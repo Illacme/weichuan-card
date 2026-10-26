@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -52,10 +51,12 @@ func (f *fakeWX) hits(path string) int {
 
 // resetTokenCache 清空 access_token 进程级缓存：它是包级全局变量，
 // 不清会让上一个用例签出的 token 泄漏到下一个用例（表现为「该发的请求没发」）。
+// 按 appid 分键后，逐个删比整体清更贴近真实——也顺带验证「键真的是 appid」。
 func resetTokenCache() {
 	tokenMu.Lock()
-	token = ""
-	tokenExp = time.Time{}
+	for k := range tokenCache {
+		delete(tokenCache, k)
+	}
 	tokenMu.Unlock()
 }
 

@@ -23,7 +23,15 @@ export function saveCard(
         success: () => wx.showToast({ title: '已保存' }),
         fail: (err: any) => {
           const msg = (err && err.errMsg) || ''
-          if (msg.indexOf('deny') >= 0) {
+          if (msg.indexOf('privacy') >= 0) {
+            // 隐私授权被拒：不是用户「取消」，而是没同意隐私政策。
+            // 混进「已取消」分支会让用户以为是自己点的，措辞必须分开。
+            wx.showModal({
+              title: '需要隐私授权',
+              content: '保存名片到通讯录需要你同意隐私政策，请前往设置中开启后重试',
+              showCancel: false,
+            })
+          } else if (msg.indexOf('deny') >= 0) {
             // 拒绝授权：长文案用 modal，toast 单行会截断
             wx.showModal({
               title: '需要通讯录权限',

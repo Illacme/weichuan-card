@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"strings"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/dbopen"
 	"weichuan/internal/handler"
+	"weichuan/internal/license"
+	"weichuan/internal/logx"
 	"weichuan/internal/middleware"
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 	"weichuan/internal/repository"
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
@@ -23,15 +28,19 @@ import (
 const usage = `用法：
   server            正常启动服务（默认）
   server migrate    应用待执行的数据库迁移后退出（不启服务）
+  server backup     对 SQLite 库做在线一致性快照（--out <文件>）
+  server dbcheck    只读体检一个 SQLite 备份文件（--file <文件>）
   server help       显示本说明
 
 迁移默认在启动时自动补齐（仅 MySQL；AUTO_MIGRATE=0 关闭），
 migrate 子命令用于把它拆成发布流水线里的独立一步。
+backup / dbcheck 的详细参数见 server help 之后的子命令说明（server backup 无参即打印）。
 `
 
 func main() {
 	initGinMode()
 	cfg := config.Load()
+	initLogFormat(cfg)
 
 	// 运维子命令：先于「未配置模式」判定处理——migrate 需要在没有服务监听的
 	// 情况下连库，也被 InsecureGates 之外的场景使用（如升级脚本）。
@@ -39,6 +48,12 @@ func main() {
 		switch os.Args[1] {
 		case "migrate":
 			runMigrate(cfg)
+			return
+		case "backup":
+			runBackup(cfg)
+			return
+		case "dbcheck":
+			runDBCheck()
 			return
 		case "help", "-h", "--help":
 			log.Print(usage)
@@ -142,6 +157,20 @@ func main() {
 		log.Printf("[MIGRATE] AUTO_MIGRATE=0：跳过自动迁移，请自行确认表结构与本版本匹配")
 	}
 
+	// PII 加密密钥自检：未设置 PII_ENC_KEY 时用内置 dev 密钥加密——生产必须显式设置，
+	// 否则「加密」全在公开已知的密钥下进行，形同虚设。这里只告警不拒启：
+	// 拒启会让 clone 即跑 / 首次安装 / 测试全挂，代价过大；真上生产时该 WARN 必须清零。
+	if pii.UsingPlaceholderKey() {
+		log.Printf("[SECURITY][WARN] 未设置 %s（base64 32 字节），员工 PII 使用内置 dev 密钥加密——生产必须设置，否则加密形同虚设", pii.KeyEnvVar)
+	}
+
+	// 存量 PII 回填：把历史明文员工 PII 加密入库并补盲索引（幂等，仅处理未加密/缺索引的行）。
+	// 放在表结构就绪之后、业务路由装配之前；失败只告警不终止——读路径对未加密的
+	// 历史行仍兼容（Decrypt 对非密文原样返回），但必须靠这条日志暴露出来排查。
+	if err := model.BackfillPII(db); err != nil {
+		log.Printf("[PII][ERROR] PII 存量回填失败：%v（历史明文行尚未加密，请排查密钥/DB 后重启）", err)
+	}
+
 	handler.SeedAdmin(db, cfg) // 首启动若 admin 表为空则创建初始超管
 
 	// 系统设置：建表 + seed 缺省值 + 载入内存缓存（后台「系统设置」界面维护运行参数）
@@ -151,6 +180,42 @@ func main() {
 	// 系统设置覆盖环境变量（空串=界面未设置→保留环境变量），让云存储 / CDN / 微信凭据
 	// 也能在后台维护；这些客户端在启动时构造，故界面标记为「需重启生效」。
 	cfg.OverlayFromSettings()
+
+	// 按租户解析授权用的库连接（Phase 4）：注入后 EnforceLicense 会先查
+	// tenant_license 表该租户的行，查不到才回退全局设置。
+	license.SetTenantDB(db)
+
+	// 授权公钥自检：私有 / 独立部署用的是**对外收费交付**的形态，
+	// 此时验签公钥必须是发行方自己的——不能用仓库里那把占位演示密钥。
+	//
+	// 为什么这是硬门槛而不是告警：占位密钥的配对私钥写在签发工具的注释里，
+	// 任何拿到二进制的人都能自己签一张「永久有效 / 无限席位」的许可证，
+	// 授权机制直接形同虚设。
+	//
+	// 为什么只在私有模式拦：集中 / 平台模式（SaaS）不验本地许可证文件，
+	// 授权来自系统设置，用不用占位公钥都不影响；而演示 / 开源仓库需要
+	// 「clone 下来就能跑」，一刀切拦会让本地开发无从下手。
+	//
+	// 为什么排在 license.Verify **之前**：私钥模式下 Verify 会先验签，
+	// 用占位公钥验真实许可证必然失败，会先一步 Fatalf 退出——
+	// 那样用户看到的只会是「授权校验失败」，而真正的原因是「公钥没换」。
+	// 先说原因，才不会让人往错的方向排查。
+	//
+	// 自愈方式：把发行方自己的公钥放进环境变量 LICENSE_PUB（base64），
+	// 无需改代码重新编译；改完重启即生效。
+	if license.PrivateMode() && license.IsPlaceholderPublicKey() {
+		log.Fatalf("[LICENSE][FATAL] 私有部署仍在使用仓库内置的占位演示公钥，拒绝启动："+
+			"该公钥的配对私钥是公开的，任何人都能伪造许可证。"+
+			"请用 license keygen 生成密钥对，把公钥填入环境变量 %s 后重启"+
+			"（私钥只留在签发环境，绝不能进仓库或二进制）",
+			license.PubKeyEnvVar)
+	}
+
+	// 授权校验（Phase 1 地基）：私有 / 独立部署验本地签名许可证，集中模式读系统设置。
+	// 私有模式下验签失败或过期 = 拒绝启动（与 InsecureGates 同一类硬门槛逻辑）。
+	if _, err := license.Verify(context.Background()); err != nil {
+		log.Fatalf("[LICENSE][FATAL] 授权校验失败，拒绝启动：%v", err)
+	}
 	// 上传限制从系统设置读取（后台改上限即时生效、无需重启）；未配置则回落 10MB / 默认白名单
 	storage.UploadLimitBytes = func() int64 {
 		return int64(setting.GetInt("upload_max_mb", 10)) * 1024 * 1024
@@ -184,6 +249,17 @@ func main() {
 	stopRatePurge := repository.StartRateLimitPurge(db, cfg.RatePurgeInterval)
 	defer stopRatePurge()
 
+	// 审计日志按保留期清理（C3）：audit_log 只追加，长期运行会一直涨。
+	// 保留天数取自系统设置（默认 0 = 不清理，理由见 audit/purge.go），所以传的是
+	// 取值函数——后台改完即时生效，不必重启。启动时先跑一次，把上次停机期间
+	// 超期的行补掉；清理动作本身会记一条 audit.purge 审计。
+	auditKeepDays := func() int {
+		return setting.GetInt("audit_retention_days", cfg.AuditRetentionDays)
+	}
+	audit.RunAuditPurgeOnce(db, auditKeepDays)
+	stopAuditPurge := audit.StartAuditLogPurge(db, cfg.AuditPurgeInterval, auditKeepDays)
+	defer stopAuditPurge()
+
 	r := handler.New(db)
 	// 可信反代：gin 的内置缺省是「信任所有代理」（启动日志自己会打一行
 	// "You trusted all proxies, this is NOT safe"）。那样 c.ClientIP() 直接采信
@@ -200,19 +276,29 @@ func main() {
 	metrics.Enabled = func() bool {
 		return setting.GetBool("metrics_enabled", cfg.MetricsEnabled)
 	}
+	// /metrics 的第二道门：即便开关在界面上被打开，也只允许 METRICS_ALLOW_CIDR
+	// 里的来源（内网采集器）访问，公网一律 404——流量规模不该被外人看到。
+	if len(cfg.MetricsAllowCIDR) > 0 {
+		allow := middleware.NewIPAllowlist(cfg.MetricsAllowCIDR)
+		metrics.Allow = func(c *gin.Context) bool { return allow(c.ClientIP()) }
+	}
 	r.Use(metrics.Middleware())
 	r.GET("/metrics", metrics.Handler())
 	if metrics.Enabled() {
 		log.Printf("[INFO] metrics enabled: GET /metrics")
 	}
-	handler.RegisterAuth(r, db, cfg) // 员工/超管登录（JWT 签发）+ 刷新 + 登出
-	handler.RegisterApply(r, db)     // 开通申请 / 名片修改审核 / 员工管理 / 统计
-	handler.RegisterStatsExport(r, db)  // 统计 CSV 导出（与 /api/admin/stats 同口径，按租户隔离）
-	handler.RegisterStatsDetail(r, db)  // 埋点明细列表（聚合的下钻：逐条事件 + 筛选 + 分页）
-	handler.RegisterContent(r, db)   // 企业内容管理（公司信息/简介/分类/项目/服务/布局，按租户隔离）
-	handler.RegisterCompanies(r, db) // 企业管理（平台超管）：开通/停用企业、企业管理员管理
-	handler.RegisterAdmins(r, db)    // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
-	handler.RegisterAuditLogs(r, db) // 操作审计日志（只读查询：平台超管）
+	handler.RegisterAuth(r, db, cfg)   // 员工/超管登录（JWT 签发）+ 刷新 + 登出
+	handler.RegisterApply(r, db, cfg)  // 开通申请 / 名片修改审核 / 员工管理 / 统计
+	handler.RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径，按租户隔离）
+	handler.RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻：逐条事件 + 筛选 + 分页）
+	handler.RegisterContent(r, db)     // 企业内容管理（公司信息/简介/分类/项目/服务/布局，按租户隔离）
+	handler.RegisterCompanies(r, db)
+	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
+	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额（GET /api/admin/storage + PUT quota）
+	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
+	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
+	handler.RegisterAdmins(r, db)         // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
+	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，
@@ -242,13 +328,17 @@ func main() {
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。
 	r.Static("/uploads", cfg.UploadDir)
-	handler.RegisterUpload(r, db, up, refresher)       // POST /api/admin/upload + /api/employee/upload
+	handler.RegisterUpload(r, db, cfg, up, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
 	handler.RegisterStorage(r, db, up, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
+	// 图片内容安全：微信消息推送回调 + 后台检测记录列表 + 一键下架
+	handler.RegisterMediaCheck(r, db, cfg, up, refresher)
 	// 刷新器往下传给「会覆盖同名对象」的两条路径（素材采用 / 小程序码重生成），
 	// 普通上传的对象名是随机的、永不覆盖，刷新对它本就无意义（见 handler.refreshCDN 注释）
-	handler.RegisterAssets(r, db, up, refresher)  // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
-	handler.RegisterWechat(r, cfg, up, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId）
-	handler.RegisterSettings(r, db, cfg)          // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterAssets(r, db, up, refresher)      // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
+	handler.RegisterWechat(r, db, cfg, up, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId 归属租户取凭据）
+	handler.RegisterSettings(r, db, cfg)              // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                    // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                     // 海报个性化设置：GET/PUT /api/employee/poster-prefs（自定义背景 + 版式）
 	// 首次配置状态查询（只读）：已配置时返回 configured=true；未配置时进程根本进不到这里
 	// （见开头 setup.Unconfigured 分支）。前端据此决定是否显示配置引导。
 	// /setup 别名：安装完成后还有人手动敲 /setup 时 302 回首页，不给裸 404。
@@ -266,6 +356,21 @@ func main() {
 // 不设就是 debug——每次启动把**全部路由表**打进日志（几十行，把真正要看的安全告警
 // 与迁移日志挤到屏幕外），并且保留调试期开销。本地排查可以 GIN_MODE=debug 覆盖。
 // 必须早于 handler.New / setup.Engine：路由注册时就在按模式决定要不要打印。
+// initLogFormat 切换日志形态（LOG_FORMAT=json 输出 JSONL，供日志系统按字段检索）。
+//
+// 必须在任何业务日志之前调用：否则前面的几行还是纯文本，混在 JSONL 里会让采集器
+// 那一行解析失败（多数采集器遇到非 JSON 行是整行丢弃——恰好把启动阶段最该看的
+// 那几行丢掉）。同时把 gin 自己的两个 writer 也接进来，它是把 panic 栈与启动日志
+// 直接写到 DefaultWriter 的，不接就会在 JSONL 里混进纯文本块。
+func initLogFormat(cfg config.Config) {
+	got := logx.SetFormat(cfg.LogFormat)
+	gin.DefaultWriter = logx.Writer()
+	gin.DefaultErrorWriter = logx.Writer()
+	if got == logx.FormatJSON {
+		log.Printf("[INFO] 日志格式=json（结构化日志，供集中采集）")
+	}
+}
+
 func initGinMode() {
 	if os.Getenv(gin.EnvGinMode) == "" {
 		gin.SetMode(gin.ReleaseMode)

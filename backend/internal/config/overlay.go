@@ -2,6 +2,7 @@ package config
 
 import (
 	"strings"
+	"time"
 
 	"weichuan/internal/setting"
 )
@@ -58,4 +59,20 @@ func (c *Config) OverlayFromSettings() {
 	// 此处同步一份到 cfg，保证启动日志与其它读取点看到的值一致。
 	c.WXAppID = str("wx_appid", c.WXAppID)
 	c.WXAppSecret = str("wx_appsecret", c.WXAppSecret)
+	// 消息推送凭据同样在请求期解析（resolveWXMsgToken / resolveWXMsgAESKey），
+	// 这里同步一份只为让启动日志与其它读取点看到一致的值。
+	c.WXMsgToken = str("wx_msg_token", c.WXMsgToken)
+	c.WXMsgAESKey = str("wx_msg_aeskey", c.WXMsgAESKey)
+
+	// 后台上传小程序代码：三项「服务器上有什么」，界面优先、空串回落环境变量。
+	// 上传时按请求期再叠一次（见 handler.mpUploadCfg），这里同步是为了让
+	// 启动日志与其它读取点看到的值一致。
+	c.MPNodeBin = str("mp_node_bin", c.MPNodeBin)
+	c.MPCIModuleDir = str("mp_ci_module_dir", c.MPCIModuleDir)
+	c.MPSourceDir = str("mp_source_dir", c.MPSourceDir)
+	// 超时不挂环境变量（见 setting 注册处的说明），只在界面配了值时覆盖；
+	// 填 0 / 负数视为「没配」，保留进程内取值。
+	if v := setting.GetInt("mp_upload_timeout_sec", 0); v > 0 {
+		c.MPUploadTimeout = time.Duration(v) * time.Second
+	}
 }

@@ -122,23 +122,43 @@
         </el-button>
       </div>
       <!-- 其余（string / string_slice）按文本编辑；只读敏感项也走这里，
-           原样显示后端给的「可辨认预览」 -->
-      <el-input
-        v-else
-        :model-value="modelValue"
-        :disabled="item.readOnly"
-        :placeholder="placeholderOf(item)"
-        class="text-input"
-        @update:model-value="(v: any) => emit('change', item.key, String(v ?? ''))"
-      />
+           原样显示后端给的「可辨认预览」。
+           路径类配置（pathKind 非空）额外给一个「浏览服务器目录」按钮：这些路径指向
+           后端要 exec 的**服务器**文件系统，浏览器原生文件框选的是客户端机器、没意义，
+           所以走服务端目录浏览（见 PathPickerDialog + 后端 pathpick 包）。 -->
+      <div v-else class="text-input path-control">
+        <el-input
+          :model-value="modelValue"
+          :disabled="item.readOnly"
+          :placeholder="placeholderOf(item)"
+          class="path-input"
+          @update:model-value="(v: any) => emit('change', item.key, String(v ?? ''))"
+        />
+        <el-button
+          v-if="item.pathKind && !item.readOnly"
+          size="small"
+          class="path-browse"
+          @click="openPicker"
+        >
+          浏览…
+        </el-button>
+        <PathPickerDialog
+          v-if="item.pathKind && pickerReady"
+          v-model:visible="pickerVisible"
+          :kind="item.pathKind"
+          :model-value="modelValue"
+          @pick="(p: string) => emit('change', item.key, p)"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { SettingItem } from '@/api/settings'
 import { CDN_PROVIDERS, CDN_PROVIDER_LABELS } from '@/utils/cdn'
+import PathPickerDialog from '@/components/PathPickerDialog.vue'
 
 const props = defineProps<{
   item: SettingItem
@@ -241,6 +261,17 @@ const numVal = computed(() => {
   const n = Number(props.modelValue)
   return Number.isFinite(n) ? n : 0
 })
+
+// 服务端路径选择器弹窗：仅 pathKind 项才有「浏览…」按钮；打开后由子组件自行拉取目录。
+// pickerReady 让弹窗**首次点开时才挂载**：设置页主列表 + 配置向导共有 6 个 pathKind 项，
+// 若全都常驻，页面一进来就在 body 里塞 6 套 el-dialog（各自带遮罩层），既浪费又给
+// 层叠 / 锁滚动留隐患。挂载后不再销毁，关掉时保留状态，二次打开是瞬时的。
+const pickerVisible = ref(false)
+const pickerReady = ref(false)
+function openPicker() {
+  pickerReady.value = true
+  pickerVisible.value = true
+}
 </script>
 
 <style scoped>
@@ -322,6 +353,18 @@ const numVal = computed(() => {
 }
 .text-input {
   width: 100%;
+}
+/* 路径类配置：文本框 + 「浏览…」按钮并排，按钮不再独占一行挤压标签 */
+.path-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.path-input {
+  flex: 1;
+}
+.path-browse {
+  flex: none;
 }
 .secret-control {
   display: flex;

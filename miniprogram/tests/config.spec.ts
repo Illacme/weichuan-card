@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   DEFAULT_BASE_URL,
   baseUrlOf,
-  pinnedCompanyOf,
   cachedSettings,
   cacheSettings,
+  fetchPublicSettings,
+  hasBaseUrl,
+  pinnedCompanyOf,
 } from '../utils/config'
 
 // 小程序端「后台下发配置」的纯逻辑测试：
@@ -27,12 +29,73 @@ describe('config', () => {
     stubWx()
   })
 
-  it('内置引导种子地址可用（换部署环境改这一处）', () => {
-    // 合法值随部署环境变化：模拟器 127.0.0.1 / 真机局域网 IP / 上线域名，
-    // 故不硬编码具体地址，只钉死格式——必须带协议头与端口。
-    // 「缺协议头」是真机最典型手误（直接填 192.168.x.x:8080，
-    // 微信 request 会静默失败，表现为登录页网络错误）。
-    expect(DEFAULT_BASE_URL).toMatch(/^https?:\/\/[^\s]+:8080$/)
+  // 守门：引导种子基址**默认必须是空串**（源码里不放任何地址）。
+  // 这条用例盯的是已经发生过的事故：默认值曾是某台开发机的
+  // `http://192.168.31.224:8080`，随源码分发出去后，别人部署的小程序会拿它当
+  // 首连地址——那是别人家的内网，请求必然超时；而种子基址是拉取后台配置的
+  // **唯一入口**，超时后就再也拿不到正确基址（后台配 miniprogram_base_url 也救不回来），
+  // 只能重新打包提审。同理，明文 http 在正式版也不被允许。
+  describe('引导种子基址（守门）', () => {
+    it('默认留空，不内置任何地址', () => {
+      expect(DEFAULT_BASE_URL).toBe('')
+    })
+
+    it('若部署方已填写，只能是线上 https 域名或本机回环', () => {
+      const seed = String(DEFAULT_BASE_URL || '')
+      if (!seed) return
+      // 内网 / 链路本地网段：只在自己那台机器所在局域网内可用
+      expect(seed).not.toMatch(/\/\/(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/)
+      const isHttps = seed.indexOf('https://') === 0
+      const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(seed)
+      expect(isHttps || isLoopback).toBe(true)
+    })
+  })
+
+  describe('hasBaseUrl', () => {
+    it('空串 / 纯空白 / null / undefined 一律视为未配置', () => {
+      expect(hasBaseUrl('')).toBe(false)
+      expect(hasBaseUrl('   ')).toBe(false)
+      expect(hasBaseUrl(null)).toBe(false)
+      expect(hasBaseUrl(undefined)).toBe(false)
+    })
+
+    it('有地址即视为已配置', () => {
+      expect(hasBaseUrl('https://card.example.com')).toBe(true)
+    })
+  })
+
+  describe('fetchPublicSettings', () => {
+    it('基址为空时不发请求（否则拼出 /api/... 非法 URL，白等 5s 超时）', async () => {
+      const request = vi.fn()
+      ;(globalThis as any).wx = { request }
+      await expect(fetchPublicSettings()).resolves.toBeNull()
+      await expect(fetchPublicSettings('')).resolves.toBeNull()
+      await expect(fetchPublicSettings('   ')).resolves.toBeNull()
+      expect(request).not.toHaveBeenCalled()
+    })
+
+    it('基址可用时请求 /api/public/settings，末尾斜杠被归一（不拼双斜杠）', async () => {
+      const request = vi.fn((o: any) =>
+        o.success({ data: { code: 0, data: { brand_name: '甲公司', pinned_company_id: '3' } } })
+      )
+      ;(globalThis as any).wx = { request }
+
+      const got = await fetchPublicSettings('https://card.example.com/')
+
+      expect(request.mock.calls[0][0].url).toBe('https://card.example.com/api/public/settings')
+      expect(got?.brand_name).toBe('甲公司')
+      expect(pinnedCompanyOf(got)).toBe(3)
+    })
+
+    it('后端返回非 0 / 网络失败时按「没拿到」处理，不抛异常', async () => {
+      ;(globalThis as any).wx = {
+        request: vi.fn((o: any) => o.success({ data: { code: 1, msg: 'boom' } })),
+      }
+      await expect(fetchPublicSettings('https://card.example.com')).resolves.toBeNull()
+
+      ;(globalThis as any).wx = { request: vi.fn((o: any) => o.fail(new Error('timeout'))) }
+      await expect(fetchPublicSettings('https://card.example.com')).resolves.toBeNull()
+    })
   })
 
   describe('baseUrlOf', () => {

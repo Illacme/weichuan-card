@@ -468,6 +468,11 @@ func statFissionTop(c *gin.Context, db *gorm.DB, from, to string, limit int) ([]
 	if err := q.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
+	// employees.name 已加密，裸 SQL 不经过模型 AfterFind，这里显式解密；
+	// COALESCE 回落的「已删除」不是密文，decPII 原样返回。
+	for i := range rows {
+		rows[i].Name = decPII(rows[i].Name)
+	}
 	return rows, nil
 }
 
@@ -665,6 +670,10 @@ func RegisterStatsDetail(r *gin.Engine, db *gorm.DB) {
 
 		var events []statEventRaw
 		total, page := pagedQuery(q, "stat_events.id desc", &events, page, size)
+		// 明细里的员工姓名同样来自裸 SQL 的 JOIN，需显式解密（见 statFissionTop 同款处理）。
+		for i := range events {
+			events[i].Name = decPII(events[i].Name)
+		}
 
 		caseNames, svcNames := statTargetNames(db, events)
 		list := make([]statDetailItem, 0, len(events))

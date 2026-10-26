@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,8 +19,8 @@ import (
 // RegisterStorage 注册存储增强接口：直传预签名 / 私有桶限时签名 / CDN 刷新 / 本地私有文件流
 func RegisterStorage(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher, cfg config.Config) {
 	// 直传预签名（超管 / 员工）：客户端拿 putUrl 后直接 PUT 到对象存储
-	r.GET("/api/admin/upload/presign", middleware.AuthMiddleware(db, "admin"), presignHandler(up))
-	r.GET("/api/employee/upload/presign", middleware.AuthMiddleware(db, "employee"), presignHandler(up))
+	r.GET("/api/admin/upload/presign", middleware.AuthMiddleware(db, "admin"), presignHandler(db, up))
+	r.GET("/api/employee/upload/presign", middleware.AuthMiddleware(db, "employee"), presignHandler(db, up))
 	// 存储能力探测：后台「公司简介 → 视频来源」用它判断「云存储上传」档是否可选
 	r.GET("/api/admin/upload/capability", middleware.AuthMiddleware(db, "admin"), capabilityHandler(up, cfg))
 	// 私有桶：已存 URL → 限时签名 URL（超管 / 员工）
@@ -35,7 +36,14 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher 
 }
 
 // presignHandler 返回预签名 PUT URL + 最终可访问 URL；本地驱动不支持时返回 code=1（前端回退普通上传）
-func presignHandler(up storage.Uploader) gin.HandlerFunc {
+//
+// 关于存储配额（B3）：直传由客户端直接 PUT 到对象存储，**后端永远看不到这批字节**，
+// 所以只能靠客户端在申请签名时把 size 报上来（UploadField.vue 已带上）。
+// 这里做两件事：① size 可信时先判配额，超了直接拒（前端会回退普通上传，那边还会再判一次）；
+// ② 签名成功即按 size 记一次用量——**即使随后 PUT 失败也会记**。
+// 这个偏向是有意的：不记就完全统计不到对象存储的用量（那配额等于形同虚设），
+// 记多了只会让该租户早一点看到"空间不足"，用户可核对、平台可调；反过来则永远查不出谁在占。
+func presignHandler(db *gorm.DB, up storage.Uploader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, ok := up.(storage.Presigner)
 		if !ok {
@@ -44,6 +52,15 @@ func presignHandler(up storage.Uploader) gin.HandlerFunc {
 		}
 		ext := strings.TrimPrefix(c.Query("ext"), ".")
 		contentType := c.Query("contentType")
+		// size 为可选：老客户端不带 → 不计量也不拦（不能因为缺一个可选参数就让上传失败）
+		size, _ := strconv.ParseInt(c.Query("size"), 10, 64)
+		cid := uploadCompanyID(c)
+		if size > 0 {
+			if okq, msg := checkStorageQuota(db, cid, size); !okq {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
+				return
+			}
+		}
 		key, err := storage.RandName(ext)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
@@ -56,6 +73,11 @@ func presignHandler(up storage.Uploader) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 			return
+		}
+		if size > 0 {
+			// 函数内部已按 [STORAGE][WARN] 记日志；这里显式丢弃返回值，
+			// 表示「不拦上传」是有意决定（文件已直传成功，回错会让用户重传）。
+			_ = addStorageUsage(db, cid, size, 1)
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"putUrl": putURL, "url": finalURL, "key": key}})
 	}

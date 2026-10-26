@@ -61,12 +61,26 @@ Component({
       this.triggerEvent('entercase')
     },
     // 手机/座机/邮箱点击复制：名片主要给客户看，存号、发邮件是最高频动作
+    //
+    // setClipboardData 属微信隐私接口（读取你的剪切板）。访客复制的是名片上
+    // 本就公开的联系信息，不涉及收集访客个人信息，故不弹自绘授权窗——由微信
+    // 官方弹窗兜底即可（未声明对应隐私类型时平台会直接放行）。
+    // 但**必须有 fail 回调**：接口被拒（未声明隐私类型 / 未授权）时若不接
+    // fail，用户点了复制却毫无反应——「复制」是本页最高频动作，静默失效最致命。
     onCopy(e: any) {
       const value = e.currentTarget.dataset.copy
       if (!value) return
       wx.setClipboardData({
         data: value,
         success: () => wx.showToast({ title: '已复制', icon: 'success' }),
+        fail: (err: any) => {
+          const msg = (err && err.errMsg) || ''
+          if (msg.indexOf('privacy') >= 0) {
+            wx.showToast({ title: '需同意隐私政策才能复制', icon: 'none' })
+          } else {
+            wx.showToast({ title: '复制失败', icon: 'none' })
+          }
+        },
       })
     },
   },

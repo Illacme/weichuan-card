@@ -19,6 +19,7 @@ import (
 //	GET  /api/assets/file/*path    素材预览图。公开 + 长缓存：素材是通用图形、
 //	                                不含租户数据；<img> 标签也无法带 Authorization 头，
 //	                                公开可避免任何部署形态（同源/跨域/CDN）下的预览问题。
+//	GET  /api/assets/posters       海报素材清单（公开：员工在小程序里挑分享背景用）
 //	GET  /api/admin/assets/library 素材清单（管理员登录态）
 //	POST /api/admin/assets/adopt   采用素材：把内嵌素材复制进上传存储，返回与普通
 //	                                上传完全同构的 URL（管理员登录态）
@@ -31,6 +32,7 @@ import (
 // 边缘失效——2026-10-23 之前刷新只挂在上传接口（对象名随机、永不覆盖），等于没接线。
 func RegisterAssets(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher) {
 	r.GET("/api/assets/file/*path", assetFileHandler)
+	r.GET("/api/assets/posters", posterListHandler)
 	r.GET("/api/admin/assets/library", middleware.AuthMiddleware(db, "admin"), libraryListHandler)
 	r.POST("/api/admin/assets/adopt", middleware.AuthMiddleware(db, "admin"), assetAdoptHandler(up, refresher))
 }
@@ -87,6 +89,45 @@ func libraryListHandler(c *gin.Context) {
 		"size":        res.Size,
 		"pages":       res.Pages,
 		"styleCounts": res.StyleCounts,
+	}})
+}
+
+// posterListHandler 返回海报素材清单（公开端点，供小程序「选海报背景」用）。
+//
+// 为什么单开一个端点而不是放开 /api/admin/assets/library：后者带管理员登录态，
+// 且会返回全量 900+ 素材（含图标配色变体），给小程序用既越权也浪费流量。
+// 这里只回 poster 分类，字段也压到小程序真正需要的四五个。
+//
+// 素材是通用的、不含租户数据，公开无信息泄露风险；海报背景由分享者本人挑选，
+// 也不需要鉴权（未登录的访客打开别人分享的海报页同样要能换背景再看）。
+func posterListHandler(c *gin.Context) {
+	m, err := assets.Load()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "素材库加载失败"})
+		return
+	}
+	// MaxPageSize(60) 足够覆盖当前 44 张（24 节气 + 20 场景）；海报不分页，
+	// 小程序一次拉全后在本地横滑选择，省掉翻页交互。
+	res := assets.List(assets.Query{Type: "poster", Page: 1, Size: assets.MaxPageSize})
+	items := make([]gin.H, 0, len(res.Items))
+	for _, it := range res.Items {
+		thumb := it.Thumb
+		if thumb == "" {
+			thumb = it.File // 清单里 thumb 缺省时退回原图，别给前端一个空 src
+		}
+		items = append(items, gin.H{
+			"id":    it.ID,
+			"name":  it.Name,
+			"style": it.Style,
+			// file 是内嵌素材路径（posters/xx.jpg），统一补成可直取的 URL；
+			// 小程序再过 assetUrl 拼成绝对地址（canvas 的 img.src 不认相对路径）。
+			"file":  "/api/assets/file/" + it.File,
+			"thumb": "/api/assets/file/" + thumb,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+		"version": m.Version,
+		"items":   items,
 	}})
 }
 

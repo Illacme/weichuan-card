@@ -458,6 +458,7 @@ func closeDB(db *gorm.DB) {
 		return
 	}
 	if sqlDB, err := db.DB(); err == nil {
-		sqlDB.Close()
+		// 临时连接，关闭失败无后果（进程退出也会回收）
+		_ = sqlDB.Close()
 	}
 }

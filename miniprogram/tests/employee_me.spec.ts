@@ -237,3 +237,74 @@ describe('employee/me 页', () => {
     expect(wxStub.showToast).not.toHaveBeenCalled()
   })
 })
+
+// 注销账号（PIPL 删除权）：不可逆特权动作，必须两次强确认 + 成功后清本地态。
+// 走两次 showModal（第一次讲后果、第二次红字「确认注销」），任一取消都不能真删。
+describe('employee/me 注销账号', () => {
+  let wxStub: any
+  let storage: Map<string, any>
+  let app: any
+
+  beforeEach(() => {
+    vi.resetModules()
+    installPageCapture()
+    const installed = installWx({
+      // 默认两次 modal 都点「确认」
+      showModal: vi.fn((o: any) => o && o.success && o.success({ confirm: true })),
+    })
+    wxStub = installed.wx
+    storage = installed.storage
+    app = installApp({ myStaffId: 42 })
+    mocks.request.mockClear()
+  })
+
+  async function cancelPage() {
+    await import('../pages/employee/me/me')
+    return makeInstance(capturedPage())
+  }
+
+  it('两次确认后调用注销接口并清本地态', async () => {
+    storage.set('empToken', 'tk-1')
+    storage.set('empRefreshToken', 'rt-1')
+    app.globalData.myStaffId = 42
+    mocks.request.mockResolvedValueOnce({ code: 0 })
+    const p = await cancelPage()
+
+    p.cancelAccount()
+    await flush()
+
+    // 本人身份注销：无 id 参数，靠令牌鉴权（结构上杜绝删别人）
+    expect(mocks.request).toHaveBeenCalledWith('POST', '/api/employee/me/cancel')
+    expect(storage.has('empToken')).toBe(false)
+    expect(storage.has('empRefreshToken')).toBe(false)
+    expect(app.globalData.myStaffId).toBe(0)
+  })
+
+  it('第一次取消确认：不调注销接口、不动本地态', async () => {
+    storage.set('empToken', 'tk-1')
+    mocks.request.mockResolvedValue({ code: 0 })
+    const p = await cancelPage()
+    // 第一个 modal 点「取消」
+    wxStub.showModal.mockImplementationOnce((o: any) => o && o.success && o.success({ confirm: false }))
+
+    p.cancelAccount()
+    await flush()
+
+    expect(mocks.request).not.toHaveBeenCalledWith('POST', '/api/employee/me/cancel')
+    expect(storage.get('empToken')).toBe('tk-1')
+  })
+
+  it('接口失败：提示且保留本地登录态', async () => {
+    storage.set('empToken', 'tk-1')
+    mocks.request.mockResolvedValueOnce({ code: 1, msg: '注销失败：服务端异常' })
+    const p = await cancelPage()
+
+    p.cancelAccount()
+    await flush()
+
+    expect(mocks.request).toHaveBeenCalledWith('POST', '/api/employee/me/cancel')
+    expect(storage.get('empToken')).toBe('tk-1')
+    const calls = wxStub.showToast.mock.calls
+    expect(calls[calls.length - 1][0].title).toContain('注销失败')
+  })
+})

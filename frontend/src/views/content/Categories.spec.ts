@@ -160,7 +160,7 @@ function mountPage() {
   return mount(Categories, mountOpts)
 }
 
-async function flush(w: ReturnType<typeof mountPage>) {
+async function flush(_w: ReturnType<typeof mountPage>) {
   await nextTick()
   await nextTick()
   await nextTick()

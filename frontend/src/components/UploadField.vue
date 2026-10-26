@@ -139,7 +139,7 @@ async function customUpload(option) {
       option.onSuccess({ code: 0, data: { urls: [p.data.url] } })
       return
     }
-  } catch (e) {
+  } catch {
     // 预签名异常，落入回退分支
   }
   await serverUpload(option)

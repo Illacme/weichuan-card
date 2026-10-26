@@ -23,8 +23,59 @@ export interface SettingItem {
   /** 枚举候选值（仅枚举项有，如 storage_driver 的 local/minio/oss/s3）；
       界面据此渲染下拉而非文本框，与后端 oneOf 校验同源 */
   options?: string[]
+  /** 服务端路径类配置（node_bin / module_dir / source_dir）：驱动界面在文本框旁
+      渲染一个「浏览服务器目录」按钮，弹出选择器在**服务器**文件系统上挑路径
+      （这些路径指向后端要 exec 的服务器，浏览器原生文件框选的是客户端机器，没意义） */
+  pathKind?: string
   /** 当前是否已有有效值（库值或环境变量） */
   configured: boolean
+}
+
+// 服务端路径选择器结果（GET /api/admin/settings/paths）。
+// 与后端 internal/pathpick 的 Result 结构一致：列举当前目录、徽标、自动探测候选、
+// 以及「当前路径作为该类目标」的实时校验（前端三处校验口径与后端 CheckPath 同源）。
+export interface PathEntry {
+  name: string
+  path: string
+  type: 'dir' | 'file'
+  marker: string
+}
+export interface PathSuggestion {
+  path: string
+  label: string
+  reason: string
+}
+export interface PathStatus {
+  ok: boolean
+  message: string
+}
+export interface PathBrowseResult {
+  kind: string
+  /** 实际列举的目录（已解析符号链接）——面包屑与列表都以它为准 */
+  path: string
+  /** 当前「待选中」的路径：node_bin 下可能是目录里的某个文件，其余就是目录本身 */
+  selected: string
+  /** selected 是否目录（node_bin 借此区分「还没选到文件」） */
+  selectedIsDir: boolean
+  parent: string
+  home: string
+  entries: PathEntry[]
+  truncated: boolean
+  current: PathStatus
+  suggestions: PathSuggestion[]
+}
+
+// 浏览服务器目录 / 挑选可执行文件（GET /api/admin/settings/paths?kind=&dir=）。
+// 平台超管鉴权（后端 PlatformAdminMiddleware 拦截）。dir 缺省时后端给一个合理起点。
+export function browseServerPaths(kind: string, dir?: string) {
+  const params: Record<string, string> = { kind }
+  if (dir) params.dir = dir
+  // __silent：错误由选择器就地展示（状态条文案 + 列表为空），不要再弹全局红条——
+  // 否则一次失败会同时出现「弹窗内提示」和「右上角 toast」两处，看着像两个错。
+  return http.get<{ code: number; msg?: string; data?: PathBrowseResult }>('/admin/settings/paths', {
+    params,
+    __silent: true,
+  } as any)
 }
 
 // 平台超管读取全部可配置项（GET /api/admin/settings）

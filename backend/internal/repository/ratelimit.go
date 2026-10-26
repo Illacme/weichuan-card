@@ -27,6 +27,44 @@ func isMySQLDialect(db *gorm.DB) bool {
 // 于是阈值与副本数无关。SQLite 单机形态也走同一路径——行为一致，
 // 免得出现「MySQL 限流准、SQLite 不准」这种难以解释的差异。
 
+// 本包取「当前时间」的时间源。
+//
+// 为什么不直接调 time.Now：窗口按墙上时钟对齐（见 windowStart），于是「现在落在
+// 哪一分钟」决定了计数落到哪一行。测试里连打十几次请求只要跨过一次分钟边界，
+// 计数就翻页重置，「第 11 次必须被拒」会变成放行——这是与被测逻辑无关的偶发
+// 失败（并发跑全量包时最容易撞上）。把时间源做成可替换的，测试就能固定 / 推进
+// 时钟，让「窗口翻页」成为可断言的确定事件。生产路径不受影响（默认 time.Now）。
+var (
+	nowMu sync.RWMutex
+	nowFn = time.Now
+)
+
+// now 取当前时间（走可替换的时间源）。
+func now() time.Time {
+	nowMu.RLock()
+	fn := nowFn
+	nowMu.RUnlock()
+	return fn()
+}
+
+// SetNowFunc 替换本包取当前时间的实现，返回还原函数。
+// **仅测试使用**：固定时钟可让限流窗口不再自己翻页；推进时钟可断言翻页行为。
+// 传 nil 表示还原为 time.Now。调用方应在测试结束时执行返回的还原函数。
+func SetNowFunc(fn func() time.Time) (restore func()) {
+	nowMu.Lock()
+	old := nowFn
+	if fn == nil {
+		fn = time.Now
+	}
+	nowFn = fn
+	nowMu.Unlock()
+	return func() {
+		nowMu.Lock()
+		nowFn = old
+		nowMu.Unlock()
+	}
+}
+
 // windowStart 把时间对齐到窗口边界，返回该窗口的起始 Unix 秒。
 // 同一窗口内任意时刻都得到同一个值，它因此可以作为主键的一部分，
 // 也不需要额外判断「窗口是否已经翻页」。
@@ -35,7 +73,7 @@ func windowStart(window time.Duration) int64 {
 	if sec <= 0 {
 		sec = 1
 	}
-	return time.Now().Unix() / sec * sec
+	return now().Unix() / sec * sec
 }
 
 // RateHit 记录一次命中，返回该 key 在当前窗口内的累计次数（含本次）。
@@ -89,7 +127,7 @@ func PurgeOldRateHits(db *gorm.DB, keep time.Duration) (int64, error) {
 	if keep <= 0 {
 		keep = 10 * time.Minute
 	}
-	cutoff := time.Now().Add(-keep).Unix()
+	cutoff := now().Add(-keep).Unix()
 	res := db.Where("window_start < ?", cutoff).Delete(&model.RateLimitHit{})
 	return res.RowsAffected, res.Error
 }

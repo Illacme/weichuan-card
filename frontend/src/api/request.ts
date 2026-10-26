@@ -5,6 +5,7 @@ import axios, {
 } from 'axios'
 import router from '@/router'
 import { ElMessage } from 'element-plus'
+import { setLastRequestId } from './clientError'
 
 /**
  * 统一响应体约定（见《三端联调与接口总表》§2）：
@@ -95,6 +96,14 @@ http.interceptors.response.use(
     if (!data || typeof data !== 'object') {
       return data as unknown as AxiosResponse
     }
+
+    // 把后端回传的 X-Request-Id 记下来，供前端报错上报时带上，
+    // 把「这次请求」和后端同一条访问日志关联起来（见 ./clientError.ts）。
+    // 这里必须用可选链：真实 axios 一定有 headers，但测试替身 / 自定义 adapter 返回的
+    // 响应可能没有——为了让「记个请求号」崩掉整个响应拦截（进而把所有业务错误都变成
+    // 一句「Cannot read properties of undefined」）是不值当的。
+    const rid = resp.headers?.['x-request-id'] || resp.headers?.['X-Request-Id']
+    if (rid) setLastRequestId(rid as string)
 
     // 401：access 过期 / 登录失效 → 先用 refresh Cookie 静默换发并重试原请求一次；
     //      刷新失败再清登录态跳登录。已重试过（__retried）或刷新请求自身（__skipRefresh）不再刷新。

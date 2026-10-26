@@ -4,6 +4,34 @@
        取不到刚渲染的节点 → draw() 静默画不出来，页面永远停在「生成中」。 -->
   <view class="poster-stage">
     <canvas type="2d" id="poster" class="poster-canvas"></canvas>
+    <!-- 拖动层：盖在 canvas 上接收触摸。canvas 本身收不到 bindtouch 事件，
+         只能靠这层透明 view 转达。catchtouchmove 阻止页面跟着滚，
+         否则拖海报会把整页一起拖走。加载 / 失败时撤掉，让遮罩上的按钮可点。 -->
+    <view
+      class="poster-drag"
+      wx:if="{{!loading && !error}}"
+      data-target="content"
+      bindtouchstart="onDragStart"
+      catchtouchmove="onDragMove"
+      bindtouchend="onDragEnd"
+      bindtouchcancel="onDragEnd"
+    ></view>
+    <!-- 二维码热区：盖在 canvas 上、位置由几何算出来（见 poster.ts 的 syncQrRect）。
+         单独一层是为了把「拖码」和「拖信息」分开——按在码上就是挪码，按在别处才是
+         挪整块信息。虚线框只在「位置」工具下显形：平时完全透明，用户看到的是干净海报；
+         进位置页才亮出来，让人知道这块是可以单独拖的。 -->
+    <view
+      class="qr-hit {{tool === 'pos' ? 'show' : ''}}"
+      wx:if="{{!loading && !error && qrRect.size}}"
+      style="left:{{qrRect.left}}px;top:{{qrRect.top}}px;width:{{qrRect.size}}px;height:{{qrRect.size}}px"
+      data-target="qr"
+      bindtouchstart="onDragStart"
+      catchtouchmove="onDragMove"
+      bindtouchend="onDragEnd"
+      bindtouchcancel="onDragEnd"
+    >
+      <text class="qr-hit-label" wx:if="{{tool === 'pos'}}">二维码</text>
+    </view>
     <view class="poster-mask" wx:if="{{loading}}">
       <view class="loading">海报生成中…</view>
     </view>
@@ -12,8 +40,185 @@
       <button class="retry-btn" bindtap="retry">重新生成</button>
     </view>
   </view>
+
+  <!-- 常驻提示：拖动这件事没有任何视觉线索，藏进工具里没人会发现 -->
+  <view class="drag-tip" wx:if="{{!loading && !error}}">按住海报拖动信息区 · 按住二维码可单独挪码</view>
+
+  <!-- 小程序码缺失：必须显式告诉用户。悄悄画一张没有码的图发出去，
+       对方扫不出任何东西，等于发了一张废纸（常见原因是后端没配 AppID）。 -->
+  <view class="qr-warn" wx:if="{{!loading && !error && qrError && layout.showQr}}">
+    <text class="qr-warn-txt">小程序码未生成：{{qrMsg}}</text>
+    <text class="qr-warn-btn" bindtap="retryQr">重试</text>
+  </view>
+
+  <!-- 底部工具条：一个工具一行选项。
+       不做「两个 tab + 五行选项」是因为画布本身占 920rpx，五行铺开必然把
+       「位置」和「保存/分享」顶到屏幕外——而位置恰恰最需要边看边调。 -->
+  <view class="poster-tools">
+    <view
+      wx:for="{{tools}}"
+      wx:key="key"
+      class="tool {{tool === item.key ? 'on' : ''}}"
+      data-tool="{{item.key}}"
+      bindtap="switchTool"
+    >{{item.name}}</view>
+  </view>
+
+  <view class="poster-panel">
+    <!-- 背景：横滑一排缩略图。首项「原样」= 白底，其后是「上传」入口、
+         我的背景（自定义）、内置素材（24 节气 + 20 场景）。
+         当天是节气时，该节气的素材会被排到内置素材最前并自动选中
+         （见 utils/solarTerm.ts），非节气日顺序与素材清单一致。 -->
+    <block wx:if="{{tool === 'bg'}}">
+      <scroll-view class="bg-strip" scroll-x enable-flex>
+        <view class="bg-row">
+          <view class="bg-item {{bgId === '' ? 'on' : ''}}" data-id="" bindtap="pickBg">
+            <view class="bg-thumb bg-plain">原样</view>
+          </view>
+
+          <view class="bg-item" bindtap="uploadBg">
+            <view class="bg-thumb bg-upload {{uploading ? 'busy' : ''}}">
+              <text class="bg-upload-plus">+</text>
+              <text class="bg-upload-txt">{{uploading ? '上传中' : '上传'}}</text>
+            </view>
+          </view>
+
+          <!-- 自定义背景：长按删除（内置素材不可删，它们编译在二进制里） -->
+          <view
+            wx:for="{{customs}}"
+            wx:key="id"
+            class="bg-item {{bgId === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="pickBg"
+            bindlongpress="removeBg"
+          >
+            <image class="bg-thumb" src="{{item.thumbUrl}}" mode="aspectFill" />
+          </view>
+
+          <view
+            wx:for="{{posters}}"
+            wx:key="id"
+            class="bg-item {{bgId === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="pickBg"
+          >
+            <image class="bg-thumb" src="{{item.thumbUrl}}" mode="aspectFill" />
+            <!-- 今天这张：自动选中 + 排第一，加个角标说明原因。
+                 节日（festival）与节气（term）分开配色——用户能看出
+                 「这张是因为过节」而不是「上次选的」。 -->
+            <view
+              class="bg-today bg-today-{{todayKind}}"
+              wx:if="{{item.id === todayId}}"
+            >{{todayName}}</view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="bg-hint" wx:if="{{customs.length}}">长按自己的背景可删除</view>
+    </block>
+
+    <!-- 版式模板 -->
+    <view class="opt-chips" wx:if="{{tool === 'tpl'}}">
+      <view
+        wx:for="{{templates}}"
+        wx:key="key"
+        class="chip {{layout.template === item.key ? 'on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="pickTemplate"
+      >{{item.name}}</view>
+    </view>
+
+    <!-- 元素显隐：九个胶囊折成两排。座机 / 邮箱默认关着（老海报不该突然多两行），
+         二维码可以关掉做纯形象海报——关掉后连「码没生成」的黄条也不会再弹。 -->
+    <view class="opt-chips" wx:if="{{tool === 'show'}}">
+      <view class="chip {{layout.showAvatar ? 'on' : ''}}" data-field="showAvatar" bindtap="toggleOption">头像</view>
+      <view class="chip {{layout.showName ? 'on' : ''}}" data-field="showName" bindtap="toggleOption">姓名</view>
+      <view class="chip {{layout.showTitle ? 'on' : ''}}" data-field="showTitle" bindtap="toggleOption">职位</view>
+      <view class="chip {{layout.showCompany ? 'on' : ''}}" data-field="showCompany" bindtap="toggleOption">公司</view>
+      <view class="chip {{layout.showAddress ? 'on' : ''}}" data-field="showAddress" bindtap="toggleOption">地址</view>
+      <view class="chip {{layout.showPhone ? 'on' : ''}}" data-field="showPhone" bindtap="toggleOption">手机</view>
+      <view class="chip {{layout.showLandline ? 'on' : ''}}" data-field="showLandline" bindtap="toggleOption">座机</view>
+      <view class="chip {{layout.showEmail ? 'on' : ''}}" data-field="showEmail" bindtap="toggleOption">邮箱</view>
+      <view class="chip {{layout.showQr ? 'on' : ''}}" data-field="showQr" bindtap="toggleOption">二维码</view>
+    </view>
+
+    <!-- 文字：配色 + 一句话自定义文案。
+         自定义文案是「我的签名」而不是每次现填，所以和配色同归一处：
+         都是「海报上这些字长什么样、写什么」。 -->
+    <block wx:if="{{tool === 'text'}}">
+      <view class="opt-chips">
+        <view class="chip {{layout.textColor === 'auto' ? 'on' : ''}}" data-color="auto" bindtap="pickTextColor">自动</view>
+        <view class="chip {{layout.textColor === 'light' ? 'on' : ''}}" data-color="light" bindtap="pickTextColor">浅色</view>
+        <view class="chip {{layout.textColor === 'dark' ? 'on' : ''}}" data-color="dark" bindtap="pickTextColor">深色</view>
+      </view>
+      <view class="custom-row">
+        <input
+          class="custom-input"
+          type="text"
+          value="{{layout.customText}}"
+          placeholder="加一句话，如「24 小时上门维修」"
+          placeholder-class="custom-ph"
+          maxlength="{{customMax}}"
+          confirm-type="done"
+          bindinput="onCustomText"
+          bindblur="commitCustomText"
+        />
+        <text class="custom-clear" wx:if="{{layout.customText}}" bindtap="clearCustomText">清空</text>
+      </view>
+    </block>
+
+    <!-- 大小：头像和码放在一起。用户想「把码放大点」时不该先去点「头像」找 -->
+    <block wx:if="{{tool === 'size'}}">
+      <view class="opt-chips">
+        <text class="opt-sub">头像</text>
+        <view
+          wx:for="{{avatarOptions}}"
+          wx:key="size"
+          class="chip {{layout.avatarSize === item.size ? 'on' : ''}}"
+          data-size="{{item.size}}"
+          bindtap="pickAvatarSize"
+        >{{item.label}}</view>
+      </view>
+      <!-- 码大小：0 = 自动（跟着内容高度自适应）。中档就是改造前的固定上限，
+           所以「没动过设置的人」选自动和选中间看到的是一模一样的一张图。 -->
+      <view class="opt-chips">
+        <text class="opt-sub">码</text>
+        <view
+          wx:for="{{qrOptions}}"
+          wx:key="size"
+          class="chip {{layout.qrSize === item.size ? 'on' : ''}}"
+          data-size="{{item.size}}"
+          bindtap="pickQrSize"
+        >{{item.label}}</view>
+      </view>
+      <view class="opt-tip">码太大会遮住下面的信息，遮住就选小一档</view>
+    </block>
+
+    <!-- 位置：拖动为主、按钮微调为辅。内容区和码各占一行、各有各的复位，
+         读数紧跟在自己那行后面——混在一起写「信息 0,0 · 码 0,0」没人分得清哪个是哪个。 -->
+    <block wx:if="{{tool === 'pos'}}">
+      <view class="opt-chips">
+        <text class="opt-sub">内容</text>
+        <view class="chip" bindtap="offsetUp">上移</view>
+        <view class="chip" bindtap="offsetDown">下移</view>
+        <view class="chip" bindtap="resetContent">复位</view>
+        <text class="pos-read">{{layout.offsetX}},{{layout.offsetY}}</text>
+      </view>
+      <view class="opt-chips">
+        <text class="opt-sub">码</text>
+        <view class="chip" bindtap="qrUp">上移</view>
+        <view class="chip" bindtap="qrDown">下移</view>
+        <view class="chip" bindtap="resetQr">复位</view>
+        <text class="pos-read">{{layout.qrOffsetX}},{{layout.qrOffsetY}}</text>
+      </view>
+      <view class="opt-tip">按住海报拖动更快，点「位置」时码会显形</view>
+    </block>
+  </view>
+
   <view class="actions">
     <button class="save-btn" bindtap="save">保存到相册</button>
     <button class="share-btn" bindtap="share">发送给好友</button>
   </view>
 </view>
+
+<!-- 微信隐私授权弹窗：选图上传背景 / 存海报到相册前由 ensurePrivacy 弹出 -->
+<privacy-consent visible="{{privacyVisible}}" />

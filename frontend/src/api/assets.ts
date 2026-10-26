@@ -25,7 +25,7 @@ export interface StyleCount extends LibraryStyle {
 export interface LibraryItem {
   id: string
   name: string
-  category: string // icon / cover / logo / avatar / background
+  category: string // icon / cover / logo / avatar / background / poster
   style: string // 视觉调性，见 LibraryStyle.key
   file: string
   thumb: string // 预览图相对路径（封面/背景为缩略版）

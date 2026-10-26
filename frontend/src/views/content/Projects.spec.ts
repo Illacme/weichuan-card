@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, defineComponent, h, provide, inject, computed, ref } from 'vue'
+import { nextTick, defineComponent, h, provide, inject, computed } from 'vue'
 import Projects from './Projects.vue'
 
 // 项目案例页：企业内容里字段最多的一页（分类 / 精选 / 上架 / 封面 / 相册 / 富文本）。

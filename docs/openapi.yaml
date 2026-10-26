@@ -54,6 +54,8 @@ tags:
     description: 企业信息 / 分类 / 项目 / 服务 / 首页布局
   - name: 存储
     description: 上传 / 预签名 / 私有签名 / CDN 刷新 / 小程序码
+  - name: 可观测性
+    description: 请求追踪 / 前端报错回传 / 日志关联
 
 paths:
   # ───────────────────────── 系统 ─────────────────────────
@@ -2239,6 +2241,60 @@ paths:
                         items:
                           type: string
 
+  /api/admin/settings/paths:
+    get:
+      summary: 浏览服务器目录（平台超管，服务端路径选择器）
+      description: |
+        让管理员在「后台上传小程序代码」那几项路径配置（Node 可执行文件 / miniprogram-ci
+        安装目录 / 小程序源码目录）上，直接在**服务器**文件系统里挑路径，而不是手敲绝对路径——
+        也绕开「浏览器文件框选的是客户端机器」这个根本误区（这些路径指向后端要 exec 的服务器）。
+
+        安全口径（见 backend/internal/pathpick 包）：
+        - 白名单目录（/opt /srv /usr/local /home /data …，外加服务进程的家目录）才能浏览；
+          用黑名单兜底等于玩「你猜我漏了哪个敏感目录」。白名单只收绝对路径（相对路径会随 cwd 漂移）
+        - 解析符号链接后再判白名单；列举时遇到软链条目直接跳过（不展示也不跟随）
+        - 敏感点目录（.ssh/.aws/.gnupg/.docker/.kube/.config）连名字都不回传
+        - 只回目录；仅 node_bin 这一「目标是文件」的类额外回可执行文件
+        - 条目数封顶（300），避免巨型目录撑爆响应
+        - 已配置的绝对路径（界面优先、空串回落环境变量）会被补进白名单，保证配好的路径一定能继续浏览
+        - 自动探测候选只做有界浅扫（深度 ≤ 3、访问目录数 ≤ 2000），且先扫已配置路径再扫家目录
+
+        kind 必须是 node_bin / module_dir / source_dir 之一，否则 code=1。
+        响应 data 含：当前目录 path / 父目录 parent / 家目录 home / 子项 entries（带徽标 marker）/
+        是否截断 truncated / 当前路径作为该类目标的实时校验 current（ok + message，与后端 CheckPath 同源）/
+        自动探测到的候选 suggestions（免去逐层翻目录）。
+      tags: [设置]
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [node_bin, module_dir, source_dir]
+          description: 路径类型，决定「选文件还是目录」与「怎么算对」
+        - name: dir
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 要列举的服务器绝对路径；缺省时按类型给一个合理起点
+      responses:
+        "200":
+          description: |
+            code=0 返回目录内容；code=1 业务拒绝（未知 kind / 路径不在白名单 / 目录不存在 / 无起点）。
+            前端三处校验（界面提示 / 上传前探活 / 本选择器实时校验）口径与后端 CheckPath 完全一致。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  msg:
+                    type: string
+                  data:
+                    $ref: "#/components/schemas/PathBrowseResult"
+
   # ===== 平台超管账号管理 =====
   /api/admin/platform-admins:
     get:
@@ -2439,10 +2495,12 @@ paths:
   # ===== 租户（企业）管理：仅平台超管 =====
   /api/admin/companies:
     get:
-      summary: 企业列表（含员工数 / 管理员数）
+      summary: 企业列表（含员工数 / 管理员数 / 小程序凭据是否配好）
       description: |
         服务端分页：page/size 见「分页约定」。员工数与管理员数按当前页的企业批量统计，
-        不是逐企业 COUNT。
+        不是逐企业 COUNT。`wxConfigured` 同理一次 IN 查询（要求 AppID 与 AppSecret 成对非空），
+        用于让平台一眼看出哪些企业还缺小程序凭据——缺了的企业员工生成海报小程序码时
+        会静默回落到平台小程序。
       tags: [租户]
       parameters:
         - $ref: "#/components/parameters/Page"
@@ -2612,6 +2670,825 @@ paths:
         "200":
           description: code=0（data.id / data.username）；code=1 企业不存在 / 用户名已存在
 
+  /api/admin/companies/{id}/wechat:
+    get:
+      summary: 该企业的小程序凭据（只读）
+      description: |
+        企业独立版小程序（每企业一个 appid、共用同一套后端）用这份凭据生成小程序码；
+        未配置时回落到全局 `wx_appid`/`wx_appsecret`，再回落环境变量。
+
+        **appSecret 永不回传**（连 key 都不出现），`configured` 表示 AppID 与 AppSecret 成对非空——
+        半配置（只填了 AppID）按「没配」处理，与取值侧口径一致。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（data.appId / data.configured / data.releaseEnabled / data.uploadKeyConfigured）；从没配过也是 code=0 + configured=false，不是错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      appId:
+                        type: string
+                      configured:
+                        type: boolean
+                      releaseEnabled:
+                        type: boolean
+                        description: 是否允许平台代发小程序版本（见 /releases 系列接口）。回包缺省视为 true
+                      uploadKeyConfigured:
+                        type: boolean
+                        description: |
+                          是否配了**代码上传密钥**（private.key）。与 appSecret 是两把不同的钥匙：
+                          AppSecret 换 access_token 调提审 / 发布接口，上传密钥才能把代码传到微信。
+                          只回「配没配」，永不明文回传；该企业没配时上传回落平台全局那份。
+    put:
+      summary: 保存该企业的小程序凭据（平台超管代填）
+      description: |
+        `appId` 须以 wx 开头（只卡前缀，其余交给微信侧当裁判）。
+
+        **`appSecret` 传空串 = 清空该企业已存的 Secret 并回落全局小程序**，
+        因此「只改 AppID、Secret 不动」做不到——界面会在这种保存前弹二次确认。
+        `uploadKey` 同语义：空串 = 清空并改用平台全局上传密钥。
+
+        `releaseEnabled` 不传 = 保持原值（不是重置为 true）。传 false 时平台不能再
+        代这家企业提交审核 / 发布 / 撤回小程序版本，登记与列表等只读动作不受影响。
+
+        本接口**不受** independent_lock（独立版企业锁定）限制：那个开关是「别动租户结构」，
+        而凭据是阻塞性配置，锁住了会让独立版用户永远配不上小程序。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, appSecret]
+              properties:
+                appId:
+                  type: string
+                appSecret:
+                  type: string
+                  description: 空串 = 清空并回落全局小程序
+                uploadKey:
+                  type: string
+                  description: |
+                    代码上传密钥（private.key 文件全文，可含换行）。空串 = 清空并改用平台全局
+                    那份（系统设置 `wx_upload_key`）。**只写不读**：不校验格式，格式问题在
+                    真正上传时由后端给出具体原因。
+                releaseEnabled:
+                  type: boolean
+                  description: 省略该字段时保持原值；仅在同时提供 appSecret 时有意义（留空清空凭据时开关随之重置）
+      responses:
+        "200":
+          description: code=0；code=1 参数错误 / AppID 格式不对 / 保存失败
+
+  # ── 租户授权（B4）与存储配额（B3）──────────────────────────────────────
+  # 这两个能力默认都是「不限制」：授权只在**开通企业时**落一条试用行，存量企业无行 = 不限；
+  # 存储配额全局缺省 0 = 不限。升级不得让存量部署突然开始拦人，因此默认值都是放行。
+  /api/admin/companies/{id}/license:
+    get:
+      summary: 查看某企业的授权状态（平台超管）
+      description: |
+        没有授权行时**不报错**，返回 `exists=false`——那是「未配置 = 不限制」的合法状态
+        （存量企业升级后就是这种），界面据此显示「未配置」。
+
+        `trial` 一并下发当前试用口径，界面用它提示「新开通的企业会拿到 N 席 / M 天」。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（data.exists / edition / seats / expiresAt / features / expired / employeeCount / trial）；code=1 企业不存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      companyId:
+                        type: integer
+                        format: int64
+                      exists:
+                        type: boolean
+                        description: 是否已有授权行。false = 未配置 = 不受席位与到期限制
+                      edition:
+                        type: string
+                        enum: ["", trial, platform, private]
+                      seats:
+                        type: integer
+                        description: 员工席位上限；0 = 不限制
+                      expiresAt:
+                        type: string
+                        description: 到期日 YYYY-MM-DD；空串 = 不过期
+                      features:
+                        type: string
+                        description: 逗号分隔的功能开关；空串 = 全部开通
+                      expired:
+                        type: boolean
+                      employeeCount:
+                        type: integer
+                        format: int64
+                      trial:
+                        type: object
+                        description: 当前试用口径（开通企业时按它落行）
+                        properties:
+                          enabled:
+                            type: boolean
+                          days:
+                            type: integer
+                          seats:
+                            type: integer
+    put:
+      summary: 设置某企业的授权（转正 / 延期 / 改席位 / 功能开关）
+      description: |
+        `seats=0` 表示不限席位、`expiresAt` 留空表示不过期——两者都是**正式客户**的常态，
+        不是「没填」。因此保存是**全量覆盖**，不是局部更新。
+
+        `expiresAt` 接受 `YYYY-MM-DD`（落库为**当天 23:59:59**：客户理解的「到 12-31 到期」
+        是这一天整天才算完，存 00:00 会让人在最后一天上午被停服）或 RFC3339。
+
+        到期后会由 `EnforceLicense` 自动降级只读（写操作返回 `code:2`）——
+        **降权是自动的，恢复不是**，续费后必须调本接口把到期日改到未来。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                edition:
+                  type: string
+                  enum: ["", trial, platform, private]
+                seats:
+                  type: integer
+                  minimum: 0
+                  maximum: 100000
+                expiresAt:
+                  type: string
+                  description: YYYY-MM-DD 或 RFC3339；空串 = 不过期
+                features:
+                  type: string
+      responses:
+        "200":
+          description: code=0；code=1 参数错误（版本标识不在白名单 / 席位越界 / 日期格式错）/ 企业不存在 / 保存失败
+
+  /api/admin/storage:
+    get:
+      summary: 某租户的存储用量与配额
+      description: |
+        企业管理员看本企业；平台超管用 `?companyId=`（缺省 1 号企业）。
+        「空间还剩多少」是日常运营信息，不是特权，因此两种角色都能看。
+
+        **口径**：用量是「自本功能启用起累计的上传量」，历史文件不回溯
+        （对象存储无租户元数据、本地 `/uploads` 是扁平目录，硬凑估算更误导）；
+        覆盖写（`SaveBytes` 的三个固定名对象）不扣减。它回答「谁还在往里塞东西」，
+        不是「磁盘上谁占了多少」。
+      tags: [租户]
+      parameters:
+        - name: companyId
+          in: query
+          required: false
+          description: 平台超管可指定；企业管理员忽略此项
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（data.bytes / files / quotaBytes / quotaMb / percent / humanBytes / humanQuota / unlimited / quotaGlobal）；code=1 无法确定租户 / 查询失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      companyId:
+                        type: integer
+                        format: int64
+                      bytes:
+                        type: integer
+                        format: int64
+                      files:
+                        type: integer
+                        format: int64
+                      quotaBytes:
+                        type: integer
+                        format: int64
+                        description: 生效配额（字节）；0 = 不限
+                      quotaMb:
+                        type: integer
+                        description: 该租户的**覆盖值**；0 = 未单独设置、跟随全局
+                      percent:
+                        type: integer
+                      humanBytes:
+                        type: string
+                      humanQuota:
+                        type: string
+                      unlimited:
+                        type: boolean
+                      quotaGlobal:
+                        type: integer
+                        description: 全局兜底值 `storage_quota_mb`（0 = 不限）
+
+  /api/admin/storage/quota:
+    put:
+      summary: 设置某企业的存储配额覆盖（平台超管）
+      description: |
+        `quotaMb=0` = 跟随全局 `storage_quota_mb`（全局缺省也是 0 = 不限）。
+        上限 1TB：再大就不是配额而是笔误。
+
+        只改 `quota_mb`，**不动** `bytes`/`files`——那两列是累计事实，调配额不该清零用量。
+      tags: [租户]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [companyId, quotaMb]
+              properties:
+                companyId:
+                  type: integer
+                  format: int64
+                quotaMb:
+                  type: integer
+                  minimum: 0
+                  maximum: 1048576
+      responses:
+        "200":
+          description: code=0；code=1 参数错误 / 企业不存在 / 保存失败
+
+  # ── 小程序版本发布（平台代租户上传 / 提审 / 发布）──────────────────────
+  # 分工：**上传代码有两条路**——后台自己传（走内嵌的 miniprogram-ci，Node 脚本）
+  # 或 CI 传完后由后台登记版本号；提审 / 查状态 / 发布 / 撤回始终由后端调微信接口。
+  # 状态机见 backend/internal/model/mp_release.go，只有白名单内的流向才放行。
+  /api/admin/companies/{id}/releases:
+    get:
+      summary: 该企业的版本列表（分页）
+      description: |
+        只读，**不受** `releaseEnabled` 开关与 independent_lock 限制——企业要能看见自己的历史版本。
+
+        响应遵循统一分页约定：`data` 是**当前页数组**，`total`/`page`/`size` 与 `data` 同级放在顶层。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+        - name: status
+          in: query
+          required: false
+          description: 按状态过滤，可重复（逗号分隔亦可）；见 MPReleaseStatus 枚举
+          schema:
+            type: string
+      responses:
+        "200":
+          description: code=0
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MPRelease"
+                  total:
+                    $ref: "#/components/schemas/PageTotal"
+                  page:
+                    $ref: "#/components/schemas/PageIndex"
+                  size:
+                    type: integer
+    post:
+      summary: 登记一个「CI 已上传」的版本 → draft
+      description: |
+        **不调任何微信接口**：代码是 CI 传的，后台只把版本号与描述记下来，
+        让后续提审 / 发布有据可查。也因此**无法在此校验版本号是否真的传过**——
+        写错只影响记录显示，提审时微信拿它自己收到的那份代码，错版本的后果由审核环节暴露。
+
+        企业 + 版本号唯一：重复登记返回 code=1（别让人为同一份代码提两次审）。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userVersion]
+              properties:
+                userVersion:
+                  type: string
+                  description: 1-64 位字母/数字/点/横线/下划线，须与 CI 上传时一致，如 1.2.0
+                userDesc:
+                  type: string
+                  description: 这版改了什么，最多 255 字
+      responses:
+        "200":
+          description: code=0（data 为新建记录）；code=1 参数/格式错误、企业不存在；code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/MPRelease"
+
+  /api/admin/companies/{id}/releases/upload-readiness:
+    get:
+      summary: 上传前探活：环境缺什么一次列全
+      description: |
+        只读，**不写审计、不调 node**。把后台上传代码的前置条件逐项查一遍：
+        node 可执行、miniprogram-ci 模块、小程序源码目录、上传密钥。
+        `problems` 刻意**一次列全**（不是遇到第一个就返回）——让运维一次性补齐，
+        而不是「改一项再刷新看下一项」。
+
+        界面在打开上传弹窗时调它，缺项直接摆在表单上方，缺项未清前禁用提交按钮。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0；`data.ready=false` 不是错误，是「还不能传」
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      ready:
+                        type: boolean
+                      problems:
+                        type: array
+                        items:
+                          type: string
+                      keyConfigured:
+                        type: boolean
+                        description: 该企业自己配了上传密钥（false 时会用平台全局那份）
+
+  /api/admin/companies/{id}/releases/upload:
+    post:
+      summary: 后台上传小程序代码到微信（成为体验版）并建 draft 记录
+      description: |
+        调内嵌的 Node 脚本跑 miniprogram-ci 的 `upload`。**不需要任何人装微信开发者工具**——
+        这是它与「登记版本」的本质差别：登记只是记一笔，这里是真的把源码传上去。
+
+        前置条件（缺任一返回 code=1，**不会**启动 node，也不建记录）：
+          - 服务器有 node（`MP_NODE_BIN`，默认 `node`）；
+          - `MP_CI_MODULE_DIR`（或 `MP_SOURCE_DIR`）下装过 `miniprogram-ci`；
+          - `MP_SOURCE_DIR` 指向小程序源码目录；
+          - 上传密钥：该企业自己的（`uploadKey`）或平台全局（`wx_upload_key`）任一份非空；
+          - 企业 + 版本号未被占用。
+
+        **同步执行、分钟级**：编译 + 上传都在这次请求里做完，反代超时
+        （nginx `proxy_read_timeout`）必须大于 `MP_UPLOAD_TIMEOUT_SEC`。
+
+        成功后**自动建一条 `source=backend` 的 draft 记录**，版本号就是这次真实上传的
+        那个号——从根上杜绝「填的版本号」和「实际传的版本号」不是同一个。
+        失败则**不建记录**，只写一条失败审计（避免运营以为只差提审而白扣审核额度）。
+
+        上传密钥只以 0600 临时文件形式存在、用完即删，不进 argv / stdout / 审计明细。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userVersion]
+              properties:
+                userVersion:
+                  type: string
+                  description: 1-64 位字母/数字/点/横线/下划线，会成为体验版版本号，如 1.2.0
+                userDesc:
+                  type: string
+                  description: 项目备注，会展示在微信公众平台，最多 200 字
+      responses:
+        "200":
+          description: |
+            code=0（data 为新建的 draft 记录）；
+            code=1 参数/格式错误、环境未就绪、上传失败；
+            code=2 **代码已上传成功但记录保存失败**——此时切勿重复上传（版本号已占用），
+            先去后台补一条同版本号的登记；
+            code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  msg:
+                    type: string
+                  data:
+                    $ref: "#/components/schemas/MPRelease"
+
+  /api/admin/releases/{id}/submit-audit:
+    post:
+      summary: 提交审核（draft / rejected / withdrawn → auditing）
+      description: |
+        调微信 `/wxa/submit_audit`。**MVP 不传 item_list**，类目取后台已配的。
+
+        两条硬约束（提笔前想清楚）：
+          - **提审消耗审核额度**；从 rejected / withdrawn 重新提审会**再扣一次**；
+          - 上传代码后需等微信侧代码检测结束才能提审，否则报 61039。
+
+        成功后才把本地记录改成 auditing。微信报错时本地记录保持原状、并写一条失败审计。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（data.auditId 为微信审核单号）；code=1 状态不允许 / 凭据问题 / 微信报错；code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/MPRelease"
+
+  /api/admin/releases/{id}/audit-status:
+    get:
+      summary: 拉一次微信审核状态并按需同步本地记录
+      description: |
+        调微信 `/wxa/get_auditstatus`。微信 status：0 审核成功 / 1 被拒（带 reason）/ 2 审核中 / 3 已撤回 / 4 延后。
+        其中 4（延后）本地仍记为 auditing——它不是一个独立的业务态，只是「还没审完」。
+
+        回包除记录本身外多两个字段：`wxStatus`（微信原始枚举）与 `changed`（本地记录是否因这次查询而变动），
+        以及非终态时的 `note`。**没有 auditId（还没提审）时返回 code=1**。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0；code=1 尚未提审 / 凭据问题 / 微信报错；code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/MPRelease"
+                      - type: object
+                        properties:
+                          wxStatus:
+                            type: integer
+                            description: 微信原始审核状态枚举
+                          changed:
+                            type: boolean
+                            description: 本地记录是否因这次查询而变动
+                          note:
+                            type: string
+
+  /api/admin/releases/{id}/release:
+    post:
+      summary: 发布（audit_passed → released）
+      description: |
+        调微信 `/wxa/release`。**发布直接改变该企业小程序的线上行为、对全部用户立即生效**，
+        且微信侧不支持「再发一次同一版本」——要再动就得走新一轮 上传→提审→发布。
+        只有 audit_passed 态允许，其余一律拒绝（白名单见状态机）。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（data.releasedAt 为上线时间）；code=1 状态不允许 / 凭据问题 / 微信报错；code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/MPRelease"
+
+  /api/admin/releases/{id}/undo-audit:
+    post:
+      summary: 撤回审核（auditing → withdrawn）
+      description: |
+        调微信 `/wxa/undo_code_audit`。**撤回不返还已消耗的审核额度**，撤回后要再上线
+        必须重新提审（再扣一次）。因此本接口要求 `confirm: true` 才执行——把「不可逆」
+        这件事做成显式参数，而不是只在界面上弹个窗。
+      tags: [版本发布]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+                  description: 必须为 true，否则返回 code=1
+      responses:
+        "200":
+          description: code=0；code=1 confirm 不为 true / 状态不允许 / 凭据问题 / 微信报错；code=403 该企业关闭了平台代发
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/MPRelease"
+
+  /api/wechat/msgpush:
+    get:
+      summary: 微信消息推送 URL 校验（echo）
+      description: |
+        在微信公众平台配置「消息推送」URL 时，微信会发一个带 signature/timestamp/nonce/echostr 的 GET 请求来校验地址可达。
+        本端点验签通过后原样回显 echostr；验签失败返回 403。
+        与 POST 共用同一路径，靠 HTTP 方法区分（GET=校验，POST=接收事件）。
+      tags: [内容安全]
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          schema: { type: string }
+        - name: timestamp
+          in: query
+          required: true
+          schema: { type: string }
+        - name: nonce
+          in: query
+          required: true
+          schema: { type: string }
+        - name: echostr
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 验签通过，原样回显 echostr（纯文本）
+          content:
+            text/plain:
+              schema: { type: string }
+        "403":
+          description: 验签失败
+        "503":
+          description: 未配置推送 Token
+    post:
+      summary: 微信消息推送接收（图片检测结论回来）
+      description: |
+        微信把图片 / 音频内容安全（/wxa/media_check_async）的检测结论通过「消息推送」推到本端点。
+        支持明文与安全模式（EncodingAESKey 解密）两种，验签必做。
+        无论能否识别事件，都返回纯文本 "success"（微信只认这个，回别的会触发重推，
+        连续失败会停掉整条推送通道，导致图片检测永久收不到结论）。
+      tags: [内容安全]
+      parameters:
+        - name: msg_signature
+          in: query
+          required: false
+          description: 安全模式下的签名（与明文 signature 二选一，由 encrypt_type=aes 或本字段存在判定安全模式）
+          schema: { type: string }
+        - name: signature
+          in: query
+          required: false
+          schema: { type: string }
+        - name: timestamp
+          in: query
+          required: false
+          schema: { type: string }
+        - name: nonce
+          in: query
+          required: false
+          schema: { type: string }
+        - name: encrypt_type
+          in: query
+          required: false
+          schema: { type: string, enum: [raw, aes] }
+      responses:
+        "200":
+          description: 纯文本 "success"（含「非媒体事件」「检测中」「已落库」等所有情况）
+          content:
+            text/plain:
+              schema: { type: string, example: success }
+        "400":
+          description: 密文 body 解析失败 / 解密失败
+        "403":
+          description: 验签失败
+        "500":
+          description: 结论落库失败（微信按退避策略重推）
+        "503":
+          description: 未配置推送 Token / 安全模式但未配 EncodingAESKey
+
+  /api/admin/media-checks:
+    get:
+      summary: 图片内容安全检测记录列表（平台超管 / 企业管理员）
+      description: |
+        异步图片检测的送检与结论记录。状态：pending（已送检等回调）/ pass / review（疑似，建议人工复核）/
+        risky（命中违规）/ failed（送检或微信侧检测失败）。
+        **租户隔离**：平台超管（company_id=0）看全部，企业管理员只看本企业。
+      tags: [内容安全]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+        - name: status
+          in: query
+          required: false
+          description: 按状态过滤
+          schema:
+            type: string
+            enum: [pending, pass, review, risky, failed]
+        - name: onlyTakedownable
+          in: query
+          required: false
+          description: "1 = 只看可下架（risky 且未处置）"
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: code=0；code=403 非管理员
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/MediaCheck" }
+                  total: { $ref: "#/components/schemas/PageTotal" }
+                  page: { $ref: "#/components/schemas/PageIndex" }
+                  size: { $ref: "#/components/schemas/PageSize" }
+
+  /api/admin/media-checks/config:
+    get:
+      summary: 图片检测推送配置状态（给后台显示还缺什么）
+      description: |
+        直接把「要让图片检测跑起来还缺什么」回给后台：小程序凭据、推送 Token、
+        EncodingAESKey 是否就绪，以及应填到微信公众平台的推送 URL。运营据此把缺失项补上。
+      tags: [内容安全]
+      responses:
+        "200":
+          description: code=0
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { $ref: "#/components/schemas/MediaCheckConfig" }
+
+  /api/admin/media-checks/{id}/takedown:
+    post:
+      summary: 一键下架违规图片（覆盖成占位图）
+      description: |
+        仅「命中违规（risky）且未处置且推得出对象键」的记录可下架。下架 = 把同名对象覆盖成
+        「内容不可用」占位图（按扩展名选 PNG/JPEG），并触发 CDN 刷新 + 记审计。**不可逆**，故不自动下架，留人工兜底。
+      tags: [内容安全]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: "code=0 成功；code=1 参数错误 / 记录不存在 / 记录不可下架 / 下架失败；code=403 无权操作该企业记录"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+
+  /api/client-error:
+    post:
+      tags: [可观测性]
+      summary: 前端报错上报（无鉴权公开端点）
+      description: |
+        浏览器侧异常（Vue 运行时 / window.onerror / 未捕获 Promise 拒绝）回传服务端，
+        以 `[CLIENT-ERROR]` 前缀写日志并带 requestId，可与后端同一次请求的日志串起来排查。
+
+        **刻意无鉴权**：报错可能发生在登录前、匿名页或令牌失效瞬间，要求鉴权反而上报不出去。
+        代价是它成了潜在刷日志入口，因此用三道闸兜住（详见下方）：
+        1. 每 IP 固定窗口限流：1 分钟内最多 60 条，超限返回 `{code:429}`；
+        2. 请求体硬上限 64KB（`io.LimitReader`），挡住超大体；
+        3. 字段裁剪（message≤2000 / stack≤4000 / url≤1000 / ua≤300 字节等），防单条撑爆日志。
+        仅 message 与 stack 都为空时报废（视为垃圾，不写日志）。
+        **只写日志不落库**——C1 的诉求是「出事服务端能收到信号」，日志流已满足；聚合查询另议。
+        DEV 下前端只 `console.warn` 不发请求，故本端点在开发环境不会收到噪音。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientErrorPayload" }
+      responses:
+        "200":
+          description: |
+            code=0 已记录（写 `[CLIENT-ERROR]` 日志）；
+            code=1 业务拒绝（空 payload / JSON 解析失败）；
+            code=429 限流命中（窗口内该 IP 上报超 60 条）。
+            注意：限流返回的是 **HTTP 200 + body.code=429**（与全局「鉴权失败走 body.code」约定一致），
+            前端 / 测试据此判断，而非 HTTP 状态码。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+
 components:
   # 分页约定（管理端列表统一）：请求 ?page=&size=，响应 data 为**当前页数组**，
   # total/page/size 放在顶层。实现见 backend/internal/handler/pagination.go。
@@ -2649,6 +3526,63 @@ components:
       description: 0=成功；1=业务失败；2=特殊状态；401=未登录/失效；403=无权限；429=限流
       enum: [0, 1, 2, 401, 403, 429]
 
+    MediaCheck:
+      type: object
+      description: 图片 / 音频内容安全检测记录（异步送检 → 消息推送回调 → 后台下架）
+      properties:
+        id: { type: integer, format: int64 }
+        companyId: { type: integer, format: int64 }
+        url: { type: string, description: 送检时的绝对地址，也是下架时覆盖对象的定位依据 }
+        objectKey: { type: string, description: 存储对象键；为空表示推不出，不允许下架 }
+        mediaType: { type: integer, description: 1 音频 / 2 图片 }
+        scene: { type: integer }
+        source: { type: string, enum: [employee, admin, apply] }
+        traceId: { type: string, description: 微信侧追踪号（申诉与排障都要它） }
+        status:
+          type: string
+          enum: [pending, pass, review, risky, failed]
+        suggest: { type: string, description: 微信原始 suggest（pass / review / risky） }
+        label: { type: integer, description: 违规标签 }
+        raw: { type: string, description: 微信回调原文（申诉证据） }
+        note: { type: string, description: 跳过 / 失败原因 }
+        action: { type: string, description: '"" 未处置 / takedown 已下架' }
+        handledAt: { type: string, nullable: true, format: date-time }
+        handlerId: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    MediaCheckConfig:
+      type: object
+      description: 图片检测推送配置状态（给后台显示还缺什么）
+      properties:
+        enabled: { type: boolean, description: 内容安全开关（系统设置 content_sec_enabled） }
+        tokenReady: { type: boolean, description: 推送 Token 是否已配 }
+        aesReady: { type: boolean, description: EncodingAESKey 是否已配（仅安全模式需要） }
+        credReady: { type: boolean, description: 小程序 AppID / AppSecret 是否已配 }
+        pushUrl: { type: string, description: 应填到微信公众平台的消息推送 URL }
+        pending: { type: integer, description: 待结论（pending）记录数 }
+        risky: { type: integer, description: 命中违规且未处置的记录数 }
+        takedownReady: { type: boolean, description: 下架能力是否就绪（恒 true，占位兼容前端） }
+
+    ClientErrorPayload:
+      type: object
+      description: 前端报错上报载荷（POST /api/client-error；无鉴权，三道闸限流/体积/裁剪）
+      required: [message]
+      properties:
+        message: { type: string, description: 错误描述；与 stack 都为空时报废（不记录） }
+        stack: { type: string, description: 错误堆栈（截断到 4000 字节） }
+        url: { type: string, description: 出错页面 URL（默认前端填 location.href，截断到 1000 字节） }
+        line: { type: integer, description: 出错行号（window.onerror 提供） }
+        column: { type: integer, description: 出错列号（window.onerror 提供） }
+        level:
+          type: string
+          description: 级别；error / warning / unhandledrejection，缺省 error
+          enum: [error, warning, unhandledrejection]
+        env: { type: string, description: 前端运行环境（import.meta.env.MODE，如 dev / production） }
+        requestId: { type: string, description: 最近一次后端响应头的 X-Request-Id，用于关联后端日志（截断到 64 字节） }
+        userAgent: { type: string, description: 浏览器 UA（截断到 300 字节） }
+        extra: { type: string, description: 附加上下文（如 Vue errorHandler 的 info；截断到 1024 字节） }
+
     # ── 分页元信息（与 data 同级，见 components/parameters 的分页约定）──
     PageTotal:
       type: integer
@@ -2662,7 +3596,7 @@ components:
 
     CompanyItem:
       type: object
-      description: 企业列表项（含员工 / 管理员数量）
+      description: 企业列表项（含员工 / 管理员数量 / 小程序凭据是否配好）
       properties:
         id:
           type: integer
@@ -2678,6 +3612,30 @@ components:
           type: integer
         adminCount:
           type: integer
+        wxConfigured:
+          type: boolean
+          description: 该企业是否已配好独立小程序凭据（AppID + AppSecret 成对非空）；false 时生成小程序码回落到平台全局凭据
+        storageBytes:
+          type: integer
+          format: int64
+          description: |
+            已用存储（字节）。口径是**自本功能启用起累计的上传量**，不是磁盘真实占用
+            （历史文件无法可靠归属租户，见 model.StorageUsage 的注释）
+        licenseExists:
+          type: boolean
+          description: 是否有授权行。false = 未配置 = 不受席位与到期限制（存量企业升级后即此状态）
+        licenseEdition:
+          type: string
+          enum: ["", trial, platform, private]
+        licenseSeats:
+          type: integer
+          description: 员工席位上限；0 = 不限制
+        licenseExpiresAt:
+          type: string
+          description: 到期日 YYYY-MM-DD；空串 = 不过期
+        licenseExpired:
+          type: boolean
+          description: 是否已过期（过期后该企业后台只读：能登录看，不能改）
         createdAt:
           type: string
           format: date-time
@@ -3003,6 +3961,91 @@ components:
           description: 枚举候选值（仅枚举项有，如 storage_driver 的 local/minio/oss/s3）；界面据此渲染下拉，缺失时按文本框渲染
         configured:
           type: boolean
+        pathKind:
+          type: string
+          enum: [node_bin, module_dir, source_dir]
+          description: >
+            服务端路径类配置（仅后台上传小程序代码那三项有）：驱动界面在文本框旁渲染
+            「浏览服务器目录」按钮，弹出服务端路径选择器挑路径（而非浏览器原生文件框，
+            后者选的是客户端机器，对这些指向服务器的配置没意义）
+
+    PathEntry:
+      type: object
+      description: 服务端目录列表里的一项
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+          description: 完整绝对路径
+        type:
+          type: string
+          enum: [dir, file]
+        marker:
+          type: string
+          description: 徽标（如「小程序工程目录」「已装 miniprogram-ci」「node 可执行文件」），空串表示不像正确答案
+
+    PathSuggestion:
+      type: object
+      description: 自动探测到的候选路径
+      properties:
+        path:
+          type: string
+        label:
+          type: string
+          description: 默认取路径末段作为展示名
+        reason:
+          type: string
+          description: 为什么它像正确答案（如「含 project.config.json」）
+
+    PathStatus:
+      type: object
+      description: 某个路径作为当前项时的校验结果（与后端 CheckPath 同源口径）
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+
+    PathBrowseResult:
+      type: object
+      description: 一次服务端目录浏览的结果（GET /api/admin/settings/paths）
+      properties:
+        kind:
+          type: string
+          enum: [node_bin, module_dir, source_dir]
+        path:
+          type: string
+          description: 实际列举的目录（已解析符号链接）
+        selected:
+          type: string
+          description: |
+            当前「待选中」的路径。node_bin 下可能是所列举目录里的某个可执行文件，
+            其余类型就是目录本身。界面据此高亮列表项、决定「选择此路径」是否可点。
+        selectedIsDir:
+          type: boolean
+          description: selected 是否目录（node_bin 借此区分「还没选到文件」）
+        parent:
+          type: string
+          description: 上一级目录，供 UI 回退
+        home:
+          type: string
+          description: 当前用户家目录，供 UI 一键回家
+        entries:
+          type: array
+          description: 本目录下的子项。**恒为数组**（无内容时是 []，不是 null）——界面按数组消费
+          items:
+            $ref: "#/components/schemas/PathEntry"
+        truncated:
+          type: boolean
+          description: 是否因超过上限（300）被截断
+        current:
+          $ref: "#/components/schemas/PathStatus"
+        suggestions:
+          type: array
+          description: 自动探测到的候选。**恒为数组**（无候选时是 []，不是 null）
+          items:
+            $ref: "#/components/schemas/PathSuggestion"
 
     PlatformAdmin:
       type: object
@@ -3053,6 +4096,80 @@ components:
           type: string
           enum: [success, fail]
         createdAt:
+          type: string
+          format: date-time
+
+    MPReleaseStatus:
+      type: string
+      description: |
+        版本生命周期。合法流转只有白名单里的几条（见 backend/internal/model/mp_release.go）：
+
+            draft      → auditing        提交审核
+            auditing   → audit_passed    轮询发现审过
+            auditing   → rejected        轮询发现驳回
+            auditing   → withdrawn       撤回审核
+            audit_passed → released      发布
+            rejected   → auditing        重新提审（再扣一次额度）
+            withdrawn  → auditing        重新提审（再扣一次额度）
+            released   → （终态，无出路）
+
+        `draft → released`（跳过审核）与 `audit_passed → auditing`（审过又退回审核）
+        都不存在，是刻意的。
+      enum: [draft, auditing, audit_passed, released, rejected, withdrawn]
+
+    MPRelease:
+      type: object
+      description: |
+        一条小程序版本记录。代码包本身**不在此存储**——上传有两条路：
+        后台自己传（`source=backend`，走 miniprogram-ci）或 CI 传完由后台登记
+        （`source=ci` / `manual`），库里只留版本号、状态与微信审核单号，
+        让「哪一版审到哪一步」可查。
+      properties:
+        id:
+          type: integer
+          format: int64
+        companyId:
+          type: integer
+          format: int64
+          description: 0 = 平台自有小程序
+        appId:
+          type: string
+          description: 登记时用的小程序 AppID；动作时会与当前凭据比对，不一致即拒绝
+        userVersion:
+          type: string
+        userDesc:
+          type: string
+        status:
+          $ref: "#/components/schemas/MPReleaseStatus"
+        statusName:
+          type: string
+          description: 状态中文名（待提审 / 审核中 / 审过待发布 / 已上线 / 已驳回 / 已撤回）
+        auditId:
+          type: integer
+          format: int64
+          description: 微信审核单号；未提审为 0。不建唯一索引——驳回后重新提审会拿到新单号
+        auditReason:
+          type: string
+          description: 微信给的驳回原因，仅 rejected 态有值
+        source:
+          type: string
+          enum: [backend, ci, manual]
+          description: backend=后台上传（自动建记录，版本号即真实上传的那个）；ci=CI 上传后登记；manual=手工登记
+        operatorId:
+          type: integer
+          format: int64
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 

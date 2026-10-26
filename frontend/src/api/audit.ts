@@ -5,7 +5,7 @@ import http, { toPaged, type Paged } from './request'
 // 否则出事无法回答「谁在什么时候改了什么」。
 export interface AuditLog {
   id: number
-  actorType: string // admin / employee / anonymous
+  actorType: string // admin / employee / anonymous / system
   actorId: number
   actorName: string // 冗余用户名：账号删除后仍可追溯
   companyId: number
@@ -51,8 +51,24 @@ export const ACTION_LABELS: Record<string, string> = {
   'employee.update': '编辑员工',
   'employee.reset_password': '重置员工密码',
   'employee.status': '启停员工',
+  // PIPL 权利入口：注销是不可逆的（员工与其申请单/统计一并删除），导出个人信息本身也是敏感动作
+  'employee.cancel': '员工本人注销账号',
+  'employee.export': '导出员工个人信息',
   'apply.approve': '通过申请',
   'apply.reject': '驳回申请',
+  // 商业动作：授权与配额直接决定客户能不能继续用、能占多少存储
+  'company.license': '修改企业授权',
+  'company.storage_quota': '设置企业存储配额',
+  'mp_release.create': '登记小程序版本',
+  'mp_release.upload': '后台上传小程序代码',
+  'mp_release.submit_audit': '提交小程序审核',
+  'mp_release.audit_status': '查询小程序审核状态',
+  'mp_release.release': '发布小程序版本',
+  'mp_release.undo_audit': '撤回小程序审核',
+  // 图片内容安全的处置：覆盖是不可逆的（原图当场丢失），必须留痕
+  'media_check.takedown': '下架违规图片',
+  // 按保留期清理审计日志（后台定时任务）。删日志本身就是最该被追责的动作，必须留痕
+  'audit.purge': '按保留期清理审计日志',
 }
 
 // 审计日志只查不写：记录一旦可改就等于没有审计，因此不提供任何写接口。

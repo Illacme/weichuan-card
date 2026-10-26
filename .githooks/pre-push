@@ -1,35 +1,38 @@
 #!/bin/sh
-# 推送前本地门禁：只要本次推送改了前端，就把类型检查先跑一遍。
+# 推送前本地门禁：改了前端就先跑类型检查，改了依赖就先核对第三方许可清单。
 #
 # 为什么需要这个钩子：
 #   CI 的「前端类型检查 (vue-tsc)」是和「前端 (Vue)」并列的独立 job，两者互不覆盖。
 #   曾出现过单测全绿、类型检查却翻红的提交（守门测试用了 node:fs / process，
 #   但 frontend 没有 @types/node），一直推到远端才被 CI 拦下。
 #   这个钩子把 CI 里同一条命令提前到本地执行，结论一致、发现更早。
+#   同理，「第三方许可清单（过期检查）」也常在「改了依赖、忘了重生成清单」时红，
+#   本地先跑一次比推上去被 CI 拦更省事。
 #
 # 启用（每个克隆执行一次即可，钩子随仓库走，配置是本地的）：
 #     git config core.hooksPath .githooks
 #
 # 临时跳过：
-#     SKIP_TYPECHECK=1 git push        # 只跳过本钩子
+#     SKIP_TYPECHECK=1 git push        # 只跳过类型检查
+#     SKIP_NOTICES=1  git push         # 只跳过许可清单检查
 #     git push --no-verify             # 跳过全部钩子
 #
 # 设计取舍：
-#   · 只在本次推送涉及 frontend/ 变更时才跑——纯后端或文档提交直接放行，
+#   · 只在本次推送涉及 frontend/ 变更时才跑类型检查——纯后端或文档提交直接放行，
 #     否则每次推送固定多等两分钟，很快就会被 --no-verify 绕过去。
+#   · 许可清单检查只在改了依赖文件（go.mod / go.sum / package.json / package-lock.json）
+#     时才跑——它要读 node_modules 里的许可正文，没装依赖时只提示不阻断。
 #   · 还没装依赖（新克隆）时只提示不阻断，避免本地环境问题挡住推送；
 #     真正的门禁仍在 CI，钩子只是提前。
 #   · 与 CI 用同一条命令（node 直调 vue-tsc，不经 npx），保证两边结论一致。
 
 set -u
 
-if [ "${SKIP_TYPECHECK:-0}" = "1" ]; then
-  echo "[pre-push] 已按 SKIP_TYPECHECK=1 跳过前端类型检查"
-  exit 0
-fi
-
 ZERO=0000000000000000000000000000000000000000
 need_check=0
+need_notices=0
+skip_typecheck="${SKIP_TYPECHECK:-0}"
+skip_notices="${SKIP_NOTICES:-0}"
 
 # git 通过标准输入给出每个待推的 ref：<local ref> <local sha> <remote ref> <remote sha>
 while read -r _local_ref local_sha _remote_ref remote_sha; do
@@ -51,9 +54,53 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   case "$changed" in
     *frontend/*) need_check=1 ;;
   esac
+  case "$changed" in
+    *backend/go.mod*|*backend/go.sum*|*frontend/package.json*|*frontend/package-lock.json*) need_notices=1 ;;
+  esac
 done
 
+[ "$need_check" = "0" ] && [ "$need_notices" = "0" ] && exit 0
+
+# ── 1. 第三方许可清单（快，先跑） ──────────────────────────────────────
+if [ "$need_notices" = "1" ]; then
+  if [ "$skip_notices" = "1" ]; then
+    echo "[pre-push] 已按 SKIP_NOTICES=1 跳过第三方许可清单检查"
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "[pre-push] 本机没有 python3，跳过第三方许可清单检查（CI 仍会拦）。"
+  elif [ ! -d frontend/node_modules ]; then
+    echo "[pre-push] 本次推送改了依赖，但 frontend/node_modules 未安装，跳过清单检查。"
+    echo "           建议先执行：cd frontend && npm ci"
+  else
+    echo "[pre-push] 检测到依赖变更，正在核对第三方许可清单是否过期……"
+    if python3 scripts/gen_third_party_notices.py --check; then
+      echo "[pre-push] 许可清单与当前依赖一致。"
+    else
+      cat <<'MSG'
+
+[pre-push] 第三方许可清单已过期，已阻止推送。
+
+  · 依赖变了但 docs/third-party-licenses.md 没更新。修复：
+        python3 scripts/gen_third_party_notices.py
+    然后把重新生成的清单一起提交。
+  · 清单是随专有许可一起交付的声明，与实际依赖不符比没有清单更糟，
+    CI 的 notices job 同样会拦。
+  · 确实是草稿分支要备份，可以跳过：
+        SKIP_NOTICES=1 git push
+        git push --no-verify
+
+MSG
+      exit 1
+    fi
+  fi
+fi
+
+# ── 2. 前端类型检查 ───────────────────────────────────────────────────
 [ "$need_check" = "0" ] && exit 0
+
+if [ "$skip_typecheck" = "1" ]; then
+  echo "[pre-push] 已按 SKIP_TYPECHECK=1 跳过前端类型检查"
+  exit 0
+fi
 
 if [ ! -f frontend/node_modules/vue-tsc/bin/vue-tsc.js ]; then
   echo "[pre-push] 本次推送改了前端，但还没安装依赖，跳过类型检查。"

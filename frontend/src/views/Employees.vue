@@ -20,7 +20,8 @@
         列宽是「算」出来的，不是拍的：固定 width 之和 + min-width 之和 ≈ 1116px，
         需小于后台内容区宽度（约 1170px）。历史上操作列曾设 280px，加上其余列
         合计 1380px 超出容器，fixed="right" 的操作列直接压住「创建时间」列。
-        改动列宽时请按同一口径重算，宁紧勿松。
+        改动列宽时请按同一口径重算，宁紧勿松。操作列现为 260px（预览/编辑/启用
+        或停用/重置密码/导出 五个 link 按钮，超窄会折行或挤占创建时间列）。
       -->
       <el-table v-if="!isPhone" :data="rows" v-loading="loading" border stripe>
         <el-table-column prop="staffId" label="编号" width="62" align="center" />
@@ -71,7 +72,7 @@
         <el-table-column label="创建时间" width="180" v-if="!isPhone" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right" align="center">
+        <el-table-column label="操作" width="260" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="preview(row)">预览</el-button>
             <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
@@ -93,6 +94,7 @@
               @click="reset(row)"
               >重置密码</el-button
             >
+            <el-button type="info" link @click="exportInfo(row)">导出</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -282,6 +284,7 @@ import {
   disableEmployee,
   enableEmployee,
   resetPassword,
+  exportEmployee,
 } from '@/api/employees'
 import { getWxacode } from '@/api/wechat'
 import UploadField from '@/components/UploadField.vue'
@@ -453,6 +456,18 @@ async function reset(row: any) {
     const pwd = await resetPassword(row.staffId)
     pwdResult.value = { staffId: row.staffId, initialPassword: pwd }
     pwdVisible.value = true
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    actingId.value = null
+  }
+}
+
+// 导出某员工个人信息（PIPL 查阅复制权协助义务）：拉取该员工完整 PII 的 JSON 文件并下载。
+async function exportInfo(row: any) {
+  actingId.value = row.staffId
+  try {
+    await exportEmployee(row.staffId)
   } catch {
     /* 拦截器已提示 */
   } finally {

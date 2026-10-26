@@ -127,22 +127,27 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 
 	r := New(db)
 	RegisterAuth(r, db, cfg)
-	RegisterApply(r, db)
+	RegisterApply(r, db, cfg)
 	RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径）
 	RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻）
 	RegisterContent(r, db)
 	RegisterCompanies(r, db)
-	RegisterAdmins(r, db)    // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
-	RegisterAuditLogs(r, db) // 操作审计日志（只读查询）
+	RegisterCompanyLicense(r, db) // 按企业查看/设置授权（B4：试用转正 / 延期 / 改席位）
+	RegisterStorageQuota(r, db)   // 按租户存储用量与配额（B3）
+	RegisterCompanyWXApp(r, db)
+	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
+	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
+	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
 
 	// 静态托管需要目录存在
 	require.NoError(t, os.MkdirAll(cfg.UploadDir, 0755))
 	r.Static("/uploads", cfg.UploadDir)
-	RegisterUpload(r, db, up, refresher)
+	RegisterUpload(r, db, cfg, up, refresher)
 	RegisterStorage(r, db, up, refresher, cfg)
 	RegisterAssets(r, db, up, refresher) // 常用素材库（内嵌 Lucide 图标 + 通用封面/LOGO）
-	RegisterWechat(r, cfg, up, refresher)
-	RegisterSettings(r, db, cfg) // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	RegisterWechat(r, db, cfg, up, refresher)
+	RegisterMediaCheck(r, db, cfg, up, refresher) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
+	RegisterSettings(r, db, cfg)                  // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
 
 	return r
 }
@@ -911,7 +916,7 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	require.EqualValues(t, 0, put(map[string]interface{}{
 		"videoSource": "channels", "videoChannelId": "sph_abc", "videoFeedId": "feed_1",
 		"videoFeedToken": "tok_1",
-		"videoUrl": "https://cdn.example.com/fallback.mp4", "videoFallbackUrl": true,
+		"videoUrl":       "https://cdn.example.com/fallback.mp4", "videoFallbackUrl": true,
 	})["code"])
 	d := get()
 	require.Equal(t, "channels", d["videoSource"])

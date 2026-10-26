@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, defineComponent, h, provide, inject, computed, ref } from 'vue'
+import { nextTick, defineComponent, h, provide, inject, computed } from 'vue'
 import Services from './Services.vue'
 
 // 业务服务页：列表 + 关键字过滤 + 排序 + 增删改。

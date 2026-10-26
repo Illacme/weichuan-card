@@ -1,0 +1,6 @@
+{
+  "usingComponents": {
+    "privacy-consent": "/components/privacy-consent/index"
+  },
+  "navigationBarTitleText": "我的数据"
+}

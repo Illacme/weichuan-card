@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, defineComponent, ref } from 'vue'
+import { nextTick, defineComponent } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
 
@@ -234,7 +234,7 @@ describe('layout/AdminLayout', () => {
   it('已登录但身份未恢复：挂载时调 getMe 并 hydrate', async () => {
     auth.loggedIn = true
     auth.profileLoaded = false
-    const { w } = await mountLayout()
+    await mountLayout()
     await nextTick()
 
     expect(mocks.getMe).toHaveBeenCalledTimes(1)

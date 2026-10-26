@@ -105,6 +105,8 @@ describe('employee/edit 页', () => {
     expect(p.data.form.name).toBe('张伟') // 其它字段不受影响
   })
 
+  // chooseAvatar 现在是 async：调用隐私接口（chooseMedia）前要先过隐私授权检查，
+  // 所以选图动作发生在 await 之后，断言前必须放行一轮微任务。
   it('选图上传成功：头像换成上传后的绝对 URL 并提示', async () => {
     storage.set('empToken', 'tk-1')
     const p = await page(meData)
@@ -115,7 +117,8 @@ describe('employee/edit 页', () => {
       opt.success({ data: JSON.stringify({ code: 0, data: { urls: ['/uploads/new.png'] } }) })
     )
 
-    p.chooseAvatar()
+    await p.chooseAvatar()
+    await flush()
 
     expect(wxStub.uploadFile.mock.calls[0][0].header.Authorization).toBe('Bearer tk-1')
     expect(p.data.form.avatar).toBe('https://cdn.test/uploads/new.png')
@@ -133,7 +136,8 @@ describe('employee/edit 页', () => {
     )
     const before = p.data.form.avatar
 
-    p.chooseAvatar()
+    await p.chooseAvatar()
+    await flush()
 
     expect(lastToast()).toBe('文件太大')
     expect(p.data.form.avatar).toBe(before)
@@ -146,7 +150,8 @@ describe('employee/edit 页', () => {
     )
     wxStub.uploadFile.mockImplementationOnce((opt: any) => opt.fail({ errMsg: 'uploadFile:fail' }))
 
-    p.chooseAvatar()
+    await p.chooseAvatar()
+    await flush()
 
     expect(lastToast()).toBe('上传失败')
     expect(wxStub.hideLoading).toHaveBeenCalled()
@@ -165,6 +170,8 @@ describe('employee/edit 页', () => {
     )
 
     expect(() => p.chooseAvatar()).not.toThrow()
+    await flush()
+
     expect(lastToast()).toBe('上传失败')
     expect(wxStub.hideLoading).toHaveBeenCalled()
   })

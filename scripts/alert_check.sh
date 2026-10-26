@@ -4,7 +4,8 @@
 #   R1 healthz    ：本地探活 GET /healthz，非 2xx / 超时即告警
 #   R2 5xx        ：访问日志新增 [ACCESS-5XX] 行即告警（附请求 ID 便于排查）
 #   R3 备份新鲜度 ：backups/ 最新备份文件年龄超阈值即告警
-#                   （backup.sh 失败时不落新文件，本规则可兜底捕获）
+#                   （认 *.sql.gz 与 *.db.gz 两种产物；backup.sh 失败时不落新文件，
+#                    本规则可兜底捕获）
 #   R4 外部拨测   ：从本机之外访问对外地址（EXTERNAL_URL）：非 2xx / 耗时超阈值 /
 #                   证书临近过期即告警。R1 是本机视角，看不出反代、证书、防火墙
 #                   这类「本机全绿、用户全挂」的故障，R4 补的就是这一半
@@ -129,7 +130,9 @@ check_backup() {
     return 0
   fi
   local latest m age_h
-  latest="$(ls -t "$BACKUP_DIR"/weichuan-*.sql.gz 2>/dev/null | head -1)"
+  # 两种备份产物都要认：MySQL 是 .sql.gz，SQLite 是 .db.gz（见 backup.sh 的 DB_DRIVER）。
+  # 只认一种会让另一种部署的 R3 永远「没有备份文件」——告警天天响，然后被静音。
+  latest="$(ls -t "$BACKUP_DIR"/weichuan-*.sql.gz "$BACKUP_DIR"/weichuan-*.db.gz 2>/dev/null | head -1 || true)"
   if [ -z "$latest" ]; then
     # 从未备份，或备份停跑且旧文件已轮转——两种情况都意味着"当前没有可用备份"
     send_alert backup "备份目录 $BACKUP_DIR 中没有备份文件（从未备份，或备份停跑且旧文件已轮转）" 21600

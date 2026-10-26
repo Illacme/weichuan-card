@@ -53,6 +53,20 @@
     <text class="label">邮箱</text>
     <input data-field="email" value="{{form.email}}" bindinput="onInput" placeholder="选填" />
   </view>
+
+  <!-- 隐私政策明示同意（PIPL「告知—同意」）：本表单采集姓名/手机/邮箱/座机等个人信息，
+       必须由用户主动勾选，未勾选不允许提交（校验在 onSubmit）。
+       勾选框用自定义 view 而非原生 checkbox：原生控件在小程序里样式不可控，
+       且要放进 checkbox-group 才能点文字也能勾。 -->
+  <view class="agree-row" bindtap="toggleAgree">
+    <view class="agree-box {{agreed ? 'agree-box-on' : ''}}">{{agreed ? '✓' : ''}}</view>
+    <view class="agree-text">
+      <text>我已阅读并同意</text>
+      <text class="agree-link" catchtap="goPrivacy">《隐私政策》</text>
+      <text>，同意本小程序收集上述信息用于生成与展示我的电子名片</text>
+    </view>
+  </view>
+
   <button class="submit-btn" loading="{{saving}}" bindtap="onSubmit">提交申请</button>
   <view class="tip">
     提交后由超管在 PC 后台审核，通过即自动创建账号；头像与微信昵称为选填，便于管理员核实身份，头像也可登录后在「编辑名片」中修改。手机号右侧的「+ 备用手机号」可展开第二个号码（选填）：填写后名片上与主号并列展示，主号仍作为登录账号
@@ -65,3 +79,7 @@
   <view class="done-tip">超管审核通过后，请用提交的手机号作为账号、接收到的初始密码登录</view>
   <button class="primary-btn" bindtap="backMe">返回「我的」</button>
 </view>
+
+<!-- 微信隐私授权弹窗：调用隐私接口（选图 / 昵称）前由 ensurePrivacy 弹出，
+     用户同意后才继续。组件挂在页面末尾，遮罩层覆盖全屏。 -->
+<privacy-consent visible="{{privacyVisible}}" />

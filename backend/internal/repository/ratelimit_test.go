@@ -56,20 +56,46 @@ func TestRateHitIsolatesKeys(t *testing.T) {
 
 // 窗口翻页后必须重新计数：否则一次撞限就永久锁死该 key
 // （也正是固定窗口限流的本意——惩罚只持续一个窗口）。
+//
+// 翻页靠**推进可控时钟**而不是 sleep：sleep 的时长必须大于窗口，
+// 负载高时「睡够了但调度没跟上」同样会偶发失败；推进时钟没有这个不确定性，
+// 还顺带把这一条从测试总时长里省掉 1.3 秒。
 func TestRateHitResetsOnNewWindow(t *testing.T) {
 	db := newRateTestDB(t)
-	// 用极小窗口，等它自然翻页
-	w := 1200 * time.Millisecond
+	base := time.Date(2026, 1, 1, 12, 0, 30, 0, time.UTC)
+	restore := SetNowFunc(func() time.Time { return base })
+	defer restore()
 
-	for i := 0; i < 2; i++ {
-		_, err := RateHit(db, "login:same", w)
+	for i := 0; i < 3; i++ {
+		_, err := RateHit(db, "login:same", time.Minute)
 		require.NoError(t, err)
 	}
-	time.Sleep(1300 * time.Millisecond) // 越过窗口边界
+	n, err := RateHit(db, "login:same", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, 4, n, "同一窗口内应持续累加")
 
-	n, err := RateHit(db, "login:same", w)
+	base = base.Add(2 * time.Minute) // 推进到下一个窗口
+	n, err = RateHit(db, "login:same", time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "新窗口应从 1 重新计")
+}
+
+// 时间源本身要可还原：否则一个测试固定了时钟，后续测试就活在 2026 年，
+// 表现为「单独跑全绿、整包跑偶发失败」这种最难查的形态。
+func TestSetNowFuncRestoresPreviousClock(t *testing.T) {
+	fixed := time.Date(2026, 1, 1, 12, 0, 30, 0, time.UTC)
+
+	restore := SetNowFunc(func() time.Time { return fixed })
+	require.Equal(t, fixed.Unix()/60*60, windowStart(time.Minute), "固定时钟后窗口起始应随之确定")
+	restore()
+
+	// 还原后应回到墙上时钟：与 time.Now 算出的窗口一致
+	require.Equal(t, time.Now().Unix()/60*60, windowStart(time.Minute), "还原后应回到真实时钟")
+
+	// nil 表示显式还原为 time.Now
+	restore = SetNowFunc(nil)
+	require.Equal(t, time.Now().Unix()/60*60, windowStart(time.Minute))
+	restore()
 }
 
 // 窗口边界必须对齐：同一窗口内的任意时刻都应落到同一行。

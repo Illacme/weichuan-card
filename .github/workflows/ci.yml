@@ -41,6 +41,39 @@ jobs:
         working-directory: backend
         run: go test ./... -v
 
+  # ───────── 后端 lint（门禁） ─────────
+  # 与 `go vet` 的分工：vet 只查「编译器能确定的可疑写法」，这里补的是
+  # 「静默失败」这类 vet 看不出的问题——最典型的是 errcheck：一个被丢弃的
+  # error 在 Go 里完全合法，编译过、vet 也过，只有 lint 会点名。
+  # 配置在 backend/.golangci.yml（跟着 Go module 走，本机 `cd backend && golangci-lint run`
+  # 与 CI 完全同口径，不会出现「本地过、CI 红」）。
+  #
+  # 启用的 linter 是**刻意收窄**的：只留「报出来一定是问题」的那几个，
+  # 不留风格类（gofmt 之外的命名 / 注释 / 复杂度）。风格类规则一开就是几十上百条，
+  # 要么花几天改代码，要么加一堆 nolint 把它变成摆设——两头都不划算。
+  backend-lint:
+    name: 后端 lint (golangci-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # 不用 golangci-lint-action：action 的大版本与 golangci-lint 的大版本是两套编号
+      # （v9 的 action 要求 v2 的 linter），踩错一次就是「CI 装了个跑不起来的版本」。
+      # 这里直接按官方安装脚本取固定版本，本机 `curl 同一条命令` 能复现出与 CI 完全
+      # 一致的结果，排查时不必猜「CI 上装的是哪个」。
+      - name: golangci-lint
+        working-directory: backend
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.15.0/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.15.0
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m
+
   # ───────── 后端：MySQL 生产契约 parity（可选，需配置 TEST_MYSQL_DSN） ─────────
   # 启用方式：在仓库 Settings → Secrets and variables → Actions → Variables
   # 新增变量 TEST_MYSQL_DSN = root:root@tcp(127.0.0.1:3306)/weichuan_test?charset=utf8mb4&parseTime=true
@@ -106,6 +139,12 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # 与后端 .golangci.yml 同一套取舍：只留「报出来一定是问题」的规则
+      # （未使用变量 / 导入、Vue 模板硬错误），不检查排版与命名——那类规则
+      # 一开就是几百条，结局不是改代码就是加 disable 让它变成摆设。
+      - name: lint（eslint）
+        run: npm run lint
+
       - name: 生产构建
         run: npm run build
 
@@ -137,3 +176,154 @@ jobs:
 
       - name: 类型检查（vue-tsc --noEmit）
         run: npm run type-check
+
+  # ───────── 第三方依赖许可清单：过期检查（门禁） ─────────
+  # 为什么单列一个 job：清单是**交付物**（随专有许可一起给客户），一旦依赖变动而
+  # 清单没重新生成，交付出去的就是与实际不符的声明。这类「文档与代码脱节」
+  # 没人会记得手工核对，只能交给 CI 挡住。
+  #
+  # 判定按许可文件**正文**（不是 package.json 的 license 字段），所以必须先装好
+  # node_modules——缺了它脚本会直接报 FAIL(2) 而不是回落到 lock 的声明，避免误报。
+  # 比对时忽略「生成日期」一行：否则从第二天起每天都无条件失败，那是噪音不是过期。
+  notices:
+    name: 第三方许可清单（过期检查）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go：脚本用 go list -deps ./... 取真正链进二进制的模块
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # Node：脚本要读 frontend/node_modules/<pkg>/LICENSE 的正文
+      - name: 设置 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 检查清单是否与当前依赖一致
+        run: python3 scripts/gen_third_party_notices.py --check
+
+  # ───────── 密钥扫描：防止真实凭据被提交进仓库（门禁） ─────────
+  # 为什么单列一个 job：密钥一旦进 git 历史就极难彻底清除，必须在合并前用 CI 拦住。
+  # 测试 fixture / 文档里的伪密钥（明显是占位、非真实凭据）已在 .gitleaks.toml 的
+  # allowlist 中按「具体假字符串」精确抑制；任何不在白名单里的真实密钥都会让本 job 失败。
+  secrets-scan:
+    name: 密钥扫描 (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks 需要完整历史，才能扫出历史提交里残留的密钥
+
+      - name: gitleaks 扫描
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # 不自动上传 SARIF 到 code scanning，避免额外权限；命中即让本步失败即可
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  # ───────── 依赖漏洞扫描（**非阻塞**，先只做可见性） ─────────
+  # 为什么先不设门禁：govulncheck 报的是「依赖链上有 CVE」，其中相当一部分
+  # 在本项目里根本调不到那条代码路径，而修它往往要升大版本（连带一堆行为变化）。
+  # 一上来就当门禁，结果通常是「红灯常态化 → 没人看 → 等于没有」。
+  # 现在的目标是先让风险**看得见**（每次 PR 都能在 Checks 里点到），
+  # 等基线清干净了再摘掉 continue-on-error 转正式门禁。
+  vuln:
+    name: 依赖漏洞扫描（非阻塞）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # govulncheck 按「实际调用到的函数」判定，比单纯比对版本清单准得多：
+      # 依赖里有 CVE 但没调用到那条路径的不报，避免噪音淹没真问题。
+      - name: govulncheck（后端）
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: 设置 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm audit（前端运行时依赖）
+        working-directory: frontend
+        run: |
+          npm ci
+          # 只看运行时依赖（--omit=dev）：构建工具链的告警量极大且**不进产物**，
+          # 把它和运行时风险混在一起，等于用噪音淹没真正要处理的那几条。
+          npm audit --omit=dev --audit-level=low
+
+  # ───────── 镜像构建（Dockerfile 门禁） ─────────
+  # 为什么要单独 build 镜像：go build / npm run build 绿只代表「代码能编译」，
+  # Dockerfile 里的 COPY 路径、多阶段产物名、运行镜像缺 tzdata / wget 这类问题
+  # 只有真 build 一次才暴露——而它们全都是「本地能跑、客户装不上」的典型故障。
+  images:
+    name: 镜像构建（backend / frontend）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 构建后端镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          tags: weichuan-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: 构建前端镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: weichuan-frontend:ci
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  # ───────── 端到端冒烟（非阻塞） ─────────
+  # 覆盖的是单测与接口测试**结构上覆盖不到**的那一层：真起一个进程，从安装向导
+  # 一路走到「小程序侧公开接口能读到后台刚写的数据」。
+  # 为什么非阻塞：它依赖「起真实进程 + 自重启 + 端口可用」，在 runner 上偶发
+  # 环境性抖动（端口冲突 / 启动慢）；先跑起来积累稳定性数据，稳定后转门禁。
+  e2e-smoke:
+    name: 端到端冒烟（非阻塞）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: 端到端冒烟（安装向导 → 登录 → 建企业 → 配内容 → 小程序侧读回）
+        run: scripts/e2e_smoke.sh

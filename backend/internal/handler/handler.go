@@ -19,6 +19,9 @@ import (
 func New(db *gorm.DB) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	// 授权强制层（Phase 2）：把启动期解析出的授权落到运行期——
+	// 过期降级只读、新建员工超席位拒建。未解析授权时全部放行，等价于现状。
+	r.Use(EnforceLicense(db))
 
 	// 健康检查（就绪探针）：容器编排 / 负载均衡探活用。
 	// 注意：这里必须探 DB 连通性，而不是无条件返回 200。若只做存活探测，
@@ -83,15 +86,15 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
-	cats, featured, err := repository.GetAchievements(db, cid)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
-		return
-	}
-	// 公开只读接口：短缓存给 CDN / 反代用（端上不受益，详见 cdnCache 注释）。
-	// 只在成功分支设置——错误响应不该被缓存。
-	cdnCache(c, 60)
-	c.JSON(http.StatusOK, gin.H{"code": 0, "categories": cats, "featured": featured})
+		cats, featured, err := repository.GetAchievements(db, cid)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
+			return
+		}
+		// 公开只读接口：短缓存给 CDN / 反代用（端上不受益，详见 cdnCache 注释）。
+		// 只在成功分支设置——错误响应不该被缓存。
+		cdnCache(c, 60)
+		c.JSON(http.StatusOK, gin.H{"code": 0, "categories": cats, "featured": featured})
 	})
 
 	// 项目列表（按分类，按租户）

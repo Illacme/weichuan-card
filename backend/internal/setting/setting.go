@@ -63,6 +63,11 @@ type def struct {
 	// 避免出现「下拉能选、保存被拒」或反之（2026-10-22 用户实测：
 	// storage_driver 有 oneOf 校验却渲染成文本框，填错只能靠保存时报错）。
 	Options []string
+	// PathKind 标记这是「服务端路径」类配置（node_bin / module_dir / source_dir），
+	// 驱动界面在文本框旁渲染一个「浏览服务器目录」按钮（见 pathpick 包）。
+	// 空串表示不是路径类。它解决的不是「能不能输入」，而是「在服务器上挑路径」——
+	// 浏览器原生的文件框选的是客户端机器，对指向服务器的这些配置毫无意义。
+	PathKind string
 	// Validate 业务校验（可选）：**类型之外**的取值约束（上下限 / 枚举 / URL 前缀 /
 	// 租户是否存在）。只给「填错会造成大面积故障或把自己锁住」的项加，不做普遍校验——
 	// 处处拦截会让运营改个配置处处碰壁，不如让它自愈（见 validate.go 的包注释）。
@@ -82,15 +87,16 @@ type Item struct {
 	Type        string `json:"type"` // int | string | bool | string_slice
 	Description string `json:"description"`
 	// Value 当前值：敏感项恒为 Mask（已配置）或空串（未配置）。
-	Value      string `json:"value"`
-	Secret     bool   `json:"secret"`
-	Restart    bool   `json:"restart"`
-	ReadOnly   bool   `json:"readOnly"`
-	EnvVar     string `json:"envVar"`
+	Value    string `json:"value"`
+	Secret   bool   `json:"secret"`
+	Restart  bool   `json:"restart"`
+	ReadOnly bool   `json:"readOnly"`
+	EnvVar   string `json:"envVar"`
 	// Options 枚举候选值（仅枚举项有）：界面据此渲染下拉。omitempty 保证
 	// 旧客户端（不认这个字段）与大多数项（无候选值）的响应形状不变。
 	Options    []string `json:"options,omitempty"`
-	Configured bool     `json:"configured"` // 是否有有效值（库值 / 环境变量 / 进程内缺省）
+	PathKind   string   `json:"pathKind,omitempty"` // 服务端路径类配置（node_bin/module_dir/source_dir），驱动界面渲染浏览按钮
+	Configured bool     `json:"configured"`         // 是否有有效值（库值 / 环境变量 / 进程内缺省）
 }
 
 // registry 全量「可后台配置项」清单：新增可配置项只在此追加一行即可。
@@ -99,11 +105,13 @@ type Item struct {
 //	general    通用（品牌名）
 //	miniprogram 小程序（默认基址 / 独立版锁定租户）
 //	upload     上传（单文件上限 / 允许扩展名 / 各类签名有效期）
-//	wechat     微信（小程序码 TTL / AppID / AppSecret）
+//	wechat     微信（小程序码 TTL / AppID / AppSecret / 代码上传密钥）
+//	mpupload   后台上传小程序代码（Node / miniprogram-ci / 源码目录 / 超时）
 //	auth       登录与令牌（令牌有效期 / 登录与刷新限流）
 //	storage    文件存储与 CDN（驱动 / 端点 / 桶 / 凭据 / 上传基址 / CDN 刷新）
 //	security   安全与基础设施（只读：DB 连接串 / JWT 密钥 / Cookie）
 //	feature    特性开关（Prometheus 指标 / 独立版企业锁定）
+//	license    授权（新租户试用天数 / 席位 / 是否自动试用）
 var registry = []def{
 	{Key: "brand_name", Group: "general", Type: "string", Value: "微传名片",
 		Name: "品牌名称",
@@ -165,6 +173,40 @@ var registry = []def{
 	{Key: "wx_appsecret", Group: "wechat", Type: "string", Secret: true, EnvVar: "WX_APPSECRET",
 		Name: "小程序 AppSecret",
 		Desc: "微信小程序的 AppSecret，用来生成小程序码。属于敏感信息，界面不会显示已保存的内容，填新值即覆盖。留空则使用部署环境里配置的值（环境变量 WX_APPSECRET 或配置文件）。"},
+	{Key: "wx_upload_key", Group: "wechat", Type: "string", Secret: true,
+		Name: "小程序代码上传密钥",
+		Desc: "在微信公众平台 → 开发管理 → 开发设置 → 小程序代码上传 下载的 .key 文件内容，整个粘贴进来。这是把代码传到微信的唯一凭证，与 AppSecret 不是同一把钥匙（AppSecret 只能调提审/发布接口，传不了代码）。企业独立版的小程序请在「企业管理 → 凭据」里各配各的，这里配的是平台全局那一份。属于敏感信息，界面不会显示已保存的内容。"},
+	// ---- 微信消息推送（图片内容安全的结论从这里回来）----
+	// 为什么要单独两项：图片检测只有异步接口，送出去只拿到 trace_id，
+	// 判定结果由微信推回来。没有推送配置时「送检能成功、结论永远收不到」——
+	// 记录会永久停在待结论，比不送检更容易误导人（见 mediachk.Plan）。
+	// Token 用于验签（必填）；EncodingAESKey 只在安全模式下用来解密（明文模式可留空）。
+	{Key: "wx_msg_token", Group: "wechat", Type: "string", EnvVar: "WX_MSG_TOKEN",
+		Name: "消息推送 Token",
+		Desc: "微信公众平台 → 开发管理 → 开发设置 → 消息推送 里自己填的 Token，用于校验回调确实来自微信。不填则图片内容安全不送检（因为收不到结论）。填完把本页显示的推送 URL 填到微信后台。"},
+	{Key: "wx_msg_aeskey", Group: "wechat", Type: "string", Secret: true, EnvVar: "WX_MSG_AESKEY",
+		Name: "消息推送 EncodingAESKey",
+		Desc: "消息推送选「安全模式」时必填的 43 位密钥（微信后台随机生成，可点击随机获取）。选「明文模式」可留空。属于敏感信息，界面不会显示已保存的内容。"},
+
+	// ---- 后台上传小程序代码（仅「后台直接传代码」这条路需要）----
+	// 单独一组，不与 wx_* 那组混：那组回答「微信认谁」（凭据），这组回答
+	// 「服务器上有什么」（Node / 模块 / 源码）。混在一组会让人以为配齐
+	// AppSecret 就能传代码——两把钥匙 + 一套环境，缺一不可。
+	{Key: "mp_node_bin", Group: "mpupload", Type: "string", EnvVar: "MP_NODE_BIN",
+		Name: "Node 可执行文件", PathKind: "node_bin",
+		Desc: "后台上传小程序代码要靠 Node 跑 miniprogram-ci。填 node（在 PATH 里）或绝对路径（例：/usr/local/bin/node；容器镜像里建议给绝对路径）。留空则用部署环境里配置的值（环境变量 MP_NODE_BIN 或配置文件），再留空用默认 node。不走「上传代码」这条路可以不用配。"},
+	{Key: "mp_ci_module_dir", Group: "mpupload", Type: "string", EnvVar: "MP_CI_MODULE_DIR",
+		Name: "miniprogram-ci 安装目录", PathKind: "module_dir",
+		Desc: "服务器上装过 miniprogram-ci 的目录（在那个目录执行过 npm install miniprogram-ci）。它不随后端二进制分发，必须单独装一次。留空则改用「小程序源码目录」下找，再留空用环境变量 MP_CI_MODULE_DIR。"},
+	{Key: "mp_source_dir", Group: "mpupload", Type: "string", EnvVar: "MP_SOURCE_DIR",
+		Name: "小程序源码目录", PathKind: "source_dir",
+		Desc: "服务器上小程序源码的根目录，里面要有 project.config.json。上传的就是这份代码——请确认它是你要发布的那一份（改完源码后不用在这里改什么）。留空则用部署环境里配置的值（环境变量 MP_SOURCE_DIR 或配置文件）。"},
+	// 这一项给的是**界面缺省值**（不挂环境变量）：超时是运行期参数，
+	// 没有「部署时才知道」的属性，挂在环境变量上只会出现「界面明明显示 300、
+	// 实际却用环境变量里的值」这种对不上的情况。
+	{Key: "mp_upload_timeout_sec", Group: "mpupload", Type: "int", Value: "300",
+		Name: "上传超时（秒）",
+		Desc: "等一次上传代码最长多久（秒），编译 + 传代码都算在里面，默认 300。上传是同步执行的，反代（nginx proxy_read_timeout）要设得比它大，否则会在传到一半时先返回 504。改完下一次上传就生效，不用重启服务。"},
 
 	// ---- 登录与令牌（即时生效）----
 	// 令牌有效期设太短会把人一直踢下线；代码内保留**安全下限**，
@@ -181,6 +223,9 @@ var registry = []def{
 	{Key: "refresh_rate_limit_per_min", Group: "auth", Type: "int", Value: "60",
 		Name: "凭证刷新频率限制",
 		Desc: "同一个 IP 每分钟最多允许刷新几次凭证。刷新比登录频繁，所以配额给得更宽。填 0 或负数会回到默认 60 次。"},
+	{Key: "upload_rate_limit_per_min", Group: "auth", Type: "int", Value: "20",
+		Name: "匿名上传频率限制",
+		Desc: "同一个 IP 每分钟最多允许上传几次文件（申请开通页的访客头像上传走这条）。这个端点不需要登录，不限流就等于把对象存储开成免费网盘，也能批量把违规图刷到公开地址上。填 0 或负数会回到默认 20 次——不会把这道防护关掉。"},
 
 	// ---- 文件存储与 CDN（改后需重启：客户端在启动时构造）----
 	// 凭据写错最坏结果是「上传失败」，改回来重启即可自愈，不会把自己锁在系统外，
@@ -192,7 +237,7 @@ var registry = []def{
 		// s3 与 minio 共用同一套端点 / 桶 / 凭据字段与 S3 客户端实现，差别只在
 		// 「声明的用途」：minio 面向自建 MinIO，s3 面向腾讯云 COS / 华为云 OBS /
 		// 七牛云 / AWS S3 / Cloudflare R2 等 S3 兼容云（这类云常需填存储区域）。
-		Desc:     "图片和视频存到哪里：local=服务器本地磁盘，minio=MinIO 或自建 S3 兼容服务，oss=阿里云 OSS，s3=S3 兼容云存储（腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2 等）。留空则使用部署环境里配置的值。改完要重启服务才生效。"},
+		Desc: "图片和视频存到哪里：local=服务器本地磁盘，minio=MinIO 或自建 S3 兼容服务，oss=阿里云 OSS，s3=S3 兼容云存储（腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2 等）。留空则使用部署环境里配置的值。改完要重启服务才生效。"},
 	{Key: "storage_endpoint", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_ENDPOINT",
 		Name: "存储服务端点",
 		Desc: "对象存储的服务地址，只填域名或 IP:端口，不要带 http://（例：127.0.0.1:9000）。MinIO 和阿里云 OSS 共用这一项。改完要重启服务才生效。"},
@@ -231,7 +276,7 @@ var registry = []def{
 		// 端上自行拼基址（浏览器按页面源、小程序用 miniprogram_base_url），
 		// 这一项不参与——早期文案说「小程序和后台都用它拼」对 local 是误导，
 		// 界面联动也已按 minio / oss / s3 专属过滤（2026-10-22 全量核查统一口径）。
-		Desc:     "已上传文件对外访问的根地址（仅 minio / oss / s3 需要），必须是 http:// 或 https:// 开头的完整地址（例：https://cdn.example.com）。小程序和后台都用它拼出完整的图片链接，填错的话所有图片都会打不开；本地存储用相对地址，不经过这项。改完要重启服务才生效。"},
+		Desc: "已上传文件对外访问的根地址（仅 minio / oss / s3 需要），必须是 http:// 或 https:// 开头的完整地址（例：https://cdn.example.com）。小程序和后台都用它拼出完整的图片链接，填错的话所有图片都会打不开；本地存储用相对地址，不经过这项。改完要重启服务才生效。"},
 	{Key: "cdn_enabled", Group: "storage", Type: "bool", Restart: true, EnvVar: "CDN_ENABLED",
 		Name: "启用 CDN 刷新",
 		// 2026-10-23：从「只支持阿里云」扩到五家（阿里云 / 腾讯云 / 七牛云 /
@@ -246,7 +291,7 @@ var registry = []def{
 		// 五家的凭据形态不同（AK/SK 三家、Cloudflare 用 Token+Zone、CloudFront 用
 		// AK/SK+Distribution），所以下面几项是「通用凭据位」，具体含义按厂商变：
 		// 界面按厂商联动显示需要的字段，Desc 里逐项写清各厂商对应什么。
-		Desc:     "用哪家 CDN 的刷新接口：aliyun=阿里云，tencent=腾讯云，qiniu=七牛云，cloudflare=Cloudflare，cloudfront=AWS CloudFront。留空按阿里云处理（早期版本只有阿里云）。改完要重启服务才生效。"},
+		Desc: "用哪家 CDN 的刷新接口：aliyun=阿里云，tencent=腾讯云，qiniu=七牛云，cloudflare=Cloudflare，cloudfront=AWS CloudFront。留空按阿里云处理（早期版本只有阿里云）。改完要重启服务才生效。"},
 	{Key: "cdn_access_key_id", Group: "storage", Type: "string", Restart: true, EnvVar: "CDN_ACCESS_KEY_ID",
 		Name: "CDN AccessKeyId",
 		Desc: "刷新凭据的「账号」部分：阿里云填 AccessKeyId（可与 OSS 相同），腾讯云填 SecretId，七牛云填 AccessKey，CloudFront 填 AccessKeyId；Cloudflare 用不到这项（它只用 API Token）。改完要重启服务才生效。"},
@@ -279,16 +324,57 @@ var registry = []def{
 		Name: "登录 Cookie 作用域",
 		Desc: "登录 Cookie 在哪个范围内有效。留空只对当前域名生效；需要在多个子域名之间共享登录状态时才填（例：.example.com）。界面不能改，请到部署环境改环境变量 COOKIE_DOMAIN 或配置文件（默认 data/runtime.env）后重启。"},
 
+	// 审计日志保留期（C3）。默认 0 = 永不自动清理，这是刻意的：
+	// 删审计日志不可逆，而审计的价值恰恰在「出事之后能翻到很久以前」。升级当天
+	// 就把历史日志清掉＝把本来就有的证据变成再也拿不回来（与 B3 配额默认不限、
+	// B4 存量不补授权同一条「升级不得突变存量」纪律）。想清理必须由运维显式填天数。
+	// 清理动作本身会记一条 audit.purge 审计（操作者 = 系统），所以即便有人把保留期
+	// 改成 1 天，事后也能在审计页看到「什么时候、按多少天、清了多少条」。
+	{Key: "audit_retention_days", Group: "security", Type: "int", Value: "0",
+		Name:     "审计日志保留天数",
+		Validate: intRange(0, 3650),
+		Desc:     "审计日志（后台操作留痕）保留多少天，超期的自动删除。0 = 永不自动清理（默认）。填了才会清理，建议按合规要求填 180 或 365；删除不可恢复，请在「审计日志」页按需先导出留底。清理动作本身也会记一条审计（操作人显示为「系统」）。"},
+
 	// 缺省空串 = 「未设置」，读取时回退环境变量 METRICS_ENABLED；
 	// 一旦在界面显式设为 true/false 就以界面为准（避免升级后让既有部署的开关行为突变）。
 	{Key: "metrics_enabled", Group: "feature", Type: "bool", EnvVar: "METRICS_ENABLED",
 		Name: "开放监控指标",
 		Desc: "是否开放 /metrics 监控接口，供 Prometheus 抓取数据。留空则使用部署环境里配置的值。"},
+	// 默认开：UGC 内容安全是小程序提审的硬性要求，不该让运维「想起来才开」。
+	// 开了也不会立刻产生副作用——没配小程序凭据、或提交人没有 openid 时一律跳过
+	// （fail-open，只记日志），所以「配了凭据就自动生效」是安全的默认。
+	{Key: "content_sec_enabled", Group: "feature", Type: "bool", Value: "true",
+		Name: "内容安全检测",
+		Desc: "员工提交名片修改、访客提交开通申请时，把姓名 / 职位 / 昵称等文字送微信内容安全接口检测，命中违规直接拒绝提交；员工上传的图片也会异步送检（需配「消息推送 Token」才生效，否则收不到结论）。依赖小程序 AppID / AppSecret，未配置时自动跳过，不影响提交。"},
 	// 开启后企业管理页整体只读：列表/管理员列表可查，但新建企业、编辑企业、
 	// 启停企业、新建企业管理员一律拒绝（见 handler/companies.go 的 writeLocked）。
 	{Key: "independent_lock", Group: "feature", Type: "bool", Value: "false",
 		Name: "独立版企业锁定",
 		Desc: "开启后企业管理页变成只读：不能新建、编辑、启停企业，也不能添加企业管理员。适合交付给单一企业使用的独立版。"},
+
+	// 授权（升级后新增分组）：平台模式「新租户默认给试用额度」的三个口径。
+	//
+	// 为什么这三项要能在界面改：试用期是天数、席位是销售政策，随客户分层经常调整，
+	// 不该让运营改一次代码重新发版。取值在**开通企业那一刻**落到 tenant_license 行，
+	// 之后改这三项不会追溯影响已开通的企业（改的只是「以后新开的」）。
+	{Key: "license_trial_enabled", Group: "license", Type: "bool", Value: "true",
+		Name: "新租户自动试用",
+		Desc: "开通新企业时自动写入一条试用授权（席位 + 到期日）。关闭后新企业不写授权行，行为回到「不限制」。已有企业不受影响。"},
+	{Key: "license_trial_days", Group: "license", Type: "int", Value: "14",
+		Name:     "试用天数",
+		Validate: intRange(1, 3650),
+		Desc:     "试用授权的有效天数，从开通企业当天起算。到期后该企业后台变为只读：仍可登录查看，但所有写操作被拒绝，续费后在「企业管理 → 授权」里延长即可恢复。"},
+	{Key: "license_trial_seats", Group: "license", Type: "int", Value: "5",
+		Name:     "试用员工席位",
+		Validate: intRange(1, 100000),
+		Desc:     "试用期最多能建多少个员工（管理员直接新增与审批开通申请两条路径合并计数）。超出后被拒绝，提示升级授权。"},
+
+	// 存储配额：按租户累计上传字节数。默认 0 = 不限制——存量部署升级后行为不变，
+	// 想按量计费或做成本封顶时再填（单企业上限，可被 tenant 级 override 覆盖）。
+	{Key: "storage_quota_mb", Group: "storage", Type: "int", Value: "0",
+		Name:     "每租户存储配额",
+		Validate: intRange(0, 1048576),
+		Desc:     "单个企业可用的上传空间上限（MB）。0 = 不限制（默认）。超出后该企业再上传会被拒绝，并提示已用 / 上限；用量与配额可在「企业管理」列表查看（统计自本功能启用后新上传的文件）。"},
 }
 
 // registryByKey 供按 key 快速查类型。
@@ -468,9 +554,9 @@ func (s *Store) Set(key, value string) error {
 	}
 	if d.ReadOnly {
 		// 措辞不能只说「环境变量」：优先级是 环境变量 > 配置文件 > 内置缺省，
-	// 而安装向导正是把 DB_DSN / JWT_KEY / COOKIE_* 写进配置文件（data/runtime.env）。
-	// 走向导装的部署根本没有环境变量，说「只能改环境变量」会让人找不到东西改。
-	return fmt.Errorf("%s 为只读项，只能改环境变量 %s 或配置文件（默认 data/runtime.env）后重启", key, d.EnvVar)
+		// 而安装向导正是把 DB_DSN / JWT_KEY / COOKIE_* 写进配置文件（data/runtime.env）。
+		// 走向导装的部署根本没有环境变量，说「只能改环境变量」会让人找不到东西改。
+		return fmt.Errorf("%s 为只读项，只能改环境变量 %s 或配置文件（默认 data/runtime.env）后重启", key, d.EnvVar)
 	}
 	if d.Secret && value == Mask {
 		return fmt.Errorf("%s 不能提交掩码值；留空表示回退环境变量", key)
@@ -606,7 +692,7 @@ func All() []Item {
 			Key: d.Key, Name: d.Name, Group: d.Group, Type: d.Type,
 			Description: d.Desc,
 			Secret:      d.Secret, Restart: d.Restart, ReadOnly: d.ReadOnly, EnvVar: d.EnvVar,
-			Options:     d.Options,
+			Options: d.Options, PathKind: d.PathKind,
 		}
 		it.Configured = configured(d, stored)
 		if d.Secret {

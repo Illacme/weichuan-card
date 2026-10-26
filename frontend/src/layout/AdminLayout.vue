@@ -129,6 +129,9 @@ const allMenuGroups = [
       { path: '/apply/open', title: '开通审核' },
       { path: '/apply/modify', title: '名片修改审核' },
       { path: '/employees', title: '员工管理' },
+      // 内容安全：图片违规记录与一键下架。企业管理员也要用（管自己企业的图），
+      // 所以放在这个非 platformOnly 的组里，而不是「平台管理」。
+      { path: '/content-sec', title: '内容安全' },
     ],
   },
   {

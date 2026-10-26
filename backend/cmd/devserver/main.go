@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -28,8 +29,10 @@ import (
 	"weichuan/internal/auth"
 	"weichuan/internal/config"
 	"weichuan/internal/handler"
+	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
@@ -64,14 +67,15 @@ func main() {
 		log.Fatalf("create temp db: %v", err)
 	}
 	dbPath := tmpDB.Name()
-	tmpDB.Close()
+	// 只是借它拿一个不冲突的路径，文件本身马上由 gorm 打开；关闭失败无后果
+	_ = tmpDB.Close()
 	log.Printf("dev db: %s", dbPath)
 	// 如实回写 DB_DSN：本进程是拿 dbPath 直连 gorm 的，**不经过 DB_DSN 配置**，
 	// 但 /api/setup/status（与生产同一套 StatusPayload）只认 DB_DSN——不回写就会
 	// 报 configured=false，前端 main.ts 据此去挂安装引导页而不是后台 App，
 	// 本地联调直接废掉（「接口查不到 → 按已配置」的兜底反而比「查到却说没配」安全）。
 	// 缺的从来是「DB_DSN 这个环境变量」而不是数据库，故这里补上真实值。
-	os.Setenv("DB_DSN", dbPath)
+	_ = os.Setenv("DB_DSN", dbPath) // 仅影响本进程；失败只会让联调页误判，故不中断
 
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
@@ -79,6 +83,10 @@ func main() {
 	}
 	if err := db.AutoMigrate(devModels...); err != nil {
 		log.Fatalf("auto migrate: %v", err)
+	}
+	// 存量 PII 回填（员工/开通申请/修改快照，加密 + 补盲索引）：幂等，仅处理未就绪的行。
+	if err := model.BackfillPII(db); err != nil {
+		log.Printf("[PII][ERROR] PII 存量回填失败：%v", err)
 	}
 
 	// 系统设置：seed 缺省值 + 载入内存缓存（后台「系统设置」界面维护运行参数）
@@ -108,6 +116,14 @@ func main() {
 	// 与生产一致：系统设置覆盖环境变量（界面留空则保留环境变量）。
 	// 放在下面几个「开发态强制覆盖」之前，保证 devserver 仍然是本地磁盘 + 临时目录。
 	cfg.OverlayFromSettings()
+
+	// 按租户解析授权用的库连接（Phase 4）：与生产同路径，便于本地验证多租户授权。
+	license.SetTenantDB(db)
+
+	// 授权校验（Phase 1 地基）：开发态下即便私有模式也只告警不致命，避免卡住本地联调。
+	if _, err := license.Verify(context.Background()); err != nil {
+		log.Printf("[LICENSE][WARN] 开发态忽略授权校验失败：%v", err)
+	}
 	cfg.UploadDir = mustDir(filepath.Join(os.TempDir(), "weichuan-dev-uploads"))
 	cfg.UploadBaseURL = uploadBaseURL(port)
 	cfg.StorageDriver = "local"
@@ -133,16 +149,20 @@ func main() {
 	r.Use(metrics.Middleware())
 	r.GET("/metrics", metrics.Handler())
 	handler.RegisterAuth(r, db, cfg)
-	handler.RegisterApply(r, db)
+	handler.RegisterApply(r, db, cfg)
 	// 统计的两个「后加」端点：CSV 导出 + 埋点明细（/api/admin/stats 汇总本身在
 	// RegisterApply 里，故统计页能开，但明细抽屉与导出会 404——2026-10-24 实测抓到）。
 	// 漏注册不报编译错、只在点开功能时 404，正是下面 main_test.go 守门测试要钉住的漂移。
 	handler.RegisterStatsExport(r, db)
 	handler.RegisterStatsDetail(r, db)
 	handler.RegisterContent(r, db)
-	handler.RegisterCompanies(r, db) // 企业管理（平台超管）
-	handler.RegisterAdmins(r, db)    // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
-	handler.RegisterAuditLogs(r, db) // 操作审计日志（只读查询：平台超管）
+	handler.RegisterCompanies(r, db)
+	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
+	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额
+	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
+	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
+	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
+	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 
 	up := &storage.LocalUploader{
 		Dir:      cfg.UploadDir,
@@ -160,11 +180,14 @@ func main() {
 		c.Next()
 	})
 	r.Static("/uploads", cfg.UploadDir)
-	handler.RegisterUpload(r, db, up, refresher)
+	handler.RegisterUpload(r, db, cfg, up, refresher)
+	handler.RegisterMediaCheck(r, db, cfg, up, refresher)
 	handler.RegisterStorage(r, db, up, refresher, cfg)
-	handler.RegisterAssets(r, db, up, refresher)  // 常用素材库（内嵌图标/封面/LOGO）
-	handler.RegisterWechat(r, cfg, up, refresher) // 小程序码
-	handler.RegisterSettings(r, db, cfg)          // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterAssets(r, db, up, refresher)      // 常用素材库（内嵌图标/封面/LOGO）
+	handler.RegisterWechat(r, db, cfg, up, refresher) // 小程序码
+	handler.RegisterSettings(r, db, cfg)              // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                    // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                     // 海报个性化设置：GET/PUT /api/employee/poster-prefs
 	// 安装状态查询与 /setup 别名：必须与生产（cmd/server）一致。
 	// 缺了前者会让前端启动探针 GET /api/setup/status 每次都吃 404——
 	// 功能上无碍（前端把查不到按「已配置」处理，见 api/setup.ts 的注释），
@@ -301,7 +324,7 @@ func seedDemoData(db *gorm.DB, cfg config.Config) {
 
 	// 1 个演示员工（设计稿员工：高立新 / 业务经理；手机号登录用）
 	var cnt int64
-	db.Model(&model.Employee{}).Where("phone = ?", "13832603521").Count(&cnt)
+	db.Model(&model.Employee{}).Where("phone_bidx = ?", pii.BlindIndex("13832603521")).Count(&cnt)
 	if cnt == 0 {
 		hash, _ := auth.HashPassword("weichuan123")
 		emp := model.Employee{
@@ -314,7 +337,7 @@ func seedDemoData(db *gorm.DB, cfg config.Config) {
 		}
 		db.Create(&emp)
 		var got model.Employee
-		db.Where("phone = ?", "13832603521").First(&got)
+		db.Where("phone_bidx = ?", pii.BlindIndex("13832603521")).First(&got)
 		fmt.Printf("演示员工 staffId=%d\n", got.StaffID)
 	}
 }

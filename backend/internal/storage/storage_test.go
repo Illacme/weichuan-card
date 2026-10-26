@@ -3,6 +3,10 @@ package storage
 import (
 	"bytes"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"mime/multipart"
 	"net/http/httptest"
 	"testing"
@@ -98,4 +102,94 @@ func TestRandNameEntropyFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "生成随机文件名失败")
 	require.Empty(t, name)
+}
+
+// tinyImage 构造一个 2x2 的纯色图，供 ProcessImage 的编码/解码往返测试。
+func tinyImage() *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{10, 20, 30, 255})
+	img.Set(1, 1, color.RGBA{200, 100, 50, 255})
+	return img
+}
+
+// realPNG / realJPG 用标准库编码出一段真实可解码的图片字节，供 Save 路径的
+// 「上传即剥离」集成测试使用（避免用假文件头骗过 checkFile 却骗不过 ProcessImage 解码）。
+func realPNG() []byte {
+	var b bytes.Buffer
+	_ = png.Encode(&b, tinyImage())
+	return b.Bytes()
+}
+
+func realJPG() []byte {
+	var b bytes.Buffer
+	_ = jpeg.Encode(&b, tinyImage(), &jpeg.Options{Quality: 90})
+	return b.Bytes()
+}
+
+// jpgWithExif 在合法 JPEG 的 SOI 之后注入一段 APP1/Exif 标记，模拟「手机相册里带
+// GPS 坐标的原图」。供 Save 集成测试验证：上传到存储的字节确实已剥离 EXIF。
+func jpgWithExif() []byte {
+	base := realJPG()
+	exif := []byte{0xFF, 0xE1, 0x00, 0x10, 'E', 'x', 'i', 'f', 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+	return append([]byte{0xFF, 0xD8}, append(exif, base[2:]...)...)
+}
+
+// TestProcessImageStripsExif 守门「上传图片必须剥离 EXIF/GPS」。
+// 在一段合法 JPEG 的 SOI（FF D8）之后注入一个 APP1/Exif 段，验证：
+//   - 输入含 "Exif\0\0" 标记；
+//   - ProcessImage 输出不再含该标记（整段 EXIF 连同 GPS 被丢弃）；
+//   - 输出仍是可解码的合法 JPEG，且尺寸与原文一致（像素无损，仅丢元数据）。
+// 反向验证：若把 ProcessImage 改回「jpeg 原样透传」，本用例会 FAIL，证明它不是空跑。
+func TestProcessImageStripsExif(t *testing.T) {
+	var base bytes.Buffer
+	require.NoError(t, jpeg.Encode(&base, tinyImage(), &jpeg.Options{Quality: 90}))
+	require.True(t, bytes.HasPrefix(base.Bytes(), []byte{0xFF, 0xD8}), "base 应为合法 JPEG(SOI)")
+
+	// 注入 APP1/Exif 段：FF E1 <len> "Exif\0\0" + 6 字节伪 GPS 数据
+	exif := []byte{0xFF, 0xE1, 0x00, 0x10, 'E', 'x', 'i', 'f', 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+	injected := append([]byte{0xFF, 0xD8}, append(exif, base.Bytes()[2:]...)...)
+	require.Contains(t, string(injected), "Exif\x00\x00", "前置条件：注入的 JPEG 应含 Exif 标记")
+
+	out, err := ProcessImage("jpg", injected)
+	require.NoError(t, err)
+	require.NotContains(t, string(out), "Exif\x00\x00", "输出必须已剥离 EXIF/GPS 标记")
+	// 输出仍可解码且尺寸不变
+	dec, err := jpeg.Decode(bytes.NewReader(out))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 2, 2), dec.Bounds())
+}
+
+// TestProcessImagePngRoundTrip 验证 PNG 解码重编码后仍为合法可解码 PNG。
+func TestProcessImagePngRoundTrip(t *testing.T) {
+	// 用 realPNG() 而不是就地再编一次：同一个 helper 也服务 Save 路径的
+	// 集成用例，两处共用一份「真实可解码的图片」才不会各造各的假数据。
+	out, err := ProcessImage("png", realPNG())
+	require.NoError(t, err)
+	dec, err := png.Decode(bytes.NewReader(out))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 2, 2), dec.Bounds())
+}
+
+// TestProcessImagePassesThroughNonImage 验证 gif/webp/mp4 等非目标类型原样透传，
+// 不引入破坏性改动（gif 尤其不能重新编码，否则丢动画帧）。
+func TestProcessImagePassesThroughNonImage(t *testing.T) {
+	gif := []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b")
+	out, err := ProcessImage("gif", gif)
+	require.NoError(t, err)
+	require.Equal(t, gif, out, "gif 应原样透传")
+
+	mp4 := []byte("\x00\x00\x00\x1cftypmp42mp42\x00\x00\x00\x00")
+	out, err = ProcessImage("mp4", mp4)
+	require.NoError(t, err)
+	require.Equal(t, mp4, out, "mp4 应原样透传")
+}
+
+// TestProcessImagePassthroughOnDecodeError 守门「解码失败的图片不能阻断上传」。
+// 文件头是合法 JPEG（能通过 checkFile 嗅探），但体损坏无法解码：ProcessImage 必须
+// fail-open 原样透传，而不是让本次上传失败——这样安全姿态不弱于改造前。
+func TestProcessImagePassthroughOnDecodeError(t *testing.T) {
+	broken := append([]byte{0xFF, 0xD8, 0xFF}, []byte("not a real jpeg body")...)
+	out, err := ProcessImage("jpg", broken)
+	require.NoError(t, err)
+	require.Equal(t, broken, out, "解码失败时原样透传，不阻断合法上传")
 }

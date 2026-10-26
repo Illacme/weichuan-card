@@ -1,0 +1,30 @@
+# 微传名片 · gitleaks 密钥扫描配置
+#
+# 继承 gitleaks 内置默认规则集（useDefault），仅额外追加一份「已知假值」白名单。
+#
+# 白名单里列的都是测试 fixture / 文档占位符里的伪密钥——它们形状像密钥但明显是
+# 占位、不是真实凭据，不值得在 CI 里反复误报。任何不在白名单里的真实密钥仍会被
+# 拦截（fail=true）。
+#
+# 设计原则：宁可白名单写得「窄」——只放具体的假字符串，不放整类文件——这样将来
+# 真有人把真实密钥写进测试，CI 照样能拦下来，不会因为这层白名单而静默放过。
+
+title = "微传名片 gitleaks 配置"
+
+[extend]
+# 继承 gitleaks 官方默认规则（含 private-key / generic-api-key / aws / github-pat 等）
+useDefault = true
+
+[allowlist]
+description = "测试 fixture 与文档占位符中的伪密钥，并非真实凭据"
+regexes = [
+    # 各 *_test.go 反复出现的「已知缺省凭据」占位（security 门槛依赖它做缺省判定，
+    # 故不能删；config_test.go 的 JWTKey 缺省值即此串，安全门会据此拒绝带缺省密钥启动）
+    '''0123456789abcdef''',
+    # middleware 测试里的伪中间件密钥
+    '''middleware-test-key-''',
+    # config/file_test.go 里模拟「从环境变量读到的密钥」占位
+    '''from-env-key-9876543210''',
+    # 接口字段映射文档里的 JWT 占位示例（eyJhbGci... 是公开的 JWT 头，后面跟 .... 占位）
+    '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.+''',
+]

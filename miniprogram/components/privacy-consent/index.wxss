@@ -1,0 +1,65 @@
+/* 微信隐私授权弹窗（样式不写进 app.wxss：组件独立作用域，避免污染全局） */
+.pc-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60rpx;
+  box-sizing: border-box;
+}
+.pc-dialog {
+  width: 100%;
+  max-width: 620rpx;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 36rpx 32rpx 28rpx;
+  box-sizing: border-box;
+}
+.pc-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 18rpx;
+}
+.pc-body {
+  font-size: 26rpx;
+  color: #666;
+  line-height: 1.7;
+}
+.pc-link {
+  color: #1b66df;
+}
+.pc-actions {
+  display: flex;
+  margin-top: 32rpx;
+}
+.pc-btn {
+  flex: 1;
+  margin: 0 8rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  font-size: 28rpx;
+  border-radius: 10rpx;
+  padding: 0;
+}
+/* 微信 button 默认带边框与背景色，这里两个都要覆盖掉，
+   否则会出现「灰底方框按钮」而不是设计的胶囊按钮 */
+.pc-btn-cancel {
+  background: #f2f4f7;
+  color: #555;
+  border: none;
+}
+.pc-btn-primary {
+  background: #1b66df;
+  color: #fff;
+  border: none;
+}
+.pc-btn::after {
+  border: none;
+}

@@ -1,4 +1,5 @@
 {
+  "navigationBarTitleText": "案例详情",
   "usingComponents": {
     "rich-video": "/components/rich-video/index"
   }

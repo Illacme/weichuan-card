@@ -39,6 +39,10 @@ Page({
   goApply() {
     wx.navigateTo({ url: '/pages/apply/open/open' })
   },
+  // 隐私政策页：微信审核要求用户可在应用内查阅隐私保护指引（未登录访客同样可达）
+  goPrivacy() {
+    wx.navigateTo({ url: '/pages/privacy/privacy' })
+  },
   // 返回名片首页：底部 tabBar 已移除，「我的」页由 navigateTo 进入，返回用 navigateBack；
   // 若栈内已无名片页（极端入口），兜底 reLaunch 回名片页
   goMyCard() {
@@ -57,6 +61,10 @@ Page({
   },
   goStat() {
     wx.navigateTo({ url: '/pages/employee/stat/stat' })
+  },
+  // 我的数据：查阅/复制本人个人信息（PIPL 查阅复制权）
+  goMydata() {
+    wx.navigateTo({ url: '/pages/mydata/mydata' })
   },
   openPwd() {
     this.setData({ pwdVisible: true, pwd: { oldPwd: '', newPwd: '', confirmPwd: '' } })
@@ -107,5 +115,42 @@ Page({
     wx.removeStorageSync('empRefreshToken')
     this.setData({ me: null, pendingModify: false, pwdVisible: false })
     if (!silent) wx.showToast({ title: '已退出登录' })
+  },
+  // 注销账号（PIPL 删除权）：删除本人员工记录及关联 PII。
+  //
+  // 这是**不可恢复**的特权动作——一旦注销，名片与管理后台账号都没了。
+  // 因此走两次强确认：第一次讲清后果，第二次用「确认注销」红字按钮再次确认，
+  // 避免手滑误删（一次确认在微信里太容易直接点掉）。
+  cancelAccount() {
+    wx.showModal({
+      title: '注销账号',
+      content: '注销后你的电子名片、账号与全部个人信息将被永久删除，且不可恢复。确定要继续吗？',
+      confirmText: '继续注销',
+      confirmColor: '#e64340',
+      success: (r1) => {
+        if (!r1.confirm) return
+        wx.showModal({
+          title: '确认注销',
+          content: '最后确认：此操作不可撤销，你的所有数据将被清除。',
+          confirmText: '确认注销',
+          confirmColor: '#e64340',
+          success: async (r2) => {
+            if (!r2.confirm) return
+            const res = await request('POST', '/api/employee/me/cancel')
+            if (res.code === 0) {
+              // 注销成功：清本地登录态并回名片首页（未登录态）
+              wx.removeStorageSync('empToken')
+              wx.removeStorageSync('empRefreshToken')
+              const app = getApp() as any
+              if (app) app.globalData.myStaffId = 0
+              wx.showToast({ title: '账号已注销', icon: 'success' })
+              setTimeout(() => wx.reLaunch({ url: '/pages/index/index' }), 800)
+            } else {
+              wx.showToast({ title: res.msg || '注销失败', icon: 'none' })
+            }
+          },
+        })
+      },
+    })
   },
 })

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,8 +14,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"weichuan/internal/logx"
+
 	"github.com/gin-gonic/gin"
 )
+
+// ─────────────────────────────────────────────────────────────
+// 可观测性三件套（零第三方依赖）：
+//   1. RequestID：注入 / 透传 X-Request-Id，串联访问日志与排障；
+//   2. AccessLog：每个请求一行结构化日志（方法 / 路径 / 状态 / 耗时 / IP）；
+//   3. Metrics：内存计数器 + Prometheus 文本格式 /metrics（默认关闭，
+//      由 METRICS_ENABLED=1 显式开启，避免公网暴露流量规模）。
+// 日志走标准 log（12-factor），生产可被 journald / 日志采集直接收集；
+// 形态（人读文本 / JSONL）由 logx 统一切换，见 LOG_FORMAT。
+// ─────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────
 // 可观测性三件套（零第三方依赖）：
@@ -75,13 +88,9 @@ func AccessLog() gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		latency := time.Since(start).Round(time.Millisecond)
-		line := fmt.Sprintf("%s %s %d %s req=%s ip=%s",
-			c.Request.Method, c.Request.URL.Path, status, latency, RequestIDOf(c), c.ClientIP())
-		if status >= 500 {
-			log.Printf("[ACCESS-5XX] %s", line)
-			return
-		}
-		log.Printf("[ACCESS] %s", line)
+		// 走 logx 而不是直接 log.Printf：JSON 模式下 method / path / status 是
+		// 可聚合的字段（「按路径统计 5xx」这条最常用），文本模式下格式与历史一致。
+		logx.Access(c.Request.Method, c.Request.URL.Path, status, latency, RequestIDOf(c), c.ClientIP())
 	}
 }
 
@@ -96,6 +105,10 @@ type Metrics struct {
 	// 关闭时不计数、GET /metrics 返回 404——避免在公网暴露流量规模。
 	// nil 表示不接入系统设置（始终启用）。
 	Enabled func() bool
+	// Allow 可选的进一步限制：返回 false 时 /metrics 同样按 404 处理。
+	// 用于把指标端点收在内网（METRICS_ALLOW_CIDR），即便开关被误开也不至于
+	// 把流量规模摊在公网上。nil 表示不额外限制。
+	Allow func(c *gin.Context) bool
 }
 
 // enabled 当前是否采集指标；未接入开关时恒为 true。
@@ -132,6 +145,11 @@ func (m *Metrics) Handler() gin.HandlerFunc {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		// 白名单同样按「不存在」处理：不返回 403 是为了不暴露「这里有个端点」。
+		if m.Allow != nil && !m.Allow(c) {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		m.mu.Lock()
 		keys := make([]string, 0, len(m.counters))
 		for k := range m.counters {
@@ -157,5 +175,64 @@ func (m *Metrics) Handler() gin.HandlerFunc {
 		fmt.Fprintf(&b, "weichuan_uptime_seconds %d\n", uptime)
 
 		c.Data(http.StatusOK, "text/plain; version=0.0.4", []byte(b.String()))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 来源 IP 白名单（给 /metrics 这类「只该内网访问」的端点用）
+// ─────────────────────────────────────────────────────────────
+
+// NewIPAllowlist 按 CIDR 列表构造放行判定。
+//
+// 两条必须说清的取舍：
+//   - 列表为空 = 放行全部。/metrics 本身默认关闭，白名单是**第二道门**，
+//     没配第二道门时不该顺手把第一道门也堵死（否则配了 METRICS_ENABLED=1
+//     却忘了配网段的人会得到一个永远 404 的监控端点，且不知道为什么）。
+//   - 任一条 CIDR 解析失败 → **整体拒绝**（fail-closed）。配了白名单却写错，
+//     最坏的结果是「以为限制了其实没限制」；宁可让监控端点先不可用，
+//     也不能让流量规模被公网抓到。启动时日志会点名哪条写错了。
+func NewIPAllowlist(cidrs []string) func(ip string) bool {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	bad := make([]string, 0)
+	for _, s := range cidrs {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(s); err == nil {
+			nets = append(nets, n)
+			continue
+		}
+		// 也接受单个 IP（没有 /掩码 的写法很常见）
+		if ip := net.ParseIP(s); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		bad = append(bad, s)
+	}
+	for _, s := range bad {
+		log.Printf("[WARN] METRICS_ALLOW_CIDR 里有无法解析的条目 %q：白名单按「全部拒绝」处理（/metrics 将一律 404）", s)
+	}
+	if len(bad) > 0 {
+		return func(string) bool { return false }
+	}
+	if len(nets) == 0 {
+		return func(string) bool { return true }
+	}
+	return func(ip string) bool {
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			return false
+		}
+		for _, n := range nets {
+			if n.Contains(parsed) {
+				return true
+			}
+		}
+		return false
 	}
 }

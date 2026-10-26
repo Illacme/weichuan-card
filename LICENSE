@@ -1,21 +1,170 @@
-MIT License
+微传名片 — 商业许可协议（专有软件 / Proprietary License）
 
-Copyright (c) 2026 Illacme
+版权所有 (C) 2026 Illacme。保留所有权利。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+重要提示
+--------
+本软件是专有商业软件，**不再**依据 MIT 或任何其他开源许可授权。
+除本协议明确授予的权利、或 Illacme 另行书面授权外，一切权利均予保留。
+任何使用、复制、修改、分发行为，均须事先取得 Illacme 的书面授权。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+一、定义
+-------
+1. "本软件"：微传名片三端工程（backend / frontend / miniprogram）及其文档中
+   由 Illacme 原创的代码、文档与自有素材；**不含**第三方组件（见 NOTICES.md，
+   其仍受各自原许可约束）。
+2. "被授权方"：与 Illacme 签署书面许可合同，或持有 Illacme 签发的有效许可证
+   文件（如 data/license.key）的主体。
+3. "授权范围"：书面合同或许可证文件中载明的要素，包括席位（员工数上限）、
+   有效期、功能开关、部署形态（私有 / 独立部署或平台模式）、绑定的租户与域名等。
+
+
+二、未获授权时的禁止行为
+------------------------
+未取得 Illacme 书面授权，任何主体不得实施下列行为：
+1. 复制、安装、部署、运行本软件的全部或任何部分；
+2. 修改、翻译、反编译、反汇编、逆向工程，或以其他方式试图获取源代码；
+3. 分发、出租、出借、转售、再许可（sublicense），或以任何方式向第三方提供；
+4. 以本软件为基础对外提供商业服务，包括但不限于 SaaS、代运营、托管服务；
+5. 移除、遮蔽或篡改本软件中的版权、商标、授权声明与许可证标识；
+6. 规避、停用、破解或绕过本软件的授权校验机制——包括但不限于许可证签名校验、
+   席位上限、到期降级只读、功能开关。该机制是本协议授权范围的技术执行手段，
+   规避行为同时构成违约与侵权。
+
+
+三、授予被授权方的权利（有限）
+------------------------------
+在授权范围与有效期内，被授权方可为**自身内部业务**需要：
+1. 部署并运行本软件，包括为运行与灾备目的制作必要数量的备份副本；
+2. 为适配自身业务做必要的配置与改动；改动部分的权利归属及衍生作品的处置，
+   依书面合同约定（未约定时仍归 Illacme）；
+3. 在授权席位范围内供其内部员工及关联企业使用。
+
+超出授权范围的使用（超席位、超有效期、启用未授权功能）由软件内置的授权机制
+自动限制（降级只读 / 拒绝创建 / 拦截功能），被授权方不得规避。
+
+
+四、转售与二次分发的禁止
+------------------------
+被授权方不得将本软件（无论原始形态或经修改）转售、二次分发、公开或开源发布，
+亦不得用于向第三方提供与本软件构成实质竞争的服务。
+
+
+五、所有权
+----------
+本软件及其所有副本的著作权、专利权、商标权及其他知识产权均归 Illacme 所有。
+本协议不转让任何所有权，仅授予第三条所述的有限使用权。
+
+
+六、第三方组件
+--------------
+本软件包含第三方开源组件（例如 backend/internal/assets/library 下的 Lucide
+图标，ISC 许可；以及后端 Go 模块与前端 npm 依赖）。该等组件**仍受各自原许可
+约束**，Illacme 不对其主张专有权利；被授权方使用时应遵守其原许可。
+清单与获取方式见 NOTICES.md、各子工程说明及依赖自身的许可文件。
+
+
+七、无担保与责任限制
+--------------------
+本软件按"现状"提供。Illacme 不作任何明示或默示的担保，包括但不限于适销性、
+特定用途适用性及不侵权的担保。在法律允许的最大范围内，Illacme 不对任何间接、
+附带、特殊、惩罚性或后果性损害（包括利润损失、数据损失、业务中断）承担责任，
+即使已被告知该等损害的可能性。
+
+
+八、期限与终止
+--------------
+本授权在授权范围内、有效期内有效。发生下列任一情形时授权自动终止，被授权方
+应立即停止使用并删除其持有的全部副本：
+1. 有效期届满且未续订；
+2. 违反本协议任一禁止性条款（含规避授权校验）；
+3. 书面合同约定的其他终止事由。
+
+
+九、关于历史开源版本
+--------------------
+本软件的早期版本曾以 MIT 许可发布。MIT 许可不可撤销：在该等版本发布之时已依
+据 MIT 合法取得的权利，不受本协议影响。本协议适用于 Illacme 此后分发（含更新、
+修改与衍生）的版本。
+
+
+十、其他
+--------
+1. 本协议适用中华人民共和国法律（不含冲突法）；因本协议产生的争议，提交
+   Illacme 所在地有管辖权的人民法院解决。
+2. 本协议以中文版本为正式文本。
+3. Illacme 保留对本协议的解释与更新权；更新不溯及已签署的书面许可合同。
+
+商务与授权咨询：wqbyc@msn.com
+
+(C) 2026 Illacme。保留所有权利。
+
+
+================================================================================
+English (reference only — the Chinese text above is the authoritative version)
+================================================================================
+
+Weichuan Card — Commercial License Agreement (Proprietary Software)
+
+Copyright (C) 2026 Illacme. All rights reserved.
+
+NOTICE: This software is proprietary and is NOT licensed under MIT or any
+other open-source license. Except as expressly granted herein or separately
+authorized in writing by Illacme, all rights are reserved.
+
+1. DEFINITIONS. "Software" means the original code, documentation and assets of
+   the Weichuan Card project (backend / frontend / miniprogram), excluding
+   third-party components (see NOTICES.md). "Licensee" means a party that has
+   signed a written license agreement with Illacme or holds a valid license
+   file issued by Illacme. "Scope" means the seats, term, feature flags,
+   deployment mode and bound tenant/domain stated in the agreement or file.
+
+2. PROHIBITIONS WITHOUT AUTHORIZATION. No party may, without Illacme's written
+   authorization: (a) copy, install, deploy or run the Software; (b) modify,
+   translate, decompile, disassemble or reverse engineer it; (c) distribute,
+   rent, lend, resell or sublicense it; (d) use it to provide commercial
+   services to third parties (including SaaS); (e) remove or alter copyright,
+   trademark or license notices; or (f) circumvent, disable or defeat its
+   license enforcement mechanisms (signature verification, seat limits, expiry
+   degradation, feature flags).
+
+3. LIMITED RIGHTS GRANTED. Within the Scope and term, Licensee may, for its own
+   internal business: (a) deploy and run the Software and make backups; (b) make
+   necessary configuration and modifications (ownership per written agreement,
+   otherwise Illacme); (c) allow use by internal staff within the licensed seat
+   count. Use beyond the Scope is automatically restricted by the Software's
+   built-in enforcement and must not be circumvented.
+
+4. NO RESALE OR REDISTRIBUTION. Licensee may not resell, redistribute, publish
+   or open-source the Software, or use it to offer services substantially
+   competing with the Software.
+
+5. OWNERSHIP. All intellectual property rights in the Software remain with
+   Illacme. This Agreement grants limited use rights only, not ownership.
+
+6. THIRD-PARTY COMPONENTS remain subject to their own licenses (e.g. Lucide
+   icons, ISC; Go modules; npm dependencies). See NOTICES.md.
+
+7. NO WARRANTY / LIMITATION OF LIABILITY. The Software is provided "AS IS"
+   without warranties of any kind. To the maximum extent permitted by law,
+   Illacme is not liable for indirect, incidental, special, punitive or
+   consequential damages.
+
+8. TERM AND TERMINATION. This license terminates automatically upon expiry
+   without renewal, breach of any prohibition (including circumvention), or
+   other events stated in the written agreement. Licensee must then cease use
+   and delete all copies.
+
+9. HISTORICAL OPEN-SOURCE RELEASES. Earlier versions were released under MIT.
+   MIT is irrevocable: rights validly acquired under MIT at the time of those
+   releases are unaffected. This Agreement governs versions distributed
+   thereafter.
+
+10. MISCELLANEOUS. Governed by the laws of the People's Republic of China;
+    disputes submitted to the competent court at Illacme's location. The Chinese
+    version is authoritative.
+
+Contact: wqbyc@msn.com
+
+(C) 2026 Illacme. All rights reserved.

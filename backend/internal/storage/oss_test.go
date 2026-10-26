@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,11 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeOSS 记录 OSS 请求的方法 / 路径，按 200 + x-oss-request-id 应答，
+// fakeOSS 记录 OSS 请求的方法 / 路径 / 体，按 200 + x-oss-request-id 应答，
 // 使 aliyun-oss-go-sdk 的 PutObject 走完整网络路径而无需真实 OSS。
 type fakeOSS struct {
 	gotMethod string
 	gotPath   string
+	gotBody   []byte
 	hits      int
 }
 
@@ -24,6 +26,8 @@ func (f *fakeOSS) server(t *testing.T) *httptest.Server {
 		f.hits++
 		f.gotMethod = r.Method
 		f.gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		f.gotBody = body
 		w.Header().Set("x-oss-request-id", "fake-request-id")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -53,15 +57,17 @@ func TestOssSave(t *testing.T) {
 	defer srv.Close()
 	up := newTestOssUploader(t, srv)
 
-	fh := makeFileHeader(t, "logo.png", []byte("\x89PNG\r\n\x1a\nrealpngcontent"))
+	fh := makeFileHeader(t, "logo.jpg", jpgWithExif())
 	url, err := up.Save(fh)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, fake.hits, "Save 应真正发起一次 PUT")
 	require.Equal(t, "PUT", fake.gotMethod)
 	require.True(t, strings.HasPrefix(fake.gotPath, "/weichuan/"), "对象路径应为 /<bucket>/<name>，实际 %s", fake.gotPath)
-	require.True(t, strings.HasSuffix(fake.gotPath, ".png"))
+	require.True(t, strings.HasSuffix(fake.gotPath, ".jpg"))
 	require.Equal(t, "http://cdn.example.com"+strings.TrimPrefix(fake.gotPath, "/weichuan"), url)
+	// 经 ProcessImage 重新编码后，落到 OSS 的字节必须已剥离 EXIF/GPS 标记
+	require.NotContains(t, string(fake.gotBody), "Exif\x00\x00", "上传到 OSS 的应是剥离后的字节，而非带 EXIF 的原图")
 }
 
 func TestOssSaveRejectsBadExtBeforeHTTP(t *testing.T) {

@@ -1,0 +1,64 @@
+# golangci-lint 配置（放在 backend/ 而不是仓库根：跟着 Go module 走，
+# 本机 `cd backend && golangci-lint run` 与 CI 完全同口径，不会出现「本地过、CI 红」）。
+#
+# 选型原则：**只留「报出来一定是问题」的 linter，不留风格类**。
+# 风格类规则（命名 / 注释 / 圈复杂度 / 行长）一开就是几十上百条，结局只有两种：
+# 花几天改代码，或者加一堆 nolint 把它变成摆设——两头都不划算。
+# 真正值得进 CI 的是「静默失败」这一族：它们在 Go 里完全合法，编译过、go vet 也过，
+# 只有 lint 会点名。errcheck 是其中最值钱的一个——一个被丢弃的 error
+# 往往就是「失败没人知道」的那一行。
+version: "2"
+
+run:
+  timeout: 5m
+  # 测试文件一并检查：测试里 `defer resp.Body.Close()` 被丢、err 被 `_` 吞掉，
+  # 都会让「断言其实没跑到」伪装成通过——那是最难发现的一类假绿。
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck      # 丢弃的 error（静默失败的主要来源）
+    - govet         # 与 `go vet` 同族，进 lint 是为了让本地一次跑完
+    - ineffassign   # 赋值后从未使用（常是「改了一半」的残留）
+    - staticcheck   # 已废弃 API、永远为真/假的条件、明显的逻辑错
+    - unused        # 未被引用的函数 / 字段 / 常量（删代码时最容易留下的垃圾）
+
+  settings:
+    staticcheck:
+      # 关掉两类「不是错」的检查：
+      #   1) QF1003 / QF1008 —— 「可以改写得更短」的建议。按它改会让
+      #      `db.Dialector.Name()` 变成 `db.Name()`，反而看不出这是方言判断；
+      #   2) ST1000 / ST1005 / ST1020 / ST1021 / ST1022 —— 注释与文案的**格式**规则。
+      #      ST1005「错误文案不应大写」是按英文习惯写的，本项目错误文案是中文，
+      #      且 Cloudflare / MySQL 这类专有名词本来就必须大写；ST102x 要求
+      #      导出符号的注释必须以符号名开头，而本项目注释习惯先写「这个东西解决
+      #      什么问题」（可读性优先）。这些全都是风格，报出来一堆只会逼出无意义的
+      #      改动，把真正的问题淹没在噪音里。
+      checks:
+        - "all"
+        - "-QF1003"
+        - "-QF1008"
+        - "-ST1000"
+        - "-ST1005"
+        - "-ST1020"
+        - "-ST1021"
+        - "-ST1022"
+    errcheck:
+      # 不检查 `fmt.Fprintf(os.Stdout, ...)` 这类惯用写法：它们的返回值在实践中
+      # 无人处理，全查一遍只会逼出一堆 `_ =` 赋值，反而把真正的漏判淹没掉。
+      exclude-functions:
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    rules:
+      # 测试里为构造场景显式丢错是惯例（如 `_, _ = db.Exec("DROP TABLE ...")`），
+      # 按文件豁免比逐行加 nolint 干净。
+      - path: _test\.go$
+        linters:
+          - errcheck

@@ -30,6 +30,8 @@ frontend/
     │   ├── employees.ts      # 员工管理
     │   ├── content.ts        # 公司信息/简介/分类/项目/服务/首页布局
     │   ├── storage.ts        # CDN 刷新 / 私有桶签名
+    │   ├── tenants.ts        # 企业管理 / 企业管理员 / 租户小程序凭据（含 releaseEnabled 代发开关）
+    │   ├── mpRelease.ts      # 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回
     │   └── assets.ts         # 开源素材库：清单 / 采用 / 预览图 URL
     ├── store/auth.ts         # Pinia 登录态（持久化 localStorage）
     ├── router/index.ts       # 路由表 + 路由守卫
@@ -37,6 +39,7 @@ frontend/
     ├── components/
     │   ├── UploadField.vue   # 通用上传组件（直传预签名 + 回退普通上传 + 素材库入口）
     │   ├── AssetPicker.vue   # 开源素材库选择器（分类 tab + 风格行 + 搜索 + 分页 + 单选/多选采用）
+    │   ├── MPReleaseDialog.vue  # 小程序版本发布弹窗（按状态机显隐按钮 + 驳回原因 + 二次确认）
     │   └── ChangePasswordDialog.vue
     └── views/
         ├── Login.vue
@@ -121,7 +124,37 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 | 页面     | 接口                                    | 备注                                                   |
 | ------ | ------------------------------------- | ---------------------------------------------------- |
 | 企业管理   | `GET/POST/PUT /api/admin/companies` 等 | 多租户：开通/停用企业、企业管理员管理、企业简称；企业管理员访问会被后端 403 拒绝          |
+| 版本发布   | `/api/admin/companies/:id/releases` 等 | 代租户提审 / 发布小程序版本；入口在企业管理行「版本」按钮，详见下节 |
 | CDN 刷新 | `POST /api/admin/cdn/refresh`         | 平台级基础设施操作，需启用刷新并选好厂商（阿里云 / 腾讯云 / 七牛云 / Cloudflare / AWS CloudFront）且填全该厂商要求的凭据；覆盖同名对象（素材采用 / 小程序码重生成）已自动刷新，此处为手动兜底 |
+
+## 小程序版本发布（企业管理 →「版本」）
+
+`src/components/MPReleaseDialog.vue` + `src/api/mpRelease.ts`。**上传代码有两条路**：
+后台自己传到微信（`source=backend`，不需要任何人装微信开发者工具），或 CI 传完后由后台登记
+版本号（`source=ci` / `manual`）。之后都是**提交审核 → 查审核状态 → 发布**，外加一个撤回。
+
+- **「上传代码」与「登记版本」的分工**：登记只是记一笔，版本号写错了要到提审才暴露；
+  上传是后台真的把源码传上去，成功后由后端按同一个版本号自动建 draft 记录，
+  从根上杜绝「填的号」和「传的号」不是同一个。
+- **打开上传弹窗先探活**（`getMPReleaseUploadReadiness`）：缺 node / 没装 miniprogram-ci /
+  源码目录不在 / 没配上传密钥，一次列全摆在表单上方，没清完禁用「开始上传」——
+  而不是让人干等几分钟再报错。上传是**同步执行、分钟级**，界面上也写明了勿关闭页面。
+- **按钮显隐完全跟状态机走**（后端白名单是最终裁判，前端只是少让人点错）：
+  `draft` 出「提交审核」；`auditing` 出「查状态 / 撤回」；`audit_passed` 出「查状态 / 发布」；
+  `rejected` / `withdrawn` 出「重新提审」；`released` 是终态，行内只有一个不可点的「已上线」。
+- **三条不可逆代价都做成了二次确认**，且文案说清后果而不是「确定吗？」：
+  重新提社会再扣一次审核额度、撤回不返还已扣额度、发布对全部用户立即生效。
+  撤回在后端还要求 `confirm=true` 才执行，双保险。
+- **驳回原因单独一列 + 危险色**：被驳回的版本要能一眼看到为什么，否则运营只会反复点
+  「重新提审」然后再次被同一个理由驳回。
+- **查状态回包区分 `changed`**：微信状态变了才提示「状态已更新」，仍在审核中则提示
+  「微信仍在审核中，稍后再查」——不把「没变」渲染成一次成功提示。
+- **租户代发开关与上传密钥**都在「凭据」弹窗里（`el-switch`，`releaseEnabled`）：
+  关掉后代发动作后端一律 403，列表仍可读（企业要能看见历史）；省略该字段保存时保持原值，
+  不会被静默重置。**上传密钥与 AppSecret 是两把不同的钥匙**（前者传代码、后者换 token 调
+  提审/发布），同样只写不读——接口只回 `uploadKeyConfigured`，留空保存即清空并改用平台全局那把，
+  保存前会弹一次点名「要清掉什么」的确认（两个密钥合并成一次，不连弹两窗）。
+- 失败时保留旧数据不清空表格：一次网络抖动不该让人以为版本记录没了。
 
 ## 列表分页 / 搜索
 
@@ -191,6 +224,9 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
 - `src/components/UploadField.spec.ts`：上传组件用例——直传/回退分支、素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断。
+- `src/api/mpRelease.spec.ts`（10 例）：版本发布接口契约——路径拼装（租户维度列表 / 登记 vs 记录维度四个动作）、`undo-audit` 必须带 `confirm:true`、审核状态回包 `wxStatus/changed` 解包、`mpReleaseTagType` 六态映射（含未知值回落 info）、**上传与探活两条路径**（`/releases/upload` 带版本号+备注、`/releases/upload-readiness` 把 `data` 摊平且缺字段兜底）。
+- `src/components/MPReleaseDialog.spec.ts`（12 例）：版本弹窗——打开即按企业拉列表、**每个状态出哪些按钮**（draft 只有提交审核 / auditing 查状态+撤回 / audit_passed 发布 / released 终态无动作）、驳回原因渲染与「重新提审」、撤回与发布的二次确认（含用户取消时不调接口）、**上传链路**（打开即探活并逐条列出缺失项 / 就绪提示 / **环境不齐时点「开始上传」不发请求** / 就绪后提交并刷新列表）。`el-dialog` 桩认 `modelValue`，否则嵌套的登记弹窗会把「取消 / 登记」混进行内按钮断言；`el-button` 桩要把 `disabled` 声明成 prop，否则它以 attr 落到真 `<button>` 上，VTU 的 `trigger` 会直接跳过点击，那道 guard 就永远测不到。
+- `src/views/Companies.spec.ts`（凭据部分）：租户小程序凭据 + **平台代发开关** + **上传密钥**——缺省允许、关掉后随保存提交 `releaseEnabled:false`、回包 `releaseEnabled:false` 时显示关闭态；上传密钥填了随保存提交、**原本已配置却留空时确认文案同时点名 AppSecret 与上传密钥**（一次说清要清掉什么，不连弹两窗）；以及原先的列表标签 / 回填 / Secret 留空二次确认 / AppID 前缀校验。
 - `src/router/index.spec.ts`（11 例）：路由守卫门禁——未登录跳登录页、已登录访问登录页回后台、企业管理员访问平台级页面挡回审核页、平台超管放行、未知路径落默认页、登出后门禁立即生效；另守路由表本身（平台管理分组必须都标 `platformOnly`、仅登录页 public、业务页都要有 title）。做法是真实 routes + 桩组件 + 内存 history，挂的是生产同一个 `registerGuards`。
 - `src/layout/AdminLayout.spec.ts`（16 例）：后台外壳——**企业管理员看不到「平台管理」组**、平台超管能看到全部入口、品牌名三级回落（企业简称 → 系统设置品牌 → 「· 管理后台」后缀）、顶部标题取路由 `meta.title`、当前菜单跟随路由；刷新后 `profileLoaded=false` 时用 `/api/admin/me` 取回身份（已恢复则不重复请求，失败保留本地身份）；登出（接口失败也要本地登出）、改密弹层、手机端收进头像下拉、路由切换收起窄屏抽屉。
 - `src/views/content/` 六个企业内容页全覆盖：
@@ -245,7 +281,7 @@ npm run test:watch  # 监听模式
 > 说明：CI 中 `frontend` job 执行 `npm ci` + `npm run build` + `npm test`（前端与小程序单测一并覆盖）。  
 > 严格类型检查（`npm run type-check` / `vue-tsc --noEmit`）历史上有 4 个 `@wangeditor/*` 相关错误（editor-for-vue 的 `exports` 未暴露 types、自定义节点 `registerNodeType` 的类型签名），已通过 tsconfig `paths` 指向其真实 d.ts + 精准断言收敛修复，**当前 0 错误**；CI 的 `frontend-typecheck` job 已从「预警（continue-on-error）」升级为**阻塞门禁**，后续不得引入新的类型错误。
 
-## 反向代理配置（`nginx.conf`）的两个要点
+## 反向代理配置（`nginx.conf`）的三个要点
 
 线上由 `nginx.conf` 托管静态产物并反代后端。改这个文件时有两处**不是风格问题**：
 
@@ -263,8 +299,17 @@ npm run test:watch  # 监听模式
    登录 / 刷新 / 小程序码三处限流都按这个 IP 分桶，换一个伪造头就换一个桶——
    实测 14/14 全部放行。改成覆盖后同一手法第 11 次即返回 `code:429`。
 
+3. **`proxy_read_timeout` 要大于后台上传小程序代码的耗时（`MP_UPLOAD_TIMEOUT_SEC`，默认 300s）。**
+   `POST /api/admin/companies/:id/releases/upload` 是**同步执行**的——编译 + 传代码都在
+   这一次请求里做完，分钟级。nginx 默认的 60s 会在上传途中先返回 504，
+   而那时代码可能已经传到微信了：前端看到失败、后台没有 draft 记录，
+   运营再点一次就撞上「版本号已占用」。改的是反代，不是前端能兜住的。
+
 ## 已知边界（与后端一致）
 
 - 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；员工 / 企业 / 申请 / 账号 / 审计日志已服务端分页（`useServerTable` + 后端 `?page=&size=`）。
 - 私有桶场景下，前端无需改造：上传/访问经签名通道，URL 由后端返回限时签名地址（见《三端联调与接口总表》§4.4/§4.5）。
 - 初始密码仅返回一次（开通/新增/重置），前端弹窗展示，需超管线下通知员工。
+- **小程序版本发布是 MVP**：上传代码不在后台也不在后端——由 CI 用「代码上传密钥」经
+  `miniprogram-ci` 完成。后台登记版本号时**无法校验该版本是否真的上传过**，写错只在提审时
+  由微信暴露；`item_list`（审核类目）也未开放，取后台已配类目。

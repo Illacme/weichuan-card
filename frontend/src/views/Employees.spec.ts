@@ -149,7 +149,7 @@ function mountEmployees() {
 }
 
 // 等挂载后的 onMounted → load() 的微任务链走完
-async function flushLoad(w: ReturnType<typeof mountEmployees>) {
+async function flushLoad(_w: ReturnType<typeof mountEmployees>) {
   await nextTick()
   await nextTick()
   await nextTick()

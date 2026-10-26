@@ -193,7 +193,7 @@ const mountOpts = {
 }
 
 // 等挂载后 onMounted → load() 的微任务链走完
-async function flushLoad(w: ReturnType<typeof mount>) {
+async function flushLoad(_w: ReturnType<typeof mount>) {
   await nextTick()
   await nextTick()
   await nextTick()

@@ -1,5 +1,5 @@
 {
- "version": 7,
+ "version": 9,
  "styles": [
   {
    "key": "clean",
@@ -42,6 +42,10 @@
   {
    "key": "background",
    "name": "背景"
+  },
+  {
+   "key": "poster",
+   "name": "海报"
   }
  ],
  "items": [
@@ -14931,6 +14935,1165 @@
     "全屏",
     "sunburst",
     "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-lichun",
+   "name": "立春",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-lichun.jpg",
+   "thumb": "thumbs/posters/poster-lichun.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "立春",
+    "春",
+    "节气",
+    "东风",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-yushui",
+   "name": "雨水",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-yushui.jpg",
+   "thumb": "thumbs/posters/poster-yushui.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "雨水",
+    "春",
+    "节气",
+    "春雨",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-jingzhe",
+   "name": "惊蛰",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-jingzhe.jpg",
+   "thumb": "thumbs/posters/poster-jingzhe.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "惊蛰",
+    "春",
+    "节气",
+    "雷",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-chunfen",
+   "name": "春分",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-chunfen.jpg",
+   "thumb": "thumbs/posters/poster-chunfen.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "春分",
+    "春",
+    "节气",
+    "桃花",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-qingming",
+   "name": "清明",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-qingming.jpg",
+   "thumb": "thumbs/posters/poster-qingming.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "清明",
+    "春",
+    "节气",
+    "细雨",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-guyu",
+   "name": "谷雨",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-guyu.jpg",
+   "thumb": "thumbs/posters/poster-guyu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "谷雨",
+    "春",
+    "节气",
+    "雨生百谷",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-lixia",
+   "name": "立夏",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-lixia.jpg",
+   "thumb": "thumbs/posters/poster-lixia.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "立夏",
+    "夏",
+    "节气",
+    "万物并秀",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-xiaoman",
+   "name": "小满",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-xiaoman.jpg",
+   "thumb": "thumbs/posters/poster-xiaoman.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "小满",
+    "夏",
+    "节气",
+    "麦粒",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-mangzhong",
+   "name": "芒种",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-mangzhong.jpg",
+   "thumb": "thumbs/posters/poster-mangzhong.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "芒种",
+    "夏",
+    "节气",
+    "收麦",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-xiazhi",
+   "name": "夏至",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-xiazhi.jpg",
+   "thumb": "thumbs/posters/poster-xiazhi.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "夏至",
+    "夏",
+    "节气",
+    "烈日",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-xiaoshu",
+   "name": "小暑",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-xiaoshu.jpg",
+   "thumb": "thumbs/posters/poster-xiaoshu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "小暑",
+    "夏",
+    "节气",
+    "暑气",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-dashu",
+   "name": "大暑",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-dashu.jpg",
+   "thumb": "thumbs/posters/poster-dashu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "大暑",
+    "夏",
+    "节气",
+    "酷热",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-liqiu",
+   "name": "立秋",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-liqiu.jpg",
+   "thumb": "thumbs/posters/poster-liqiu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "立秋",
+    "秋",
+    "节气",
+    "落叶",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-chushu",
+   "name": "处暑",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-chushu.jpg",
+   "thumb": "thumbs/posters/poster-chushu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "处暑",
+    "秋",
+    "节气",
+    "暑退",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-bailu",
+   "name": "白露",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-bailu.jpg",
+   "thumb": "thumbs/posters/poster-bailu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "白露",
+    "秋",
+    "节气",
+    "露珠",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-qiufen",
+   "name": "秋分",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-qiufen.jpg",
+   "thumb": "thumbs/posters/poster-qiufen.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "秋分",
+    "秋",
+    "节气",
+    "月圆",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-hanlu",
+   "name": "寒露",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-hanlu.jpg",
+   "thumb": "thumbs/posters/poster-hanlu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "寒露",
+    "秋",
+    "节气",
+    "菊",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-shuangjiang",
+   "name": "霜降",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-shuangjiang.jpg",
+   "thumb": "thumbs/posters/poster-shuangjiang.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "霜降",
+    "秋",
+    "节气",
+    "霜",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-lidong",
+   "name": "立冬",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-lidong.jpg",
+   "thumb": "thumbs/posters/poster-lidong.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "立冬",
+    "冬",
+    "节气",
+    "初雪",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-xiaoxue",
+   "name": "小雪",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-xiaoxue.jpg",
+   "thumb": "thumbs/posters/poster-xiaoxue.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "小雪",
+    "冬",
+    "节气",
+    "轻雪",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-daxue",
+   "name": "大雪",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-daxue.jpg",
+   "thumb": "thumbs/posters/poster-daxue.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "大雪",
+    "冬",
+    "节气",
+    "瑞雪",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-dongzhi",
+   "name": "冬至",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-dongzhi.jpg",
+   "thumb": "thumbs/posters/poster-dongzhi.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "冬至",
+    "冬",
+    "节气",
+    "夜长",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-xiaohan",
+   "name": "小寒",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-xiaohan.jpg",
+   "thumb": "thumbs/posters/poster-xiaohan.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "小寒",
+    "冬",
+    "节气",
+    "严寒",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-dahan",
+   "name": "大寒",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-dahan.jpg",
+   "thumb": "thumbs/posters/poster-dahan.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "大寒",
+    "冬",
+    "节气",
+    "极寒",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-chunjie",
+   "name": "春节",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-chunjie.jpg",
+   "thumb": "thumbs/posters/poster-chunjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "春节",
+    "节日",
+    "新年",
+    "红灯笼",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-yuanxiao",
+   "name": "元宵",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-yuanxiao.jpg",
+   "thumb": "thumbs/posters/poster-yuanxiao.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "元宵",
+    "节日",
+    "灯会",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-duanwu",
+   "name": "端午",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-duanwu.jpg",
+   "thumb": "thumbs/posters/poster-duanwu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "端午",
+    "节日",
+    "粽子",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-zhongqiu",
+   "name": "中秋",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-zhongqiu.jpg",
+   "thumb": "thumbs/posters/poster-zhongqiu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "中秋",
+    "节日",
+    "月亮",
+    "团圆",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-guoqing",
+   "name": "国庆",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-guoqing.jpg",
+   "thumb": "thumbs/posters/poster-guoqing.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "国庆",
+    "节日",
+    "红旗",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-yuandan",
+   "name": "元旦",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-yuandan.jpg",
+   "thumb": "thumbs/posters/poster-yuandan.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "元旦",
+    "节日",
+    "新年",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-shengdan",
+   "name": "圣诞",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-shengdan.jpg",
+   "thumb": "thumbs/posters/poster-shengdan.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "圣诞",
+    "节日",
+    "冬青",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-shengri",
+   "name": "生日",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-shengri.jpg",
+   "thumb": "thumbs/posters/poster-shengri.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "生日",
+    "节日",
+    "庆祝",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-chuxi",
+   "name": "除夕",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-chuxi.jpg",
+   "thumb": "thumbs/posters/poster-chuxi.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "除夕",
+    "节日",
+    "团圆",
+    "年夜饭",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-laba",
+   "name": "腊八",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-laba.jpg",
+   "thumb": "thumbs/posters/poster-laba.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "腊八",
+    "节日",
+    "腊八粥",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-xiaonian",
+   "name": "小年",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-xiaonian.jpg",
+   "thumb": "thumbs/posters/poster-xiaonian.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "小年",
+    "节日",
+    "祭灶",
+    "扫尘",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-longtaitou",
+   "name": "龙抬头",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-longtaitou.jpg",
+   "thumb": "thumbs/posters/poster-longtaitou.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "龙抬头",
+    "节日",
+    "二月二",
+    "剃龙头",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-qixi",
+   "name": "七夕",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-qixi.jpg",
+   "thumb": "thumbs/posters/poster-qixi.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "七夕",
+    "节日",
+    "星河",
+    "乞巧",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-chongyang",
+   "name": "重阳",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-chongyang.jpg",
+   "thumb": "thumbs/posters/poster-chongyang.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "重阳",
+    "节日",
+    "登高",
+    "敬老",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-qingrenjie",
+   "name": "情人节",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-qingrenjie.jpg",
+   "thumb": "thumbs/posters/poster-qingrenjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "情人节",
+    "节日",
+    "告白",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-nvshenjie",
+   "name": "女神节",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-nvshenjie.jpg",
+   "thumb": "thumbs/posters/poster-nvshenjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "女神节",
+    "节日",
+    "三八",
+    "女性",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-laodongjie",
+   "name": "劳动节",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-laodongjie.jpg",
+   "thumb": "thumbs/posters/poster-laodongjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "劳动节",
+    "节日",
+    "五一",
+    "劳动者",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-muqinjie",
+   "name": "母亲节",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-muqinjie.jpg",
+   "thumb": "thumbs/posters/poster-muqinjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "母亲节",
+    "节日",
+    "妈妈",
+    "感恩",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-ertongjie",
+   "name": "儿童节",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-ertongjie.jpg",
+   "thumb": "thumbs/posters/poster-ertongjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "儿童节",
+    "节日",
+    "六一",
+    "童年",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-fuqinjie",
+   "name": "父亲节",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-fuqinjie.jpg",
+   "thumb": "thumbs/posters/poster-fuqinjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "父亲节",
+    "节日",
+    "爸爸",
+    "感恩",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-jiaoshijie",
+   "name": "教师节",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-jiaoshijie.jpg",
+   "thumb": "thumbs/posters/poster-jiaoshijie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "教师节",
+    "节日",
+    "老师",
+    "感恩",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-ganenjie",
+   "name": "感恩节",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-ganenjie.jpg",
+   "thumb": "thumbs/posters/poster-ganenjie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "感恩节",
+    "节日",
+    "感谢",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-pinganye",
+   "name": "平安夜",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-pinganye.jpg",
+   "thumb": "thumbs/posters/poster-pinganye.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "平安夜",
+    "节日",
+    "圣诞",
+    "平安",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-zhaopin",
+   "name": "招聘",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-zhaopin.jpg",
+   "thumb": "thumbs/posters/poster-zhaopin.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "招聘",
+    "商务",
+    "人才",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-hezuo",
+   "name": "商务合作",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-hezuo.jpg",
+   "thumb": "thumbs/posters/poster-hezuo.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "商务",
+    "合作",
+    "共赢",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-kaiye",
+   "name": "开业大吉",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-kaiye.jpg",
+   "thumb": "thumbs/posters/poster-kaiye.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "开业",
+    "商务",
+    "庆典",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-zhanhui",
+   "name": "展会邀请",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-zhanhui.jpg",
+   "thumb": "thumbs/posters/poster-zhanhui.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "展会",
+    "商务",
+    "邀请",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-xinpin",
+   "name": "新品上市",
+   "category": "poster",
+   "style": "vivid",
+   "file": "posters/poster-xinpin.jpg",
+   "thumb": "thumbs/posters/poster-xinpin.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "新品",
+    "商务",
+    "发布",
+    "海报",
+    "分享",
+    "背景",
+    "光影流动"
+   ]
+  },
+  {
+   "id": "poster-jiaofu",
+   "name": "项目交付",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-jiaofu.jpg",
+   "thumb": "thumbs/posters/poster-jiaofu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "交付",
+    "商务",
+    "项目",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-qiaojian",
+   "name": "乔迁之喜",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-qiaojian.jpg",
+   "thumb": "thumbs/posters/poster-qiaojian.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "乔迁",
+    "商务",
+    "新居",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-daxie",
+   "name": "客户答谢",
+   "category": "poster",
+   "style": "luxury",
+   "file": "posters/poster-daxie.jpg",
+   "thumb": "thumbs/posters/poster-daxie.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "答谢",
+    "商务",
+    "客户",
+    "海报",
+    "分享",
+    "背景",
+    "轻奢尊贵"
+   ]
+  },
+  {
+   "id": "poster-zhufu",
+   "name": "节日祝福",
+   "category": "poster",
+   "style": "soft",
+   "file": "posters/poster-zhufu.jpg",
+   "thumb": "thumbs/posters/poster-zhufu.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "祝福",
+    "节日",
+    "问候",
+    "海报",
+    "分享",
+    "背景",
+    "柔美清新"
+   ]
+  },
+  {
+   "id": "poster-kaigong",
+   "name": "开工大吉",
+   "category": "poster",
+   "style": "nature",
+   "file": "posters/poster-kaigong.jpg",
+   "thumb": "thumbs/posters/poster-kaigong.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "开工",
+    "商务",
+    "开工",
+    "海报",
+    "分享",
+    "背景",
+    "温暖自然"
+   ]
+  },
+  {
+   "id": "poster-xiaoqi",
+   "name": "校企合作",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-xiaoqi.jpg",
+   "thumb": "thumbs/posters/poster-xiaoqi.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "校企",
+    "商务",
+    "合作",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
+   ]
+  },
+  {
+   "id": "poster-brand",
+   "name": "匠心品质",
+   "category": "poster",
+   "style": "clean",
+   "file": "posters/poster-brand.jpg",
+   "thumb": "thumbs/posters/poster-brand.jpg",
+   "width": 640,
+   "height": 920,
+   "tags": [
+    "品牌",
+    "商务",
+    "品质",
+    "海报",
+    "分享",
+    "背景",
+    "简约清晰"
    ]
   }
  ]

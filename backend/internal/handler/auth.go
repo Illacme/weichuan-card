@@ -9,6 +9,7 @@ import (
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 	"weichuan/internal/repository"
 	"weichuan/internal/setting"
 
@@ -75,7 +76,8 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		var e model.Employee
-		if err := db.First(&e, "phone = ?", req.Phone).Error; err != nil {
+		// 手机号已静态加密：按盲索引等值查找（库里看不到明文，但仍能精确命中）。
+		if err := db.First(&e, "phone_bidx = ?", pii.BlindIndex(req.Phone)).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "账号不存在"})
 			return
 		}
@@ -104,7 +106,14 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			loginUpdates["openid"] = req.OpenID
 		}
 		if req.Nickname != "" {
-			loginUpdates["nickname"] = req.Nickname
+			// 昵称属 PII：此处是 map 更新（不触发模型钩子），必须显式加密 + 补盲索引。
+			enc, err := pii.Encrypt(req.Nickname)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登录失败"})
+				return
+			}
+			loginUpdates["nickname"] = enc
+			loginUpdates["nickname_bidx"] = pii.BlindIndex(req.Nickname)
 		}
 		if len(loginUpdates) > 0 {
 			db.Model(&e).Updates(loginUpdates)

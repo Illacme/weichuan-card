@@ -33,7 +33,7 @@ type Category struct {
 type Item struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
-	Category string   `json:"category"` // icon / cover / logo / avatar / background
+	Category string   `json:"category"` // icon / cover / logo / avatar / background / poster
 	Style    string   `json:"style"`    // 视觉调性：clean / nature / luxury / soft / vivid
 	File     string   `json:"file"`     // library 内相对路径，如 icons/icon-house.png
 	Thumb    string   `json:"thumb"`    // 预览图路径（缩略版，图标/LOGO/头像与 File 相同）
@@ -53,7 +53,7 @@ type StyleCount struct {
 type Query struct {
 	Page    int    // 1-based，<1 回落 1
 	Size    int    // 每页条数，<1 回落 DefaultPageSize，>MaxPageSize 截断
-	Type    string // 分类过滤："" 全部；icon / cover / logo / avatar / background
+	Type    string // 分类过滤："" 全部；icon / cover / logo / avatar / background / poster
 	Style   string // 调性过滤："" 全部；clean / nature / luxury / soft / vivid
 	Keyword string // 关键字：匹配名称或标签（大小写不敏感，中文直接子串匹配）
 }

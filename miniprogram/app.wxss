@@ -206,6 +206,138 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .save-btn { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; }
 .share-btn { background: #1a8cff; color: #fff; border: 1rpx solid #1a8cff; border-radius: 40rpx; }
 
+/* 海报背景选择条：横滑一排缩略图（海报是 640×920 竖幅，缩略图按 3:4.3 裁）。
+   选中项用主色描边——44 张里挑一张，没有选中态的话根本看不出当前用的哪张。 */
+.bg-bar { margin-top: 24rpx; }
+.bg-title { font-size: 26rpx; color: #666; margin-bottom: 12rpx; }
+.bg-strip { width: 100%; white-space: nowrap; }
+.bg-row { display: inline-flex; align-items: center; gap: 16rpx; padding: 4rpx 2rpx; }
+.bg-item { flex-shrink: 0; position: relative; }
+.bg-thumb {
+  width: 108rpx; height: 156rpx; border-radius: 8rpx;
+  border: 4rpx solid transparent; box-sizing: border-box;
+  background: #f2f3f5;
+}
+.bg-item.on .bg-thumb { border-color: #1a8cff; }
+/* 「今日节气」角标：节气日自动选中 + 排到第一位，只靠蓝色边框
+   看不出是节气选的，用户会以为是上次的选择。贴缩略图底部一条，
+   与素材图上烧的节气名呼应。 */
+.bg-today {
+  position: absolute; left: 4rpx; right: 4rpx; bottom: 4rpx;
+  padding: 2rpx 0; text-align: center;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  font-size: 20rpx; line-height: 1.2; border-radius: 0 0 5rpx 5rpx;
+}
+/* 节日用朱红（和海报上那枚「節慶」印章同色），节气用墨黑——
+   一眼能分清「因为过节」和「因为节气」，不用读字。 */
+.bg-today-festival { background: rgba(150, 28, 28, 0.82); }
+.bg-today-term { background: rgba(20, 26, 38, 0.78); }
+/* 首项「原样」= 白底卡片：与海报素材同尺寸，用文字标出，避免被当成裂图 */
+.bg-plain {
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border-color: #dcdfe6; color: #909399; font-size: 24rpx;
+}
+.bg-item.on .bg-plain { border-color: #1a8cff; color: #1a8cff; }
+
+/* 海报页底部：工具条 + 单行选项面板。
+   工具条常驻一屏内，「位置」不必滚动就能点到；面板只渲染当前工具的一行，
+   高度稳定（不随工具跳动），换工具时下面的「保存/分享」不会上下乱窜。 */
+.poster-tools {
+  display: flex; margin-top: 18rpx; padding: 6rpx;
+  background: #f2f3f5; border-radius: 14rpx;
+}
+.tool {
+  flex: 1; text-align: center; font-size: 25rpx; color: #666;
+  padding: 14rpx 0; border-radius: 10rpx; position: relative;
+}
+.tool.on { background: #fff; color: #1a8cff; font-weight: 600; }
+/* 当前工具下的小圆点：只靠底色区分在浅灰面板上不够明显 */
+.tool.on::after {
+  content: ''; position: absolute; left: 50%; bottom: 6rpx;
+  width: 8rpx; height: 8rpx; margin-left: -4rpx;
+  border-radius: 50%; background: #1a8cff;
+}
+.poster-panel {
+  margin-top: 16rpx;
+  /* 固定最小高度 + 垂直居中：工具间切换时面板不塌陷，「保存/分享」不上下跳。
+     172rpx 是按最高的两行工具（大小 / 位置：两行胶囊 + 一行提示）量的；
+     单行工具多出来的空间被 justify-content 分到上下，视觉上更居中而不是贴顶。 */
+  min-height: 172rpx; box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center;
+}
+
+/* 小程序码缺失提示：黄条 + 重试。用警示色而不是灰色——
+   这张图现在发出去是坏的，必须让用户看见。 */
+.qr-warn {
+  display: flex; align-items: center; margin-top: 14rpx;
+  padding: 12rpx 18rpx; border-radius: 10rpx;
+  background: #fff7e6; border: 1rpx solid #ffd591;
+}
+.qr-warn-txt { flex: 1; font-size: 22rpx; color: #ad6800; line-height: 1.4; }
+.qr-warn-btn {
+  flex-shrink: 0; margin-left: 16rpx; padding: 4rpx 20rpx;
+  font-size: 22rpx; color: #fff; background: #fa8c16; border-radius: 20rpx;
+}
+
+/* 上传入口：与背景缩略图同尺寸，虚线边框区分「不是一张图」 */
+.bg-upload {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #f7f8fa; border-color: #c8cdd6; border-style: dashed;
+}
+.bg-upload-plus { font-size: 40rpx; line-height: 1; color: #1a8cff; }
+.bg-upload-txt { font-size: 20rpx; color: #909399; margin-top: 6rpx; }
+.bg-upload.busy { opacity: 0.55; }
+.bg-hint { font-size: 22rpx; color: #aaa; margin-top: 10rpx; }
+
+/* 拖动层：盖在 canvas 上接收触摸（canvas 本身收不到 bindtouch）。
+   透明但仍然占位——不能省掉，否则拖不动。 */
+.poster-drag { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+/* 二维码热区：位置由版式计算给出（见 pages/poster/poster.ts 的 syncQrRect）。
+   平时是透明的一层（照样能接住触摸，所以「拖码」随时可用）；进「位置」工具
+   才显形成虚线框 + 角标，否则没人会想到二维码是可以单独挪的。 */
+.qr-hit {
+  position: absolute; box-sizing: border-box;
+  border: 2rpx dashed transparent; border-radius: 8rpx;
+}
+.qr-hit.show { border-color: rgba(26, 140, 255, 0.9); background: rgba(26, 140, 255, 0.06); }
+.qr-hit-label {
+  position: absolute; left: 0; top: 0;
+  font-size: 18rpx; line-height: 1; padding: 4rpx 8rpx;
+  color: #fff; background: rgba(26, 140, 255, 0.9);
+  border-radius: 8rpx 0 8rpx 0;
+}
+.drag-tip { font-size: 22rpx; color: #aaa; text-align: center; margin-top: 12rpx; }
+
+/* 单行选项组：不再有左侧标签列（工具条已经说明了这一行是什么），
+   腾出的宽度让 5 个胶囊也能一行排下 */
+.opt-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 12rpx; padding: 4rpx 0; }
+.opt-tip { font-size: 22rpx; color: #aaa; margin-top: 10rpx; }
+/* 位置读数：右对齐的次要信息，不跟按钮抢视觉重心 */
+.pos-read { margin-left: auto; font-size: 21rpx; color: #b0b3b8; }
+/* 组内小标签（头像 / 码 / 内容）：不占一整行，和胶囊同排。
+   固定宽度让两行的胶囊左端对齐——否则「码」单字那行会整体左移一格。 */
+.opt-sub { font-size: 22rpx; color: #909399; width: 72rpx; flex-shrink: 0; }
+
+/* 自定义文案输入：一行搞定，右侧「清空」只在有内容时出现。
+   放在配色胶囊下面而不是另开一个工具——两者都是「海报上这些字」。 */
+.custom-row { display: flex; align-items: center; margin-top: 14rpx; }
+.custom-input {
+  flex: 1; height: 64rpx; padding: 0 20rpx;
+  font-size: 24rpx; color: #333; background: #f7f8fa;
+  border: 1rpx solid #e4e7ed; border-radius: 12rpx; box-sizing: border-box;
+}
+.custom-ph { color: #b8bcc4; }
+.custom-clear {
+  flex-shrink: 0; margin-left: 16rpx; padding: 0 18rpx; height: 64rpx; line-height: 64rpx;
+  font-size: 23rpx; color: #909399; background: #f2f3f5; border-radius: 12rpx;
+}
+.chip {
+  padding: 0 24rpx; height: 56rpx; line-height: 56rpx;
+  font-size: 25rpx; color: #444; background: #f2f3f5; border-radius: 28rpx;
+  border: 1rpx solid transparent; box-sizing: border-box;
+}
+.chip.on { background: #e8f3ff; color: #1a8cff; border-color: #1a8cff; }
+
 /* 员工头像上传 */
 .form-item.avatar-row { align-items: center; }
 .avatar-preview { width: 96rpx; height: 96rpx; border-radius: 50%; background: #eee; margin-right: 16rpx; }

@@ -388,11 +388,12 @@ describe('index 首页', () => {
     expect(p.onShareAppMessage().title).toBe('朗汇机电设备有限公司')
   })
 
-  it('名片未加载时分享用默认标题', async () => {
+  it('名片未加载时分享用产品名兜底（不是任何具体企业名）', async () => {
     mockApis({ fail: true })
     const p = await page({ staffId: '42' })
 
-    expect(p.onShareAppMessage().title).toBe('朗汇机电')
+    // 兜底必须是产品名：一套代码多租户，写死某个客户名对第二个客户就是错的
+    expect(p.onShareAppMessage().title).toBe('微传名片')
     expect(p.onShareAppMessage().path).toBe('/pages/index/index?staffId=42')
   })
 

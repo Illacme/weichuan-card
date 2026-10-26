@@ -131,6 +131,48 @@ func TestAccessLogOutput(t *testing.T) {
 	require.Contains(t, out, "[ACCESS-5XX] GET /oops 500", "5xx 应带专用前缀便于告警匹配")
 }
 
+// /metrics 的第二道门：白名单外的来源一律 404（不返回 403，避免暴露端点存在）。
+// 即便有人在界面上把 metrics_enabled 打开了，公网也不该看到流量规模。
+func TestMetricsIPAllowlistGate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	allow := NewIPAllowlist([]string{"127.0.0.1/32", "10.0.0.0/8"})
+	m := NewMetrics()
+	m.Allow = func(c *gin.Context) bool { return allow(c.ClientIP()) }
+	r := gin.New()
+	r.GET("/metrics", m.Handler())
+
+	// 内网采集器：放行
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	req.RemoteAddr = "10.1.2.3:45678"
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// 公网来源：按「不存在」处理
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/metrics", nil)
+	req2.RemoteAddr = "203.0.113.9:45678"
+	r.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusNotFound, w2.Code, "白名单外应一律 404")
+}
+
+// 白名单的三条边界：空列表=不限制、单 IP 写法、写错=整体拒绝（fail-closed）。
+func TestNewIPAllowlistRules(t *testing.T) {
+	require.True(t, NewIPAllowlist(nil)("203.0.113.9"), "未配置网段时不额外限制（/metrics 另有开关兜底）")
+
+	allow := NewIPAllowlist([]string{"127.0.0.1/32", "10.0.0.0/8", "192.168.1.5"})
+	require.True(t, allow("127.0.0.1"))
+	require.True(t, allow("10.255.255.254"))
+	require.True(t, allow("192.168.1.5"), "不带掩码的单个 IP 也应接受")
+	require.False(t, allow("192.168.1.6"))
+	require.False(t, allow("203.0.113.9"))
+	require.False(t, allow("这不是 IP"))
+
+	// CIDR 写错（/33 非法）：宁可让监控端点先不可用，也不能「以为限制了其实没限制」
+	require.False(t, NewIPAllowlist([]string{"192.168.1.0/33"})("192.168.1.5"),
+		"白名单解析失败必须 fail-closed")
+}
+
 func TestPanicRecoveredByChain(t *testing.T) {
 	// panic 不应逃逸出中间件链：Recovery 捕获后返回 500
 	r, _ := testEngine()

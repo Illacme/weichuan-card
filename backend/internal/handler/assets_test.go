@@ -25,14 +25,14 @@ func TestAssetLibrary(t *testing.T) {
 	_, body = anon.do("GET", "/api/admin/assets/library", nil, "")
 	require.EqualValues(t, 401, body["code"])
 
-	// 2. 清单（默认第一页）：五个分类 + 分页元信息
+	// 2. 清单（默认第一页）：六个分类 + 分页元信息
 	_, body = plat.doWithCookie("GET", "/api/admin/assets/library", nil)
 	require.EqualValues(t, 0, body["code"])
 	data := body["data"].(map[string]interface{})
-	require.Len(t, data["categories"].([]interface{}), 5, "图标/封面/LOGO/头像/背景 五个分类")
+	require.Len(t, data["categories"].([]interface{}), 6, "图标/封面/LOGO/头像/背景/海报 六个分类")
 	items := data["items"].([]interface{})
 	total := int(data["total"].(float64))
-	require.GreaterOrEqual(t, total, 900, "素材应覆盖五大类九百项以上（含图标配色变体）")
+	require.GreaterOrEqual(t, total, 940, "素材应覆盖六大类九百四十项以上（含图标配色变体）")
 	require.EqualValues(t, 1, data["page"])
 	require.EqualValues(t, 15, data["size"], "缺省每页 15 条（5 列 × 3 排）")
 	require.EqualValues(t, 15, len(items), "第一页按 size 截断")
@@ -239,6 +239,49 @@ func TestAssetLibrary(t *testing.T) {
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		require.NotEqual(t, http.StatusOK, w.Code, p)
+	}
+}
+
+// TestPublicPosterList 小程序「选海报背景」用的公开清单。
+//
+// 守三件事：1) 免登录可取（访客扫别人的海报进来也要能换背景）；
+//  2. 只回 poster 分类（不能把 900+ 全量素材泄给小程序，也不该混进图标）；
+//  3. 每项都给出能直取的 URL，且缩略图与原图公开可下——URL 拼错在真机上
+//     表现为「背景选了但画布全黑」，本地开发（同源）永远复现不了。
+func TestPublicPosterList(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	anon := newTestClient(r, t)
+
+	_, body := anon.do("GET", "/api/assets/posters", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	items := data["items"].([]interface{})
+	// 24 节气 + 20 场景
+	require.GreaterOrEqual(t, len(items), 44, "海报应覆盖二十四节气与各商务场景")
+
+	first := items[0].(map[string]interface{})
+	require.NotEmpty(t, first["id"])
+	require.NotEmpty(t, first["name"])
+	require.NotEmpty(t, first["style"])
+	file, _ := first["file"].(string)
+	thumb, _ := first["thumb"].(string)
+	require.Contains(t, file, "/api/assets/file/posters/")
+	require.Contains(t, thumb, "/api/assets/file/thumbs/posters/")
+
+	// 只回海报：不得混入其它分类的 id
+	for _, it := range items {
+		m := it.(map[string]interface{})
+		require.Contains(t, m["id"].(string), "poster-", "海报清单里混进了非海报素材: %v", m["id"])
+	}
+
+	// 原图与缩略图都公开可取（无登录、无 Authorization）
+	for _, p := range []string{file, thumb} {
+		req := httptest.NewRequest("GET", p, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, p)
+		require.Equal(t, "image/jpeg", w.Header().Get("Content-Type"), p)
+		require.Greater(t, w.Body.Len(), 1000, "海报图不应是空文件: %s", p)
 	}
 }
 

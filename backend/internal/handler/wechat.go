@@ -11,11 +11,13 @@ import (
 
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
+	"weichuan/internal/model"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
 	"weichuan/internal/wechat"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // 小程序码内存缓存：避免每次请求都重新调微信 + 重新写对象存储。
@@ -85,11 +87,13 @@ var getWXACode = wechat.GetWXACodeUnlimit
 // refresher 可选：小程序码对象名固定（wxacode/<staffID>.jpg），TTL 到期重新生成 = 覆盖写，
 // 覆盖后要让 CDN 边缘失效，否则已分享出去的旧链接会一直拿到旧图
 // （2026-10-23 之前刷新只挂在随机名的上传接口，这条覆盖路径根本没触发）。
-func RegisterWechat(r *gin.Engine, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
-	// AppID / AppSecret 都每次请求解析：可在后台「系统设置 → 微信」配置，
-	// 未配置时回退环境变量 WX_APPID / WX_APPSECRET——换凭据不必改环境变量重启。
-	wcOf := func() wechat.Config {
-		return wechat.Config{AppID: resolveWXAppID(cfg), AppSecret: resolveWXAppSecret(cfg)}
+func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
+	// 按租户取凭据：staffId / companyId → 该企业的小程序凭据，未配则回落
+	// 全局设置（sys_setting）与环境变量。取值链见 wxAppOf。
+	// 之所以不写成「平台模式走全局、企业版走租户」两条分支：全局那一份本来就是
+	// 回落链的最后一环，租户没配时 wxAppOf 自动落到它，行为与改造前一致。
+	tenantWC := func(companyID int64) wechat.Config {
+		return wxAppOf(db, companyID, cfg)
 	}
 
 	// 微信身份换取（公开）：小程序 wx.login 的 code → openid。
@@ -97,12 +101,22 @@ func RegisterWechat(r *gin.Engine, cfg config.Config, up storage.Uploader, refre
 	r.POST("/api/wechat/openid", func(c *gin.Context) {
 		var req struct {
 			Code string `json:"code"`
+			// 客户端按自己所属租户填（企业独立版固定、平台模式粘滞，见 miniprogram/utils/tenant.ts）。
+			// 可以被伪造，但伪造只会让 code2session 失败：微信会校验 appid 与 code
+			// 是否同属一个小程序，拼不出「能用的错凭据」。所以这里信任入参，
+			// 换来的是「不必为每个 code 反查员工」。
+			CompanyID int64 `json:"companyId"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Code == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "缺少 code"})
 			return
 		}
-		openid, _, err := wechat.Code2Session(wcOf(), req.Code)
+		wc := tenantWC(req.CompanyID)
+		if wc.AppID == "" || wc.AppSecret == "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未配置小程序 AppID / WX_APPSECRET"})
+			return
+		}
+		openid, _, err := wechat.Code2Session(wc, req.Code)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 			return
@@ -121,16 +135,17 @@ func RegisterWechat(r *gin.Engine, cfg config.Config, up storage.Uploader, refre
 		WithMessage("小程序码生成过于频繁，请稍后再试")
 
 	r.GET("/api/wechat/wxacode", wxacodeLimiter.Handler(), func(c *gin.Context) {
-		// 未配置凭据时降级为明确错误：放在请求期判定（而非注册期一次性判定），
-		// 这样后台补上 AppID 后立刻可用，无需重启进程。
-		wc := wcOf()
-		if wc.AppID == "" || wc.AppSecret == "" {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未配置小程序 AppID / WX_APPSECRET"})
-			return
-		}
 		staffID, _ := strconv.ParseInt(c.Query("staffId"), 10, 64)
 		if staffID <= 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "缺少 staffId"})
+			return
+		}
+		// 未配置凭据时降级为明确错误：放在请求期判定（而非注册期一次性判定），
+		// 这样后台补上 AppID 后立刻可用，无需重启进程。
+		// 按 staffId 归属的租户取——企业独立版的员工要用自己企业的小程序码。
+		wc := tenantWC(companyIDOf(db, staffID))
+		if wc.AppID == "" || wc.AppSecret == "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未配置小程序 AppID / WX_APPSECRET"})
 			return
 		}
 		page := c.Query("page")
@@ -233,6 +248,127 @@ func resolveWXAppSecret(cfg config.Config) string {
 		return v
 	}
 	return cfg.WXAppSecret
+}
+
+// ---- 按租户取小程序凭据 ----
+//
+// 小程序有两种形态，凭据来源不同：
+//   平台模式（一个 appid 服务所有企业）→ sys_setting 的全局那一份就够；
+//   企业独立版（每企业一个 appid，共用同一套后端）→ 必须用该企业自己那份。
+//
+// 所以取值链是三级回落：**租户凭据 → 全局设置 → 环境变量**。
+// 平台模式的租户不配凭据，自动落到第二级，行为与改造前完全一致。
+
+var (
+	wxAppMu    sync.Mutex
+	wxAppCache = map[int64]wxAppEntry{}
+)
+
+type wxAppEntry struct {
+	appID     string
+	appSecret string
+	expAt     time.Time
+}
+
+// wxAppCacheTTL 租户凭据的缓存时长。设置成短 TTL 而不是「改完即失效」：
+// 后台保存时已经主动清缓存（见 clearWXAppCache），这里的 TTL 只是兜底，
+// 兼顾「不每请求查库」与「改错了最多 30 秒就恢复」。
+const wxAppCacheTTL = 30 * time.Second
+
+// clearWXAppCache 后台保存租户凭据后调用：改完立刻生效，不用等 TTL。
+func clearWXAppCache(companyID int64) {
+	wxAppMu.Lock()
+	delete(wxAppCache, companyID)
+	wxAppMu.Unlock()
+}
+
+// tenantWXApp 读租户的小程序凭据。**必须成对返回**：只配了 appid 或只配了
+// appsecret 时按「没配」处理——半配置比不配更危险，会拼出
+// 「平台的 appid + 企业的 secret」这种组合，生成出来的码谁也扫不开，
+// 而报错信息只会指向微信侧，极难查。后台界面也是成对保存的。
+func tenantWXApp(db *gorm.DB, companyID int64) (string, string) {
+	if db == nil || companyID <= 0 {
+		return "", ""
+	}
+	wxAppMu.Lock()
+	e, ok := wxAppCache[companyID]
+	wxAppMu.Unlock()
+	if ok && time.Now().Before(e.expAt) {
+		return e.appID, e.appSecret
+	}
+	var row model.CompanyWXApp
+	err := db.Where("company_id = ?", companyID).First(&row).Error
+	appID, appSecret := "", ""
+	if err == nil {
+		appID = strings.TrimSpace(row.AppID)
+		appSecret = strings.TrimSpace(row.AppSecret)
+	}
+	if appID == "" || appSecret == "" {
+		appID, appSecret = "", ""
+	}
+	wxAppMu.Lock()
+	wxAppCache[companyID] = wxAppEntry{appID: appID, appSecret: appSecret, expAt: time.Now().Add(wxAppCacheTTL)}
+	wxAppMu.Unlock()
+	return appID, appSecret
+}
+
+// wxAppOf 完整取值链：租户凭据 → 全局设置 → 环境变量。
+func wxAppOf(db *gorm.DB, companyID int64, cfg config.Config) wechat.Config {
+	appID, appSecret := tenantWXApp(db, companyID)
+	if appID == "" || appSecret == "" {
+		return wechat.Config{AppID: resolveWXAppID(cfg), AppSecret: resolveWXAppSecret(cfg)}
+	}
+	return wechat.Config{AppID: appID, AppSecret: appSecret}
+}
+
+// ---- staffId → companyID ----
+//
+// wxacode 是公开接口（访客扫码看名片就要取，不能挂鉴权），所以不能信客户端
+// 传的 companyId——伪造它就能让别的企业的码用错 appid 生成。可靠路径是
+// staffId → employee.company_id：staffId 是全局唯一主键，伪造不了归属。
+//
+// 但每次请求回表 employee 会在扫描洪峰时打到主库，所以加一层短缓存。
+// 员工归属企业几乎不变；负结果（staffId 不存在 → 0）也缓存，
+// 否则枚举 staffId 扫号时会变成「每次 miss 都查一次库」。
+var (
+	staffCompanyMu    sync.Mutex
+	staffCompanyCache = map[int64]staffCompanyEntry{}
+)
+
+type staffCompanyEntry struct {
+	companyID int64
+	expAt     time.Time
+}
+
+const staffCompanyTTL = 5 * time.Minute
+const staffCompanyCacheMax = 8192
+
+// companyIDOf staffId → 租户。查库失败或 staffId 不存在都返回 0（= 用全局凭据），
+// 不阻断出码——码出不来是整条分享链断掉，比用错一次凭据严重得多。
+func companyIDOf(db *gorm.DB, staffID int64) int64 {
+	if db == nil || staffID <= 0 {
+		return 0
+	}
+	now := time.Now()
+	staffCompanyMu.Lock()
+	e, ok := staffCompanyCache[staffID]
+	staffCompanyMu.Unlock()
+	if ok && now.Before(e.expAt) {
+		return e.companyID
+	}
+	var cid int64
+	if err := db.Model(&model.Employee{}).Where("staff_id = ?", staffID).
+		Select("company_id").Scan(&cid).Error; err != nil {
+		cid = 0
+	}
+	staffCompanyMu.Lock()
+	if len(staffCompanyCache) >= staffCompanyCacheMax {
+		// 直接清空而不是逐个淘汰：这是纯缓存，重建成本只是一次主键查询
+		staffCompanyCache = map[int64]staffCompanyEntry{}
+	}
+	staffCompanyCache[staffID] = staffCompanyEntry{companyID: cid, expAt: now.Add(staffCompanyTTL)}
+	staffCompanyMu.Unlock()
+	return cid
 }
 
 // wxacodeTTL 小程序码缓存有效期：优先取系统设置 upload/wxacode_ttl_hours，

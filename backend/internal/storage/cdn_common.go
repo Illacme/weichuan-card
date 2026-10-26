@@ -72,7 +72,7 @@ func cdnDo(req *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cdn refresh request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // 只读响应体，关闭错误无后果
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		return body, fmt.Errorf("cdn refresh http %d: %s", resp.StatusCode, cdnSnippet(body))

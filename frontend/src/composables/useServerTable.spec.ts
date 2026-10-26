@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { nextTick, ref } from 'vue'
+import { nextTick } from 'vue'
 import { useServerTable } from './useServerTable'
 import type { Paged } from '@/api/request'
 

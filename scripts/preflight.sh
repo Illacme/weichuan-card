@@ -147,8 +147,19 @@ sec "3. 小程序引导种子基址"
 seed_file="$ROOT/miniprogram/utils/config.ts"
 if [ -f "$seed_file" ]; then
   seed="$(sed -n "s/.*DEFAULT_BASE_URL *= *['\"]\([^'\"]*\)['\"].*/\1/p" "$seed_file" | head -1)"
-  if [ -z "$seed" ]; then
-    skip "$seed_file 中未找到 DEFAULT_BASE_URL"
+  if ! grep -q 'DEFAULT_BASE_URL *=' "$seed_file"; then
+    skip "$seed_file 中未找到 DEFAULT_BASE_URL 声明"
+  elif [ -z "$seed" ]; then
+    # 空串 = 部署方还没填（这是源码的**默认**状态：故意不内置任何地址，
+    # 免得把某个开发机的内网 IP / 明文 http 随源码分发出去）。
+    # 但种子基址是首连的**唯一入口**：空着等于首屏一个请求都发不出去
+    # （拼出来的 '/api/public/settings' 不是合法 URL），
+    # 而后台配 miniprogram_base_url 也救不回来——拉不到配置就不知道去哪儿拉。
+    if [ "${PREFLIGHT_ALLOW_PRIVATE:-0}" = "1" ]; then
+      warn "种子基址为空（已由 PREFLIGHT_ALLOW_PRIVATE=1 放行）：仅限本机联调，发布前必须填线上 https 域名并重新打包小程序"
+    else
+      fail "种子基址为空：小程序首次冷启动拉不到后台配置（拼出的 '/api/public/settings' 不是合法 URL），后台配 miniprogram_base_url 也救不回来。发布前须在 miniprogram/utils/config.ts 填入线上 https 域名并重新打包小程序（本机联调可 PREFLIGHT_ALLOW_PRIVATE=1 跳过本项）"
+    fi
   else
     # 取主机名再判：直接对整串做 *10.* 之类的匹配会把 card10.example.com 也当成内网
     seed_host="$(printf '%s' "$seed" | sed -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#/.*$##' -e 's#^.*@##' -e 's#:.*$##')"

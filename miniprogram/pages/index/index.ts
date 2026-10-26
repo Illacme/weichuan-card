@@ -1,6 +1,7 @@
 import { request, assetUrl } from '../../utils/request'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { track, deriveSource } from '../../utils/track'
+import { FALLBACK_BRAND } from '../../utils/brand'
 
 Page({
   data: {
@@ -252,7 +253,9 @@ Page({
     // 转发量是「员工愿不愿意把这张名片推出去」的直接信号——销售动力指标。
     track('share', this.data.staffId)
     return {
-      title: (c && (c.shortName || c.fullName)) || '朗汇机电',
+      // 名片还没加载出来时的兜底标题：用产品名，**不能**用任何具体企业名——
+      // 一套代码多租户，写死某个客户名对第二个客户就是错的。
+      title: (c && (c.shortName || c.fullName)) || FALLBACK_BRAND,
       path:
         '/pages/index/index?staffId=' +
         this.data.staffId +

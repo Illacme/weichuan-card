@@ -55,10 +55,19 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
 	name, err := RandName(ext)
+	if err != nil {
+		return "", err
+	}
+	// 读取全部字节做 EXIF/GPS 剥离（非图片原样透传），再落盘。
+	raw, err := io.ReadAll(src)
+	if err != nil {
+		return "", err
+	}
+	clean, err := ProcessImage(ext, raw)
 	if err != nil {
 		return "", err
 	}
@@ -66,12 +75,7 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return "", err
 	}
-	out, err := os.Create(dst)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, src); err != nil {
+	if err := os.WriteFile(dst, clean, 0644); err != nil {
 		return "", err
 	}
 	return "/uploads/" + name, nil
@@ -118,7 +122,7 @@ func checkFile(fh *multipart.FileHeader, max int64, allow map[string]bool) error
 	if err != nil {
 		return fmt.Errorf("读取上传文件失败: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 	buf := make([]byte, 512)
 	n, _ := src.Read(buf)
 	if !sniffExt(ext, buf[:n]) {

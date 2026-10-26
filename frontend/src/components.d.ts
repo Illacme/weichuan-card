@@ -58,6 +58,8 @@ declare module 'vue' {
     ElUpload: typeof import('element-plus/es')['ElUpload']
     ImageThumb: typeof import('./components/ImageThumb.vue')['default']
     ImageViewer: typeof import('./components/ImageViewer.vue')['default']
+    MPReleaseDialog: typeof import('./components/MPReleaseDialog.vue')['default']
+    PathPickerDialog: typeof import('./components/PathPickerDialog.vue')['default']
     RichEditor: typeof import('./components/RichEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"path/filepath"
 	"strings"
@@ -47,15 +48,24 @@ func (m *MinioUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
 	name, err := RandName(ext)
 	if err != nil {
 		return "", err
 	}
+	// 读取全部字节做 EXIF/GPS 剥离（非图片原样透传），再用剥离后的字节上传。
+	raw, err := io.ReadAll(src)
+	if err != nil {
+		return "", err
+	}
+	clean, err := ProcessImage(ext, raw)
+	if err != nil {
+		return "", err
+	}
 	// 对象名直接用 name：URL 为 BaseURL/name，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/name）形态一致
-	if _, err := m.Client.PutObject(context.Background(), m.Bucket, name, src, fh.Size, minio.PutObjectOptions{
+	if _, err := m.Client.PutObject(context.Background(), m.Bucket, name, bytes.NewReader(clean), int64(len(clean)), minio.PutObjectOptions{
 		ContentType: fh.Header.Get("Content-Type"),
 	}); err != nil {
 		return "", fmt.Errorf("minio put: %w", err)

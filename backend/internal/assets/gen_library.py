@@ -33,7 +33,7 @@ import random
 import subprocess
 import tempfile
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "library")
@@ -293,6 +293,8 @@ STYLES = [
 # 调性归类：按素材 id 登记；未登记的缺省 clean（新增素材漏标也能安全降级）。
 # 只有构图/氛围存在差异的分类（背景、封面）需要登记；图标/LOGO/头像视觉语言
 # 统一，全部落 clean，选择器的风格行会自动隐藏当前分类下 0 结果的调性。
+# 海报不在此登记：它的调性直接写在 POSTERS 元组里（节气与商务场景的调性是
+# 逐张手定的，拆成一张 id 表反而难维护）。
 _STYLE_GROUPS = {
     "clean": (
         # 背景：深色、几何、克制
@@ -567,6 +569,126 @@ AVATARS = [
     ("avatar-24", "默认头像 · 墨绿", ((6, 95, 108), (6, 78, 59))),
 ]
 
+
+# ── 海报素材 ──────────────────────────────────────────────────────────
+#
+# 海报是员工在小程序里分享出去的「门面」：画布 320×460（CSS px），按 dpr 放大
+# 后在 2x 屏上要 640×920 物理像素，故海报原图取 640×920（2x 稿，比例 0.6957
+# 与画布严格一致——canvas drawImage 铺满时零裁切、零变形）。
+#
+# 构图固定为「上部标题区 + 下部信息区」：
+#   · 上部 0~150px 烧入主标题（大字）+ 副标题 + 印章，视觉主体；
+#   · 下部 150~460px 是压深的纯色区，小程序 canvas 在其上绘制员工信息
+#     （姓名/职位/公司/电话/头像/小程序码），浅色文字压深底才读得出。
+# 素材只管「背景与标题」，员工信息一律由小程序端实时绘制——这样一张海报
+# 可以给任何员工用，不需要为每个人出一张图。
+#
+# 海报 motif 与配色解耦（同款构图换色派生），与 backgrounds 同思路。
+# 字段：id, 素材库显示名, 图上主标题, 图上副标题, 上下渐变色, motif, 调性, 标签
+POSTER_W, POSTER_H = 640, 920
+POSTER_THUMB_W, POSTER_THUMB_H = 320, 460
+# 信息区起始（与小程序 canvas 的信息区对齐：标题区 0~150，画布上从 y=150 起绘制）
+POSTER_INFO_TOP = 150
+
+# 标题用衬线中文字体（宋体系）：宋体的横细竖粗在渐变底上比黑体更有节庆/东方感，
+# 且大字与英文小字混排时重心更稳。找不到任何候选字体时退化为「无标题版」
+# （只出渐变 + 装饰），不阻塞素材库生成。
+_SERIF_CANDIDATES = [
+    ("/System/Library/Fonts/Supplemental/Songti.ttc", 1),   # macOS 宋体（Bold）
+    ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+    ("/usr/share/fonts/truetype/arphic/uming.ttc", 0),      # Linux 明体
+    ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc", 0),
+]
+_SANS_CANDIDATES = [
+    # 副标题里混了中文（"LI CHUN · 二十四节气"），必须用**有中文字形**的字体：
+    # Helvetica / DejaVu 没有 CJK 字形，中文会画成一片豆腐块（踩过）。
+    ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),   # macOS 冬青黑体（简）
+    ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),  # Linux 文泉驿
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),  # 仅拉丁（中文会缺字）
+]
+
+POSTERS = [
+    # ── 二十四节气 ──
+    ("poster-lichun", "立春", "立春", "LI CHUN · 二十四节气", ((22, 92, 68), (108, 176, 132)), "willow", "nature", ["立春", "春", "节气", "东风"]),
+    ("poster-yushui", "雨水", "雨水", "YU SHUI · 二十四节气", ((24, 74, 104), (96, 168, 200)), "rain", "nature", ["雨水", "春", "节气", "春雨"]),
+    ("poster-jingzhe", "惊蛰", "惊蛰", "JING ZHE · 二十四节气", ((46, 38, 96), (118, 92, 178)), "thunder", "vivid", ["惊蛰", "春", "节气", "雷"]),
+    ("poster-chunfen", "春分", "春分", "CHUN FEN · 二十四节气", ((196, 92, 124), (244, 186, 200)), "blossom", "soft", ["春分", "春", "节气", "桃花"]),
+    ("poster-qingming", "清明", "清明", "QING MING · 二十四节气", ((44, 88, 76), (140, 184, 168)), "mist", "soft", ["清明", "春", "节气", "细雨"]),
+    ("poster-guyu", "谷雨", "谷雨", "GU YU · 二十四节气", ((36, 92, 68), (122, 190, 150)), "rain", "nature", ["谷雨", "春", "节气", "雨生百谷"]),
+    ("poster-lixia", "立夏", "立夏", "LI XIA · 二十四节气", ((18, 96, 72), (108, 196, 156)), "sun", "nature", ["立夏", "夏", "节气", "万物并秀"]),
+    ("poster-xiaoman", "小满", "小满", "XIAO MAN · 二十四节气", ((134, 100, 26), (226, 190, 96)), "wheat", "nature", ["小满", "夏", "节气", "麦粒"]),
+    ("poster-mangzhong", "芒种", "芒种", "MANG ZHONG · 二十四节气", ((112, 82, 16), (214, 172, 74)), "wheat", "nature", ["芒种", "夏", "节气", "收麦"]),
+    ("poster-xiazhi", "夏至", "夏至", "XIA ZHI · 二十四节气", ((12, 76, 104), (78, 176, 200)), "sun", "vivid", ["夏至", "夏", "节气", "烈日"]),
+    ("poster-xiaoshu", "小暑", "小暑", "XIAO SHU · 二十四节气", ((150, 62, 22), (238, 142, 66)), "sun", "vivid", ["小暑", "夏", "节气", "暑气"]),
+    ("poster-dashu", "大暑", "大暑", "DA SHU · 二十四节气", ((126, 38, 18), (222, 108, 48)), "sun", "vivid", ["大暑", "夏", "节气", "酷热"]),
+    ("poster-liqiu", "立秋", "立秋", "LI QIU · 二十四节气", ((132, 82, 24), (226, 162, 78)), "leaf", "nature", ["立秋", "秋", "节气", "落叶"]),
+    ("poster-chushu", "处暑", "处暑", "CHU SHU · 二十四节气", ((116, 68, 36), (208, 146, 96)), "leaf", "nature", ["处暑", "秋", "节气", "暑退"]),
+    ("poster-bailu", "白露", "白露", "BAI LU · 二十四节气", ((66, 100, 126), (168, 196, 212)), "dew", "soft", ["白露", "秋", "节气", "露珠"]),
+    ("poster-qiufen", "秋分", "秋分", "QIU FEN · 二十四节气", ((132, 100, 24), (226, 184, 80)), "moon", "luxury", ["秋分", "秋", "节气", "月圆"]),
+    ("poster-hanlu", "寒露", "寒露", "HAN LU · 二十四节气", ((100, 68, 36), (184, 148, 102)), "leaf", "nature", ["寒露", "秋", "节气", "菊"]),
+    ("poster-shuangjiang", "霜降", "霜降", "SHUANG JIANG · 二十四节气", ((84, 58, 38), (162, 130, 100)), "frost", "clean", ["霜降", "秋", "节气", "霜"]),
+    ("poster-lidong", "立冬", "立冬", "LI DONG · 二十四节气", ((28, 54, 90), (92, 132, 178)), "snow", "clean", ["立冬", "冬", "节气", "初雪"]),
+    ("poster-xiaoxue", "小雪", "小雪", "XIAO XUE · 二十四节气", ((54, 74, 100), (146, 172, 198)), "snow", "soft", ["小雪", "冬", "节气", "轻雪"]),
+    ("poster-daxue", "大雪", "大雪", "DA XUE · 二十四节气", ((24, 38, 72), (68, 100, 158)), "snow", "clean", ["大雪", "冬", "节气", "瑞雪"]),
+    ("poster-dongzhi", "冬至", "冬至", "DONG ZHI · 二十四节气", ((16, 26, 56), (54, 76, 128)), "moon", "luxury", ["冬至", "冬", "节气", "夜长"]),
+    ("poster-xiaohan", "小寒", "小寒", "XIAO HAN · 二十四节气", ((28, 56, 66), (96, 146, 156)), "snow", "clean", ["小寒", "冬", "节气", "严寒"]),
+    ("poster-dahan", "大寒", "大寒", "DA HAN · 二十四节气", ((20, 32, 58), (60, 84, 116)), "snow", "clean", ["大寒", "冬", "节气", "极寒"]),
+    # ── 节日 / 商务场景 ──
+    ("poster-chunjie", "春节", "新春快乐", "SPRING FESTIVAL", ((132, 22, 22), (216, 78, 44)), "lantern", "vivid", ["春节", "节日", "新年", "红灯笼"]),
+    ("poster-yuanxiao", "元宵", "元宵节", "LANTERN FESTIVAL", ((86, 30, 74), (188, 78, 146)), "lantern", "vivid", ["元宵", "节日", "灯会"]),
+    ("poster-duanwu", "端午", "端午安康", "DRAGON BOAT FESTIVAL", ((22, 92, 72), (92, 178, 132)), "bamboo", "nature", ["端午", "节日", "粽子"]),
+    ("poster-zhongqiu", "中秋", "花好月圆", "MID-AUTUMN FESTIVAL", ((22, 26, 62), (86, 66, 132)), "moon", "luxury", ["中秋", "节日", "月亮", "团圆"]),
+    ("poster-guoqing", "国庆", "欢度国庆", "NATIONAL DAY", ((142, 22, 22), (224, 78, 58)), "confetti", "vivid", ["国庆", "节日", "红旗"]),
+    ("poster-yuandan", "元旦", "新岁如意", "HAPPY NEW YEAR", ((20, 32, 58), (72, 106, 162)), "confetti", "vivid", ["元旦", "节日", "新年"]),
+    ("poster-shengdan", "圣诞", "圣诞快乐", "MERRY CHRISTMAS", ((16, 46, 30), (48, 108, 70)), "pine", "nature", ["圣诞", "节日", "冬青"]),
+    ("poster-shengri", "生日", "生日快乐", "HAPPY BIRTHDAY", ((96, 28, 70), (196, 84, 148)), "confetti", "soft", ["生日", "节日", "庆祝"]),
+    # ── 农历节日（小程序端按当天日期自动选，见 miniprogram/utils/festival.ts）──
+    ("poster-chuxi", "除夕", "团圆除夕", "NEW YEAR'S EVE", ((104, 18, 18), (208, 68, 40)), "lantern", "vivid", ["除夕", "节日", "团圆", "年夜饭"]),
+    ("poster-laba", "腊八", "腊八安康", "LA BA FESTIVAL", ((92, 46, 20), (198, 124, 58)), "sun", "nature", ["腊八", "节日", "腊八粥"]),
+    ("poster-xiaonian", "小年", "小年祭灶", "XIAO NIAN", ((116, 34, 20), (206, 96, 52)), "lantern", "vivid", ["小年", "节日", "祭灶", "扫尘"]),
+    ("poster-longtaitou", "龙抬头", "龙抬头", "LONG TAI TOU", ((30, 84, 74), (104, 168, 128)), "willow", "nature", ["龙抬头", "节日", "二月二", "剃龙头"]),
+    ("poster-qixi", "七夕", "七夕星河", "QI XI FESTIVAL", ((46, 30, 88), (128, 84, 168)), "moon", "luxury", ["七夕", "节日", "星河", "乞巧"]),
+    ("poster-chongyang", "重阳", "重阳安康", "CHONG YANG", ((120, 74, 24), (206, 150, 70)), "leaf", "nature", ["重阳", "节日", "登高", "敬老"]),
+    # ── 公历节日（同上）──
+    ("poster-qingrenjie", "情人节", "怦然心动", "VALENTINE'S DAY", ((140, 30, 66), (222, 108, 140)), "blossom", "soft", ["情人节", "节日", "告白"]),
+    ("poster-nvshenjie", "女神节", "女神节快乐", "WOMEN'S DAY", ((158, 44, 96), (232, 138, 176)), "blossom", "soft", ["女神节", "节日", "三八", "女性"]),
+    ("poster-laodongjie", "劳动节", "劳动光荣", "LABOUR DAY", ((20, 60, 96), (66, 138, 172)), "gear", "clean", ["劳动节", "节日", "五一", "劳动者"]),
+    ("poster-muqinjie", "母亲节", "感恩母亲", "MOTHER'S DAY", ((170, 66, 96), (238, 158, 178)), "blossom", "soft", ["母亲节", "节日", "妈妈", "感恩"]),
+    ("poster-ertongjie", "儿童节", "童心未泯", "CHILDREN'S DAY", ((36, 96, 130), (110, 186, 214)), "confetti", "vivid", ["儿童节", "节日", "六一", "童年"]),
+    ("poster-fuqinjie", "父亲节", "父爱如山", "FATHER'S DAY", ((28, 48, 84), (86, 118, 164)), "pine", "clean", ["父亲节", "节日", "爸爸", "感恩"]),
+    ("poster-jiaoshijie", "教师节", "桃李芬芳", "TEACHERS' DAY", ((52, 62, 40), (140, 152, 92)), "bamboo", "nature", ["教师节", "节日", "老师", "感恩"]),
+    ("poster-ganenjie", "感恩节", "感恩有你", "THANKSGIVING", ((110, 52, 22), (198, 118, 58)), "wheat", "nature", ["感恩节", "节日", "感谢"]),
+    ("poster-pinganye", "平安夜", "平安夜", "CHRISTMAS EVE", ((18, 52, 36), (56, 112, 76)), "pine", "nature", ["平安夜", "节日", "圣诞", "平安"]),
+    ("poster-zhaopin", "招聘", "诚聘英才", "JOIN OUR TEAM", ((16, 54, 92), (56, 138, 168)), "gear", "clean", ["招聘", "商务", "人才"]),
+    ("poster-hezuo", "商务合作", "合作共赢", "WIN-WIN PARTNERSHIP", ((16, 46, 88), (52, 120, 150)), "arcs", "clean", ["商务", "合作", "共赢"]),
+    ("poster-kaiye", "开业大吉", "开业大吉", "GRAND OPENING", ((118, 84, 16), (226, 176, 66)), "rays", "luxury", ["开业", "商务", "庆典"]),
+    ("poster-zhanhui", "展会邀请", "诚邀莅临", "EXHIBITION INVITATION", ((22, 40, 84), (86, 104, 170)), "grid", "clean", ["展会", "商务", "邀请"]),
+    ("poster-xinpin", "新品上市", "新品上市", "NEW ARRIVAL", ((56, 26, 92), (128, 84, 176)), "rays", "vivid", ["新品", "商务", "发布"]),
+    ("poster-jiaofu", "项目交付", "顺利交付", "PROJECT DELIVERED", ((20, 62, 48), (76, 148, 116)), "pine", "clean", ["交付", "商务", "项目"]),
+    ("poster-qiaojian", "乔迁之喜", "乔迁之喜", "NEW HOME", ((86, 56, 26), (186, 136, 72)), "wave", "luxury", ["乔迁", "商务", "新居"]),
+    ("poster-daxie", "客户答谢", "感谢有你", "THANK YOU", ((70, 24, 40), (166, 66, 96)), "arcs", "luxury", ["答谢", "商务", "客户"]),
+    ("poster-zhufu", "节日祝福", "万事顺意", "BEST WISHES", ((20, 58, 78), (78, 142, 164)), "wave", "soft", ["祝福", "节日", "问候"]),
+    ("poster-kaigong", "开工大吉", "开工大吉", "BACK TO WORK", ((118, 52, 20), (216, 128, 56)), "sun", "nature", ["开工", "商务", "开工"]),
+    ("poster-xiaoqi", "校企合作", "校企同行", "UNIVERSITY & INDUSTRY", ((24, 48, 88), (72, 108, 168)), "building", "clean", ["校企", "商务", "合作"]),
+    ("poster-brand", "匠心品质", "匠心筑造", "CRAFTED WITH CARE", ((20, 30, 46), (76, 100, 128)), "building", "clean", ["品牌", "商务", "品质"]),
+]
+
+# 盖「節慶」章的海报；其余（节气走副标题判定、商务场景不盖章）都不盖。
+# 新增节日海报必须同步登记这里，否则图上不会出现那枚朱红印章——
+# 而「有没有章」正是用户在素材库里区分「节气图 / 节日图 / 商务图」的最快线索。
+POSTER_FESTIVALS = frozenset({
+    "poster-chunjie", "poster-yuanxiao", "poster-duanwu", "poster-zhongqiu",
+    "poster-guoqing", "poster-yuandan", "poster-shengdan", "poster-shengri",
+    "poster-kaigong", "poster-qiaojian",
+    # 农历节日
+    "poster-chuxi", "poster-laba", "poster-xiaonian", "poster-longtaitou",
+    "poster-qixi", "poster-chongyang",
+    # 公历节日
+    "poster-qingrenjie", "poster-nvshenjie", "poster-laodongjie",
+    "poster-muqinjie", "poster-ertongjie", "poster-fuqinjie",
+    "poster-jiaoshijie", "poster-ganenjie", "poster-pinganye",
+})
 
 # ── 基础绘制 ──────────────────────────────────────────────────────────
 def vgrad(size, top, bottom):
@@ -2309,6 +2431,491 @@ def make_background(item_id, name, colors, motif, tags):
             "tags": tags + ["背景", "全屏", motif, STYLE_NAMES[style_of(item_id)]]}
 
 
+# ── 海报绘制 ──────────────────────────────────────────────────────────
+# 海报构图固定：上部标题区（主标题 + 副标题 + 印章）+ 下部信息区（压深，
+# 供小程序 canvas 用浅色文字绘制员工信息）。标题烧进图里、员工信息实时画，
+# 这样一个模板能给所有员工复用，不必为每人出一张图。
+#
+# 字体：找不到候选字体时返回 None → 退化为无标题版（只出渐变 + 装饰），
+# 不阻塞素材库生成（跨机器跑脚本时字体路径差异是常态）。
+
+_FONT_CACHE = {}
+
+
+def _load_font(candidates, size):
+    """按候选列表加载字体（带缓存）；全部缺失返回 None。"""
+    key = (tuple(candidates), size)
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
+    font = None
+    for path, index in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            font = ImageFont.truetype(path, size, index=index)
+            break
+        except Exception as exc:
+            # 不能静默：字体一旦取不到，海报会退化成没有标题的纯渐变图，
+            # 不报错的话很难发现（踩过一次：ImageFont 忘了 import）。
+            print("  [warn] 字体加载失败 %s#%d: %s" % (path, index, exc))
+            continue
+    if font is None:
+        print("  [warn] 没有可用字体，标题将不绘制：%s" % (candidates,))
+    _FONT_CACHE[key] = font
+    return font
+
+
+def serif_font(size):
+    return _load_font(_SERIF_CANDIDATES, size)
+
+
+def sans_font(size):
+    return _load_font(_SANS_CANDIDATES, size)
+
+
+def fit_font(candidates, text, size, max_width, min_size=56):
+    """找一个不超 max_width 的字号；返回 (font, size)，font 为 None 表示无字体可用。
+
+    四字标题（"合作共赢"/"诚聘英才"）在 96px 下宽 384px，会撞上右侧的齿轮/太阳
+    装饰。按可用宽度自动缩号，比固定字号再让标题去躲装饰更稳（换配色也不会失效）。
+    """
+    font = _load_font(candidates, size)
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    while font and size > min_size:
+        try:
+            w = probe.textlength(text, font=font)
+        except Exception:
+            break
+        if w <= max_width:
+            break
+        size -= 4
+        font = _load_font(candidates, size)
+    return font, size
+
+
+def _poster_moon(d, cx, cy, r, color=(255, 248, 224)):
+    """满月：多层低 alpha 圆叠出光晕，再压两处淡斑。"""
+    for i in range(38, 0, -1):
+        rr = r * (1 + i * 0.027)
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                  fill=color + (min(58, int(3 + i * 0.55)),))
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color + (246,))
+    d.ellipse([cx - r * 0.38, cy - r * 0.32, cx - r * 0.02, cy + r * 0.16],
+              fill=(224, 212, 176, 78))
+    d.ellipse([cx + r * 0.16, cy + r * 0.28, cx + r * 0.44, cy + r * 0.52],
+              fill=(224, 212, 176, 58))
+
+
+def _poster_snow(d, seed=2, count=26, rmin=12, rmax=46):
+    """雪花：六向主枝 + 两级分叉（分枝才有雪的辨识度）。"""
+    random.seed(seed)
+    for _ in range(count):
+        cx = random.randint(15, POSTER_W - 15)
+        cy = random.randint(10, POSTER_H - 15)
+        r = random.randint(rmin, rmax)
+        col = (255, 255, 255, random.randint(60, 185))
+        for k in range(6):
+            ang = math.pi / 3 * k + random.uniform(-0.08, 0.08)
+            d.line([(cx, cy), (cx + r * math.cos(ang), cy + r * math.sin(ang))],
+                   fill=col, width=2)
+            for t in (0.42, 0.70):
+                bx, by = cx + r * t * math.cos(ang), cy + r * t * math.sin(ang)
+                for s in (-1, 1):
+                    aa = ang + s * math.pi / 4.2
+                    d.line([(bx, by),
+                            (bx + r * 0.2 * math.cos(aa), by + r * 0.2 * math.sin(aa))],
+                           fill=col, width=1)
+
+
+def _poster_raindrops(d, seed=7, count=80):
+    random.seed(seed)
+    for _ in range(count):
+        x = random.randint(10, POSTER_W - 10)
+        y = random.randint(10, POSTER_H - 40)
+        ln = random.randint(20, 54)
+        d.line([(x, y), (x - 6, y + ln)],
+               fill=(208, 234, 255, random.randint(55, 140)), width=2)
+
+
+def _poster_thunder(d, seed=71):
+    """惊蛰：一道折线闪电 + 稀落雨丝。闪电是主视觉，雨丝只作气氛。"""
+    random.seed(seed)
+    _poster_raindrops(d, seed=seed + 1, count=34)
+    # 闪电折线（自左上劈向右下），外发光 + 实线两遍
+    pts = [(196, 40), (150, 250), (232, 252), (128, 470),
+           (176, 470), (300, 244), (216, 222), (262, 40)]
+    d.line(pts, fill=(226, 216, 255, 52), width=26, joint="curve")
+    d.line(pts, fill=(246, 242, 214, 210), width=9, joint="curve")
+    d.line(pts, fill=(255, 255, 255, 240), width=3, joint="curve")
+
+
+def _poster_willow(d, seed=3, n=7, leaf=(224, 252, 208)):
+    """垂柳：枝条为二次贝塞尔采样，嫩叶沿枝排布（春的意象）。"""
+    random.seed(seed)
+    for i in range(n):
+        x0 = random.randint(20, POSTER_W - 20)
+        length = random.randint(320, 700)
+        sway = random.uniform(45, 95) * (1 if i % 2 else -1)
+        p0 = (x0, -20)
+        c1 = (x0 + sway, length * 0.35)
+        c2 = (x0 + sway * 0.5 - 30, length * 0.72)
+        pts = []
+        for k in range(44):
+            t = k / 43
+            u = 1 - t
+            pts.append((u * u * p0[0] + 2 * u * t * c1[0] + t * t * c2[0],
+                        u * u * p0[1] + 2 * u * t * c1[1] + t * t * c2[1]))
+        d.line(pts, fill=leaf + (160,), width=3, joint="curve")
+        for t in (0.28, 0.44, 0.58, 0.71, 0.83, 0.92):
+            idx = min(43, int(t * 43))
+            bx, by = pts[idx]
+            for s in (-1, 1):
+                lx, ly = bx + s * 9, by + 4
+                d.ellipse([lx - 5, ly - 3, lx + 5, ly + 7], fill=leaf + (182,))
+
+
+def _poster_petals(d, seed=5, n=34, color=(255, 214, 226)):
+    """花瓣：椭圆旋转难做，用小圆点+短弧模拟桃花瓣。"""
+    random.seed(seed)
+    for _ in range(n):
+        cx = random.randint(20, POSTER_W - 20)
+        cy = random.randint(20, POSTER_H - 20)
+        r = random.randint(5, 12)
+        d.ellipse([cx - r, cy - r * 0.6, cx + r, cy + r * 0.6],
+                  fill=color + (random.randint(70, 165),))
+
+
+def _poster_fog(d, seed=9, bands=7):
+    """雾：横向低对比色带（清明/晨雾）。"""
+    random.seed(seed)
+    for i in range(bands):
+        y = 120 + i * 95 + random.randint(-20, 20)
+        h = random.randint(26, 54)
+        d.rectangle([0, y, POSTER_W, y + h], fill=(255, 255, 255, random.randint(10, 26)))
+
+
+def _poster_sun(d, cx, cy, r, color=(255, 238, 176)):
+    for i in range(34, 0, -1):
+        rr = r * (1 + i * 0.035)
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                  fill=color + (min(50, int(2 + i * 0.5)),))
+    d.ellipse([cx - r * 0.55, cy - r * 0.55, cx + r * 0.55, cy + r * 0.55],
+              fill=color + (190,))
+
+
+def _poster_wheat(d, seed=11, n=9, color=(246, 220, 140)):
+    """麦穗：一根主茎 + 两侧对生麦粒。"""
+    random.seed(seed)
+    for i in range(n):
+        x0 = random.randint(30, POSTER_W - 30)
+        y0 = random.randint(120, POSTER_H - 260)
+        h = random.randint(150, 260)
+        d.line([(x0, y0), (x0 + random.randint(-18, 18), y0 - h)],
+               fill=color + (150,), width=3)
+        for k in range(9):
+            t = k / 9
+            yy = y0 - h * t
+            rr = 7 + t * 6
+            for s in (-1, 1):
+                d.ellipse([x0 + s * rr - 4, yy - 7, x0 + s * rr + 4, yy + 7],
+                          fill=color + (185,))
+
+
+def _poster_leaves(d, seed=13, n=22, color=(232, 168, 84)):
+    """落叶：斜置的椭圆叶 + 中脉。"""
+    random.seed(seed)
+    for _ in range(n):
+        cx = random.randint(20, POSTER_W - 20)
+        cy = random.randint(20, POSTER_H - 20)
+        r = random.randint(11, 22)
+        d.ellipse([cx - r, cy - r * 0.52, cx + r, cy + r * 0.52],
+                  fill=color + (random.randint(85, 175),))
+        d.line([(cx - r * 0.8, cy), (cx + r * 0.8, cy)],
+               fill=(255, 240, 210, 120), width=1)
+
+
+def _poster_dew(d, seed=17, n=26):
+    """露珠：小圆 + 高光点。"""
+    random.seed(seed)
+    for _ in range(n):
+        cx = random.randint(20, POSTER_W - 20)
+        cy = random.randint(20, POSTER_H - 20)
+        r = random.randint(5, 14)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(235, 248, 255, 120))
+        d.ellipse([cx - r * 0.35, cy - r * 0.4, cx - r * 0.05, cy - r * 0.05],
+                  fill=(255, 255, 255, 190))
+
+
+def _poster_frost(d, seed=19, n=16):
+    """霜花：六角晶体（比雪花更规整、更"结冰"）。"""
+    random.seed(seed)
+    for _ in range(n):
+        cx = random.randint(30, POSTER_W - 30)
+        cy = random.randint(30, POSTER_H - 30)
+        r = random.randint(14, 34)
+        col = (226, 244, 255, random.randint(70, 150))
+        for k in range(6):
+            ang = math.pi / 3 * k
+            d.line([(cx, cy), (cx + r * math.cos(ang), cy + r * math.sin(ang))],
+                   fill=col, width=2)
+            for t in (0.55,):
+                bx, by = cx + r * t * math.cos(ang), cy + r * t * math.sin(ang)
+                for s in (-1, 1):
+                    aa = ang + s * math.pi / 4
+                    d.line([(bx, by),
+                            (bx + r * 0.22 * math.cos(aa), by + r * 0.22 * math.sin(aa))],
+                           fill=col, width=1)
+
+
+def _poster_lantern(d, seed=21, n=5):
+    """灯笼：吊绳 + 椭圆灯身 + 上下金箍 + 流苏。"""
+    random.seed(seed)
+    for i in range(n):
+        cx = random.randint(70, POSTER_W - 70)
+        cy = random.randint(60, 340)
+        rw = random.randint(46, 74)
+        rh = int(rw * 0.78)
+        d.line([(cx, 0), (cx, cy - rh)],
+               fill=(240, 200, 140, 130), width=2)
+        d.ellipse([cx - rw, cy - rh, cx + rw, cy + rh], fill=(214, 54, 44, 175))
+        d.ellipse([cx - rw * 0.72, cy - rh * 0.78, cx + rw * 0.72, cy + rh * 0.78],
+                  outline=(255, 214, 150, 120), width=3)
+        d.rectangle([cx - rw * 0.34, cy - rh - 9, cx + rw * 0.34, cy - rh + 7],
+                    fill=(250, 216, 140, 210))
+        d.rectangle([cx - rw * 0.34, cy + rh - 7, cx + rw * 0.34, cy + rh + 9],
+                    fill=(250, 216, 140, 210))
+        for s in (-1, 0, 1):
+            d.line([(cx + s * 7, cy + rh + 9), (cx + s * 9, cy + rh + 44)],
+                   fill=(250, 216, 140, 165), width=2)
+
+
+def _poster_bamboo(d, seed=23, n=5, color=(150, 208, 140)):
+    random.seed(seed)
+    for i in range(n):
+        x0 = random.randint(20, POSTER_W - 20)
+        w = random.randint(14, 24)
+        top = random.randint(-40, 120)
+        d.rectangle([x0 - w, top, x0 + w, POSTER_H], fill=color + (95,))
+        y = top + 40
+        while y < POSTER_H:
+            d.line([(x0 - w, y), (x0 + w, y)], fill=(40, 80, 50, 110), width=3)
+            for s in (-1, 1):
+                lx, ly = x0 + s * (w + 16), y + 18
+                d.ellipse([lx - 22, ly - 7, lx + 22, ly + 7], fill=color + (135,))
+            y += random.randint(90, 150)
+
+
+def _poster_confetti(d, seed=29, n=54):
+    """节庆彩带：短矩形 + 弧线飘带。"""
+    random.seed(seed)
+    palette = [(255, 214, 120), (255, 120, 120), (150, 220, 255),
+               (200, 255, 190), (255, 180, 240), (255, 255, 255)]
+    for _ in range(n):
+        cx = random.randint(10, POSTER_W - 10)
+        cy = random.randint(10, POSTER_H - 10)
+        w = random.randint(7, 15)
+        h = random.randint(12, 26)
+        col = random.choice(palette)
+        d.rectangle([cx - w, cy - h, cx + w, cy + h],
+                    fill=col + (random.randint(90, 190),))
+
+
+def _poster_gear(d, cx, cy, r, color=(255, 255, 255)):
+    """齿轮：外齿环 + 中心孔（机电行业的符号）。"""
+    teeth = 12
+    for k in range(teeth):
+        ang = math.pi * 2 / teeth * k
+        tx, ty = cx + r * math.cos(ang), cy + r * math.sin(ang)
+        d.ellipse([tx - r * 0.17, ty - r * 0.17, tx + r * 0.17, ty + r * 0.17],
+                  fill=color + (110,))
+    d.ellipse([cx - r * 0.82, cy - r * 0.82, cx + r * 0.82, cy + r * 0.82],
+              outline=color + (95,), width=max(1, int(r * 0.14)))
+    d.ellipse([cx - r * 0.3, cy - r * 0.3, cx + r * 0.3, cy + r * 0.3],
+              outline=color + (80,), width=max(1, int(r * 0.1)))
+
+
+def _poster_arcs(d, seed=31, n=10):
+    random.seed(seed)
+    for _ in range(n):
+        r = random.randint(150, 640)
+        ox = random.randint(-120, 120)
+        d.arc([ox - r * 0.3, -r * 0.25, ox + r, r * 1.5], 0, 360,
+              fill=(255, 255, 255, random.randint(40, 95)), width=2)
+
+
+def _poster_rays(d, cx, cy, r, n=30, color=(255, 236, 170)):
+    for k in range(n):
+        ang = math.pi * 2 / n * k
+        d.line([(cx, cy), (cx + r * math.cos(ang), cy + r * math.sin(ang))],
+               fill=color + (80 if k % 2 == 0 else 45,),
+               width=3 if k % 2 == 0 else 2)
+
+
+def _poster_grid(d, seed=33):
+    random.seed(seed)
+    for x in range(0, POSTER_W + 1, 44):
+        d.line([(x, 0), (x, POSTER_H)], fill=(255, 255, 255, 26), width=1)
+    for y in range(0, POSTER_H + 1, 44):
+        d.line([(0, y), (POSTER_W, y)], fill=(255, 255, 255, 26), width=1)
+    for _ in range(16):
+        cx = random.randint(30, POSTER_W - 30)
+        cy = random.randint(30, POSTER_H - 30)
+        r = random.randint(3, 7)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 110))
+
+
+def _poster_pine(d, seed=37, n=6):
+    """松枝：斜向主枝 + 针叶簇（圣诞/项目交付的稳���意象）。"""
+    random.seed(seed)
+    for i in range(n):
+        x0 = random.randint(-40, POSTER_W)
+        y0 = random.randint(40, POSTER_H - 60)
+        ang = random.uniform(-0.5, 0.9)
+        ln = random.randint(150, 300)
+        ex, ey = x0 + ln * math.cos(ang), y0 + ln * math.sin(ang)
+        d.line([(x0, y0), (ex, ey)], fill=(96, 132, 96, 150), width=4)
+        for k in range(11):
+            t = k / 10
+            px, py = x0 + ln * t * math.cos(ang), y0 + ln * t * math.sin(ang)
+            for s in (-1, 1):
+                a2 = ang + s * 0.9
+                d.line([(px, py),
+                        (px + 26 * math.cos(a2), py + 26 * math.sin(a2))],
+                       fill=(120, 160, 120, 150), width=2)
+
+
+def _poster_wave(d, seed=41, n=6):
+    random.seed(seed)
+    for i in range(n):
+        base = 150 + i * 125
+        amp = random.randint(22, 52)
+        pts = [(x, base + amp * math.sin(x / 100 + i * 1.1)) for x in range(0, POSTER_W + 8, 8)]
+        d.line(pts, fill=(255, 255, 255, random.randint(40, 85)), width=2, joint="curve")
+
+
+def _poster_buildings(d, seed=43):
+    """楼宇天际线（校企合作 / 品牌品质）。"""
+    random.seed(seed)
+    x = 20
+    while x < POSTER_W - 40:
+        bw = random.choice([46, 62, 78, 96])
+        bh = random.randint(120, 330)
+        top = POSTER_H - bh
+        d.rectangle([x, top, x + bw, POSTER_H], fill=(255, 255, 255, 48))
+        for wy in range(top + 16, POSTER_H - 14, 26):
+            for wx in range(x + 10, x + bw - 10, 20):
+                if random.random() < 0.5:
+                    d.rectangle([wx, wy, wx + 9, wy + 12], fill=(255, 240, 200, 120))
+        x += bw + random.randint(12, 24)
+
+
+POSTER_MOTIFS = {
+    "willow": _poster_willow, "rain": _poster_raindrops, "thunder": _poster_thunder,
+    "blossom": _poster_petals, "mist": _poster_fog, "sun": _poster_sun,
+    "wheat": _poster_wheat, "leaf": _poster_leaves, "dew": _poster_dew,
+    "frost": _poster_frost, "snow": _poster_snow, "moon": _poster_moon,
+    "lantern": _poster_lantern, "bamboo": _poster_bamboo, "confetti": _poster_confetti,
+    "gear": _poster_gear, "arcs": _poster_arcs, "rays": _poster_rays,
+    "grid": _poster_grid, "pine": _poster_pine, "wave": _poster_wave,
+    "building": _poster_buildings,
+}
+# 主体型 motif（月/日/齿轮/光芒）需要落位，统一在这给定：偏右上，避开左边
+# 的标题块与下方的员工信息区。圆心/半径按「标题右缘 382」往右排，互不重叠。
+POSTER_MOTIFS["moon"] = lambda d: _poster_moon(d, 488, 206, 100)
+POSTER_MOTIFS["sun"] = lambda d: _poster_sun(d, 514, 194, 76)
+POSTER_MOTIFS["gear"] = lambda d: _poster_gear(d, 506, 240, 94)
+POSTER_MOTIFS["rays"] = lambda d: _poster_rays(d, 320, 176, 520)
+
+
+def make_poster(item_id, name, title, subtitle, colors, motif, style, tags):
+    """海报：竖幅渐变 + motif + 烧入标题 + 下部信息区压深。
+
+    下部压深是硬要求：小程序 canvas 在这一段用浅色文字绘制员工信息，
+    不压深则深色海报上白字发灰、浅色海报上白字看不见。
+    """
+    img = vgrad((POSTER_W, POSTER_H), *colors).convert("RGBA")
+    ov, d = overlay(img)
+    motif_fn = POSTER_MOTIFS.get(motif)
+    if motif_fn:
+        motif_fn(d)
+    img.alpha_composite(ov)
+
+    # 下部信息区压深（自信息区上沿起渐变到近黑）
+    info_top = POSTER_INFO_TOP * 2  # 画布坐标 → 素材坐标（2x）
+    shade = Image.new("RGBA", (POSTER_W, POSTER_H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shade)
+    for y in range(info_top, POSTER_H):
+        t = (y - info_top) / float(POSTER_H - info_top)
+        # 起点就压到 alpha 55：信息区上沿正好是姓名/职位，浅色海报（春分、
+        # 小满这类）在那里只压 30 的话白字会发灰。
+        sd.line([(0, y), (POSTER_W, y)], fill=(4, 6, 14, int(55 + 175 * t ** 0.7)))
+    img = Image.alpha_composite(img, shade)
+
+    d = ImageDraw.Draw(img)
+
+    # 顶部再压一层短渐变，保证主标题在浅色海报上也读得出
+    top_shade = Image.new("RGBA", (POSTER_W, POSTER_H), (0, 0, 0, 0))
+    tsd = ImageDraw.Draw(top_shade)
+    for y in range(0, 380):
+        tsd.line([(0, y), (POSTER_W, y)], fill=(6, 10, 22, int(66 * (1 - y / 380.0))))
+    img = Image.alpha_composite(img, top_shade)
+    d = ImageDraw.Draw(img)
+
+    # 主标题（衬线大字）+ 副标题（无衬线、字距）
+    # 标题最大宽度 330：右缘留在 382 之前，与右侧的齿轮/太阳装饰（x≥386）不重叠
+    serif, tsize = fit_font(_SERIF_CANDIDATES, title, 96, 330)
+    if serif:
+        ty = 108 + (96 - tsize) * 0.25  # 字号变小时贴着上沿走，不至于掉下去
+        d.text((54, ty + 4), title, font=serif, fill=(8, 10, 20, 90))  # 投影
+        d.text((52, ty), title, font=serif, fill=(255, 255, 255, 255))
+    sans = sans_font(24)
+    if sans:
+        cx = 56
+        for ch in subtitle:
+            d.text((cx, 252), ch, font=sans, fill=(255, 255, 255, 205))
+            cx += d.textlength(ch, font=sans) + 5
+    d.line([(56, 300), (150, 300)], fill=(255, 255, 255, 150), width=2)
+
+    # 印章：只盖节气与节日，商务场景不盖（"合作共赢"上盖"节气"章是错）。
+    # 靠副标题/白名单判定，不靠标题里有没有"雪""雨"这些字——那条路子一加新
+    # 海报就会误判（"瑞雪丰年"是祝福语，不是节气）。
+    if "二十四节气" in subtitle:
+        poster_seal(d, 540, 172, "節氣")
+    elif item_id in POSTER_FESTIVALS:
+        poster_seal(d, 540, 172, "節慶")
+
+    path = os.path.join(OUT, "posters", item_id + ".jpg")
+    img.convert("RGB").save(path, "JPEG", quality=86)
+    thumb = img.convert("RGB").resize((POSTER_THUMB_W, POSTER_THUMB_H), Image.LANCZOS)
+    tpath = os.path.join(OUT, "thumbs", "posters", item_id + ".jpg")
+    thumb.save(tpath, "JPEG", quality=80)
+    return {"id": item_id, "name": name, "category": "poster",
+            "style": style,
+            "file": "posters/%s.jpg" % item_id,
+            "thumb": "thumbs/posters/%s.jpg" % item_id,
+            "width": POSTER_W, "height": POSTER_H,
+            "tags": tags + ["海报", "分享", "背景", STYLE_NAMES[style]]}
+
+
+def poster_seal(d, cx, cy, text):
+    """朱红印章（纸底 + 红框 + 居中文字）。字体缺失时返回 False（不画空框）。
+
+    垫一层半透明宣纸底是必需的：朱红印泥直接压在深绿（立春）、深蓝（立冬）
+    这类底色上会糊成一团，红框都看不清；垫白纸后才像真的盖了个章。
+    """
+    size = 58
+    x0, y0 = cx - size / 2, cy - size / 2
+    d.rounded_rectangle([x0, y0, x0 + size, y0 + size], radius=7,
+                        fill=(250, 246, 236, 228))
+    d.rounded_rectangle([x0, y0, x0 + size, y0 + size], radius=7,
+                        outline=(178, 34, 34, 235), width=4)
+    fo = serif_font(26)
+    if not fo:
+        return False
+    d.text((cx, cy + 1), text, font=fo, fill=(178, 34, 34, 240), anchor="mm")
+    return True
+
+
 def fetch_lucide_license():
     os.makedirs(os.path.dirname(SRC), exist_ok=True)
     dst = os.path.join(HERE, "library-src", "LICENSE-Lucide.txt")
@@ -2326,8 +2933,9 @@ CREDITS = """# 常用开源素材库 · 许可与来源
 - **图标（icons/）**：取自 [Lucide](https://lucide.dev) v%s（ISC License），
   经 rsvg-convert 光栅化并合成到渐变圆角方块。ISC 许可全文见
   `../library-src/LICENSE-Lucide.txt`。
-- **封面（covers/）、背景（backgrounds/）、LOGO（logos/）与头像（avatars/）**：
-  由生成脚本程序绘制（渐变 + 几何图形/人形剪影），无第三方素材，可自由使用。
+- **封面（covers/）、背景（backgrounds/）、LOGO（logos/）、头像（avatars/）
+  与海报（posters/）**：由生成脚本程序绘制（渐变 + 几何图形/人形剪影），
+  无第三方素材，可自由使用。海报上的中文标题使用系统宋体渲染。
 
 重新生成：`python3 gen_library.py`
 （依赖 Pillow 与 rsvg-convert；Lucide SVG 已留存 library-src/icons/，离线可再生成）。
@@ -2335,8 +2943,8 @@ CREDITS = """# 常用开源素材库 · 许可与来源
 
 
 def main():
-    for sub in ("icons", "covers", "logos", "avatars", "backgrounds",
-                "thumbs/covers", "thumbs/backgrounds"):
+    for sub in ("icons", "covers", "logos", "avatars", "backgrounds", "posters",
+                "thumbs/covers", "thumbs/backgrounds", "thumbs/posters"):
         os.makedirs(os.path.join(OUT, sub), exist_ok=True)
     fetch_lucide_license()
 
@@ -2359,6 +2967,9 @@ def main():
     print("backgrounds: %d" % len(BACKGROUNDS))
     for bid, name, colors, motif, tags in BACKGROUNDS:
         items.append(make_background(bid, name, colors, motif, tags))
+    print("posters: %d" % len(POSTERS))
+    for pid, name, title, sub, colors, motif, style, tags in POSTERS:
+        items.append(make_poster(pid, name, title, sub, colors, motif, style, tags))
 
     # 素材 id 必须唯一（id 同时是落盘文件名与采用路径）：
     # 扩充素材时若不小心写重，后面会静默覆盖前一项，故在此 fail-fast。
@@ -2376,7 +2987,7 @@ def main():
             raise RuntimeError("调性 %s 没有任何素材，检查 _STYLE_GROUPS 的 id" % sk)
 
     manifest = {
-        "version": 7,
+        "version": 9,
         "styles": [{"key": k, "name": n} for k, n in STYLES],
         "categories": [
             {"key": "icon", "name": "图标"},
@@ -2384,6 +2995,7 @@ def main():
             {"key": "logo", "name": "LOGO"},
             {"key": "avatar", "name": "头像"},
             {"key": "background", "name": "背景"},
+            {"key": "poster", "name": "海报"},
         ],
         "items": items,
     }

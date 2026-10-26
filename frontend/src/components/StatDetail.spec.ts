@@ -113,7 +113,7 @@ function mountDetail(props: Record<string, unknown> = {}) {
 }
 
 // 等挂载后 watch(immediate) → load() 的微任务链走完
-async function flush(w: ReturnType<typeof mount>) {
+async function flush(_w: ReturnType<typeof mount>) {
   await nextTick()
   await nextTick()
   await nextTick()

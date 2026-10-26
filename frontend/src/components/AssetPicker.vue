@@ -1,6 +1,6 @@
 <template>
   <!-- 常用素材库选择器：点一下即采用并填入（单选），或多选后批量添加。
-       素材由后端内嵌（Lucide 图标 + 通用封面/LOGO/头像/背景），采用后与普通上传同构。
+       素材由后端内嵌（Lucide 图标 + 通用封面/LOGO/头像/背景/海报），采用后与普通上传同构。
        列表走服务端分页（page/size/type/style/keyword），素材扩充到百级也不会一次拉全量。
        两个筛选维度：分类 tab = 用在哪，风格行 = 什么气质（简约清晰/温暖自然/轻奢尊贵/
        柔美清新/光影流动）。风格行只显示当前条件下有素材的档位，只有一档时整行隐藏。 -->
@@ -110,7 +110,7 @@ const props = defineProps({
   multiple: { type: Boolean, default: false },
   limit: { type: Number, default: 9 },
   // 打开时定位到的分类（icon 图标 / cover 封面 / logo LOGO / avatar 头像 /
-  // background 背景），由调用方按字段语义传入
+  // background 背景 / poster 海报），由调用方按字段语义传入
   defaultCategory: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue', 'picked'])
@@ -347,6 +347,13 @@ function onClosed() {
 /* 首页背景为竖幅（750×1334）：卡片内放大并裁切，避免大片留白看不清样式 */
 .asset-card.background .asset-img {
   height: 190px;
+  object-fit: cover;
+}
+/* 海报是 640×920 竖幅且顶部烧着标题：按原比例整张显示，裁掉顶部就等于盲选
+   （选的时候看不到「立春」还是「合作共赢」） */
+.asset-card.poster .asset-img {
+  height: auto;
+  aspect-ratio: 640 / 920;
   object-fit: cover;
 }
 .asset-name {

@@ -7,6 +7,7 @@
 backend/
 ├── cmd/server/main.go           # 入口：连 DB、注册路由、启动（含 purge 启动清理 / 可观测中间件）
 ├── cmd/devserver/main.go        # 开发态入口：SQLite（免 cgo）+ 自动 seed 演示数据
+├── cmd/license/main.go          # 许可证签发工具（签发方专用，不随服务发布）：keygen / sign / show
 ├── internal/
 │   ├── config/config.go         # 环境变量注入（DB_DSN / PORT / JWT_KEY / 上传 / 小程序码 / 超管 / TTL / METRICS_ENABLED）
 │   ├── model/models.go          # GORM 模型（员工/企业/租户/分类/项目/服务/布局/统计/管理员/两类申请/吊销会话）
@@ -24,6 +25,11 @@ backend/
 │   ├── handler/cookie.go        # httpOnly Cookie 读写（PC 后台鉴权）
 │   ├── handler/seed.go          # 首次启动自动创建初始平台超管（SeedAdmin，company_id=0）
 │   ├── handler/wechat.go        # 小程序码生成 + 缓存（写入当前存储驱动）
+│   ├── handler/company_wx.go    # 租户小程序凭据 GET/PUT（appSecret 只写不读，永不回传）
+│   ├── handler/mp_release.go    # 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（状态机白名单流转）
+│   ├── wechat/wechat.go         # access_token 缓存（**按 appid 分键**）+ 通用 POST 助手（40001/42001 自动刷新重试）
+│   ├── wechat/release.go        # 微信侧四个接口：submit_audit / get_auditstatus / release / undo_code_audit
+│   ├── audit/audit.go           # 审计落库（动作常量 + 敏感字段脱敏），每次代发都记一条
 │   ├── handler/assets.go        # 开源素材库：清单 / 采用 / 预览（go:embed 内置，免外部找图）
 │   ├── assets/assets.go         # 素材库加载器：embed library/ + manifest.json 解析 + 安全读取
 │   ├── assets/library/          # 内置素材资产（生成物，勿手改）：manifest.json + CREDITS.md + 图标/封面/LOGO/头像
@@ -48,6 +54,8 @@ backend/
 ├── migrations/0011_company_tenant.sql      # 多租户第一期：company 租户表 + 各表 company_id + admin 两级
 ├── migrations/0012_company_admin_short_name.sql  # 企业简称（company.short_name）：侧边栏品牌名 + 公司信息简称初始值
 ├── migrations/0013_home_layout_background.sql  # 首页背景图（home_layout.bg_image / bg_mask）
+├── migrations/0025_mp_release.sql               # 小程序版本发布：mp_release 表（提审/发布状态机 + 审计字段）
+├── migrations/0026_company_wx_app_release_enabled.sql  # 租户「允许平台代发版本」开关 release_enabled
 ├── Dockerfile                   # 多阶段构建，单二进制镜像
 └── go.mod
 ```
@@ -95,6 +103,51 @@ DB_DSN='root:pw@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true' ./s
 mysql -u root -p weichuan -e "SELECT version, applied_at FROM schema_migrations ORDER BY version;"
 ```
 
+### 运维子命令：backup / dbcheck
+
+与 `migrate` 同一定位——不启服务、只做一件事、可进 cron 与流水线。
+
+```bash
+# SQLite 在线一致性快照（VACUUM INTO，不阻塞写；产物是干净单文件）
+./server backup --out /tmp/weichuan-snapshot.db
+
+# 只读体检任意 SQLite 库文件：integrity_check / 表数 / 各表行数
+./server dbcheck --file /tmp/weichuan-snapshot.db
+./server dbcheck --file /tmp/weichuan-snapshot.db --json
+./server dbcheck --file /tmp/weichuan-snapshot.db --field tables   # 取单个值给脚本用
+```
+
+- `backup` 只支持 SQLite；MySQL 请用 `scripts/backup.sh`（`mysqldump --single-transaction`
+  才有一致性快照，Go 侧不做这件事）。
+- `dbcheck` 以 `mode=ro` 只读打开，**不会创建不存在的文件**——否则体检一个写错的路径
+  会得到「0 张表、integrity ok」这种看起来正常的结论。
+
+### 签发工具：cmd/license（签发方专用，不随服务发布）
+
+```bash
+go build -o licensectl ./cmd/license
+
+# 1) 生成密钥对：公钥填进 internal/license/embed.go 的 embeddedPublicKeyB64，
+#    私钥只留签发环境（绝不进仓库 / 服务二进制）
+./licensectl keygen
+
+# 2) 签发一份许可证（私钥也可经 LICENSE_PRIV 传入，避免出现在进程列表 / shell 历史）
+./licensectl sign --priv "$PRIV" --tenant 7 --edition private \
+  --seats 50 --expires 2027-12-31T23:59:59Z \
+  --features mp_release,content_sec --out data/license.key
+
+# 3) 运维核对：读取并验签展示一份许可证（不传 --pub 时用服务内嵌公钥）
+./licensectl show --file data/license.key
+```
+
+- 为什么单独一个二进制：签名私钥只应存在于签发环境。把它编译进随服务分发的
+  二进制，等于把「给任何人签一张永久授权」的能力发到了客户机器上。
+- `--seats 0` = 不限席位；不传 `--expires` = 永不过期；`--features` 空 = 全部开通。
+- 许可证是 Ed25519 签名（载荷 + 签名两行 base64），改一个字节即验签失败；
+  私有部署（`DEPLOY_MODE=private`）验签失败或过期时 `cmd/server` 拒绝启动。
+- 这两个子命令是 `scripts/backup.sh` / `restore.sh` / `restore_drill.sh` 的底层，
+  容器部署时由脚本 `docker exec` 调用，原生部署可设 `SERVER_BIN` 直接跑。
+
 ```bash
 # 1. 建库并导入全部迁移（含 7 分类种子 / 审核流表 / 软删除 / token_version / 会话黑名单 / 多租户 company_id）——仅 MySQL 需要
 for f in migrations/000*.sql; do mysql -u root -p weichuan < "$f"; done
@@ -137,6 +190,11 @@ export WX_APPID="wxXXXXXXXXXXXXXXXX"
 export WX_APPSECRET="your-app-secret"
 # 小程序码磁盘缓存有效期（小时，默认 720 = 30 天，到期自动重新生成）
 export WXACODE_TTL_HOURS="720"
+# 后台上传小程序代码（可选，不配则只走「登记版本」那条路）。详见下方「小程序版本发布」
+export MP_NODE_BIN="node"            # node 可执行；容器里给绝对路径，如 /usr/local/bin/node
+export MP_CI_MODULE_DIR="/opt/mp-ci" # 装过 miniprogram-ci 的目录；留空则试 MP_SOURCE_DIR
+export MP_SOURCE_DIR="/opt/weichuan-miniprogram" # 小程序源码根目录（含 project.config.json）
+export MP_UPLOAD_TIMEOUT_SEC="300"   # 单次上传超时；nginx proxy_read_timeout 须大于它
 
 # 初始超管（首启动若 admin 表为空则自动 seed，上线务必修改为强密码）
 export ADMIN_USER="admin"
@@ -237,16 +295,17 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 
 后台所有需要图片的位置（分类/服务图标、项目封面、公司简介封面、公司信息 LOGO、员工头像、**小程序首页背景**）都支持从**内置开源素材库**直接选用，无需再去各处找图、抠图、调尺寸。
 
-- **资产构成**（`internal/assets/library/`，共 **915 项**、约 15MB，随 `//go:embed` 编译进二进制，Docker 单文件部署零额外挂载）：
+- **资产构成**（`internal/assets/library/`，共 **959 项**、约 17MB，随 `//go:embed` 编译进二进制，Docker 单文件部署零额外挂载）：
   - 图标 **748 个 = 187 个图形 × 4 档配色**（冷色原版 / 暖阳 / 鎏金 / **素雅浅底**，`ICON_PALETTES` 定义）：Lucide（ISC 许可证）SVG 经 `rsvg-convert` 光栅化为线形图形，合成渐变圆角方块。素雅浅底（白→浅蓝底 + 蓝色细线）即客户原型图风格，适合轻盈清新的商务调性；光影流动一档**刻意不做**——高饱和底配白/蓝线形图标对比度差；
   - 封面 52 张（960×504 JPEG + 480×252 缩略图，含**玻璃塔楼/楼盘社区等建筑主题**，可作视频播放封面）、LOGO 40 个、头像 24 个：PIL 程序化生成的渐变 + 几何图形，按配色归入五档调性，商用无授权风险。
   - **背景 51 张（750×1334 竖幅 JPEG + 300×534 缩略图）**：深色高端商务 + 行业调性 + **浅蓝素雅系**（晴空/云雾/冰蓝，即客户原型图的页面浅蓝背景）+ 其他浅色系，供小程序首页背景直接选用。
+  - **海报 59 张（640×920 竖幅 JPEG + 320×460 缩略图）**：24 张二十四节气 + 23 张节日（春节/元宵/端午/中秋/除夕/腊八/小年/龙抬头/七夕/重阳/情人节/女神节/劳动节/母亲节/儿童节/父亲节/教师节/感恩节/平安夜…）+ 12 张商务场景（商务合作/开业大吉/新品上市/客户答谢/开工大吉…），供员工在小程序分享海报页换背景。构图为「上部标题区（标题烧进图里）+ 下部信息区（压深）」，压深是硬要求——小程序用浅色字在下半部实时画员工信息，不压深则浅色海报上的白字读不出。**新增节日海报必须同步登记 `POSTER_FESTIVALS` 白名单**，否则图上不会盖那枚「節慶」朱红印章——有没有章正是用户在素材库里区分「节气图 / 节日图 / 商务图」的最快线索。小程序端按当天日期自动选图，见 `miniprogram/README.md`「节日 / 节气日自动选背景」。
   - 素材按「构图 motif + 配色」解耦：同一 motif 换配色即可派生新款式，`gen_library.py` 里加一行就能扩充；`main()` 内置素材 **id 唯一性自检**（id 即落盘文件名，重复会静默覆盖，直接 fail-fast）。
   - `manifest.json` 描述分类与素材项；`CREDITS.md` 记录图标来源与许可证。
 - **采用（adopt）模式**：`POST /api/admin/assets/adopt` 把内嵌素材经 `Uploader.SaveBytes` **复制进当前上传存储**（local → `uploads/library/<id>.<ext>`），返回与普通上传完全同构的 URL——下游（小程序 `<image>` / CDN）零感知，不引入新的静态资源域。
 - **预览图公开化**：`GET /api/assets/file/*path` 无鉴权 + `Cache-Control: immutable` 长缓存（通用素材，无租户数据；`<img>` 标签无法带 Authorization 头，故公开）。
 - **两个正交的筛选维度**：
-  - `category` 分类 = **用在哪**：图标 / 封面 / LOGO / 头像 / 背景；
+  - `category` 分类 = **用在哪**：图标 / 封面 / LOGO / 头像 / 背景 / 海报；
   - `style` 视觉调性 = **什么气质**：`clean` 简约清晰 / `nature` 温暖自然 / `luxury` 轻奢尊贵 / `soft` 柔美清新 / `vivid` 光影流动。
   - 调性命名刻意用**用户能感知的形容词**，不暴露 mesh / grain / noise 等实现术语——客户不知道什么是网格渐变，但知道自己要"沉稳"还是要"温暖"。调性中文名并入搜索标签，搜「轻奢」可直接命中该档素材。
   - 归类表见 `gen_library.py` 的 `_STYLE_GROUPS`；未登记的素材缺省 `clean`（新增素材漏标也能安全降级）。图标/LOGO/头像视觉语言统一，全部落 `clean`，故这些分类下风格行会自动隐藏。
@@ -256,12 +315,52 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | GET  | /api/assets/file/*path | 否 | 素材预览图（PNG/JPEG），immutable 长缓存 |
+| GET  | /api/assets/posters | 否 | **海报素材清单**（公开，小程序「选海报背景」用）：只回 poster 分类，字段压到 `{id,name,style,file,thumb}`；不复用 `/api/admin/assets/library` 是因为后者要管理员登录态、且会返回全量 900+ 素材 |
 | GET  | /api/admin/assets/library | admin | 素材清单（**分页**）：`page`（缺省 1）/ `size`（缺省 15 = 选择器网格 5 列 × 3 排，一屏看全、无需滚动；上限 60）/ `type`（分类，空=全部）/ `style`（视觉调性，空=全部）/ `keyword`（名称或标签匹配）→ `{items,total,page,size,pages,categories,styles,styleCounts}`。`styleCounts` 是**当前 分类+关键字 下各调性的素材数**（刻意排除 `style` 自身影响，否则选中一档后其余全变 0），前端据此隐藏 0 结果的档位 |
 | POST | /api/admin/assets/adopt | admin | 采用素材：body `{"id":"bg-deepspace"}` → 复制进上传存储，返回 `{url, item}` |
 
 > 分页与筛选都在服务端：素材已达百级且会继续扩充，一次返回全量不合适；
 > 且「客户端过滤 + 服务端分页」语义矛盾（翻页只看得见当前页内的匹配项），
 > 故 `type` / `keyword` 由 `assets.List` 在服务端过滤后再分页。
+
+### 海报个性化设置接口
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | /api/employee/poster-prefs | employee | 读自己的海报设置：`{bgId, backgrounds, layout, exists}`。`exists=false` = 服务端没有可信记录（新员工 / 没调过），客户端此时应以本机缓存为准——否则换新账号第一次进页面会把用户手挑的背景冲掉 |
+| PUT | /api/employee/poster-prefs | employee | 覆盖写：body `{bgId, backgrounds:[{id,name,file}], layout}`，返回归一后的同一结构（客户端据此纠正本地状态） |
+
+> 存 `poster_prefs` 表（`staff_id` 唯一），两个 JSON 列：`backgrounds`（自定义背景清单，上限 9 条）
+> 与 `layout`（版式）。不拆列是因为版式可选项会随需求增删，拆列每加一项都要写迁移；
+> 代价是数据库层看不出结构，所以**校验在 handler 层做**（`internal/handler/poster.go`）：
+> 枚举白名单、数值夹紧、超限截断、`file` 只认站内相对路径或 http(s)
+> （`javascript:` / `data:` / `//evil.com` 一律丢弃）。
+> `layout` 里的 `customText`（一句话自定义文案，上限 30 rune）走 `normalizePosterText`：
+> 控制字符折成空格、连续空白折成一个、按 rune 截断。必须压平换行——canvas 的 `fillText`
+> 不认 `\n`，会画出缺字或方块；小程序端 `normalizeCustomText` 是同一套规则（两边都做，
+> 缺一边就会出现「接口正常但海报画错」这种最难查的问题）。
+> 位移（`offsetX` / `offsetY` / `qrOffsetX` / `qrOffsetY`）只夹在 ±480（`posterOffsetLimit`，
+> 画布长边级别）——这是**挡脏数据的粗框，不是可拖范围**。真正的可拖范围由小程序端按
+> 「内容实际包围盒」现算（`miniprogram/pages/poster/poster.ts` 的 `measureBox` / `shiftRange`）：
+> 两字姓名能横跨大半个画布，长公司名就只给一点点余量。以前这里写死横向 ±16 / 纵向 ±60，
+> 结果是「两字姓名拖两下就顶死、长公司名照样被裁掉尾字」——服务端算不出文字多宽，
+> 就不该假装知道边界在哪。信息区与二维码各有各的一对偏移，互不牵连。
+> `qrSize`（小程序码大小）只认 0 / 76 / 104 / 140 四档（`posterQrSizes`），
+> 其余值走 `nearestPosterQrSize` **吸附**到最近档、等距取较小档（90 → 76，95 → 104），
+> 0 与负数归 0。0 表示「自动」（按内容高度自适应），**不是「没传」**，必须原样保留。
+> 选吸附而不是回 400：界面本来就是四选一，脏值只可能来自旧数据或手工改库，
+> 而用户这次改的可能是配色——为了一个跟他无关的字段让整次保存失败很荒谬。
+> 注意服务端**不校验档位与内容是否冲突**（内容太高时 140 会被客户端夹到放得下的高度），
+> 因为「内容多高」只有画得出来才知道，服务端没有字形宽度。
+> `showLandline` / `showEmail` **默认 false**、`showQr` **默认 true**。两个方向的默认值
+> 刻意相反：前两者是「新出现的信息」，默认塞给用户等于改掉他已经调好的版式；
+> 后者是海报唯一的落地入口，默认藏起来等于让用户发出去一张没人扫得到的图。
+> 模板白名单从 4 套扩到 8 套（新增 `split` / `left` / `stack` / `poster`）：
+> 老数据里存的仍是前四个之一，扩白名单不影响存量。
+> 不塞进 `employee` 表，是因为 employee 的写入走「提交 → 待审 → 通过」审核流，
+> 而海报版式是纯个人偏好——调个字号还要管理员审批很荒谬。
+> 版式请求用**指针补丁**结构解析：`bool` 的零值是 `false`，用完整结构接 `{}` 会得到
+> 「五个元素全关」的海报（用户发出去是一张只剩背景的白板），指针才能区分「没传」和「明确关掉」。
+
 
 ## 已实现接口
 
@@ -293,10 +392,10 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | POST | /api/admin/login | 否 | 管理员登录（用户名+密码）→ 写 httpOnly Cookie，响应体仅 expiresIn + 身份（companyId/companyName/isPlatform） |
 | POST | /api/refresh | 否 | 换发新 access（PC 读 refresh Cookie；小程序 body 传 refreshToken） |
 | POST | /api/logout | 否 | 吊销当前会话 sid（单设备精确吊销）+ 清除 httpOnly 鉴权 Cookie（PC 后台登出） |
-| POST | /api/apply/open | 否 | 员工自助提交开通申请（pending；可含 landline / avatar / companyId，缺省落演示租户） |
+| POST | /api/apply/open | 否 | 员工自助提交开通申请（pending；可含 landline / avatar / companyId，缺省落演示租户）。文字经内容安全检测，命中违规返回 code=1 且不落库 |
 | POST | /api/apply/open/avatar | 否 | 申请开通时上传头像（公开端点，仅图片，供访客在账号创建前设置头像） |
 | GET  | /api/employee/me | employee | 本人名片信息 |
-| PUT  | /api/employee/me | employee | 提交名片修改申请（待审，对外仍显旧信息；可含 landline） |
+| PUT  | /api/employee/me | employee | 提交名片修改申请（待审，对外仍显旧信息；可含 landline）。姓名 / 职位经内容安全检测，命中违规返回 code=1 且不落库 |
 | GET  | /api/employee/me/stat | employee | 本人访问/拨号/保存统计（?from=&to= 日期范围 YYYY-MM-DD，可缺省=全部） |
 | PUT  | /api/employee/password | employee | 修改本人密码 |
 | GET  | /api/admin/apply/open | admin | 开通申请列表（按租户隔离；平台超管可用 ?companyId= 收窄） |
@@ -349,16 +448,23 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET  | /api/admin/me | 当前登录身份（用户名 / companyId / companyName / companyShortName / isPlatform；前端刷新后恢复身份用） |
-| GET  | /api/admin/companies | 企业列表（含简称 / 员工数 / 管理员数） |
+| GET  | /api/admin/companies | 企业列表（含简称 / 员工数 / 管理员数 / **小程序凭据是否配好** `wxConfigured`） |
 | POST | /api/admin/companies | 开通企业（name 必填；shortName 为企业简称——侧边栏品牌名 + 公司信息简称初始值，留空默认「微传名片」；adminUsername+adminPassword 可选，一并建企业管理员） |
 | PUT  | /api/admin/companies/:id | 编辑企业（name / shortName；shortName 留空回落缺省「微传名片」；只改 company 表，不回写公司信息里的简称） |
 | POST | /api/admin/companies/:id/status | 停用 / 启用企业（body `{"status":"enabled"\|"disabled"}`；停用后该企业管理员与员工均不能登录） |
 | GET  | /api/admin/companies/:id/admins | 企业管理员列表 |
 | POST | /api/admin/companies/:id/admins | 新增企业管理员（username + password） |
+| GET  | /api/admin/companies/:id/wechat | 该企业小程序凭据（只回 `appId` 明文 + `configured`；**appSecret 永不回传**） |
+| PUT  | /api/admin/companies/:id/wechat | 保存租户小程序凭据（`appId` 须 wx 开头；**`appSecret` 空串 = 清空并回落全局凭据**；`releaseEnabled` 省略则保持原值；不受 independent_lock 限制，见下） |
 
 > 企业简称（`company.short_name`）与公司信息里的简称（`company_info.short_name`，0009）相互独立：
 > 前者是 PC 后台侧边栏「简称 · 管理后台」品牌名（未设置时缺省「微传名片」，企业管理员登录/me 时随身份下发），
 > 后者仅用于小程序展示（留空则小程序顶栏展示企业全称）。
+>
+> 租户小程序凭据（`company_wx_app`，migrations/0024）是**唯一不受 independent_lock 只读限制**的写接口：
+> 那个开关是「独立版部署就别再动租户结构了」，而凭据是阻塞性配置——真锁住了反而让独立版用户
+> 永远配不上小程序。`wxConfigured` 要求 AppID 与 AppSecret 成对非空，半配置算未配置，
+> 与取值侧口径一致（见下文「小程序码」的三级回落链）。
 
 ### 小程序码（公开，分享海报用）
 | 方法 | 路径 | 说明 |
@@ -371,6 +477,89 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 
 > 小程序码缓存 TTL：生成的图片通过当前存储驱动的 `SaveBytes` 写入（local → `uploads/wxacode/<staffId>.jpg`；minio/oss → 对应对象）。返回策略：公开桶/本地直接返回公开 URL；**私有桶**（`STORAGE_PUBLIC=false` 且存储支持签名）返回**每次重新签发的 1 小时限时签名 URL**。二维码内容按 `WXACODE_TTL_HOURS`（默认 720h=30 天）做内存 TTL 缓存，过期才重新调微信生成，既避免反复消耗微信配额，也支持变更样式/落地页后自然刷新。`access_token` 服务端内存缓存并在 40001/42001 时自动刷新重试。
 > 鉴权方式：请求头 `Authorization: Bearer <token>`（admin 接口）。小程序码接口为公开（分享用），未配置 `WX_APPID/WX_APPSECRET` 时返回明确错误。
+>
+> **未配凭据的后果要知道**：小程序端海报页拿不到码时会画一个「小程序码 / 未生成」占位框，
+> 并在页面顶部给一条黄条 + 重试按钮（`code:1` 的 `msg` 会原样透给用户）。
+> 也就是说「海报上没有二维码」几乎总是配置问题，而不是前端渲染问题——
+> 先 `curl '/api/wechat/wxacode?staffId=1'` 看一眼返回的 msg 即可定位。
+> 凭据可在后台「系统设置 → 微信 → 小程序凭据」填写（请求期解析，改完即时生效，不必重启），
+> 留空则回退环境变量 `WX_APPID` / `WX_APPSECRET`。
+>
+> **多小程序（企业独立版）**：产品同时支持「平台一个小程序服务所有企业」与「每企业一个自己的小程序」两种形态，
+> 后者共用同一套后端，凭据必须按租户隔离——不隔离的话企业员工生成的小程序码指向平台小程序，
+> 扫码进的是平台侧页面。取值是三级回落链：
+>
+> | 顺序 | 来源 | 配置入口 |
+> |---|---|---|
+> | 1 | 租户凭据 `company_wx_app`（`company_id` 唯一键） | 企业管理 →「凭据」按钮（平台超管代填） |
+> | 2 | 全局 `sys_setting` 的 `wx_appid` / `wx_appsecret` | 系统设置 → 微信 → 小程序凭据 |
+> | 3 | 环境变量 `WX_APPID` / `WX_APPSECRET` | 部署配置 |
+>
+> 半配置（只填了 AppID 而 Secret 为空）按「没配」处理，与列表页 `wxConfigured` 口径一致——
+> 否则界面说已配置、实际仍回落全局小程序。租户归属按 `staffId → employee.company_id` 反查
+> （**不信客户端传的 companyId**），双层缓存：凭据 30s、归属 5min（负结果也缓存，防枚举 staffId 扫号）；
+> 后台保存即清凭据缓存，改完立刻生效。
+> `appSecret` 永不回传（连 key 都不出现），也不进审计明细。写接口语义：`appSecret` 空串 = 清空并回落全局。
+
+### 小程序版本发布（平台代租户上传 / 提审 / 发布，migrations/0025 + 0026 + 0027）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET  | /api/admin/companies/:id/releases | 版本列表（分页 + `status` 过滤；只读，不受代发开关限制） |
+| POST | /api/admin/companies/:id/releases | 登记「CI 已上传」的版本 → `draft`（不调微信接口；企业 + 版本号唯一） |
+| GET  | /api/admin/companies/:id/releases/upload-readiness | 上传前探活：缺 node / 没装 miniprogram-ci / 源码目录不在 / 没配密钥，**一次列全** |
+| POST | /api/admin/companies/:id/releases/upload | 后台上传代码到微信（成为体验版）并自动建 `draft` 记录 |
+| POST | /api/admin/releases/:id/submit-audit | 提交审核 → `auditing`（微信 `/wxa/submit_audit`，MVP 不传 item_list） |
+| GET  | /api/admin/releases/:id/audit-status | 拉一次微信审核状态并按需同步本地记录（回包带 `wxStatus` / `changed`） |
+| POST | /api/admin/releases/:id/release | 发布 → `released`（仅 `audit_passed` 态允许） |
+| POST | /api/admin/releases/:id/undo-audit | 撤回审核 → `withdrawn`（body 须 `confirm:true`，见下方代价） |
+
+**上传代码有两条路**（`source` 字段区分）：
+
+1. **后台自己传**（`source=backend`）：点「上传代码」→ 后端 `exec node` 跑内嵌脚本
+   （`internal/mpupload/upload.js`，`go:embed` 进二进制）调 `miniprogram-ci` 的 `upload`。
+   **不需要任何人装微信开发者工具**——服务器上有 Node + 源码 + 密钥就行。
+   成功后**自动建一条 draft 记录，版本号就是这次真实上传的那个号**，从根上杜绝
+   「填的版本号」和「实际传的版本号」不是同一个；失败则**不建记录**，只写失败审计。
+2. **CI 传完后登记**（`source=ci` / `manual`）：CI 用同一把密钥经 `miniprogram-ci` 传，
+   后台只把版本号记下来。代价是无法在此校验版本号是否真的传过，写错要到提审才暴露。
+
+> **服务器一次性前置条件**（后台上传这条路，缺一项 `upload-readiness` 就列出来）：
+> 1. Node：`MP_NODE_BIN`（默认 `node`，容器镜像里请给绝对路径）；
+> 2. 模块：`MP_CI_MODULE_DIR`（留空则试 `MP_SOURCE_DIR`）下执行过
+>    `npm install miniprogram-ci`——它不随二进制分发，**必须单独装**；
+> 3. 源码：`MP_SOURCE_DIR` 指向小程序源码根目录（含 `project.config.json`）；
+> 4. 密钥：租户自己的（`company_wx_app.upload_key`，0027）或平台全局
+>    （系统设置 `wx_upload_key`）任一份非空。**代码上传密钥 ≠ AppSecret**——
+>    前者传代码，后者换 access_token 调提审 / 发布；都在公众平台 → 开发管理 → 开发设置里；
+> 5. **两套独立 IP 白名单**：API IP 白名单（管 access_token）与**代码上传 IP 白名单**
+>    （管 miniprogram-ci，漏了报 40164）都要放行服务器出口 IP；
+> 6. 反代超时：上传**同步执行、分钟级**，nginx `proxy_read_timeout` 必须大于
+>    `MP_UPLOAD_TIMEOUT_SEC`（默认 300）。
+>
+> 密钥只写不读（接口只回 `uploadKeyConfigured`），落 0600 临时文件、用完即删，
+> 不进 argv / stdout / 审计明细。
+
+> **状态机是白名单**（`internal/model/mp_release.go`），只放行这些流向：
+> `draft → auditing`、`auditing → audit_passed/rejected/withdrawn`、`audit_passed → released`、
+> `rejected/withdrawn → auditing`。`draft → released`（跳过审核）与 `released → *`（终态）刻意不存在。
+> 微信 status=4（审核延后）本地仍记为 `auditing`——它不是独立业务态，只是「还没审完」。
+>
+> **三条不可逆代价，写死在注释与 UI 文案里**：
+> ① 提审消耗微信审核额度，从 `rejected`/`withdrawn` 重新提审**再扣一次**；
+> ② 撤回**不返还**已扣额度，所以撤回接口要求 `confirm=true` 才执行；
+> ③ 发布对租户小程序全部用户立即生效，且微信不支持「再发一次同一版本」。
+>
+> **凭据一致性**：登记时把当时的 appid 存进记录，动作时重新解析（租户凭据 → 全局 → 环境变量）并比对。
+> 企业中途换过小程序时两者必然不同，此时直接拒绝——否则代码在新小程序、auditid 属于旧小程序，
+> 微信只会回一句莫名其妙的报错。
+>
+> **租户开关**：`company_wx_app.release_enabled`（0026，缺省 true）。关掉后该企业的一切代发动作
+> 返回 `code=403` 并写失败审计；列表仍是只读（企业要能看见历史）。凭据留空保存会清空凭据行，开关随之重置。
+>
+> **access_token 按 appid 分键缓存**（`internal/wechat/wechat.go`）：多租户共用一个后端，
+> 早先的「一个全局 token」会让 A 企业命中 B 企业的 token——微信会拿 B 的身份执行操作，
+> 在版本发布场景等于把代码发到别家小程序。回归测试见 `TestAccessTokenCacheIsKeyedByAppID`。
 
 ## 埋点事件与内容意向（统计口径）
 
@@ -434,6 +623,8 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   - `TestAPIFlowMySQL`（生产契约 parity）：设置 `TEST_MYSQL_DSN` 后，连真实 MySQL、应用 `migrations/*.sql`，再跑与 SQLite **完全相同的断言**，用以校验 AutoMigrate 与生产建表 SQL 行为一致。
   - `internal/handler/hardening_test.go`（P0 加固守门）：专治「静默失败」——摘掉修复必须红。覆盖：登出写不进黑名单必须报 `code:1`（`TestLogoutReportsRevokeFailure`，另有 `TestLogoutSucceedsNormally` 作对照）、密码生成取不到随机数必须报错而不能 panic（`TestGenPasswordEntropyFailure` / `TestGenPasswordRejectsAtAPI`）、小程序码按 IP 限流挡扫号（`TestWXACodeRateLimitedPerIP`）、小程序码缓存到上限要淘汰（`TestWXACodeCacheEvictsAtCap`）、启停员工留审计且目标不存在要报「未找到」（`TestEmployeeStatusAuditAndNotFound`）。
   - `internal/storage/storage_test.go:TestRandNameEntropyFailure`：守门「熵源读取失败必须报错」——从前忽略错误会让每次上传都叫同一个名字，后上传的静默覆盖先上传的。
+  - `internal/handler/mp_release_test.go`（8 例，`TestMPRelease*`）：版本发布 handler 全链路，假微信按调用顺序记账。覆盖：**完整闭环**（登记→提审→轮询到审过→发布，且终态后不再多调一次 release）、**微信报错时本地记录回滚**（不留下「以为提审成功了」的半截状态）、**状态机非法流转被拒**（auditing 态点发布返回 code=1）、**重复版本号 / 未配凭据 / 记录不存在**、**租户凭据优先于全局凭据**、**租户关掉代发后一切写动作 403 而列表仍可读**、**保存凭据时省略 `releaseEnabled` 不清开关**、**重新打开后代发恢复**；每次代发动作都断言落了一条审计（成功记结果态、失败带 error）。
+  - `internal/handler/mp_release_upload_test.go`（8 例，`TestMPReleaseUpload*`）：后台上传这条路。假 node + 假源码目录 + 假模块目录后**重建引擎**（`RegisterMPRelease` 按值收 cfg，改完不重建路由闭包里还是旧值）。覆盖：**上传成功建 `source=backend` 的 draft**、**上传失败不留记录只写失败审计**（别让运营以为只差提审而白扣审核额度）、**租户上传密钥优先于全局那把**（假 node 会把读到的密钥内容落盘，据此断言用的是哪把）、**readiness 一次列全**、**环境不就绪时不启动 node**、**租户关代发 403**、**重复版本号拒绝**、**上传后可直接提审**。
 - 运行：
   ```bash
   cd backend
@@ -476,6 +667,24 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   40001 刷新后重试一次 / 重试仍失败即放弃 / 非 token 类错误不重试、`isImage` 判定。
   （写这组测试时发现 `refreshToken` 持锁调用 `GetAccessToken` 会**死锁**，已拆出无锁的
   `accessToken` 修掉——见代码注释。）
+- `internal/wechat/release_test.go`（11 例）：版本发布四个微信接口的假微信联调——
+  submit_audit 取 auditid / 不传 item_list / errcode 非 0 转 `APIError` / **errcode=0 却缺
+  auditid 也要报错**（微信偶发半截响应，不当成功）、get_auditstatus 五个枚举值含 4 延后、
+  release / undo_code_audit 成功与失败分支。另有一条关键回归：
+  **`TestAccessTokenCacheIsKeyedByAppID`**——假微信按 appid 回不同 token，交替调两个租户，
+  串号必红（原先的「一个全局 token」会把 A 企业的操作打到 B 企业的小程序上）。
+- `internal/model/mp_release_test.go`（4 组）：状态机白名单——允许的 7 条流向全部放行，
+  **明令禁止的流向全部拒绝**（`draft→released` 跳过审核、`audit_passed→auditing` 审过退回、
+  `released→*` 终态、`withdrawn→released` 撤回后上线、自环、空态与未登记状态）；
+  released 终态无出路；六态都有中文名且通过校验；**微信 status=4（延后）映射成
+  auditing 且不算终局**、未知值按「仍在审核中」处理。
+- `internal/mpupload/mpupload_test.go`（7 例）：后台上传的 Go↔Node 边界。用**假 node**
+  （shell 脚本，读 stdin、按暗号分支）跑通 `exec` 全链：密钥**不以明文进 argv**、
+  `projectPath` 原样透传、退出码非 0 且没有结果行必须报错（miniprogram-ci 自己会往
+  stdout 打编译进度，不能假设 stdout 只有我们的内容）、`Problems()` 一次列全缺失项
+  （用不存在的 node 路径触发「node 缺失」分支）、CRLF 密钥归一化、0600 临时密钥文件
+  用完即删。另有一条守门：`require('miniprogram-ci')` 的解析起点是**脚本所在目录**，
+  所以必须设 `NODE_PATH`——漏了在开发机（恰好装过）看不出来，上线才炸。
 - `internal/audit/audit_test.go`：操作人姓名按 admin / employee 分别反查、租户落库、
   未登录记 anonymous、Result 缺省为 success、Detail 以 JSON 落库、写库失败不 panic
   （审计是旁路）、`db=nil` 静默返回；`DetailKeys` 敏感项脱敏（清空时记 changed/cleared）。
@@ -494,7 +703,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - `internal/repository/ratelimit_test.go`：跨副本计数的窗口内累加、key 隔离、翻页重置、窗口边界对齐、过期行清理、stop 幂等。
 - `internal/handler/ratelimit_shared_test.go`：两个 engine 共用一个库，验证总阈值仍是 10 次（不是每副本 10 次）。
 
-CI：见仓库根 `.github/workflows/ci.yml`，共四个 job：
+CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
   - `backend`（**默认必跑，零外部依赖**）：`go build` + `go vet` + `go test ./...`。
     未设置 `TEST_MYSQL_DSN` 时，两个 MySQL 用例（`TestAPIFlowMySQL` / `TestMySQLMigrations`）自动 `t.Skip`，
     因此本 job **不需要任何数据库账号**，靠 SQLite 覆盖全部业务流程。
@@ -504,6 +713,10 @@ CI：见仓库根 `.github/workflows/ci.yml`，共四个 job：
     （例：`root:pwd@tcp(host:3306)/weichuan_test?charset=utf8mb4&parseTime=true`）。
   - `frontend`：`npm ci` + `npm run build` + `npm run test`（Vitest，含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
   - `frontend-typecheck`（**阻塞门禁**）：`vue-tsc --noEmit`。历史 4 个 `@wangeditor/*` 类型错误已通过 tsconfig `paths` 指向真实 d.ts + 精准断言修复，当前 0 错误。
+  - `notices`（**阻塞门禁**）：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md`
+    与当前依赖是否一致。它同时用 Go 和 Node：Go 取 `go list -deps ./...` 命中的模块，Node 侧读
+    `frontend/node_modules/<pkg>/LICENSE` 的**正文**（不是 package.json 的 license 字段）。
+    **改了 `go.mod` / 前端依赖后这个 job 会红**——跑一次生成脚本并提交新清单即可。
 
 > **CI 红、本机绿时：在 Linux 容器里复现。**
 > CI 跑的是 `ubuntu-latest`，而开发机多为 macOS，两者在 goroutine 调度 / 时序上差异真实存在

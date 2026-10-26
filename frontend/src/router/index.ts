@@ -33,6 +33,15 @@ export const routes = [
         meta: { title: '员工管理', group: '审核管理' },
       },
       {
+        // 内容安全：图片违规的检测记录与处置（异步检测 → 消息推送回调 → 人工下架）。
+        // 放在「审核管理」组而不是「平台管理」：企业管理员也要处置自己企业的图，
+        // 而平台管理组是 platformOnly（企业管理员看不到）。
+        path: 'content-sec',
+        name: 'content-sec',
+        component: () => import('@/views/platform/ContentSec.vue'),
+        meta: { title: '内容安全', group: '审核管理' },
+      },
+      {
         path: 'stats',
         name: 'stats',
         component: () => import('@/views/Stats.vue'),

@@ -58,6 +58,19 @@ server {
 
     location / { try_files $uri $uri/ /index.html; }
 
+    # 后台上传小程序代码：同步执行、分钟级（编译 + 传代码都在这一次请求里跑完）。
+    # 不单列的话它落到下面 60s 的 /api/，会在上传途中先返回 504——而代码可能
+    # 已经传到微信了：前端看到失败、后台没有 draft 记录，运营再点一次就撞上
+    # 「版本号已占用」。正则 location 优先于前缀 location，故这里单独放宽。
+    # （只有真的用「上传代码」那条路才需要；仅走 CI 上传可删掉这段。）
+    location ~ ^/api/admin/companies/[0-9]+/releases/upload$ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
     location /api/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -65,6 +78,7 @@ server {
         # 留在链左侧，后端「跳过可信代理取第一个不可信地址」时正好取到它——
         # 登录限流遂可被绕过（等效于超管口令可无限爆破）。详见 frontend/nginx.conf。
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
     }
 
     location /uploads/ {
@@ -197,8 +211,11 @@ export TZ=Asia/Shanghai                        # 统计按服务端本地日期�
 | 服务器    | Linux x86_64，2C4G+，磁盘 40G+ | 默认形态 backend + frontend 两容器（选 SQLite）；MySQL 形态（`--profile mysql`）三容器。名片类应用流量小，2C4G 足够 |
 | Docker | Docker 24+ 与 compose 插件    | `docker compose version` 验证                                                           |
 | 域名     | **已 ICP 备案**，A 记录指向服务器     | 微信小程序合法域名的硬性要求，未备案域名配不了                                                               |
+| 小程序备案 | 主体已在工信部完成「**小程序备案**」（微信公众平台 → 小程序管理 → 备案），备案号需公示 | 与域名 ICP 备案**相互独立**的强制要求（2024 年起）：只备了域名、没备小程序，提审会在最后一步被驳回、无法上线对外提供服务。**备案有审核周期（通常数日，材料不齐会退回重走），应尽早启动**，不要等到提审前才办 |
 | 端口     | 80 / 443 对外                | 只有 frontend 的 8080（→80）该对外。mysql 的 3306 与 backend 的 8090 在 compose 里**已绑 127.0.0.1**：docker 端口映射会把所有外部来源 NAT 成桥接网关，而网关落在后端的可信反代网段里——端口一旦对外，谁都能自带伪造的 `X-Forwarded-For` 绕过登录限流。不需要直连调试就把这两行删掉 |
 | 微信     | 正式 AppID（提审阶段必须）           | 联调期可用测试号；`channel-video` 视频号渲染还需绑定视频号                                                 |
+| 隐私保护指引 | 已在微信公众平台配置《小程序用户隐私保护指引》并声明用到的隐私类型 | **平台侧未声明的隐私类型会直接禁用对应接口**（`errno: 112`），代码再对也调不通。需声明：收集你的昵称、头像；收集你选中的照片或视频信息；使用你的相册（仅写入）权限；读取你的剪切板；使用你的通讯录（仅写入）权限；以及 openid 所属的「用户标识信息」。小程序代码侧已开启 `__usePrivacyCheck__` 并接入自绘授权弹窗，声明项须与代码实际调用一致 |
+| 授权公钥 | 私有 / 独立部署需注入发行方自己的 Ed25519 公钥（环境变量 `LICENSE_PUB`） | 用 `license keygen` 生成密钥对，公钥填进 `LICENSE_PUB`，**私钥只留在签发环境**。仓库内嵌的那把是占位演示密钥（配对私钥公开），私有部署带着它会**拒绝启动**。集中 / 平台模式不验本地许可证，不受此限 |
 
 ## 1. 获取代码与配置
 
@@ -245,12 +262,17 @@ openssl rand -base64 12   # → ADMIN_PASS（或自定义强口令）
 
 ### 小程序端必改（容易漏，且只影响真机）
 
-`miniprogram/utils/config.ts` 的 `DEFAULT_BASE_URL` 默认是 `http://127.0.0.1:8080`。  
-它是小程序**首次**拉配置用的引导种子——真机上 127.0.0.1 是手机自身、不可达，  
-首连失败后就永远拿不到后台下发的正确基址（后台配置只有在种子能连通一次之后才生效）。
+`miniprogram/utils/config.ts` 的 `DEFAULT_BASE_URL` **默认为空**（源码里不放任何地址——
+免得把某台开发机的内网 IP、或明文 http 地址随源码分发给别人）。
+它是小程序**首次**拉配置用的引导种子：空着或连不通，就永远拿不到后台下发的正确基址
+（后台配置只有在种子能连通一次之后才生效），届时只能重新打包提审。
 
-- 真机联调：改成本机局域网 IP（如 `http://192.168.1.20:8080`）
-- 生产：改成 https 域名（如 `https://card.example.com`）
+- 生产：填 https 域名（如 `https://card.example.com`）后重新打包
+- 真机联调：填电脑局域网 IP（如 `http://192.168.1.20:8080`），跑 preflight 时加
+  `PREFLIGHT_ALLOW_PRIVATE=1`，**别把这段改动提交**
+- 守卫：`scripts/preflight.sh` 第 3 节对「空值 / `127.0.0.1` / 私有网段」直接判 FAIL；
+  `miniprogram/tests/config.spec.ts`（内网 IP / 非 https 明文即红）与
+  `brand.spec.ts`（源码不得出现演示租户名）是第二道闸
 
 `preflight.sh` 第 3 项会检查这一处；未改时判 FAIL。
 
@@ -485,19 +507,199 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 
 ## 8. 小程序侧切换（提审前）
 
-1. `miniprogram/app.ts` 的 `globalData.baseUrl` 改为 `https://你的域名`。
+1. 接口基址改为 `https://你的域名`：基址**不再写死在代码里**，改由后台「系统设置 → 小程序 → 小程序接口地址」下发（`miniprogram/utils/config.ts` 的 `miniprogram_base_url`；`app.ts` 里的 `DEFAULT_BASE_URL` 只是首次冷启动前的引导种子）。改完清一次小程序缓存再验证。
 2. 微信公众平台 → 开发管理 → 开发设置 → 服务器域名：
    - `request` 合法域名：`https://你的域名`
    - `uploadFile` 合法域名：`https://你的域名`（头像上传）
    - `downloadFile` 合法域名：同上（如用到）
    - **域名必须已备案；每月修改次数有限，一次填对。**
-3. 开发管理 → 用户隐私保护指引：声明「相册选择（chooseMedia）」用于员工头像上传——微信审核必查项，漏了会被打回。
+3. **开发管理 → 用户隐私保护指引**（微信审核必查项，漏了会被打回）：代码侧调用的隐私接口必须逐个声明对应类型——
+
+   | 代码里的调用 | 需声明的隐私类型 |
+   |---|---|
+   | `wx.chooseMedia`（头像 / 海报背景选图） | 收集你选中的照片或视频信息 |
+   | `wx.getUserProfile`（昵称） | 收集你的昵称、头像 |
+   | `<button open-type="chooseAvatar">`（微信头像） | 收集你的昵称、头像 |
+   | `wx.saveImageToPhotosAlbum`（海报存相册） | 使用你的相册（仅写入）权限 |
+   | `wx.setClipboardData`（复制手机号 / 邮箱） | 读取你的剪切板 |
+   | `wx.addPhoneContact`（存名片到通讯录） | 使用你的通讯录（仅写入）权限 |
+   | `wx.login` 换 openid | 用户标识信息（openid） |
+
+   声明项须与代码实际调用**一致**：多声明无碍，少声明则对应接口被平台直接禁用（`errno: 112`），真机表现为「选图没反应 / 报错」。
 4. 视频号渲染（`<channel-video>`）需真机 + 小程序绑定视频号；测试号下该块留空属预期内。
 
-## 9. 回滚
+## 8.5 运营：试用授权与存储配额（平台 / SaaS 模式）
 
-- **代码回滚**：`git checkout <上一个提交> && docker compose up -d --build`。数据库不动——迁移只增不删、向后兼容，旧版本代码能读新表结构跑。
-- **切勿对生产执行 `docker compose down -v`**——这会清空 `mysql_data` / `uploads_data` 卷。回滚前先确认备份可恢复。
+两件事都在「企业管理 → 授权与配额」一个弹窗里，但它们的**默认值都是"不限制"**，
+这是刻意的：升级不该让存量客户突然被停服。要开始按席位/容量售卖，得显式打开。
+
+| 想做的事 | 在哪里 | 注意 |
+|---|---|---|
+| 改试用口径（新开通企业自动拿到的席位与天数） | 系统设置 → 授权：`license_trial_enabled` / `license_trial_days` / `license_trial_seats`（缺省 开启 / 14 天 / 5 席） | 只影响**以后新开的**企业。已落行的授权是快照，不会跟着漂 |
+| 客户续费 / 转正 / 加席位 | 企业管理 → 「授权」→ 改席位与到期日 | 到期日按 `YYYY-MM-DD` 保存，落库为**当天 23:59:59**；填过去的日期会二次确认（保存即降级只读） |
+| 到期后发生了什么 | 后端 `EnforceLicense` 自动降级只读（写操作返回 `{code:2}`） | **降权是自动的，恢复不是**——必须有人来改到期日，所以要把 `[LICENSE]` 日志接告警 |
+| 给某个客户单独放大存储 | 企业管理 → 「授权与配额」→ 存储上限（MB，0 = 跟随全局） | 全局默认 `storage_quota_mb = 0`（不限）；单租户覆盖优先于全局 |
+| 看谁占了多少 | 企业管理列表「存储」列 / 弹窗内「本企业已用」 | 口径是**自本功能启用起累计的上传量**，不含历史文件、不含覆盖写——不是磁盘真实占用 |
+| 客户报"空间已用尽" | 先看该企业已用/上限；再看日志有无 `[STORAGE][WARN]` | `[STORAGE][WARN]` 表示累加失败（配额会低估），不是超额原因 |
+
+> 存量企业的授权状态是「未配置 = 不限制」。这是合法状态，不是数据缺失——不要为了"整齐"批量补行，
+> 那等于一次性把所有老客户套上席位与到期限制。
+
+## 9. 回滚、备份与恢复
+
+### 9.1 代码回滚
+
+- `git checkout <上一个提交> && docker compose up -d --build`。数据库不动——迁移只增不删、向后兼容，旧版本代码能读新表结构跑。
+- **切勿对生产执行 `docker compose down -v`**——这会清空 `data_data` / `mysql_data` / `uploads_data` 卷。
+
+### 9.2 备份（每天跑，进 crontab）
+
+```bash
+# SQLite（默认形态）
+DB_DRIVER=sqlite scripts/backup.sh
+# MySQL
+DB_DRIVER=mysql scripts/backup.sh
+```
+
+| 形态 | 产物 | 做法 |
+|---|---|---|
+| SQLite | `backups/weichuan-<时间戳>.db.gz` | 容器内 `server backup`（`VACUUM INTO` 在线快照）→ 就地 `integrity_check` → 拷出 → gzip |
+| MySQL | `backups/weichuan-<时间戳>.sql.gz` | 容器内 `mysqldump --single-transaction` → gzip |
+
+**SQLite 为什么不能直接 `cp` 库文件**：库开着 WAL，主文件里可能只有一部分页，剩下的还在
+`-wal` 里。`cp` 出来的是一份撕裂快照，恢复回来 `integrity_check` 直接不通过。
+实测：一个刚启动的库主文件只有 4 KB，WAL 有 1.2 MB——`cp` 得到的几乎是个空库。
+
+轮转按 `KEEP_DAYS`（默认 7 天）。备份失败**不落新文件**，所以
+`scripts/alert_check.sh` 的 R3（备份新鲜度）能兜底发现「备份停了」。
+
+### 9.3 恢复
+
+```bash
+scripts/restore.sh backups/weichuan-20261025-030000.db.gz          # 交互确认
+scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # 脚本化
+```
+
+它会做四件事，顺序不能变：
+
+1. **先备份当前库**到 `backups/pre-restore-<时间戳>/`——恢复是破坏性操作，
+   拿两周前的备份盖上去等于丢掉这两周的数据，没有退路不能动手。
+   这一步失败会直接中止（确需跳过用 `--no-safety`）。
+2. 解压到临时文件（管道中断会留下半个库，所以不直接流式导入）。
+3. 覆盖：SQLite 走一次性容器挂载 `/app/data` 卷完成「删旧 WAL → 写库 → 停/起容器」；
+   MySQL 走 `mysql < dump`（`mysqldump` 自带 `DROP TABLE IF EXISTS`，导入即替换）。
+4. 校验：SQLite 用 `server dbcheck` 验 `integrity_check` 与表数，并等 `/healthz` 回 2xx；
+   MySQL 验表数与 `schema_migrations` 版本。
+
+**SQLite 必须删 `-wal` / `-shm`**：库文件被替换后，旧 WAL 里还是上一个库的页，
+SQLite 打开时会尝试回放它——结果是把旧数据「恢复」进新库，比不恢复更糟。
+
+### 9.4 恢复演练（每季度至少一次）
+
+```bash
+scripts/restore_drill.sh                  # 演练最新一份备份
+scripts/restore_drill.sh backups/xxx.db.gz
+```
+
+演练**不碰生产**：SQLite 全程在临时目录里做，MySQL 恢复到临时库
+`weichuan_drill_<时间戳>` 并在结束时删掉。它验证四件事：
+
+| 步骤 | 判据 | 失败含义 |
+|---|---|---|
+| 1. 归档完整性 | `gzip -t` | 备份包已损坏 |
+| 2. 恢复到临时目录 | 文件头是 `SQLite format 3` | 备份内容与预期不符 |
+| 3. 库完整性 | `integrity_check = ok` 且表数 > 0 | 备份是坏库 / 空库 |
+| 4. 与生产对比 | 生产有的表备份里都有 | **备份不完整**，恢复回去会缺功能 |
+
+行数差异只报告不判失败——日备本来就落后于生产，判失败会让演练永远红着，
+最后没人看。
+
+退出码：`0` 通过 / `1` 有 FAIL / `2` 环境不完整（没有可用的 `dbcheck` 或数据库容器）。
+**`2` 不等于通过**：它只说明「归档没坏、文件头像 SQLite」，没真正打开过库。
+请在部署机上重跑，或设 `SERVER_BIN=/path/to/server`（原生部署）/
+`APP_CONTAINER`、`DB_CONTAINER`（容器部署）指向实际环境。
+
+> 演练记录建议贴进运维日志：日期 + 备份文件名 + 结论 + 行数差异。
+> 没演练过的备份不算备份——它只是「一堆文件里看起来最新的那个」。
+>
+> **留档**：演练输出请存到 `docs/drill-records/YYYY-MM-DD-<形态>.md`（`restore_drill.sh`
+> 会打印可直接粘贴的记录正文），日期 + 备份文件名 + 结论 + 行数差异四项齐全。
+> 客户/审计问「你们怎么证明备份能用」时，这份记录是唯一拿得出手的东西。
+
+### 9.5 时间点恢复（PITR）：全量备份 + binlog
+
+全量备份的恢复点是「备份那一刻」。凌晨 3 点备份、下午 4 点误删一张表，
+只用全量备份就得退回凌晨 3 点——中间 13 小时的数据没了。binlog 记的是这 13 小时
+里每一次写，**「全量备份 + binlog 回放」才能把数据恢复到误操作前一秒**。
+
+前置条件：数据库必须开了 binlog。本项目 compose 的 mysql 服务默认已带
+`--log-bin --server-id=1 --binlog-format=ROW`，自建 MySQL 需自行确认：
+
+```sql
+SHOW VARIABLES LIKE 'log_bin';   -- 必须是 ON
+```
+
+归档（建议每小时一次，比全量备份密得多）：
+
+```cron
+0 * * * * cd /path/to/repo && scripts/backup_binlog.sh >> /var/log/weichuan-binlog.log 2>&1
+```
+
+它按「先 FLUSH 滚动 → 逐个复制并 `gzip -t` 校验 → 校验全过才 `PURGE BINARY LOGS`」
+的顺序做，顺序不能换：先 PURGE 再校验的话，一旦归档坏了，源和副本就一起没了。
+`log_bin=OFF` 时脚本**报错退出**（不是空跑成功）——「以为有 PITR 其实没有」比
+「知道没有」危险得多。
+
+恢复到某个时间点：
+
+```bash
+# 1) 找一份早于目标时刻的全量备份，恢复到临时实例（不要直接盖生产）
+scripts/restore.sh backups/weichuan-20261025-030000.sql.gz
+
+# 2) 回放从备份时刻到误操作前一刻的 binlog
+gunzip -c backups/binlog/<时间戳>/mysql-bin.000123.gz > /tmp/mysql-bin.000123
+mysqlbinlog --start-datetime="2026-10-25 03:00:00" \
+            --stop-datetime="2026-10-25 15:59:59" \
+            /tmp/mysql-bin.000123 | mysql -uroot -p weichuan
+
+# 3) 核对数据后再切流
+```
+
+`--stop-datetime` 取「误操作前一秒」而不是「误操作那一刻」：binlog 里的事件是
+按事务边界组织的，取到等于误操作的时刻很容易把那条 `DELETE` 也一起放进去，
+回放完等于没恢复。
+
+> SQLite 形态没有 PITR：它没有 binlog 这种增量日志，恢复点只能是备份时刻。
+> 对数据丢失零容忍的客户请走 MySQL 形态。
+
+## 9.6 集中日志
+
+服务日志默认是人读文本（保留 `[WARN]` / `[ACCESS-5XX]` 这类前缀，grep 好用）。
+要做集中采集就把形态切成 JSON：
+
+```bash
+LOG_FORMAT=json          # .env 里设置；容器形态 compose 已留好变量
+```
+
+切完之后**每一行都是一个 JSON 对象**，既有代码一行都不用改（实现见
+`backend/internal/logx`——它包装的是标准 log 的输出目标，级别从既有的方括号标签
+推断，认不出的按 info，绝不丢行）：
+
+```json
+{"level":"warn","msg":"磁盘剩余空间不足","tag":"WARN","ts":"2026-10-27T01:20:04.123+08:00"}
+{"level":"info","msg":"http_access","method":"GET","path":"/api/employees","status":200,"latency_ms":3,"request_id":"a1b2","ip":"1.2.3.4"}
+```
+
+| 项 | 说明 |
+|---|---|
+| 采集 | `deploy/promtail/config.yml`（送 Grafana Loki），或任意支持读容器 stdout 的采集器 |
+| 轮转 | 容器已在 compose 里配 `json-file` + `max-size=10m` / `max-file=7`；**改完要 `--force-recreate`**（docker 只在容器创建时读日志配置） |
+| 非容器部署 | 用 `deploy/logrotate/weichuan.conf`（注意 `copytruncate`：服务是追加写同一句柄，默认的 create 会让它继续写已被改名的旧文件，磁盘不会释放） |
+| 指标 | `METRICS_ENABLED=1` 开 `/metrics`；建议同时设 `METRICS_ALLOW_CIDR=127.0.0.1/32,10.0.0.0/8`——白名单是第二道门，即便开关被人在界面上打开，公网访问 `/metrics` 仍一律 404 |
+| 建议告警 | `level="fatal"` 立即告警；`level="error"` 5 分钟内 ≥3 次告警；`status>=500` 比例突增告警 |
+
+> 白名单写错（CIDR 非法）时 `/metrics` 会**全部拒绝**而不是放行——配了白名单却没生效
+> 是最难发现的一类暴露。启动日志会点名哪一条解析失败。
 
 ## 常见问题
 
@@ -510,3 +712,6 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 | 启动日志出现 `[MIGRATE][FATAL]` | 迁移没应用完（表结构落后于代码版本）。看上面的报错处理，或 `AUTO_MIGRATE=0` + `docker exec weichuan-backend /app/server migrate` 单独跑（详见 §4）。服务不会因此终止，但功能可能报错 |
 | 版本升级后功能报错、表缺列 | 同上一行：确认 `schema_migrations` 里有没有最新那个迁移文件（§4 有查询 SQL） |
 | 视频号块空白 | 测试号 / 未绑视频号 / 模拟器——需真机 + 绑定视频号的正式 AppID |
+| 日志变成一行行 JSON 看不懂 | 部署环境里设了 `LOG_FORMAT=json`（集中日志用）。本地排查改回 `LOG_FORMAT=text` |
+| `/metrics` 一直 404 | 三道门任一未过：`metrics_enabled` 开关没开（后台「系统设置 → 功能」）、`METRICS_ALLOW_CIDR` 配了但来源 IP 不在其中、CIDR 写错（启动日志有 `[WARN]` 点名） |
+| 审计日志表越来越大 | 后台「系统设置 → 安全 → 审计日志保留天数」填 180/365；默认 0 = 永不自动清理（删了不可逆，所以不做默认删除）。清理动作本身会记一条 `audit.purge` 审计 |

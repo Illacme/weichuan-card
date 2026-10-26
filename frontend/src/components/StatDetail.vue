@@ -98,7 +98,9 @@ const props = defineProps<{
   /** 对象名（用于筛选标签展示，省掉一次反查）；缺省时展示 ID */
   targetName?: string
 }>()
-const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
+// 模板里直接用 $emit('update:open')（见上方 el-dialog），这里只声明事件契约；
+// 赋值给 emit 变量却从不调用会被当成死代码，故不接收返回值。
+defineEmits<{ (e: 'update:open', v: boolean): void }>()
 
 const list = ref<StatDetailItem[]>([])
 const total = ref(0)

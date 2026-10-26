@@ -16,7 +16,13 @@ func All() []interface{} {
 		&HomeLayout{}, &StatEvent{}, &Admin{},
 		&OpenApply{}, &CardModifyApply{},
 		&RevokedSession{}, &Company{},
-		&AuditLog{}, // 操作审计日志（后台写操作与登录失败留痕）
-		&RateLimitHit{}, // 限流计数（多副本共享，见该类型注释）
+		&AuditLog{},      // 操作审计日志（后台写操作与登录失败留痕）
+		&RateLimitHit{},  // 限流计数（多副本共享，见该类型注释）
+		&PosterPref{},    // 海报个性化设置（自定义背景 + 版式，按员工一行）
+		&CompanyWXApp{},  // 租户小程序凭据（按企业隔离，一个企业一个小程序）
+		&MPRelease{},     // 小程序版本发布记录（平台代租户上传/提审/发布）
+		&MediaCheck{},    // 图片/音频内容安全检测记录（异步送检 → 消息推送回调 → 后台下架）
+		&TenantLicense{}, // 按租户（企业）的授权记录：席位 / 到期 / 功能开关（Phase 4）
+		&StorageUsage{},  // 按租户累计的存储用量（上传字节数 / 文件数，配额检查用）
 	}
 }

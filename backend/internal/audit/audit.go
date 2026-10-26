@@ -39,14 +39,51 @@ const (
 	ActionCompanyStatus     = "company.status"
 	ActionCompanyAdminAdd   = "company.admin.create"
 	ActionCompanyAdminReset = "company.admin.reset_password"
+	// ActionCompanyLicense 改某企业的授权（席位 / 到期 / 功能开关）。
+	// 「改授权」直接决定客户能不能继续用：延长是收钱、缩短/过期是停服，
+	// 两边都会引起客诉，必须留痕（谁在什么时候把谁的到期日改成了哪天）。
+	ActionCompanyLicense = "company.license"
+	// ActionCompanyStorageQuota 改某企业的存储配额（MB）。
+	// 与授权同理：调大是让客户继续上传，调小可能立刻让上传失败，属计费/限流动作。
+	ActionCompanyStorageQuota = "company.storage_quota"
 
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"
 	ActionEmployeeReset  = "employee.reset_password"
 	ActionEmployeeStatus = "employee.status"
+	// ActionEmployeeCancel 员工本人注销账号（PIPL 删除权）：删除员工记录及关联 PII。
+	// 这是不可逆的特权动作，必须留痕——否则「谁注销了谁、什么时候」无从查起。
+	ActionEmployeeCancel = "employee.cancel"
+	// ActionEmployeeExport 后台导出某员工个人信息（PIPL 查阅复制权协助义务）。
+	// 虽是只读查询，但「把一个人的全部 PII 打包导出」本身就是高风险动作，
+	// 必须留痕（与审计包「只读不记」的约定在此处特意破例，见文件头说明）。
+	ActionEmployeeExport = "employee.export"
 
 	ActionApplyApprove = "apply.approve"
 	ActionApplyReject  = "apply.reject"
+
+	// 小程序版本发布（代租户提审 / 发布）。这条链上每个动作都对应微信侧的
+	// 真实后果（提审消耗审核额度、发布改变线上行为），所以逐个登记，
+	// 且轮询导致的被动状态同步只在**状态真的变了**时记一条。
+	ActionMPReleaseCreate    = "mp_release.create"
+	ActionMPReleaseSubmit    = "mp_release.submit_audit"
+	ActionMPReleaseStatus    = "mp_release.audit_status"
+	ActionMPReleaseRelease   = "mp_release.release"
+	ActionMPReleaseUndoAudit = "mp_release.undo_audit"
+	// ActionMPReleaseUpload 后台代传代码。与上面几个动作不同，它**不改变微信侧
+	// 业务状态**（只是生成体验版），但它是整条链上唯一「把代码送上服务器」的
+	// 动作，且会消耗一次编译+上传——必须留痕，否则「这版代码是谁传的」无从查起。
+	ActionMPReleaseUpload = "mp_release.upload"
+
+	// ActionMediaTakedown 图片内容安全「下架」：把已确认违规的对象覆盖成占位图。
+	// 这条必须留痕——覆盖是不可逆的（原图当场丢失），事后要能回答
+	// 「谁在什么时候下的架、依据是哪条检测结论」。
+	ActionMediaTakedown = "media_check.takedown"
+
+	// ActionAuditPurge 按保留期清理审计日志（后台定时任务，见 purge.go）。
+	// 删审计日志是最该被追责的动作之一：能删日志的人同时也能抹掉自己的痕迹。
+	// 留痕后审计页能回答「清掉了多少条、按多少天的保留期清的」。
+	ActionAuditPurge = "audit.purge"
 )
 
 // ResultSuccess / ResultFail 操作结果。
@@ -60,6 +97,10 @@ const (
 	ActorAdmin     = "admin"
 	ActorEmployee  = "employee"
 	ActorAnonymous = "anonymous"
+	// ActorSystem 系统自身（无 gin 上下文的后台任务，如审计日志按保留期清理）。
+	// 不能归到 anonymous：anonymous 的语义是「未登录的人」，而清理是系统在无人
+	// 值守时做的动作——混在一起会让「有人未登录就删了日志」变成假警报。
+	ActorSystem = "system"
 )
 
 // Sensitive 敏感值在审计详情里的占位符。
@@ -74,6 +115,7 @@ type Entry struct {
 	Detail     map[string]any // 变更摘要（敏感值用 Sensitive 占位）
 	Result     string         // ResultSuccess / ResultFail；为空视同 success
 	ActorName  string         // 可选：接口已知用户名时传入（登录失败时还没有身份）
+	ActorType  string         // 可选：系统动作填 ActorSystem；留空则按 gin 上下文判定
 }
 
 // Record 写入一条审计日志：操作者身份优先从 gin 上下文取（中间件已注入），
@@ -96,6 +138,10 @@ func Record(db *gorm.DB, c *gin.Context, e Entry) {
 			actorType = ActorAdmin
 		}
 	}
+	// 显式指定的操作者类型优先（系统动作没有 gin 上下文，只能由调用方指定）
+	if e.ActorType != "" {
+		actorType = e.ActorType
+	}
 	result := e.Result
 	if result == "" {
 		result = ResultSuccess
@@ -105,6 +151,10 @@ func Record(db *gorm.DB, c *gin.Context, e Entry) {
 	actorName := e.ActorName
 	if actorName == "" && actorID > 0 {
 		actorName = lookupName(db, actorType, actorID)
+	}
+	// 系统动作没有 id 可反查，给个固定展示名——否则审计列表里这一行操作人是空的。
+	if actorName == "" && actorType == ActorSystem {
+		actorName = "系统"
 	}
 
 	detail := ""

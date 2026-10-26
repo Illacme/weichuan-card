@@ -1,4 +1,4 @@
-import http, { toPaged, type Paged } from './request'
+import http, { toPaged, type Paged, type ApiResp } from './request'
 
 export interface EmployeePayload {
   name: string
@@ -44,4 +44,23 @@ export function enableEmployee(id: number) {
 // 重置密码 → 返回一次性初始密码
 export function resetPassword(id: number) {
   return http.post(`/admin/employees/${id}/reset-password`).then((r: any) => r.initialPassword as string)
+}
+
+// 按员工导出个人信息（PIPL 查阅复制权协助义务）：拉取该员工完整 PII 的 JSON 文件并下载。
+// 走统一 http 封装——后端回 {code,data:员工记录} 信封，拦截器已在 code!=0 时弹错并 reject，
+// 这里只需在成功分支把 data（员工记录；已不含 json:"-" 标注的密码哈希等敏感字段）落盘为 .json 文件。
+// 按租户隔离在服务端保证（scopeCond），此处只管下载。
+export function exportEmployee(id: number) {
+  return http.get(`/admin/employees/${id}/export`).then((r: ApiResp) => {
+    const json = JSON.stringify(r.data, null, 2)
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `employee-${id}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  })
 }

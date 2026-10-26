@@ -1,1 +1,6 @@
-{}
+{
+  "navigationBarTitleText": "编辑名片",
+  "usingComponents": {
+    "privacy-consent": "/components/privacy-consent/index"
+  }
+}

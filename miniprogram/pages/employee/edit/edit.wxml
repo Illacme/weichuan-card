@@ -46,3 +46,6 @@
   <button class="submit-btn" bindtap="onSubmit">提交修改（待审）</button>
 </view>
 <view wx:else class="loading">加载中…</view>
+
+<!-- 微信隐私授权弹窗：选图前由 ensurePrivacy 弹出，用户同意后才继续 -->
+<privacy-consent visible="{{privacyVisible}}" />

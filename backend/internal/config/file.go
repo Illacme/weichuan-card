@@ -159,22 +159,30 @@ func WriteFileValues(path string, kv map[string]string) error {
 		return fmt.Errorf("创建临时文件失败：%w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // rename 成功后这一步只剩清不存在的文件的 no-op
+	// 清理兜底：rename 成功后这一步只是「删一个已不存在的路径」的 no-op，
+	// 失败（文件不存在）正是预期结果，无需判错。
+	// 必须是 defer：写成同步调用会在 rename 之前就把临时文件删掉。
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.WriteString(b.String()); err != nil {
-		tmp.Close()
+		// 已经要返回写错误了，关闭失败不改变结论（后面还有一步显式 Close 兜着）
+		_ = tmp.Close()
 		return fmt.Errorf("写临时文件失败：%w", err)
 	}
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("设置文件权限失败：%w", err)
 	}
+	// 这一步的 Close 错误**必须**判：写成功而 Close 失败意味着数据未必落盘，
+	// 此时 rename 上去的就是一个残缺的配置文件——而配置文件坏了，连改回来的入口都没了。
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("关闭临时文件失败：%w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("替换配置文件失败：%w", err)
 	}
-	os.Chmod(path, 0o600) // 兜底：rename 保留临时文件权限，但显式再设一次更稳
+	// 兜底：rename 保留的是临时文件的权限，而临时文件上面已经 Chmod(0o600) 了，
+	// 这里再设一次只是双保险；失败不影响结果（权限已由上面的 Chmod 保证）。
+	_ = os.Chmod(path, 0o600)
 
 	fileMu.Lock()
 	delete(fileCache, path)

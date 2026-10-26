@@ -85,7 +85,6 @@ import {
   listPlatformAdmins,
   renamePlatformAdmin,
   resetPlatformAdminPassword,
-  type PlatformAdmin,
 } from '@/api/admins'
 import { adminLogout, getMe } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'

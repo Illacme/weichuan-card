@@ -2,6 +2,7 @@
   "name": "weichuan-admin",
   "version": "1.3.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "description": "微传名片 · PC 管理后台（Vue3 + Element Plus）",
   "scripts": {
@@ -10,7 +11,9 @@
     "preview": "vite preview --port 4173",
     "type-check": "vue-tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -23,11 +26,16 @@
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.20.5",
     "@vitejs/plugin-vue": "^5.1.4",
     "@vue/test-utils": "^2.5.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^9.33.0",
+    "globals": "^15.15.0",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.72.1",
     "unplugin-vue-components": "^32.1.0",
     "vite": "^5.4.9",
     "vitest": "^2.1.9",

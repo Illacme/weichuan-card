@@ -72,6 +72,9 @@ export function installWx(overrides: WxStub = {}) {
     previewImage: vi.fn(),
     chooseMedia: vi.fn(),
     uploadFile: vi.fn(),
+    // 剪贴板：setClipboardData 属微信隐私接口，复制类用例会用到
+    setClipboardData: vi.fn((o: any) => o && o.success && o.success({})),
+    getClipboardData: vi.fn((o: any) => o && o.success && o.success({ data: '' })),
     request: vi.fn(),
     getSystemInfoSync: () => ({ statusBarHeight: 44, pixelRatio: 2 }),
     ...overrides,

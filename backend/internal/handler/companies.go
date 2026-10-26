@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"weichuan/internal/audit"
 	"weichuan/internal/auth"
+	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
 	"weichuan/internal/setting"
@@ -66,6 +68,29 @@ func countByCompany(db *gorm.DB, tableModel interface{}, ids []int64) map[int64]
 		Scan(&rows)
 	for _, r := range rows {
 		out[r.CompanyID] = r.Cnt
+	}
+	return out
+}
+
+// configuredWXCompanies 批量查「已配好租户小程序凭据」的企业 id 集合：一次 IN 查询，
+// 不逐行 SELECT。半配置（只填了 AppID）不算配好——取值侧 tenantWXApp 也要求成对，
+// 两侧口径必须一致，否则列表显示「已配置」而生成码时仍回落全局小程序。
+func configuredWXCompanies(db *gorm.DB, ids []int64) map[int64]bool {
+	out := make(map[int64]bool, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	var rows []struct {
+		CompanyID int64 `gorm:"column:company_id"`
+	}
+	// 与 countByCompany 一样不处理 Scan 错误：表未建（迁移未执行）时退化为「全部未配置」，
+	// 页面照样能打开，只是没有高亮——比整页报错好。
+	db.Model(&model.CompanyWXApp{}).
+		Select("company_id").
+		Where("company_id IN ? AND app_id <> '' AND app_secret <> ''", ids).
+		Scan(&rows)
+	for _, r := range rows {
+		out[r.CompanyID] = true
 	}
 	return out
 }
@@ -132,13 +157,36 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		}
 		empCnt := countByCompany(db, &model.Employee{}, ids)
 		adminCnt := countByCompany(db, &model.Admin{}, ids)
+		// 租户小程序凭据状态：让平台一眼看出哪些企业还缺 AppID/AppSecret
+		// （缺了的企业员工生成海报码时会回落到平台小程序，需要提前发现而不是等客诉）
+		wxOK := configuredWXCompanies(db, ids)
+		// 存储用量与授权状态：前者是成本/计费口径，后者决定这家企业还能不能继续用
+		// （试用到期 → 后台只读）。两者都必须批量取，否则列表一页 20 行就是 40 次查询。
+		storeBytes := storageBytesByCompany(db, ids)
+		lics := tenantLicensesByCompany(db, ids)
+		now := time.Now()
 
 		data := make([]gin.H, 0, len(comps))
 		for _, comp := range comps {
+			lic := lics[comp.ID]
+			exp := ""
+			expired := false
+			if !lic.ExpiresAt.IsZero() {
+				exp = lic.ExpiresAt.Format("2006-01-02")
+				expired = now.After(lic.ExpiresAt)
+			}
 			data = append(data, gin.H{
 				"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
-				"createdAt": comp.CreatedAt,
+				"createdAt":     comp.CreatedAt,
 				"employeeCount": empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
+				"wxConfigured": wxOK[comp.ID],
+				// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
+				"storageBytes":     storeBytes[comp.ID],
+				"licenseExists":    lic.ID > 0,
+				"licenseEdition":   lic.Edition,
+				"licenseSeats":     lic.Seats,
+				"licenseExpiresAt": exp,
+				"licenseExpired":   expired,
 			})
 		}
 		pagedOK(c, data, total, page, size)
@@ -177,16 +225,31 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			}
 		}
 		comp := model.Company{Name: req.Name, ShortName: resolveShortName(req.ShortName), Status: "enabled", CreatedAt: time.Now()}
-		if err := db.Create(&comp).Error; err != nil {
+		// 企业行 + 种子内容 + 试用授权放在**同一个事务**里。
+		//
+		// 为什么不各自 Create 了事：B4 的机制是「新租户靠这条试用授权行才受约束」，
+		// 一旦企业建成而授权行没写成，这家企业就永远落在"不限制"那一侧——
+		// 而且事后没人会知道本该有一条。宁可让这次开通整体失败、让运营重试。
+		//
+		// 种子内容三件套的 error 仍旧不中断：它们只是"开箱即用的空白模板"，
+		// 缺了页面照样能打开（各自都有兜底），不值得为它整体回滚。
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&comp).Error; err != nil {
+				return err
+			}
+			// 简称种子取开通时显式填写的值，未填则留空——小程序顶栏回落展示企业全称，
+			// 不跟随 company.short_name 的缺省值「微传名片」（两者相互独立）
+			tx.Create(&model.CompanyInfo{CompanyID: comp.ID, FullName: req.Name, ShortName: strings.TrimSpace(req.ShortName)})
+			tx.Create(&model.CompanyProfile{CompanyID: comp.ID})
+			tx.Create(&model.HomeLayout{CompanyID: comp.ID, Order: `["achievement","service"]`})
+			// 试用授权：license_trial_enabled=false 时是 no-op（回到"不限制"的老行为）
+			return license.CreateTrialLicense(tx, comp.ID)
+		})
+		if err != nil {
+			log.Printf("[COMPANY][ERROR] 开通企业失败（已回滚）：%v", err)
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})
 			return
 		}
-		// 种子内容三件套：新企业开箱即有空白公司信息/简介/默认布局；
-		// 简称种子取开通时显式填写的值，未填则留空——小程序顶栏回落展示企业全称，
-		// 不跟随 company.short_name 的缺省值「微传名片」（两者相互独立）
-		db.Create(&model.CompanyInfo{CompanyID: comp.ID, FullName: req.Name, ShortName: strings.TrimSpace(req.ShortName)})
-		db.Create(&model.CompanyProfile{CompanyID: comp.ID})
-		db.Create(&model.HomeLayout{CompanyID: comp.ID, Order: `["achievement","service"]`})
 		if req.AdminUsername != "" {
 			hash, _ := auth.HashPassword(req.AdminPassword)
 			if err := db.Create(&model.Admin{CompanyID: comp.ID, Username: req.AdminUsername, PasswordHash: hash}).Error; err != nil {

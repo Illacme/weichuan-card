@@ -1,4 +1,5 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
+import { ensurePrivacy } from '../../../utils/privacy'
 
 Page({
   data: {
@@ -10,6 +11,8 @@ Page({
     // 有待审修改申请时为 true：页面展示「审核中」标签（需求 B9）。
     // 审核期对外仍显示旧信息——后端仅在超管 approve 时写回。
     pendingModify: false,
+    // 微信隐私授权弹窗是否显示（由 ensurePrivacy 控制）
+    privacyVisible: false,
   },
   onLoad() {
     this.loadMe()
@@ -51,7 +54,14 @@ Page({
     this.setData({ form })
   },
   // 选图并上传头像（沿用 PC 端 UploadField 思路：调后端上传接口拿回 URL）
-  chooseAvatar() {
+  //
+  // chooseMedia 是微信隐私接口：调用前须取得用户对隐私政策的同意，
+  // 未同意则不打开选图器（用户不同意就不能采集照片，直接放弃本次操作）。
+  async chooseAvatar() {
+    if (!(await ensurePrivacy(this))) {
+      wx.showToast({ title: '需同意隐私政策才能使用', icon: 'none' })
+      return
+    }
     const that = this
     wx.chooseMedia({
       count: 1,

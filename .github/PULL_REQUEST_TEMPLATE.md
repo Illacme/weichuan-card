@@ -17,6 +17,7 @@
 - [ ] 新增接口已在根目录映射文档或 backend/README.md 中同步
 - [ ] 涉及密钥 / 环境变量仅通过 `.env.example` 与 Secrets/Variables 注入，未硬编码
 - [ ] 数据库变更（如新增表 / 列）已追加对应 migrations，并考虑存量库迁移
+- [ ] 若改了依赖（`backend/go.mod` / `frontend/package.json` / `package-lock.json`），已跑 `python3 scripts/gen_third_party_notices.py` 并提交新清单（CI 中由 notices job 覆盖）
 
 ## 测试计划
 <!-- 手动验证步骤，或说明 CI 已覆盖 -->

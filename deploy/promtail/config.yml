@@ -1,0 +1,84 @@
+# 微传名片 · Promtail 采集配置（把容器日志送进 Grafana Loki）
+#
+# 用法（与 compose 同机部署采集器时）：
+#   docker run -d --name promtail \
+#     -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+#     -v /var/run/docker.sock:/var/run/docker.sock:ro \
+#     -v $(pwd)/deploy/promtail/config.yml:/etc/promtail/config.yml:ro \
+#     grafana/promtail:2.9.0 -config.file=/etc/promtail/config.yml
+#
+# 前提：服务日志要打成 JSON（LOG_FORMAT=json），否则下面的 json 解析阶段
+# 全部落空，日志进 Loki 后就是一坨没法筛的文本——那还不如直接 grep 文件。
+#
+# 两级 JSON 是 docker 的固有结构，必须解两次：
+#   第 1 层是 docker json-file 自己的信封（log / stream / time），
+#   第 2 层才是本服务 logx 打出来的那一行（ts / level / msg / tag / method ...）。
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: http://LOKI_HOST:3100/loki/api/v1/push # ← 换成你的 Loki 地址
+
+scrape_configs:
+  - job_name: weichuan-docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        # 只采本项目容器：compose 顶层写了 name: weichuan，容器名前缀固定
+        filters:
+          - name: name
+            values: ["weichuan-backend", "weichuan-frontend", "weichuan-mysql"]
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        target_label: container
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+    pipeline_stages:
+      # 第 1 层：docker 的信封
+      - json:
+          expressions:
+            log_line: log
+            stream: stream
+            time: time
+      # 第 2 层：服务自己的结构化日志
+      - json:
+          source: log_line
+          expressions:
+            ts: ts
+            level: level
+            msg: msg
+            tag: tag
+            method: method
+            path: path
+            status: status
+            request_id: request_id
+      # 时间戳用服务自己打的（RFC3339）：比 docker 的采集时间准，
+      # 跨容器对齐时间线时也一致（各容器时钟可能有偏差）。
+      - timestamp:
+          source: ts
+          format: RFC3339Nano
+      - labels:
+          level:
+          tag:
+          container:
+      # 这几项不进标签、只作检索字段：path 基数极高（每个员工一条），
+      # 打成标签会把 Loki 的索引撑爆。
+      - structured_metadata:
+          msg:
+          method:
+          path:
+          status:
+          request_id:
+      - output:
+          source: msg
+
+# 建议配的告警（写在 Loki / Grafana 侧，这里只是提示）：
+#   level="fatal"                          → 立即告警（启动被拦、迁移失败）
+#   level="error"                          → 5 分钟内出现 ≥3 次告警
+#   msg="http_access" | status >= 500      → 5xx 比例突增告警
+#   tag="ACCESS-5XX"                       → 同上（未开 JSON 时的退化方案）

@@ -29,6 +29,7 @@
         <el-option label="平台/企业管理员" value="admin" />
         <el-option label="员工" value="employee" />
         <el-option label="未登录（登录失败）" value="anonymous" />
+        <el-option label="系统（后台任务）" value="system" />
       </el-select>
     </div>
 
@@ -94,7 +95,7 @@ const actorType = ref('')
 const actionOptions = Object.keys(ACTION_LABELS)
 
 function actorTypeText(t: string) {
-  return { admin: '管理员', employee: '员工', anonymous: '未登录' }[t] || t || '—'
+  return { admin: '管理员', employee: '员工', anonymous: '未登录', system: '系统' }[t] || t || '—'
 }
 
 function onFilter() {

@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "申请开通"
+  "navigationBarTitleText": "申请开通",
+  "usingComponents": {
+    "privacy-consent": "/components/privacy-consent/index"
+  }
 }

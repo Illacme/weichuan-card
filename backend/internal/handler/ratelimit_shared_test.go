@@ -6,9 +6,11 @@ package handler
 import (
 	"os"
 	"testing"
+	"time"
 
 	"weichuan/internal/config"
 	"weichuan/internal/model"
+	"weichuan/internal/repository"
 	"weichuan/internal/storage"
 
 	"github.com/gin-gonic/gin"
@@ -39,8 +41,22 @@ func newSharedRateEngine(t *testing.T, db *gorm.DB) *gin.Engine {
 	}, nil)
 }
 
+// freezeRateClock 固定限流窗口的时间源。
+//
+// 为什么必须固定：窗口按墙上时钟的整分钟对齐（repository.windowStart），
+// 这十几次请求只要跨过一次分钟边界，共享计数就翻页重置，「第 11 次必须被拒」
+// 会变成放行——表现为并发跑全量包时偶发失败，且与被测逻辑无关
+// （实测抓到过：expected 429, actual 1）。固定时钟后窗口不再自己翻页。
+func freezeRateClock(t *testing.T) {
+	t.Helper()
+	base := time.Date(2026, 1, 1, 12, 0, 30, 0, time.UTC)
+	restore := repository.SetNowFunc(func() time.Time { return base })
+	t.Cleanup(restore)
+}
+
 // 计数必须真的落到表里——否则中间件挂了个假 counter，测试全绿而线上什么都没发生。
 func TestLoginRateLimitWritesSharedCounter(t *testing.T) {
+	freezeRateClock(t)
 	db := openSharedRateDB(t)
 	r := newSharedRateEngine(t, db)
 	c := newTestClient(r, t)
@@ -63,6 +79,7 @@ func TestLoginRateLimitWritesSharedCounter(t *testing.T) {
 // 改造前每个副本各有一份进程内桶，副本 A 打 6 次 + 副本 B 打 5 次都能成功，
 // 攻击者只要把请求摊到不同副本上就能把尝试次数翻倍——而线上看起来毫无异常。
 func TestLoginRateLimitSharedAcrossReplicas(t *testing.T) {
+	freezeRateClock(t)
 	db := openSharedRateDB(t)
 	replicaA := newTestClient(newSharedRateEngine(t, db), t)
 	replicaB := newTestClient(newSharedRateEngine(t, db), t)

@@ -1,0 +1,66 @@
+<view class="privacy">
+  <view class="pv-intro">
+    <text class="pv-intro-t">本政策说明本小程序在提供电子名片服务过程中如何收集、使用与保护你的个人信息。</text>
+    <text class="pv-intro-t pv-dim">生效日期：{{effectiveDate}}</text>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">一、我们收集哪些信息</view>
+    <view class="pv-item">
+      <text class="pv-item-t">· 微信标识（openid）：</text>
+      <text>用于识别你的微信身份，以便你提交开通申请、登录员工账号，以及供企业管理员核实申请人与登录者身份。</text>
+    </view>
+    <view class="pv-item">
+      <text class="pv-item-t">· 你主动填写的信息：</text>
+      <text>姓名、手机号、备用手机号、职位、座机、邮箱，用于生成与展示你的电子名片。其中手机号同时作为员工登录账号。</text>
+    </view>
+    <view class="pv-item">
+      <text class="pv-item-t">· 你上传的图片：</text>
+      <text>头像与海报背景图，用于名片与个人海报的展示。</text>
+    </view>
+    <view class="pv-item">
+      <text class="pv-item-t">· 访问与操作记录：</text>
+      <text>名片被访问、点击拨号、存入通讯录、浏览案例或服务、播放视频、转发、生成并保存海报等行为，用于向名片所属员工展示访客数据、供企业了解内容偏好。统计结果仅以计数形式呈现，不含你的身份信息。</text>
+    </view>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">二、我们如何使用这些信息</view>
+    <view class="pv-item"><text>· 在名片与海报中展示你同意公开的联系方式与职务信息；</text></view>
+    <view class="pv-item"><text>· 处理你提交的开通申请，由企业管理员审核后为你开通账号；</text></view>
+    <view class="pv-item"><text>· 向你展示你自己的访客数据统计；</text></view>
+    <view class="pv-item"><text>· 对你上传的图片与填写的文字进行内容安全检测，防止违法违规内容对外传播；</text></view>
+    <view class="pv-item"><text>· 依法配合有权机关的合法要求。</text></view>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">三、我们如何保护这些信息</view>
+    <view class="pv-item"><text>· 信息存储于部署本小程序的服务方自有服务器与对象存储，不向第三方共享或转让；</text></view>
+    <view class="pv-item"><text>· 传输过程使用 HTTPS 加密；</text></view>
+    <view class="pv-item"><text>· 仅企业管理员可查看本企业员工的资料与访客统计，且访问行为留有审计记录；</text></view>
+    <view class="pv-item"><text>· 保存期限：名片资料在员工在职期间保存，注销账号后按法律法规要求处理。</text></view>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">四、你的权利</view>
+    <view class="pv-item"><text>你可以随时行使以下权利：</text></view>
+    <view class="pv-item"><text>· 查阅、复制：在「我的」页查看你的名片资料；</text></view>
+    <view class="pv-item"><text>· 更正：进入「我的 → 编辑名片」修改你的资料，提交后由企业管理员审核生效；</text></view>
+    <view class="pv-item"><text>· 删除与注销：联系企业管理员或运营方，注销后你的账号与相关资料将被删除或匿名化；</text></view>
+    <view class="pv-item"><text>· 撤回同意：在微信「设置 → 小程序已获取的信息」中撤回授权，或停止使用相关功能。</text></view>
+    <view class="pv-item"><text>撤回同意后，与撤回相关的功能将无法继续使用。</text></view>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">五、联系我们</view>
+    <view class="pv-item"><text>如你对本政策或你的个人信息有任何疑问，或需要行使上述权利，可通过企业管理员或本小程序运营方提供的联系方式与我们联系。</text></view>
+  </view>
+
+  <view class="pv-sec">
+    <view class="pv-h">六、微信平台隐私指引</view>
+    <view class="pv-item"><text>本小程序在微信平台侧声明的隐私信息类型，可查看 </text></view>
+    <text class="pv-link" bindtap="openFullContract">{{contractName || '《小程序用户隐私保护指引》'}}</text>
+  </view>
+
+  <view class="pv-foot">本政策随产品功能调整同步更新。</view>
+</view>

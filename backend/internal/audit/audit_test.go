@@ -122,6 +122,20 @@ func TestRecordKeepsProvidedActorName(t *testing.T) {
 	require.Equal(t, "bob", lastLog(t, db).ActorName)
 }
 
+// 系统动作（无 gin 上下文的后台任务）：必须标成 system 且有个可读的操作人名，
+// 否则审计列表里这一行会显示成「未登录的人删了审计日志」——假警报比没有警报更糟。
+func TestRecordSystemActor(t *testing.T) {
+	db := newAuditDB(t)
+	Record(db, nil, Entry{
+		Action: ActionAuditPurge, ActorType: ActorSystem, TargetType: "audit_log",
+		Detail: map[string]any{"deleted": 12},
+	})
+	row := lastLog(t, db)
+	require.Equal(t, ActorSystem, row.ActorType)
+	require.Equal(t, "系统", row.ActorName)
+	require.EqualValues(t, 0, row.ActorID)
+}
+
 // 写入失败只告警、不 panic：审计是旁路，不能因为记不下来就让业务请求失败。
 func TestRecordDoesNotPanicOnWriteFailure(t *testing.T) {
 	db := newAuditDB(t)

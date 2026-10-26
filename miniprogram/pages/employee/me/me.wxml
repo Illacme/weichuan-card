@@ -5,6 +5,11 @@
     <button class="primary-btn" bindtap="goLogin">员工登录</button>
     <button class="plain-btn" bindtap="goApply">申请开通员工账号</button>
     <view class="guest-hint">暂无账号？提交开通申请，超管审核通过后即可登录</view>
+    <!-- 隐私政策入口：未登录访客也要能查阅（微信审核要求应用内可查阅隐私指引） -->
+    <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
+      <text class="cell-label">隐私政策</text>
+      <text class="cell-arrow">›</text>
+    </view>
   </view>
 
   <!-- 已登录 -->
@@ -36,12 +41,26 @@
         <text class="cell-label">数据统计</text>
         <text class="cell-arrow">›</text>
       </view>
+      <view class="cell" bindtap="goMydata" hover-class="cell-hover">
+        <text class="cell-label">我的数据</text>
+        <text class="cell-arrow">›</text>
+      </view>
       <view class="cell" bindtap="openPwd" hover-class="cell-hover">
         <text class="cell-label">修改密码</text>
         <text class="cell-arrow">›</text>
       </view>
       <view class="cell" bindtap="logout" hover-class="cell-hover">
         <text class="cell-label danger">退出登录</text>
+        <text class="cell-arrow">›</text>
+      </view>
+      <!-- 注销账号：PIPL 删除权。不可恢复，故走二次强确认（见 me.ts cancelAccount） -->
+      <view class="cell" bindtap="cancelAccount" hover-class="cell-hover">
+        <text class="cell-label danger">注销账号</text>
+        <text class="cell-arrow">›</text>
+      </view>
+      <!-- 隐私政策入口：微信审核要求用户可在应用内查阅隐私保护指引 -->
+      <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
+        <text class="cell-label">隐私政策</text>
         <text class="cell-arrow">›</text>
       </view>
     </view>

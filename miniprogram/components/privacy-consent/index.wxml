@@ -1,0 +1,24 @@
+<!-- 微信隐私授权弹窗。
+     类名一律 pc- 前缀：组件开了 addGlobalClass，会吃到全局样式，
+     通用名（mask/dialog/btn…）会与「我的」页等全局类冲突泄漏样式。 -->
+<view class="pc-mask" wx:if="{{visible}}" catchtouchmove="noop">
+  <view class="pc-dialog">
+    <view class="pc-title">用户隐私保护提示</view>
+    <view class="pc-body">
+      <text wx:if="{{contractName}}">为保障你的个人信息安全，本小程序需收集你的部分信息用于提供名片展示与申请开通服务，详见 </text>
+      <text wx:else>为保障你的个人信息安全，本小程序需收集你的部分信息用于提供名片展示与申请开通服务，详见 </text>
+      <text class="pc-link" bindtap="onViewContract">{{contractName || '《小程序用户隐私保护指引》'}}</text>
+      <text>。你可以选择同意后继续，或取消本次操作。</text>
+    </view>
+    <view class="pc-actions">
+      <button class="pc-btn pc-btn-cancel" bindtap="onDisagree">不同意</button>
+      <!-- 同意按钮必须用 open-type="agreePrivacyAuthorization"：
+           基础库会校验该按钮确实被点击过，微信侧才会记录同意状态。 -->
+      <button
+        class="pc-btn pc-btn-primary"
+        open-type="agreePrivacyAuthorization"
+        bindagreeprivacyauthorization="onAgree"
+      >同意并继续</button>
+    </view>
+  </view>
+</view>

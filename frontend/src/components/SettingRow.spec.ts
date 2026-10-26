@@ -39,6 +39,9 @@ function mountRow(item: Record<string, unknown>, modelValue = '') {
           template: '<span class="el-tooltip"><slot /><span class="el-tooltip__content">{{ content }}</span></span>',
           props: ['content', 'placement'],
         },
+        // stub 掉服务端路径选择器弹窗：它内部含输入框（用于「直接输入路径」），
+        // 会干扰「行内只有一个输入控件」的断言；弹窗本身在测试中不开（visible=false）
+        'PathPickerDialog': { template: '<span class="path-picker-stub" />' },
       },
     },
   })
@@ -146,5 +149,26 @@ describe('SettingRow 控件唯一性（防 v-if 链断裂回归）', () => {
       },
     })
     expect(w2.find('.row-error').text()).toContain('不是完整地址')
+  })
+})
+
+describe('SettingRow 路径类配置（浏览服务器目录按钮）', () => {
+  it('pathKind 项渲染文本框 + 浏览按钮，且仅一个输入控件', () => {
+    // 后台上传小程序代码那三项（mp_node_bin / mp_ci_module_dir / mp_source_dir）
+    // 是「服务端路径」类：文本框旁要出现「浏览…」按钮，但仍只一个输入框
+    const w = mountRow({ key: 'mp_source_dir', type: 'string', pathKind: 'source_dir' }, '/opt/src')
+    expect(w.find('.row-control input').exists()).toBe(true)
+    expect(w.find('.path-browse').exists()).toBe(true)
+    expect(w.find('.row-control').findAll('input')).toHaveLength(1)
+  })
+
+  it('非 pathKind 项不渲染浏览按钮', () => {
+    const w = mountRow({ key: 'brand_name', type: 'string' })
+    expect(w.find('.path-browse').exists()).toBe(false)
+  })
+
+  it('只读项即便带 pathKind 也不渲染浏览按钮', () => {
+    const w = mountRow({ key: 'mp_source_dir', type: 'string', pathKind: 'source_dir', readOnly: true })
+    expect(w.find('.path-browse').exists()).toBe(false)
   })
 })

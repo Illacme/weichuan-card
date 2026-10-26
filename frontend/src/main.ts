@@ -13,6 +13,7 @@ import 'element-plus/es/components/message-box/style/css'
 import App from './App.vue'
 import router from './router'
 import { getSetupStatus, type SetupStatus } from './api/setup'
+import { reportClientError } from './api/clientError'
 
 // 首次部署引导 / 安装向导：后端在 DB_DSN 未提供时会进入「初始配置模式」（进程起来但不加载业务）。
 // 生产环境前端由 nginx 托管，运维访问 80 端口看到的是本前端而非后端 /setup 页，
@@ -47,7 +48,34 @@ async function bootstrap() {
   // （#53 崩溃正是经此路径放大为关闭/下拉/开关失灵）。
   app.config.errorHandler = (err, instance, info) => {
     console.error('[Vue 运行时异常]', info, err)
+    reportClientError({
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : '',
+      level: 'error',
+      extra: typeof info === 'string' ? info : '',
+    })
   }
+
+  // 全局兜底：Vue errorHandler 抓不到的原生错误（脚本运行异常、资源加载失败）
+  // 与未捕获的 Promise 拒绝（async 函数 / 接口调用链）。Vue 边界之外崩了也要报。
+  window.onerror = (msg, src, line, col, err) => {
+    reportClientError({
+      message: typeof msg === 'string' ? msg : String(msg),
+      stack: err?.stack,
+      url: typeof src === 'string' ? src : location.href,
+      line: typeof line === 'number' ? line : 0,
+      column: typeof col === 'number' ? col : 0,
+      level: 'error',
+    })
+  }
+  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+    const r = e.reason
+    reportClientError({
+      message: r instanceof Error ? r.message : String(r),
+      stack: r instanceof Error ? r.stack : '',
+      level: 'unhandledrejection',
+    })
+  })
 
   app.use(createPinia())
   app.use(router)

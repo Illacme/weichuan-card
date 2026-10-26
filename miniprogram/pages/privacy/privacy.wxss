@@ -1,0 +1,57 @@
+/* 隐私政策页 */
+.privacy {
+  padding: 24rpx 24rpx 60rpx;
+  box-sizing: border-box;
+}
+.pv-intro {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 28rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.pv-intro-t {
+  display: block;
+  font-size: 27rpx;
+  color: #333;
+  line-height: 1.75;
+}
+.pv-intro-t.pv-dim {
+  color: #98a6b5;
+  font-size: 24rpx;
+  margin-top: 12rpx;
+}
+.pv-sec {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 28rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.pv-h {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 16rpx;
+}
+.pv-item {
+  font-size: 26rpx;
+  color: #5f6f80;
+  line-height: 1.8;
+  margin-bottom: 10rpx;
+}
+.pv-item:last-child {
+  margin-bottom: 0;
+}
+.pv-item-t {
+  color: #333;
+  font-weight: 500;
+}
+.pv-link {
+  color: #1b66df;
+  font-size: 26rpx;
+}
+.pv-foot {
+  text-align: center;
+  color: #a8b4c0;
+  font-size: 23rpx;
+  padding: 20rpx 0;
+}

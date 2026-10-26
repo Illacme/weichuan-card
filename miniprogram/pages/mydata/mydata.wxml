@@ -1,0 +1,21 @@
+<view class="mydata">
+  <view class="hint">以下为本小程序保存的你的全部个人信息（PIPL 查阅复制权）。如有错误，可在「我的 → 编辑名片」中更正。</view>
+
+  <view class="card" wx:if="{{!loading && items.length}}">
+    <view class="avatar-row" wx:if="{{avatar}}">
+      <image class="avatar" src="{{avatar}}" mode="aspectFill" />
+    </view>
+    <view class="row" wx:for="{{items}}" wx:key="key">
+      <text class="label">{{item.label}}</text>
+      <text class="value">{{item.value}}</text>
+    </view>
+  </view>
+
+  <view class="empty" wx:if="{{!loading && !items.length}}">未获取到信息，请重新登录后查看</view>
+  <view class="loading" wx:if="{{loading}}">加载中…</view>
+
+  <button class="copy-btn" wx:if="{{items.length}}" bindtap="copyAll">复制全部信息</button>
+
+  <!-- 微信隐私授权弹窗：复制前由 ensurePrivacy 弹出，用户同意后才继续 -->
+  <privacy-consent visible="{{privacyVisible}}" />
+</view>

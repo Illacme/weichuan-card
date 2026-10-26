@@ -16,6 +16,8 @@ dist/
 uploads/
 **/uploads/
 *.log
+# 私有/独立部署的签名许可证文件（部署产物，非源码；签发私钥不进仓库）
+data/license.key
 
 # ── 环境变量（保留 .example）──
 .env
@@ -24,6 +26,7 @@ uploads/
 
 # ── WorkBuddy 内部数据（非源码）──
 .workbuddy/
+.workbuddy-ai/
 
 # ── Go 构建产物 ──
 *.exe

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'

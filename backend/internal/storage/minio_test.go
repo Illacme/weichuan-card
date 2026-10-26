@@ -70,15 +70,17 @@ func TestMinioSave(t *testing.T) {
 	defer srv.Close()
 	up := newTestMinioUploader(t, srv)
 
-	fh := makeFileHeader(t, "logo.png", []byte("\x89PNG\r\n\x1a\nrealpngcontent"))
+	fh := makeFileHeader(t, "logo.jpg", jpgWithExif())
 	url, err := up.Save(fh)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, fake.hits, "Save 应真正发起一次 PUT")
 	require.Equal(t, "PUT", fake.gotMethod)
 	require.True(t, strings.HasPrefix(fake.gotPath, "/weichuan/"), "对象路径应为 /<bucket>/<name>，实际 %s", fake.gotPath)
-	require.True(t, strings.HasSuffix(fake.gotPath, ".png"))
+	require.True(t, strings.HasSuffix(fake.gotPath, ".jpg"))
 	require.Equal(t, "http://cdn.example.com"+strings.TrimPrefix(fake.gotPath, "/weichuan"), url, "返回 BaseURL + 对象名")
+	// 经 ProcessImage 重新编码后，落到 MinIO 的字节必须已剥离 EXIF/GPS 标记
+	require.NotContains(t, string(fake.gotBody), "Exif\x00\x00", "上传到 MinIO 的应是剥离后的字节，而非带 EXIF 的原图")
 }
 
 func TestMinioSaveRejectsBadExtBeforeHTTP(t *testing.T) {

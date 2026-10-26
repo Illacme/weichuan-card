@@ -1,5 +1,5 @@
 import { getCurrentInstance, onUnmounted, ref, watch, type Ref } from 'vue'
-import { toPaged, type Paged } from '@/api/request'
+import type { Paged } from '@/api/request'
 
 /**
  * 服务端分页表格（关键字 + 页码 + 每页条数都在请求参数里，由后端切片）。

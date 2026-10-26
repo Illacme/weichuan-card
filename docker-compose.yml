@@ -57,7 +57,17 @@ services:
           echo "[微传名片] MYSQL_ROOT_PASSWORD 未设置：cp .env.example .env 后改成强随机值，并用 docker compose --profile mysql up 启动" >&2
           exit 1
         fi
-        exec /usr/local/bin/docker-entrypoint.sh mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+        exec /usr/local/bin/docker-entrypoint.sh mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci \
+          --log-bin=/var/lib/mysql/mysql-bin --server-id=1 --binlog-format=ROW \
+          --binlog-expire-logs-seconds=604800
+    # 上面这三条是 PITR（时间点恢复）的前提，缺了 binlog，「恢复」只能回到最近一次
+    # 备份的时刻，之后的数据一概找不回来：
+    #   --log-bin             开启二进制日志（默认 8.0 其实是开的，写死防止镜像/配置改缺省）
+    #   --server-id           开了 log-bin 就必须有，否则 mysqld 拒绝启动
+    #   --binlog-format=ROW   行格式，回放结果与原库一致（STATEMENT 在含非确定性函数时会错）
+    #   --binlog-expire-logs-seconds=604800  服务端只留 7 天，磁盘不会被 binlog 撑爆；
+    #     它是兜底，正常应由 scripts/backup_binlog.sh 先归档再主动 PURGE。
+    # binlog 会带来约 10%~20% 的写放大，确认不需要 PITR 可整段删掉。
     volumes:
       - mysql_data:/var/lib/mysql
       # 首启（mysql_data 为空）时自动执行建表（0001_init → 最新，按序全部应用）。
@@ -76,6 +86,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # docker 的 json-file 驱动默认**不限制**容器日志大小，一个跑一年的服务能把
+    # 宿主机磁盘写满（写满之后的表现是「容器随机挂、数据库也起不来」，排查很费劲）。
+    # 这里限每文件 10MB、留 7 个（约 70MB 上限）。注意 docker 只在容器**创建**时
+    # 读取日志配置：改完要 `docker compose up -d --force-recreate` 才生效。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
 
   backend:
     build:
@@ -123,6 +142,16 @@ services:
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       # 可选：=1 开放 /metrics（Prometheus 抓取，建议仅内网可达）
       METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      # 可选：/metrics 的来源网段白名单（逗号分隔 CIDR，如 127.0.0.1/32,10.0.0.0/8）。
+      # 留空=不额外限制。这是第二道门：即便上面开关被人在界面上打开，
+      # 白名单外的来源（公网）访问 /metrics 仍然一律 404。
+      METRICS_ALLOW_CIDR: ${METRICS_ALLOW_CIDR:-}
+      # 日志形态：text（默认，人读）/ json（每行一个 JSON 对象，供 Loki / ELK 采集）。
+      # 集中日志部署填 json；本地开发保持 text（保留 [WARN] 等既有前缀，grep 好用）。
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      # 审计日志保留天数（0=永不自动清理）。也可在后台「系统设置 → 安全」里改，
+      # 界面改完即时生效、无需重启；这里是未配置时的回落值。
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-0}
       # 可选：WX_APPID / WX_APPSECRET / MINIO_* / OSS_* / CDN_*
     volumes:
       - uploads_data:/app/uploads
@@ -149,6 +178,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
 
   frontend:
     build:
@@ -163,6 +197,13 @@ services:
       - backend
     ports:
       - "8080:80" # PC 管理后台入口；nginx 反代 /api 与 /uploads 到 backend:8080
+    # 官方 nginx 镜像把 access.log / error.log 软链到了 stdout，因此这里的轮转
+    # 同时管住 nginx 访问日志（不设的话它会一路涨到撑爆磁盘）。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
 
 volumes:
   mysql_data: # 仅 --profile mysql 时创建

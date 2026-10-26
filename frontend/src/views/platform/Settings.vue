@@ -231,12 +231,15 @@
           @click="wizardStep = i"
         >
           <span class="wizard-stepchip-no">{{ stepStatus(i) === 'success' ? '✓' : i + 1 }}</span>
-          <span class="wizard-stepchip-title">{{ s.title }}</span>
+          <span class="wizard-stepchip-title">{{ s.short || s.title }}</span>
           <span v-if="stepPending(i) > 0" class="wizard-stepchip-count">{{ stepPending(i) }}</span>
         </button>
       </div>
+      <!-- 步骤名在标题里也重复一遍：步骤条为了等宽会把长标题折成两行，
+           这里是「当前到底在第几步、这步叫什么」的唯一不折行出处 -->
       <div class="wizard-progress">
-        第 {{ wizardStep + 1 }} 步 / 共 {{ WIZARD_STEPS.length }} 步<span
+        第 {{ wizardStep + 1 }} 步 / 共 {{ WIZARD_STEPS.length }} 步 ·
+        {{ currentStep.title }}<span
           v-if="stepPending(wizardStep) > 0"
           class="wizard-progress-pending"
           >本步 {{ stepPending(wizardStep) }} 项待配置</span
@@ -368,7 +371,9 @@ import { CDN_DEFAULT_PROVIDER, CDN_RESOURCE_PROVIDERS } from '@/utils/cdn'
 // 未登记的分组兜底显示在最后，避免后端新增分组后前端丢项。
 //
 // 排列逻辑（依赖链，从「产品是什么」到「怎么运营」）：
-//   通用 → 文件存储 → 上传 → 小程序 → 微信 → 登录与令牌 → 安全与基础设施 → 功能开关
+//   通用 → 文件存储 → 上传 → 小程序 → 微信 → 后台上传小程序代码 → 登录与令牌 → 安全与基础设施 → 功能开关
+// mpupload 紧挨 wechat：同一条小程序业务线（后台直接传代码也要用小程序凭据 + 服务器环境），
+// 与微信组相邻配置不用跳组。
 // 存储必须排在上传**之前**：上传限的是「文件多大」，可文件存哪还没定就是倒挂；
 // 小程序与微信相邻：同一条小程序业务线（基址 + 凭据 + 小程序码缓存），
 // 旧顺序里被拆到第 2 和第 4 位，配一次要在两个组之间跳。
@@ -377,12 +382,13 @@ const GROUP_LABELS: Record<string, string> = {
   miniprogram: '小程序',
   upload: '上传',
   wechat: '微信',
+  mpupload: '后台上传小程序代码',
   auth: '登录与令牌',
   storage: '文件存储与 CDN',
   security: '安全与基础设施（只读）',
   feature: '功能开关',
 }
-const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'auth', 'security', 'feature']
+const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'mpupload', 'auth', 'security', 'feature']
 
 // 分组导语：每组一句话「管什么、什么时候该动」，降低首配心智负担。
 const GROUP_BLURBS: Record<string, string> = {
@@ -392,7 +398,9 @@ const GROUP_BLURBS: Record<string, string> = {
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
-  wechat: '微信凭据（小程序码与微信登录用），以及小程序码的缓存时长；未配置则小程序码相关功能不可用。',
+  wechat:
+    '微信凭据（小程序码与微信登录用）、小程序码的缓存时长，以及消息推送（图片内容安全靠它把结论推回来，不配则图片不送检）。',
+  mpupload: '后台直接把小程序代码传到微信时需要的服务器环境：Node 可执行文件、miniprogram-ci 安装目录、小程序源码目录、上传超时。纯 CI 上传（代码由 CI 传、后台只登记版本号）用不到，可以不管；要走「后台上传代码」这条路才需要配。各项留空都会回落环境变量或默认值。',
   auth: '后台登录凭证能用多久、防爆破的尝试次数。',
   security: '数据库连接、签名密钥等关键项，界面不能改，只展示可辨认的预览（隐去口令与密钥中段），必须到部署环境改环境变量或配置文件（默认 data/runtime.env）后重启——改错会把自己锁在系统外。',
   feature: '运营期功能开关，按需开启。',
@@ -428,7 +436,17 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
     'cdn_endpoint',
   ],
   upload: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext', 'presign_put_ttl_minutes', 'sign_get_ttl_minutes'],
-  wechat: ['wx_appid', 'wx_appsecret', 'wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'],
+  wechat: [
+    'wx_appid',
+    'wx_appsecret',
+    'wxacode_ttl_hours',
+    'wxacode_sign_ttl_minutes',
+    'wxacode_rate_limit_per_min',
+    // 消息推送：图片内容安全的结论靠它推回来（不配则图片不送检）
+    'wx_msg_token',
+    'wx_msg_aeskey',
+  ],
+  mpupload: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'],
 }
 
 // 组内分区：项多的组按「在配什么」再分堆，小标题让人不用逐行读描述。
@@ -448,6 +466,12 @@ const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   wechat: [
     { label: '小程序凭据', keys: ['wx_appid', 'wx_appsecret'] },
     { label: '小程序码', keys: ['wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'] },
+    // 消息推送只服务图片内容安全：图片检测是异步的，结论靠推送回来。
+    // 单独一区，避免和「小程序码」混在一起被当成可选项跳过。
+    { label: '消息推送（图片内容安全）', keys: ['wx_msg_token', 'wx_msg_aeskey'] },
+  ],
+  mpupload: [
+    { label: '上传环境（仅后台直接传代码时需要）', keys: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'] },
   ],
 }
 
@@ -897,6 +921,10 @@ function depState(key: string): DepState {
 interface WizardStep {
   key: string
   title: string
+  /** 步骤条专用短名（≤6 字）。步骤条是等宽网格，格子宽度固定，
+      长标题会被迫折行、甚至一字一行；全名放不下时用短名，全名仍在
+      进度行与步骤正文里出现，不会丢信息 */
+  short?: string
   blurb: string
   /** 候选 key；条件显隐的按 depState 过滤，后端缺省的（旧版本）自动跳过 */
   keys: string[]
@@ -969,11 +997,21 @@ const WIZARD_STEPS: WizardStep[] = [
   {
     key: 'wechat',
     title: '微信与小程序码',
+    short: '微信配置',
     blurb: '小程序码与微信登录依赖微信 AppID / AppSecret。没有微信业务可先跳过，相关功能不可用而已。',
-    keys: ['wx_appid', 'wx_appsecret', 'wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'],
+    keys: [
+      'wx_appid',
+      'wx_appsecret',
+      'wxacode_ttl_hours',
+      'wxacode_sign_ttl_minutes',
+      'wxacode_rate_limit_per_min',
+      'wx_msg_token',
+      'wx_msg_aeskey',
+    ],
     groups: [
       { label: '小程序凭据', keys: ['wx_appid', 'wx_appsecret'] },
       { label: '小程序码', keys: ['wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'] },
+      { label: '消息推送（图片内容安全）', keys: ['wx_msg_token', 'wx_msg_aeskey'] },
     ],
   },
   {
@@ -981,13 +1019,23 @@ const WIZARD_STEPS: WizardStep[] = [
     title: '小程序接入',
     blurb: '小程序端冷启动第一个请求打到哪。必须是小程序能访问到的公网 https 地址，填错小程序直接连不上。',
     keys: ['miniprogram_base_url', 'pinned_company_id'],
-    groups: [
-      { label: '接入地址', keys: ['miniprogram_base_url'] },
-      { label: '独立版锁定（可选）', keys: ['pinned_company_id'] },
-    ],
-  },
-  {
-    key: 'final',
+		groups: [
+			{ label: '接入地址', keys: ['miniprogram_base_url'] },
+			{ label: '独立版锁定（可选）', keys: ['pinned_company_id'] },
+		],
+	},
+	{
+		key: 'mpupload',
+		title: '后台上传小程序代码',
+		short: '代码上传',
+		blurb: '若要从后台直接把代码传到微信（不走 CI、也不用微信开发者工具），需要在这里告诉后台：服务器上 Node 在哪、miniprogram-ci 装在哪个目录、小程序源码放哪个目录，以及一次上传最长等多久。这些项都有环境变量兜底，纯 CI 上传可以跳过本步。',
+		keys: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'],
+		groups: [
+			{ label: '上传环境（仅后台直接传代码时需要）', keys: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'] },
+		],
+	},
+	{
+		key: 'final',
     title: '安全确认',
     blurb: '最后核对一遍：哪些改了要重启、哪些只能改环境变量或配置文件。确认无误再保存。',
     keys: [],
@@ -1727,26 +1775,40 @@ onMounted(load)
 .wizard-dialog {
   max-width: 92vw;
 }
+/* 步骤条：等宽网格，不是 flex: 1 1 88px。
+   7 步硬塞一行时每格只剩 ~90px，而最长的一步叫「后台上传小程序代码」（9 字），
+   中文可在任意字间断行 → 标题被挤成一字一行的竖排，格子高低还各不相同（2026-10-25 截图）。
+   换成 auto-fit 网格：宽屏 4 列、窄屏自动降列，每格等宽、标题最多折两行。 */
 .wizard-stepbar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 6px;
   margin-bottom: 8px;
 }
 .wizard-stepchip {
-  flex: 1 1 88px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 6px 8px;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 9px;
   border: 0.5px solid #ebeef5;
   border-radius: 6px;
   background: #fff;
   color: #909399;
   font-size: 12px;
+  text-align: left;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
+}
+/* 标题允许折行（窄屏时），但最多两行并省略，绝不出现一字一行 */
+.wizard-stepchip-title {
+  min-width: 0;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .wizard-stepchip:hover {
   border-color: #c0c4cc;
@@ -1767,6 +1829,7 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
   min-width: 15px;
   height: 15px;
   border-radius: 50%;
@@ -1786,6 +1849,7 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
   min-width: 15px;
   height: 15px;
   padding: 0 4px;

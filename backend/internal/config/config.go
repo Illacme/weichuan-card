@@ -50,15 +50,28 @@ type Config struct {
 	CDNEndpoint string
 	// CDNResourceID 资源标识：Cloudflare 的 Zone ID / CloudFront 的 Distribution ID；
 	// AK/SK 三家不需要（它们按提交 URL 的域名自己定位加速域名）
-	CDNResourceID   string
-	WXAppID         string // 小程序 AppID（小程序码用）
-	WXAppSecret     string // 小程序 AppSecret（小程序码用）
-	AdminUser       string // 初始超管用户名（首启动 seed 用）
-	AdminPass       string // 初始超管密码（首启动 seed 用，上线务必修改）
-	CookieSecure    bool   // 鉴权 Cookie 是否加 Secure 标记（生产 HTTPS 设 true；本地 http 需 false）
-	CookieDomain    string // 鉴权 Cookie 作用域（默认空=仅当前主机；跨子域共享登录态时才设）
-	MetricsEnabled  bool   // 是否开放 GET /metrics（Prometheus 文本格式；默认关，避免公网暴露流量规模）
-	WxacodeTTLHours int    // 小程序码缓存有效期（小时）
+	CDNResourceID string
+	WXAppID       string // 小程序 AppID（小程序码用）
+	WXAppSecret   string // 小程序 AppSecret（小程序码用）
+	// 微信「消息推送」凭据：图片内容安全的结论靠它推回来。
+	// 与上面两项不同，它们**只影响回调**——Token 用于验签（必填），
+	// EncodingAESKey 只在安全模式下用来解密（明文模式可留空）。
+	// 留空时图片检测不送检：送出去也拿不回结论，只会造出一堆永久 pending 的假记录。
+	WXMsgToken  string
+	WXMsgAESKey string
+	// 小程序代码上传（后台代传，见 internal/mpupload）。这三项都是**服务器路径**，
+	// 只能来自环境变量 / 配置文件——界面里可配的只有那把密钥（多行 PEM 放不进
+	// 一行一项的 runtime.env，且密钥不该跟着部署配置到处复制）。
+	MPNodeBin       string        // node 可执行文件名或绝对路径，默认 "node"
+	MPCIModuleDir   string        // 装了 miniprogram-ci 的目录；留空则试 MPSourceDir
+	MPSourceDir     string        // 小程序源码目录（含 project.config.json）
+	MPUploadTimeout time.Duration // 单次上传超时，默认 5 分钟
+	AdminUser       string        // 初始超管用户名（首启动 seed 用）
+	AdminPass       string        // 初始超管密码（首启动 seed 用，上线务必修改）
+	CookieSecure    bool          // 鉴权 Cookie 是否加 Secure 标记（生产 HTTPS 设 true；本地 http 需 false）
+	CookieDomain    string        // 鉴权 Cookie 作用域（默认空=仅当前主机；跨子域共享登录态时才设）
+	MetricsEnabled  bool          // 是否开放 GET /metrics（Prometheus 文本格式；默认关，避免公网暴露流量规模）
+	WxacodeTTLHours int           // 小程序码缓存有效期（小时）
 	WxacodeTTL      time.Duration
 	// AutoMigrate 启动时自动补齐未应用的数据库迁移（仅 MySQL；SQLite 走 AutoMigrate 建表）。
 	// 默认开——「升级后忘了跑迁移」是本项目升级事故的主要形态，而迁移幂等、
@@ -70,6 +83,21 @@ type Config struct {
 	// RatePurgeInterval 限流计数表（rate_limit_hits）的定期清理间隔。
 	// 与上面同理：每行只在一个时间窗口内有意义，过期后不会自己消失。
 	RatePurgeInterval time.Duration
+	// AuditPurgeInterval 审计日志按保留期清理的检查间隔（AUDIT_PURGE_MINUTES，默认 12 小时）。
+	// 保留期以「天」计，检查频率高低没有业务差别，取低频即可。
+	AuditPurgeInterval time.Duration
+	// AuditRetentionDays 审计日志保留天数（AUDIT_RETENTION_DAYS，默认 0 = 不清理）。
+	// 这是**界面未设置时的回落值**：后台「审计保留天数」一旦填了就以界面为准。
+	// 默认 0 的理由见 audit/purge.go——删审计日志不可逆，不能靠升级顺手清掉存量。
+	AuditRetentionDays int
+	// LogFormat 日志形态（LOG_FORMAT：text / json，默认 text）。
+	// json = 每行一个 JSON 对象，供 Loki / ELK / 云日志服务按字段检索（C8 集中日志）；
+	// text 保留 [WARN] 等既有前缀，本地开发与已有 grep 规则不受影响。
+	LogFormat string
+	// MetricsAllowCIDR 允许访问 /metrics 的来源网段（METRICS_ALLOW_CIDR，逗号分隔）。
+	// 留空 = 不额外限制（/metrics 仍由 metrics_enabled 开关默认关闭）。
+	// 这是**第二道门**：即便有人在界面上把开关打开了，公网也抓不到流量规模。
+	MetricsAllowCIDR []string
 	// TrustedProxies 可信反代的地址/CIDR 列表，决定 c.ClientIP() 该不该相信
 	// X-Forwarded-For。留空时用 DefaultTrustedProxies（回环 + 私有网段）。
 	// 设成 TRUSTED_PROXIES=none 表示「前面没有反代」，一律用 TCP 对端地址。
@@ -143,6 +171,12 @@ func Load() Config {
 		CDNResourceID:      getEnv("CDN_RESOURCE_ID", ""),
 		WXAppID:            getEnv("WX_APPID", ""),
 		WXAppSecret:        getEnv("WX_APPSECRET", ""),
+		WXMsgToken:         getEnv("WX_MSG_TOKEN", ""),
+		WXMsgAESKey:        getEnv("WX_MSG_AESKEY", ""),
+		MPNodeBin:          getEnv("MP_NODE_BIN", ""),
+		MPCIModuleDir:      getEnv("MP_CI_MODULE_DIR", ""),
+		MPSourceDir:        getEnv("MP_SOURCE_DIR", ""),
+		MPUploadTimeout:    time.Duration(atoi(getEnv("MP_UPLOAD_TIMEOUT_SEC", "300"), 300)) * time.Second,
 		AdminUser:          getEnv("ADMIN_USER", "admin"),
 		AdminPass:          getEnv("ADMIN_PASS", DefaultAdminPass),
 		CookieSecure:       parseBool(getEnv("COOKIE_SECURE", "false")),
@@ -155,6 +189,10 @@ func Load() Config {
 		// 故清理频率无需高，只要保证长期运行的表不会无限增长即可（启动还会跑一次）
 		RevokedPurgeInterval: time.Duration(atoi(getEnv("REVOKED_PURGE_MINUTES", "360"), 360)) * time.Minute,
 		RatePurgeInterval:    time.Duration(atoi(getEnv("RATE_PURGE_MINUTES", "10"), 10)) * time.Minute,
+		AuditPurgeInterval:   time.Duration(atoi(getEnv("AUDIT_PURGE_MINUTES", "720"), 720)) * time.Minute,
+		AuditRetentionDays:   atoi(getEnv("AUDIT_RETENTION_DAYS", "0"), 0),
+		LogFormat:            getEnv("LOG_FORMAT", "text"),
+		MetricsAllowCIDR:     splitList(getEnv("METRICS_ALLOW_CIDR", "")),
 		TrustedProxies:       parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 	}
 }
@@ -199,6 +237,17 @@ func getEnv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitList 解析逗号分隔的列表（去空白、丢空项）。
+func splitList(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func atoi(s string, def int) int {

@@ -7,6 +7,22 @@ vi.mock('@/api/settings', () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(async () => ({ code: 0, data: { restartKeys: [] } })),
   getPublicSettings: vi.fn(async () => ({ code: 0, data: { brand_name: '微传名片' } })),
+  // 路径选择器：三项 pathKind 配置各自会打开一个弹窗，点「浏览…」时拉一次目录
+  browseServerPaths: vi.fn(async () => ({
+    code: 0,
+    data: {
+      kind: 'source_dir',
+      path: '/opt',
+      selected: '/opt',
+      selectedIsDir: true,
+      parent: '/',
+      home: '/home/dev',
+      entries: [],
+      truncated: false,
+      current: { ok: false, message: '当前目录还不能用' },
+      suggestions: [],
+    },
+  })),
 }))
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -14,7 +30,7 @@ vi.mock('element-plus', () => ({
 }))
 
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSettings, updateSettings } from '@/api/settings'
+import { browseServerPaths, getSettings, updateSettings } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import Settings from './Settings.vue'
 import type { SettingItem } from '@/api/settings'
@@ -34,6 +50,11 @@ const items: SettingItem[] = [
   { key: 'wxacode_ttl_hours', name: '小程序码缓存时长', group: 'wechat', type: 'int', value: '720', description: '小程序码 TTL', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'wxacode_sign_ttl_minutes', name: '小程序码签名链接有效期', group: 'wechat', type: 'int', value: '60', description: '小程序码签名时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'wxacode_rate_limit_per_min', name: '小程序码生成频率限制', group: 'wechat', type: 'int', value: '30', description: '小程序码限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  // pathKind 三项：界面在文本框旁渲染「浏览…」按钮，点击弹出服务端目录选择器
+  { key: 'mp_node_bin', name: 'Node 可执行文件', group: 'mpupload', type: 'string', value: '', description: 'Node 路径', secret: false, restart: false, readOnly: false, envVar: 'MP_NODE_BIN', pathKind: 'node_bin', configured: false },
+  { key: 'mp_ci_module_dir', name: 'miniprogram-ci 安装目录', group: 'mpupload', type: 'string', value: '', description: 'ci 模块目录', secret: false, restart: false, readOnly: false, envVar: 'MP_CI_MODULE_DIR', pathKind: 'module_dir', configured: false },
+  { key: 'mp_source_dir', name: '小程序源码目录', group: 'mpupload', type: 'string', value: '', description: '源码目录', secret: false, restart: false, readOnly: false, envVar: 'MP_SOURCE_DIR', pathKind: 'source_dir', configured: false },
+  { key: 'mp_upload_timeout_sec', name: '上传超时（秒）', group: 'mpupload', type: 'int', value: '300', description: '超时', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'access_token_ttl_minutes', name: '登录凭证有效期', group: 'auth', type: 'int', value: '15', description: 'access 有效期', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'login_rate_limit_per_min', name: '登录尝试频率限制', group: 'auth', type: 'int', value: '10', description: '登录限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'cdn_enabled', name: '启用 CDN 刷新', group: 'storage', type: 'bool', value: '', description: 'CDN 刷新', secret: false, restart: true, readOnly: false, envVar: 'CDN_ENABLED', configured: false },
@@ -106,7 +127,8 @@ const ElInputNumber = defineComponent({
 })
 const ElInput = defineComponent({
   name: 'ElInput',
-  props: ['modelValue', 'placeholder', 'type', 'showPassword', 'disabled'],
+  // size 必须声明：否则 size="small" 会作为属性落到 <input> 上（非法值 + 警告）
+  props: ['modelValue', 'placeholder', 'type', 'showPassword', 'disabled', 'size'],
   emits: ['update:modelValue'],
   template: `<input class="el-input" :type="type || 'text'" :disabled="disabled" :placeholder="placeholder" :value="modelValue" @input="$emit('update:modelValue', $event.target.value)" />`,
 })
@@ -131,6 +153,9 @@ const ElTooltip = defineComponent({
 
 const mountOpts = {
   global: {
+    // v-loading 来自 PathPickerDialog 的列表加载态；这里不引完整 EP，给个空指令即可，
+    // 否则每个用例都会刷一条「Failed to resolve directive: loading」。
+    directives: { loading: {} },
     stubs: {
       'el-card': ElCard,
       'el-alert': ElAlert,
@@ -237,13 +262,18 @@ describe('Settings 系统设置', () => {
   it('按分组渲染全部配置项与说明（含存储与只读分组）', async () => {
     const { w } = await setup()
     const text = w.text()
-    ;['通用', '小程序', '上传', '微信', '登录与令牌', '文件存储与 CDN', '安全与基础设施', '功能开关'].forEach(
+    ;['通用', '小程序', '上传', '微信', '后台上传小程序代码', '登录与令牌', '文件存储与 CDN', '安全与基础设施', '功能开关'].forEach(
       (g) => expect(text).toContain(g),
     )
     expect(text).toContain('brand_name')
     expect(text).toContain('品牌名')
     expect(text).toContain('wxacode_ttl_hours')
     expect(text).toContain('小程序码 TTL')
+    // 后台上传小程序代码组：四项均渲染（环境与密钥是两条不同配置路径，必须都能看到）
+    expect(text).toContain('mp_node_bin')
+    expect(text).toContain('Node 可执行文件')
+    expect(text).toContain('mp_source_dir')
+    expect(text).toContain('MP_SOURCE_DIR')
     // 需重启 / 只读 / 敏感 标记都渲染出来
     expect(rowOf(w, 'storage_driver').text()).toContain('需重启')
     expect(rowOf(w, 'db_dsn').text()).toContain('只读')
@@ -470,8 +500,8 @@ describe('Settings 系统设置', () => {
     // 上传组导语要说清两条链接各自的适用条件：直传预签名公私桶都走，
     // 只有私有桶下载签名仅在公开访问关掉时才涉及（2026-10-22 核查 UploadField 总是先试预签名）
     expect(w.text()).toContain('公私桶都会走')
-    // 8 个分组各一条导语
-    expect(w.findAll('.group-blurb')).toHaveLength(8)
+    // 9 个分组各一条导语（新增「后台上传小程序代码」）
+    expect(w.findAll('.group-blurb')).toHaveLength(9)
   })
 
   it('上线就绪清单默认收起为摘要条：点「查看详情」才展开，并记住选择', async () => {
@@ -710,6 +740,7 @@ describe('Settings 系统设置', () => {
       '上传',
       '小程序',
       '微信',
+      '后台上传小程序代码',
       '登录与令牌',
       '安全与基础设施（只读）',
       '功能开关',
@@ -757,7 +788,7 @@ describe('Settings 系统设置', () => {
     await wizardEntryButton(w).trigger('click')
     await nextTick()
     // 品牌名已配置 → 跳过；存储步有未配置项（upload_dir）→ 落在第 2 步
-    expect(dialogOf(w).text()).toContain('第 2 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
     expect(dialogOf(w).text()).toContain('存储与上传')
     // local 驱动：向导里出现本地上传目录，不出现云凭据
     expect(dialogOf(w).text()).toContain('upload_dir')
@@ -847,7 +878,7 @@ describe('Settings 系统设置', () => {
 
     await jumpBtn!.trigger('click')
     await nextTick()
-    expect(dialogOf(w).text()).toContain('第 2 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
     // 生产模式：minio + HTTPS 开
     expect((dialogRow(w, 'storage_driver').find('select.el-select').element as HTMLSelectElement).value).toBe('minio')
     expect(dialogRow(w, 'storage_use_ssl').find('select.el-select').element.value).toBe('true')
@@ -869,7 +900,7 @@ describe('Settings 系统设置', () => {
     // 点下一步：被拦住，仍在第 2 步，并说明是哪一项
     await dialogButton(w, '下一步').trigger('click')
     await nextTick()
-    expect(dialogOf(w).text()).toContain('第 2 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
     expect(vi.mocked(ElMessage.warning).mock.calls[0][0]).toContain('文件访问基址')
 
     // 改成合法地址：错误消失、放行
@@ -878,7 +909,7 @@ describe('Settings 系统设置', () => {
     expect(dialogRow(w, 'upload_base_url').text()).not.toContain('不是完整地址')
     await dialogButton(w, '下一步').trigger('click')
     await nextTick()
-    expect(dialogOf(w).text()).toContain('第 3 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 3 步 / 共 7 步')
   })
 
   it('向导内联校验：小程序基址只收 https；「完成」前全步骤兜底', async () => {
@@ -904,7 +935,7 @@ describe('Settings 系统设置', () => {
     await dialogButton(w, '保存并完成').trigger('click')
     await nextTick()
     // 被全步骤校验兜住：跳回出错步骤、不提交、对话框不关
-    expect(dialogOf(w).text()).toContain('第 5 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 5 步 / 共 7 步')
     expect(updateSettings).not.toHaveBeenCalled()
     expect(w.find('.el-dialog').exists()).toBe(true)
 
@@ -961,12 +992,12 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 从第 2 步一路点到安全确认（共 6 步）
-    for (let i = 0; i < 4; i++) {
+    // 从第 2 步一路点到安全确认（共 7 步）
+    for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
-    expect(dialogOf(w).text()).toContain('第 6 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 7 步 / 共 7 步')
     expect(dialogOf(w).text()).toContain('安全确认')
     const finish = dialogButton(w, '完成')
     expect(finish.exists()).toBe(true)
@@ -982,7 +1013,7 @@ describe('Settings 系统设置', () => {
     await nextTick()
     await dialogRow(w, 'upload_dir').find('input.el-input').setValue('/data/uploads')
     await nextTick()
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
@@ -1007,7 +1038,7 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await vi.waitFor(() => expect(w.find('.el-dialog').exists()).toBe(true))
     // 品牌名也未配置 → 落在第 1 步
-    expect(dialogOf(w).text()).toContain('第 1 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 1 步 / 共 7 步')
     expect(dialogOf(w).text()).toContain('品牌与身份')
   })
 
@@ -1022,7 +1053,7 @@ describe('Settings 系统设置', () => {
     expect(chip, '未找到品牌步骤 chip').toBeTruthy()
     await chip!.trigger('click')
     await nextTick()
-    expect(dialogOf(w).text()).toContain('第 1 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 1 步 / 共 7 步')
   })
 
   it('步骤条带每步待配置数：local 下存储步亮 1', async () => {
@@ -1081,9 +1112,10 @@ describe('Settings 系统设置', () => {
     ])
 
     // 微信步：小程序凭据 / 小程序码缓存（原只有两项，缓存时效补齐）
+    // chip 上用短名「微信配置」——全名「微信与小程序码」在等宽格子里会折行（见文件末尾的步骤条用例）
     await dialogOf(w)
       .findAll('.wizard-stepchip')
-      .find((c: any) => c.text().includes('微信与小程序码'))!
+      .find((c: any) => c.text().includes('微信配置'))!
       .trigger('click')
     await nextTick()
     expect(dialogOf(w).findAll('.wizard-group-title').map((t: any) => t.text())).toEqual([
@@ -1128,7 +1160,7 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
@@ -1145,14 +1177,14 @@ describe('Settings 系统设置', () => {
     expect(row, '未找到小程序接口基址行').toBeTruthy()
     await row!.find('button.el-button').trigger('click')
     await nextTick()
-    expect(dialogOf(w).text()).toContain('第 5 步 / 共 6 步')
+    expect(dialogOf(w).text()).toContain('第 5 步 / 共 7 步')
   })
 
   it('安全确认步：说明未进向导的项去哪了（有缺省、可在本页调）', async () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
@@ -1187,7 +1219,7 @@ describe('Settings 系统设置', () => {
     // 清空搜索恢复全量
     await search.setValue('')
     await nextTick()
-    expect(w.findAll('.group-card')).toHaveLength(8)
+    expect(w.findAll('.group-card')).toHaveLength(9)
     expect(rowExists(w, 'brand_name')).toBe(true)
   })
 
@@ -1255,7 +1287,7 @@ describe('Settings 系统设置', () => {
     await nextTick()
     await dialogRow(w, 'storage_driver').find('select.el-select').setValue('minio')
     await nextTick()
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
@@ -1264,5 +1296,69 @@ describe('Settings 系统设置', () => {
     expect(updateSettings).not.toHaveBeenCalled()
     // 对话框保持打开，用户可改回来或重新确认
     expect(dialogOf(w).exists()).toBe(true)
+  })
+
+  // 三项路径配置各自要能弹出自己的选择器。
+  // 2026-10-25 用户实测：只有「Node 可执行文件」能弹窗，另外两项点了没反应——
+  // 根因是后端空切片序列化成 null，选择器渲染时对 null 取 .length 抛异常，
+  // 弹窗体渲染失败。这里逐项验证「按钮存在 + 点开就是对应标题的弹窗」，防止回归。
+  it('三项路径配置的「浏览…」都能打开各自的服务端选择器', async () => {
+    const { w } = await setup()
+    const cases = [
+      ['mp_node_bin', 'node_bin', '选择 Node 可执行文件'],
+      ['mp_ci_module_dir', 'module_dir', '选择 miniprogram-ci 安装目录'],
+      ['mp_source_dir', 'source_dir', '选择小程序源码目录'],
+    ]
+    for (const [key, kind, title] of cases) {
+      const row = rowOf(w, key)
+      const btn = row.find('.path-browse')
+      expect(btn.exists(), `${key} 缺少「浏览…」按钮`).toBe(true)
+
+      await btn.trigger('click')
+      await nextTick()
+      // 弹窗按标题定位：三行同页，只按 .el-dialog 数量断言会分不清是谁打开的
+      const dlg = w.findAll('.el-dialog').find((d) => d.text().includes(title))
+      expect(dlg, `${key} 未打开「${title}」`).toBeTruthy()
+      // 不只是壳子：弹窗挂载后要真的按对应 kind 去拉目录（pickerReady 是「首次点开才挂载」，
+      // 少了这次请求就是空白弹窗）
+      expect(browseServerPaths, `${key} 打开后未请求目录`).toHaveBeenCalledWith(kind, undefined)
+
+      // 关掉再测下一项（取消按钮回写 visible=false）
+      const cancel = dlg!.findAll('button.el-button').find((b) => b.text().includes('取消'))
+      await cancel!.trigger('click')
+      await nextTick()
+      expect(
+        w.findAll('.el-dialog').some((d) => d.text().includes(title)),
+        `${key} 的弹窗关不掉`,
+      ).toBe(false)
+    }
+  })
+})
+
+// 步骤条排版回归：弹窗宽度固定 720px，7 步挤在等宽网格里，标题一长就折行，
+// 极端情况下（「后台上传小程序代码」9 字）会被逐字断成一列竖排——截图里出现过。
+// 约束：chip 只用短名（≤6 字），全名靠进度行交代，两边都不丢信息。
+describe('配置向导步骤条', () => {
+  it('每个步骤 chip 的标题不超过 6 字，长名步骤在进度行仍显示全名', async () => {
+    const { w } = await setup()
+    const openBtn = w.findAll('button').find((b: any) => b.text() === '配置向导')
+    expect(openBtn, '未找到「配置向导」按钮').toBeTruthy()
+    await openBtn!.trigger('click')
+    await nextTick()
+
+    const chips = w.findAll('.wizard-stepchip')
+    expect(chips.length, '向导步骤数变了？同步检查短名是否够用').toBe(7)
+    for (const c of chips) {
+      const title = c.find('.wizard-stepchip-title').text()
+      expect(title.length, `步骤条标题「${title}」超过 6 字，等宽格子里会折行`).toBeLessThanOrEqual(6)
+      expect(title.trim()).not.toBe('')
+    }
+
+    // 点进「代码上传」步：chip 上是短名，进度行必须给出全名，否则用户看不出这步到底在配什么
+    const mpChip = chips.find((c: any) => c.text().includes('代码上传'))
+    expect(mpChip, '「代码上传」步骤 chip 缺失').toBeTruthy()
+    await mpChip!.trigger('click')
+    await nextTick()
+    expect(w.find('.wizard-progress').text()).toContain('后台上传小程序代码')
   })
 })

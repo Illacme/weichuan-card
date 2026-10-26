@@ -93,4 +93,39 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     await expect(p).rejects.toThrow('参数错误')
     expect(elMessage.error).toHaveBeenCalledWith('参数错误')
   })
+
+  // 请求号回传：后端每个响应都带 X-Request-Id，前端记下最后一个，白屏上报时一并带走，
+  // 这样「用户说页面崩了」时能直接定位到后端同一条访问日志。
+  it('响应头带 X-Request-Id 时记下来，前端报错上报会带走它', async () => {
+    // 参数必须显式声明：fetch 调用有两个实参，不写形参时 vitest 推断出的是空元组，
+    // 取 calls[0][1] 会直接编译不过（TS2493）
+    const fetchMock = vi.fn(async (_url: any, _init?: any) => ({ ok: true }) as any)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await respFulfilled()({
+        data: { code: 0, msg: 'ok' },
+        config: {},
+        headers: { 'x-request-id': 'rid-abc123' },
+      })
+      const { reportClientError } = await import('@/api/clientError')
+      reportClientError({ message: 'boom' })
+      // vitest 下 `import.meta.env.DEV` 为 true → 走本地 console.warn 分支；生产构建走 fetch。
+      // 两条路都只断言同一个 requestId：测的是「记没记住」，不是「怎么发」。
+      const body = fetchMock.mock.calls.length
+        ? JSON.parse((fetchMock.mock.calls[0][1] as any).body)
+        : (warnSpy.mock.calls.find((c: any[]) => c[1] && c[1].requestId) || [])[1]
+      expect(body?.requestId).toBe('rid-abc123')
+    } finally {
+      vi.unstubAllGlobals()
+      warnSpy.mockRestore()
+    }
+  })
+
+  // 记请求号是「锦上添花」，绝不能因为它崩掉整个拦截器：
+  // 否则所有业务错误都会变成一句 Cannot read properties of undefined，真实原因全丢。
+  it('响应对象没有 headers 时也不崩（只跳过记录）', async () => {
+    const p = respFulfilled()({ data: { code: 1, msg: '参数错误' }, config: {} })
+    await expect(p).rejects.toThrow('参数错误')
+  })
 })

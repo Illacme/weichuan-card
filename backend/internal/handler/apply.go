@@ -7,11 +7,15 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"weichuan/internal/audit"
 	"weichuan/internal/auth"
+	"weichuan/internal/config"
+	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -20,7 +24,7 @@ import (
 // RegisterApply 注册写操作：开通申请 / 名片修改审核 / 员工管理 / 统计。
 // 多租户：所有 /api/admin 端点按 tenantScope 收窄（企业管理员只见本企业）；
 // 公开申请端点按请求体 companyId 归属租户（缺省 1 号租户朗汇）。
-func RegisterApply(r *gin.Engine, db *gorm.DB) {
+func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	// 员工自助提交开通申请（公开）
 	r.POST("/api/apply/open", func(c *gin.Context) {
 		var req model.OpenApply
@@ -35,6 +39,17 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 		}
 		if !companyEnabled(db, req.CompanyID) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "申请目标企业不存在或已停用"})
+			return
+		}
+		// 内容安全：申请里的姓名 / 昵称 / 职位 / 邮箱都是访客自己填的 UGC。
+		//
+		// 注意 openid 是客户端提交的，省略它就能跳过检测——所以机器检测在这条
+		// 链路上是**增强**而不是硬闸，真正兜底的是后台人工审核（pending → 审核）。
+		// 不改成「无 openid 就拒」是因为 v2 接口的 openid 必填，那样等于把匿名
+		// 申请整条路封死。
+		if d := contentSecText(db, cfg, req.CompanyID, req.OpenID,
+			req.Name, req.Nickname, req.Title, req.Email); !d.Allowed {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": d.Reason})
 			return
 		}
 		req.Status = "pending"
@@ -82,6 +97,13 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
+		// 内容安全：名片上的姓名 / 职位是员工自己填的 UGC，审核通过后会对外展示。
+		// 在**提交时**拦，而不是等审核时人工发现——否则违规内容会先在待审队列里
+		// 躺几天，期间还可能被别的管理员一键通过。
+		if d := contentSecText(db, cfg, me.CompanyID, me.OpenID, patch.Name, patch.Title); !d.Allowed {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": d.Reason})
+			return
+		}
 		snap, _ := json.Marshal(patch)
 		apply := model.CardModifyApply{CompanyID: me.CompanyID, StaffID: staffID, Snapshot: string(snap), Status: "pending"}
 		if err := db.Create(&apply).Error; err != nil {
@@ -89,6 +111,50 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已提交，等待审核"})
+	})
+
+	// 员工本人注销账号（PIPL 删除权）：删除本人员工记录及关联的 PII。
+	//
+	// 删除范围：员工主记录 + 待审名片修改申请（CardModifyApply）+ 本人访客统计
+	// （StatEvent，按 staff_id 隔离，删员工后这些行本就无法被任何查询命中，这里直接清掉）。
+	// 头像文件保留在对象存储里（storage 接口目前无 Delete 方法，留孤儿文件）——这是已知
+	// 限制：数据库侧的身份关联已全部断开，残留的只是无法关联到任何人的一张图。
+	//
+	// 这是不可逆的特权动作，必须留痕；且必须按**已登录的本人**身份删，不能传 id 删别人。
+	r.POST("/api/employee/me/cancel", middleware.AuthMiddleware(db, "employee"), func(c *gin.Context) {
+		staffID := c.GetInt64("staffId")
+		var e model.Employee
+		if db.First(&e, "staff_id = ?", staffID).Error != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		// 用一个显式事务把三张表的删除包起来：要么全删、要么全不删，
+		// 避免「员工删了但统计还在」这种半成品（半成品会让后续审计/统计对不上）。
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("staff_id = ?", staffID).Delete(&model.CardModifyApply{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("staff_id = ?", staffID).Delete(&model.StatEvent{}).Error; err != nil {
+				return err
+			}
+			// 主记录最后删：前面两张表靠 staff_id 关联，主记录没了关联也就断了
+			if err := tx.Where("staff_id = ?", staffID).Delete(&model.Employee{}).Error; err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "注销失败：" + err.Error()})
+			return
+		}
+		// 注销是特权动作，记审计（绝不记姓名/手机等明文 PII，只记编号）
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeCancel,
+			TargetType: "employee",
+			TargetID:   strconv.FormatInt(staffID, 10),
+			Detail:     map[string]any{"companyId": e.CompanyID},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "账号已注销"})
 	})
 
 	// 员工本人统计（?from=&to= 日期范围，YYYY-MM-DD 闭区间，均可缺省=全部时间）。
@@ -161,8 +227,11 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 	r.GET("/api/admin/apply/open", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		page, size := pageParams(c)
 		q := db.Model(&model.OpenApply{}).Scopes(scopeCond(c))
-		if cond, args := keywordCond(c.Query("keyword"), "name", "phone", "email", "nickname"); cond != "" {
-			q = q.Where(cond, args...)
+		// 申请单的姓名/手机/邮箱/昵称已加密：用盲索引做等值匹配（密文无法 LIKE）。
+		if kw := strings.TrimSpace(c.Query("keyword")); kw != "" {
+			bidx := pii.BlindIndex(kw)
+			q = q.Where("name_bidx = ? OR phone_bidx = ? OR email_bidx = ? OR nickname_bidx = ?",
+				bidx, bidx, bidx, bidx)
 		}
 		if cond, v := statusCond(c.Query("status"), "pending", "approved", "rejected"); cond != "" {
 			q = q.Where(cond, v)
@@ -188,6 +257,14 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "已处理"})
 			return
 		}
+		// 席位上限：审批通过会自动建员工，与「管理员直接新增员工」是同一条
+		// 建号路径，必须同样受授权席位约束。此前只有直接新增那条被卡，
+		// 管理员可以反复通过申请无限建号——席位上限形同虚设，客户超额使用
+		// 却不付费。按**申请所属租户**判（不是操作者所在租户）。
+		if ent := license.ResolveFor(c.Request.Context(), a.CompanyID); seatExceeded(db, ent, a.CompanyID) {
+			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "员工席位已达授权上限，请升级授权"})
+			return
+		}
 		pwd, err := genPassword()
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
@@ -199,9 +276,21 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			return
 		}
 		emp := model.Employee{CompanyID: a.CompanyID, Name: a.Name, Phone: a.Phone, Phone2: a.Phone2, Email: a.Email, Title: a.Title, Landline: a.Landline, Avatar: a.Avatar, OpenID: a.OpenID, Nickname: a.Nickname, PasswordHash: hash, Status: "enabled"}
-		db.Create(&emp)
+		// 建号失败必须报错：此前 db.Create 的错误被丢掉，失败时照样返回
+		// code:0 + staffId + 初始密码——管理员拿到一个**不存在的员工编号**
+		// 和一个**永远登不进去的密码**，而申请单还会被标成 approved
+		// （无从重试，只能手工改库）。宁可如实报错，让管理员再点一次。
+		if err := db.Create(&emp).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建员工账号失败：" + err.Error()})
+			return
+		}
 		a.Status = "approved"
-		db.Save(&a)
+		// 同理：申请单状态没落库时不能装作成功——申请还留在 pending，
+		// 管理员会看到「待审核」却已经建了号，再点一次会重复建人。
+		if err := db.Save(&a).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "员工已创建，但申请状态更新失败，请刷新确认"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
 
@@ -211,7 +300,9 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 		var body struct {
 			Reason string `json:"reason"`
 		}
-		c.ShouldBindJSON(&body)
+		// 驳回理由可选：绑定失败（空 body / 非 JSON）按「没有理由」处理，
+		// 不因此拒绝这次操作——强制要求理由只会逼管理员随手填一串无意义字符。
+		_ = c.ShouldBindJSON(&body)
 		q := db.Model(&model.OpenApply{}).Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c))
 		if q.Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason}).RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
@@ -227,8 +318,9 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 	r.GET("/api/admin/apply/modify", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		page, size := pageParams(c)
 		q := db.Model(&model.CardModifyApply{}).Scopes(scopeCond(c))
-		if like := likeKeyword(c.Query("keyword")); like != "" {
-			sub := db.Model(&model.Employee{}).Select("staff_id").Where("name LIKE ?", like)
+		// 员工姓名已加密：用盲索引做等值匹配（密文无法 LIKE），语义由「模糊」收窄为「精确」。
+		if kw := strings.TrimSpace(c.Query("keyword")); kw != "" {
+			sub := db.Model(&model.Employee{}).Select("staff_id").Where("name_bidx = ?", pii.BlindIndex(kw))
 			q = q.Where("staff_id IN (?)", sub)
 		}
 		if cond, v := statusCond(c.Query("status"), "pending", "approved", "rejected"); cond != "" {
@@ -263,28 +355,32 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 		var patch map[string]string
 		_ = json.Unmarshal([]byte(a.Snapshot), &patch)
 		updates := map[string]interface{}{}
+		// 非 PII：直接明文更新
 		if v, ok := patch["avatar"]; ok {
 			updates["avatar"] = v
-		}
-		if v, ok := patch["name"]; ok {
-			updates["name"] = v
 		}
 		if v, ok := patch["title"]; ok {
 			updates["title"] = v
 		}
-		if v, ok := patch["phone"]; ok {
-			updates["phone"] = v
-		}
-		if v, ok := patch["phone2"]; ok {
-			updates["phone2"] = v
-		}
 		if v, ok := patch["landline"]; ok {
 			updates["landline"] = v
 		}
-		if v, ok := patch["email"]; ok {
-			updates["email"] = v
+		// PII（姓名/手机/手机2/邮箱）：map 更新不触发模型钩子，必须显式加密 + 补盲索引，
+		// 否则会绕过 Employee 的加密、把明文写进库。
+		for _, kv := range []struct{ col, key string }{
+			{"name", "name"}, {"phone", "phone"}, {"phone2", "phone2"}, {"email", "email"},
+		} {
+			if v, ok := patch[kv.key]; ok {
+				if err := setPII(updates, kv.col, v); err != nil {
+					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "资料加密失败"})
+					return
+				}
+			}
 		}
-		db.Model(&e).Updates(updates)
+		if err := db.Model(&e).Updates(updates).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "更新员工资料失败"})
+			return
+		}
 		a.Status = "approved"
 		db.Save(&a)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
@@ -296,7 +392,8 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 		var body struct {
 			Reason string `json:"reason"`
 		}
-		c.ShouldBindJSON(&body)
+		// 同开通申请：理由可选，绑定失败按「没有理由」处理（见上面那条注释）
+		_ = c.ShouldBindJSON(&body)
 		q := db.Model(&model.CardModifyApply{}).Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c))
 		if q.Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason}).RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
@@ -332,7 +429,12 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			return
 		}
 		emp := model.Employee{CompanyID: cid, Name: req.Name, Phone: req.Phone, Phone2: req.Phone2, Email: req.Email, Title: req.Title, Landline: req.Landline, Avatar: req.Avatar, PasswordHash: hash, Status: "enabled"}
-		db.Create(&emp)
+		// 建号失败必须报错（同审批路径）：失败时返回 code:0 会让管理员拿到
+		// 一个不存在的员工编号与永远登不进去的密码，且无从察觉。
+		if err := db.Create(&emp).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建员工账号失败：" + err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
 
@@ -359,11 +461,20 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "姓名与手机为必填"})
 			return
 		}
+		updates := map[string]interface{}{
+			"title": req.Title, "landline": req.Landline, "avatar": req.Avatar,
+		}
+		// PII 字段必须显式加密 + 补盲索引（map 更新绕过模型钩子）。
+		for _, kv := range []struct{ col, val string }{
+			{"name", req.Name}, {"phone", req.Phone}, {"phone2", req.Phone2}, {"email", req.Email},
+		} {
+			if err := setPII(updates, kv.col, kv.val); err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "资料加密失败"})
+				return
+			}
+		}
 		if db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
-			Updates(map[string]interface{}{
-				"name": req.Name, "title": req.Title, "phone": req.Phone, "phone2": req.Phone2,
-				"landline": req.Landline, "email": req.Email, "avatar": req.Avatar,
-			}).RowsAffected == 0 {
+			Updates(updates).RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -381,9 +492,17 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 	r.GET("/api/admin/employees", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		page, size := pageParams(c)
 		q := db.Model(&model.Employee{}).Scopes(scopeCond(c))
-		if cond, args := keywordCond(c.Query("keyword"),
-			"name", "phone", "phone2", "title", "landline", "nickname", "openid"); cond != "" {
-			q = q.Where(cond, args...)
+		// 员工姓名/手机/手机2/昵称已静态加密：这些列用盲索引做等值匹配（密文无法 LIKE）；
+		// 职位/座机/openid 仍是明文，保留 LIKE 模糊。语义由「全字段模糊」收窄为
+		// 「加密字段精确 + 明文字段模糊」——这是静态加密换来的必然取舍。
+		if kw := strings.TrimSpace(c.Query("keyword")); kw != "" {
+			bidx := pii.BlindIndex(kw)
+			like := likeKeyword(kw)
+			q = q.Where(
+				"name_bidx = ? OR phone_bidx = ? OR phone2_bidx = ? OR nickname_bidx = ? "+
+					"OR title LIKE ? OR landline LIKE ? OR openid LIKE ?",
+				bidx, bidx, bidx, bidx, like, like, like,
+			)
 		}
 		if cond, v := statusCond(c.Query("status"), "enabled", "disabled"); cond != "" {
 			q = q.Where(cond, v)
@@ -473,6 +592,35 @@ func RegisterApply(r *gin.Engine, db *gorm.DB) {
 			Action: audit.ActionEmployeeReset, TargetType: "employee", TargetID: strconv.FormatInt(id, 10),
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "initialPassword": pwd})
+	})
+
+	// 按员工导出个人信息（PIPL 查阅复制权协助义务）：管理员把某员工的全部 PII
+	// 打包返回，用于响应数据主体的查阅/复制请求。
+	//
+	// 按租户隔离（scopeCond）：管理员只能导出自己企业下的员工，不能跨租户捞人。
+	// 返回 envelope.data = 该员工完整记录（字段与模型一致，不含 password_hash 等
+	// json:"-" 项）。前端「导出」按钮拿到后落盘成文件即完成交付。
+	//
+	// 审计：把一个人的全部 PII 打包导出是高风险动作，特意破例记录（审计包约定
+	// 只读不记，但此处属于「可能泄露大量个人信息的提取」必须留痕）。
+	r.GET("/api/admin/employees/:id/export", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		if id <= 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
+			return
+		}
+		var e model.Employee
+		if err := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).First(&e).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到（或不在本租户）"})
+			return
+		}
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeExport,
+			TargetType: "employee",
+			TargetID:   strconv.FormatInt(id, 10),
+			Detail:     map[string]any{"companyId": e.CompanyID},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": e})
 	})
 
 	// 超管修改自己密码
