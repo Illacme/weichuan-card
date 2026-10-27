@@ -37,9 +37,22 @@ jobs:
         working-directory: backend
         run: go vet ./...
 
+      # -v 的全量输出很大，「哪个用例红了」得人肉翻日志。失败时另开一步把 FAIL
+      # 行摘出来做成注解，提交 / PR 页直接可见；完整上下文仍留在日志里。
+      # pipefail 是必需的：否则 go test 的非零退出会被 tee 的成功覆盖掉。
       - name: 测试（SQLite 全流程 + 存储增强）
         working-directory: backend
-        run: go test ./... -v
+        run: |
+          set -o pipefail
+          go test ./... -v 2>&1 | tee /tmp/go-test.log
+
+      - name: 失败用例摘要（注解）
+        if: failure()
+        working-directory: backend
+        run: |
+          # 注解每步上限 10 条，先摘最要紧的：包级 FAIL、用例级 FAIL、panic
+          grep -E '^(--- FAIL|    --- FAIL|FAIL|panic:)' /tmp/go-test.log \
+            | head -10 | while IFS= read -r line; do echo "::error::$line"; done
 
   # ───────── 后端 lint（门禁） ─────────
   # 与 `go vet` 的分工：vet 只查「编译器能确定的可疑写法」，这里补的是
