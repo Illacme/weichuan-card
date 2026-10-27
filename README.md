@@ -14,7 +14,7 @@
 | `miniprogram/` | 原生微信小程序前端（员工 / 访客侧） |
 | `backend/migrations/` | MySQL 建表与种子 SQL（含软删除迁移 `0003` 等） |
 | `docs/` | OpenAPI 3 接口规范（`openapi.yaml`）· 分支保护协作规范（`branch-protection.md`）· 生产上线 Runbook（`deploy-runbook.md`） |
-| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：MySQL 逻辑备份 / SQLite 在线快照 + 轮转；`restore.sh`：恢复；`restore_drill.sh`：恢复演练；`alert_check.sh`：最小告警四规则，含外部拨测） |
+| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：MySQL 逻辑备份 / SQLite 在线快照 + 轮转；`restore.sh`：恢复；`restore_drill.sh`：恢复演练；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
 | `*.md`（根目录） | 需求 / 架构 / 接口字段映射等中文文档 |
 
 ## 技术栈
@@ -247,7 +247,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - 接口规范：`docs/openapi.yaml`（OpenAPI 3.0.3）
 - 部署与运维：《部署与联调》（联调环境）· `docs/deploy-runbook.md`（生产上线 Runbook）· `scripts/preflight.sh` · `scripts/backup.sh` · `scripts/alert_check.sh`
 - 协作规范：`docs/branch-protection.md`（分支保护 / CI 门禁 / 评审流）
-- 许可与第三方声明：`LICENSE`（商业专有许可）· `NOTICES.md`（第三方组件概览与重新生成方法）· `docs/third-party-licenses.md`（逐项清单，由 `scripts/gen_third_party_notices.py` 生成）
+- 许可与第三方声明：`LICENSE`（商业专有许可）· `NOTICES.md`（第三方组件概览与重新生成方法）· `docs/third-party-licenses.md`（逐项清单，由 `scripts/gen_third_party_notices.py` 生成）· `scripts/license_setup.sh`（私有部署授权密钥初始化，签发环境专用）
 - 子工程说明：`backend/README.md` · `frontend/README.md` · `miniprogram/README.md`
 
 ## 许可证

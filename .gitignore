@@ -18,6 +18,10 @@ uploads/
 *.log
 # 私有/独立部署的签名许可证文件（部署产物，非源码；签发私钥不进仓库）
 data/license.key
+# 许可证签发私钥（scripts/license_setup.sh 生成）：只留在签发环境，
+# 进仓库 = 任何人都能伪造「永久 / 无限席位」的许可证
+license-private.key
+**/license-private.key
 
 # ── 环境变量（保留 .example）──
 .env
