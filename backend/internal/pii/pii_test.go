@@ -1,6 +1,8 @@
 package pii
 
 import (
+	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 
@@ -72,6 +74,37 @@ func TestBlindIndexEmailCaseInsensitive(t *testing.T) {
 func TestBlindIndexEmpty(t *testing.T) {
 	require.Equal(t, "", BlindIndex(""))
 	require.Equal(t, "", BlindIndex("   "))
+}
+
+// Reload 的存在理由：包级 init 早于配置加载，安装向导写进**配置文件**的密钥
+// 在 init 时还不存在，必须靠 Reload 才能生效。这里同时验证「Reload 真的换了钥匙」
+// ——只断言状态位会在「算了新值却没装进去」的实现下假通过。
+func TestReloadPicksUpNewKey(t *testing.T) {
+	real := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	t.Setenv(KeyEnvVar, real)
+	Reload()
+	t.Cleanup(func() {
+		os.Unsetenv(KeyEnvVar)
+		Reload()
+	})
+
+	if UsingPlaceholderKey() {
+		t.Fatal("Reload 后应读到环境变量里的真密钥，不应再是占位密钥")
+	}
+	enc, err := Encrypt("张三")
+	if err != nil {
+		t.Fatalf("用真密钥加密失败：%v", err)
+	}
+
+	// 换回 dev 密钥：同一串密文必须解不开。能解开说明 Reload 没真正换掉钥匙。
+	os.Unsetenv(KeyEnvVar)
+	Reload()
+	if !UsingPlaceholderKey() {
+		t.Fatal("清掉环境变量并 Reload 后应回落到占位密钥")
+	}
+	if _, err := Decrypt(enc); err == nil {
+		t.Fatal("换钥后旧密文不应还能解开（说明 Reload 没有真正生效）")
+	}
 }
 
 func TestKeyShape(t *testing.T) {

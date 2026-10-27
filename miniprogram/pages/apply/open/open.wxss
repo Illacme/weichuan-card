@@ -1,12 +1,3 @@
-/* 微信昵称行：昵称取值占据中间弹性空间，「授权获取」按钮靠右 */
-.nickname-value {
-  flex: 1;
-  color: #333;
-}
-.nickname-value.nickname-ph {
-  color: #aaa;
-}
-
 /* 申请目标企业行（多租户分发）：企业名加粗展示，让访客确认申请加入的企业 */
 .company-value {
   flex: 1;

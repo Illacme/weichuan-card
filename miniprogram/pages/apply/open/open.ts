@@ -1,5 +1,5 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
-import { getOpenid, getWechatNickname } from '../../../utils/wechat'
+import { getOpenid } from '../../../utils/wechat'
 import { ensurePrivacy } from '../../../utils/privacy'
 
 // 访客自助提交开通申请（POST /api/apply/open）。
@@ -12,8 +12,10 @@ import { ensurePrivacy } from '../../../utils/privacy'
 // 隐私合规（本页是 UGC 采集最重的页面，2026-10-26 补）：
 //   1. 表单级明示同意（PIPL「告知—同意」）：采集姓名/手机/邮箱等属个人信息，
 //      必须有用户主动勾选的同意项，未勾选不得提交（见 form.agreed 与 onSubmit）。
-//   2. 平台级隐私授权：chooseMedia / getUserProfile 是微信隐私接口，
+//   2. 平台级隐私授权：chooseMedia 是微信隐私接口，
 //      调用前须取得用户对隐私政策的同意（见 utils/privacy.ts 的 ensurePrivacy）。
+//      头像的 chooseAvatar 与昵称的 type="nickname" 由微信自己兜授权弹窗，
+//      与既有 chooseAvatar 的处理一致，代码里不额外拦。
 Page({
   data: {
     form: { name: '', phone: '', phone2: '', title: '', landline: '', email: '', avatar: '', nickname: '' },
@@ -132,27 +134,6 @@ Page({
         })
       })
   },
-  // 「授权获取」微信昵称：getUserProfile 弹窗（需在点击手势内调用），成功后展示在「微信昵称」行，
-  // 提交时随表单带上。用户可跳过——昵称仅作后台核实用途，不填也能提交。
-  //
-  // getUserProfile 是微信隐私接口，调用前须取得隐私政策同意。
-  async authorizeNickname() {
-    if (!(await ensurePrivacy(this))) {
-      wx.showToast({ title: '需同意隐私政策才能使用', icon: 'none' })
-      return
-    }
-    wx.showLoading({ title: '获取中' })
-    getWechatNickname().then((nickname) => {
-      wx.hideLoading()
-      if (nickname) {
-        const form = this.data.form as any
-        form.nickname = nickname
-        this.setData({ form })
-      } else {
-        wx.showToast({ title: '未获取到昵称（可跳过）', icon: 'none' })
-      }
-    })
-  },
   async onSubmit() {
     const { name, phone } = this.data.form
     if (!name || !phone) {
@@ -167,8 +148,8 @@ Page({
       return
     }
     this.setData({ saving: true })
-    // openid 静默采集（wx.login 换取，无需弹窗）；昵称由用户点「授权获取」显式授权后已在 form.nickname，
-    // 此处只补 openid，不再触发昵称弹窗（避免提交时盲弹）。
+    // openid 静默采集（wx.login 换取，无需弹窗）；昵称已由表单里的原生输入框
+    // 填写/自动填充，提交时不再触发任何授权弹窗（避免提交瞬间盲弹）。
     const openid = await getOpenid()
     try {
       const r = await request('POST', '/api/apply/open', { ...this.data.form, openid })

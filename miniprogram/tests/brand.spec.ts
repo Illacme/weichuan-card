@@ -99,13 +99,19 @@ describe('brand', () => {
       expect(app.window.navigationBarTitleText).toBe(FALLBACK_BRAND)
     })
 
-    it(`${DEMO_TENANT} 不得出现在小程序源码（ts / js / json / wxml / wxss）里`, () => {
-      const hits = sourceFiles(MP_ROOT).filter((f) =>
-        readFileSync(f, 'utf8').includes(DEMO_TENANT)
-      )
-      // 报出具体文件，别只丢一句「匹配失败」——这类断言失败时必须一眼知道改哪
-      const names = hits.map((f) => relative(MP_ROOT, f))
-      expect(names).toEqual([])
-    })
+    it(
+      `${DEMO_TENANT} 不得出现在小程序源码（ts / js / json / wxml / wxss）里`,
+      () => {
+        const hits = sourceFiles(MP_ROOT).filter((f) =>
+          readFileSync(f, 'utf8').includes(DEMO_TENANT)
+        )
+        // 报出具体文件，别只丢一句「匹配失败」——这类断言失败时必须一眼知道改哪
+        const names = hits.map((f) => relative(MP_ROOT, f))
+        expect(names).toEqual([])
+      },
+      // 要遍历并读取整个小程序目录，实测约 4.5s——贴着 vitest 默认 5s 上限，
+      // 机器一忙就被判超时（表现为与被测代码无关的偶发红）。给一个宽裕的上限。
+      30000
+    )
   })
 })

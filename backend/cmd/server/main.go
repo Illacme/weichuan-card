@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -77,6 +78,27 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+
+	// PII 加密密钥：先让「配置文件形态」也生效，再过安全门槛。
+	// pii 包在包级 init 里只读环境变量，而包级 init 早于本函数的配置加载——
+	// 安装向导把密钥写进的是 runtime.env，进程起来时 init 早已跑完、看不到，
+	// 所以必须由这里补一次（见 syncPIIKeyFromConfig）。
+	syncPIIKeyFromConfig()
+
+	// PII 加密密钥硬门槛：未设置 PII_ENC_KEY 时 pii 回落到源码里公开的内置
+	// dev 密钥，「加密」在已知密钥下进行、形同虚设。此前只打 WARN 不拦，
+	// 生产漏设无人察觉；现在与 JWT 缺省密钥同等处理——拒绝启动。
+	//
+	// 为什么现在敢拦了：安装向导会自动签发随机密钥写进配置（见 setup.Install），
+	// 所以走向导的新装不会被拦；被拦住的正是手工部署漏设的场景，
+	// 而那恰恰是最需要有人喊一声的地方。逃生门同是 ALLOW_INSECURE=1。
+	if err := piiKeyGate(); err != nil {
+		log.Fatalf("[SECURITY][FATAL] %v", err)
+	}
+	if pii.UsingPlaceholderKey() {
+		// 能走到这里只可能是 ALLOW_INSECURE=1 放行的：留痕，避免运维忘了自己开过逃生门。
+		log.Printf("[SECURITY][ALLOW_INSECURE] 已放行：%s 未设置，PII 正用内置 dev 密钥加密", pii.KeyEnvVar)
 	}
 
 	// 安全硬门槛：带内置缺省的 JWT 密钥 / 超管口令上线，等于把后台开放给所有人——
@@ -155,13 +177,6 @@ func main() {
 		}
 	} else if driver == dbopen.DriverMySQL {
 		log.Printf("[MIGRATE] AUTO_MIGRATE=0：跳过自动迁移，请自行确认表结构与本版本匹配")
-	}
-
-	// PII 加密密钥自检：未设置 PII_ENC_KEY 时用内置 dev 密钥加密——生产必须显式设置，
-	// 否则「加密」全在公开已知的密钥下进行，形同虚设。这里只告警不拒启：
-	// 拒启会让 clone 即跑 / 首次安装 / 测试全挂，代价过大；真上生产时该 WARN 必须清零。
-	if pii.UsingPlaceholderKey() {
-		log.Printf("[SECURITY][WARN] 未设置 %s（base64 32 字节），员工 PII 使用内置 dev 密钥加密——生产必须设置，否则加密形同虚设", pii.KeyEnvVar)
 	}
 
 	// 存量 PII 回填：把历史明文员工 PII 加密入库并补盲索引（幂等，仅处理未加密/缺索引的行）。
@@ -356,6 +371,46 @@ func main() {
 // 不设就是 debug——每次启动把**全部路由表**打进日志（几十行，把真正要看的安全告警
 // 与迁移日志挤到屏幕外），并且保留调试期开销。本地排查可以 GIN_MODE=debug 覆盖。
 // 必须早于 handler.New / setup.Engine：路由注册时就在按模式决定要不要打印。
+// syncPIIKeyFromConfig 让「写在配置文件里的 PII_ENC_KEY」也能生效。
+//
+// pii 包在包级 init 里读环境变量，而包级 init 早于 main 里的 config.Load()——
+// 安装向导把密钥写进 runtime.env 后进程重新启动，init 早就跑完了、看不到这个值，
+// 于是「装完就有真密钥」只会在环境变量形态下成立。这里把配置文件的值补进
+// 环境变量再让 pii 重新装载一次，两种部署形态才一致。
+// 环境变量优先：已显式注入时不覆盖，保持「env > 配置文件」的既有语义。
+func syncPIIKeyFromConfig() {
+	if os.Getenv(pii.KeyEnvVar) == "" {
+		if v := config.Resolved(pii.KeyEnvVar); v != "" {
+			// Setenv 只作用于本包的常量键（不含 '=' 与 NUL），失败仅可能是内存耗尽；
+			// 即便失败也只是落回 dev 密钥，由紧随其后的 piiKeyGate 拦住。
+			_ = os.Setenv(pii.KeyEnvVar, v)
+		}
+	}
+	pii.Reload()
+}
+
+// piiKeyGate 返回 PII 密钥相关的启动硬门槛错误（nil = 放行）。
+//
+// 独立成函数是为了让单测能直接覆盖：启动门槛写错的两种后果都很贵——
+// 漏拦等于生产裸奔且无人察觉，误拦等于所有人都起不来。
+func piiKeyGate() error {
+	// 配了但格式不对：Encrypt/Decrypt 会一路报错。与其等到写入时才炸，
+	// 不如启动时说清楚——这种错没有「放行」的合理场景，故不受 ALLOW_INSECURE 影响。
+	if err := pii.KeyError(); err != nil {
+		return err
+	}
+	if !pii.UsingPlaceholderKey() {
+		return nil
+	}
+	if os.Getenv("ALLOW_INSECURE") == "1" {
+		return nil
+	}
+	return fmt.Errorf("未设置 %s（base64 32 字节）：员工 PII 正用源码里公开的内置 dev 密钥加密，形同虚设。"+
+		"请用 openssl rand -base64 32 生成后设置"+
+		"（警告：已用 dev 密钥写入的数据换钥后无法解密，必须在首次写入业务数据之前设定）；"+
+		"本地联调确需放行请加 ALLOW_INSECURE=1，切勿用于生产", pii.KeyEnvVar)
+}
+
 // initLogFormat 切换日志形态（LOG_FORMAT=json 输出 JSONL，供日志系统按字段检索）。
 //
 // 必须在任何业务日志之前调用：否则前面的几行还是纯文本，混在 JSONL 里会让采集器

@@ -1,11 +1,13 @@
 // 访客自助开通申请页（POST /api/apply/open）：对外公开，没有登录态兜底，
 // 所以「校验漏一条 = 脏数据进审核队列」「上传崩了 = 用户填的东西全丢」都不允许。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { installPageCapture, capturedPage, makeInstance, installWx, flush } from './helpers/harness'
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
-  nickname: vi.fn(async (): Promise<string> => ''),
 }))
 
 vi.mock('../utils/request', () => ({
@@ -16,7 +18,6 @@ vi.mock('../utils/request', () => ({
 }))
 vi.mock('../utils/wechat', () => ({
   getOpenid: vi.fn(async () => 'openid-x'),
-  getWechatNickname: mocks.nickname,
 }))
 
 let wxStub: any
@@ -26,7 +27,6 @@ beforeEach(() => {
   installPageCapture()
   wxStub = installWx().wx
   mocks.request.mockClear()
-  mocks.nickname.mockClear()
 })
 
 async function page(company: any = { code: 0, data: { name: '朗汇机电有限公司', shortName: '朗汇机电' } }) {
@@ -179,25 +179,41 @@ describe('apply/open 页', () => {
 
   // ---- 昵称 ----
 
-  it('授权获取昵称：写回表单（提交时随表单上传）', async () => {
+  // 昵称改用官方「头像昵称填写能力」的原生输入框（type="nickname"）：
+  // 微信自动填充或用户手填，都经 bindinput 写进 form.nickname，
+  // 与姓名/手机等字段走同一条路，提交时随表单一起带上。
+  it('昵称输入框：填入即写入表单（提交时随表单上传）', async () => {
     const p = await page()
-    mocks.nickname.mockResolvedValueOnce('小明')
 
-    p.authorizeNickname()
-    await flush()
+    p.onInput({ currentTarget: { dataset: { field: 'nickname' } }, detail: { value: '小明' } })
 
     expect(p.data.form.nickname).toBe('小明')
   })
 
-  // 昵称只是后台核实用途，拿不到要明确告诉用户可以跳过
-  it('拿不到昵称：提示可跳过', async () => {
+  // 旧实现是点「授权获取」调 wx.getUserProfile 弹窗取昵称——该接口已被平台收回，
+  // 此后永远返回占位值「微信用户」，点了等于白点。页面不该再留这条路径。
+  it('不再提供 authorizeNickname（getUserProfile 已被平台收回）', async () => {
     const p = await page()
-    mocks.nickname.mockResolvedValueOnce('')
 
-    p.authorizeNickname()
-    await flush()
+    expect(typeof p.authorizeNickname).toBe('undefined')
+  })
 
-    expect(lastToast()).toBe('未获取到昵称（可跳过）')
+  // 源码守门：昵称必须是官方填写能力的原生输入框。
+  // 上面两条只能验证「值能写进表单」，验证不了 wxml 用的是哪种控件——
+  // 而「改回普通 input」这类回退在真机上的表现只是「不再自动填充昵称」，
+  // 不报错、不失败，没人会察觉，只能靠读源码钉住。
+  it('源码守门：昵称行用 type="nickname" 且不再挂旧的授权按钮', () => {
+    // 路径解析方式与 brand.spec.ts 的源码守门保持一致（import.meta.url 在
+    // 本环境不是 file 协议，直接 new URL(...) 会报 scheme 错）
+    const HERE = dirname(fileURLToPath(import.meta.url)) // miniprogram/tests
+    const wxml = readFileSync(join(HERE, '..', 'pages/apply/open/open.wxml'), 'utf8')
+    // 必须先剥掉注释再匹配：说明性注释里会提到 type="nickname" 这个写法，
+    // 不剥的话「把控件改回普通 input」这种真回退会被注释里的同名文本掩盖过去
+    const body = wxml.replace(/<!--[\s\S]*?-->/g, '')
+    expect(body).toMatch(/type="nickname"/)
+    // 真正的回归信号是「又挂回旧的授权按钮」；注释里提到 API 名是允许的，
+    // 所以这里查绑定而不是查字符串 getUserProfile
+    expect(body).not.toMatch(/authorizeNickname/)
   })
 
   // ---- 提交 ----

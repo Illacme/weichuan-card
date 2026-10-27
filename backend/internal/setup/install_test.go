@@ -13,6 +13,7 @@ import (
 	"weichuan/internal/config"
 	"weichuan/internal/dbopen"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 )
 
 // resetInstallState 清掉进程内一次性锁：每个安装用例都应是「全新进程」视角。
@@ -40,6 +41,7 @@ func sqliteEnv(t *testing.T) (cfgPath, dbPath string) {
 	t.Setenv("JWT_KEY", "")
 	t.Setenv("ADMIN_PASS", "")
 	t.Setenv("MYSQL_ROOT_PASSWORD", "")
+	t.Setenv(pii.KeyEnvVar, "")
 	return cfgPath, dbPath
 }
 
@@ -102,10 +104,16 @@ func TestInstallSQLiteEndToEnd(t *testing.T) {
 		t.Fatalf("配置文件应已写入：%v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"DB_DSN=sqlite://" + dbPath, "JWT_KEY=", "ADMIN_USER=admin", "ADMIN_PASS=installer-pass-123"} {
+	for _, want := range []string{"DB_DSN=sqlite://" + dbPath, "JWT_KEY=", "ADMIN_USER=admin", "ADMIN_PASS=installer-pass-123", "PII_ENC_KEY="} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("配置文件应包含 %q，实际：\n%s", want, text)
 		}
+	}
+	// PII 密钥必须随安装一起签发，走的是 cmd/server 读取它的同一条路径
+	// （config.Resolved）。漏了它，装完重启会直接被启动门槛拒绝——
+	// 表现是「刚装好就起不来」，而原因却写在完全不同的地方，最难排查。
+	if k := config.Resolved(pii.KeyEnvVar); k == "" {
+		t.Fatal("安装应自动生成并写入 PII_ENC_KEY")
 	}
 	if fi, err := os.Stat(cfgPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("配置文件权限应 0600，实际 %v (%v)", fi.Mode().Perm(), err)

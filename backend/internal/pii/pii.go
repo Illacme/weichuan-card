@@ -42,7 +42,12 @@ var (
 	placeholder bool
 )
 
-func init() {
+func init() { loadKeys() }
+
+// loadKeys 读取环境变量中的密钥（缺失则回落内置 dev 密钥）并派生盲索引子密钥。
+func loadKeys() {
+	keyErr = nil
+	placeholder = false
 	if v := strings.TrimSpace(os.Getenv(KeyEnvVar)); v != "" {
 		b, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
@@ -54,7 +59,6 @@ func init() {
 			return
 		}
 		copy(encKey[:], b)
-		placeholder = false
 	} else {
 		// 内置 dev 密钥：由固定串派生，测试 / 本地开箱即用。
 		encKey = sha256.Sum256([]byte("weichuan-pii-dev-key-v1"))
@@ -70,6 +74,14 @@ func init() {
 // UsingPlaceholderKey 报告当前是否在用内置 dev 密钥。生产启动自检应据此拒绝
 // （与 license.IsPlaceholderPublicKey 同一思路：带占位密钥上线 = 加密形同虚设）。
 func UsingPlaceholderKey() bool { return placeholder }
+
+// Reload 重新读取环境变量并重新派生子密钥。
+//
+// 为什么需要它：包级 init 早于 cmd/server 的配置加载，而安装向导是把
+// PII_ENC_KEY 写进**配置文件**（runtime.env）的——init 跑完时那份值还不存在，
+// 于是「装完就有真密钥」只会在环境变量形态下成立。main 把配置文件的值
+// 补进环境变量后调用本函数，两种部署形态才一致。
+func Reload() { loadKeys() }
 
 // KeyError 返回密钥加载错误（配置了 PII_ENC_KEY 但格式/长度不对时非 nil）。
 // 此时 Encrypt/Decrypt 会直接返回错误——宁可让写入/读取显式失败，也不静默降级。

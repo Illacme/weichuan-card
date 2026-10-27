@@ -18,6 +18,7 @@ import (
 	"weichuan/internal/handler"
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
+	"weichuan/internal/pii"
 	"weichuan/internal/setting"
 )
 
@@ -238,12 +239,29 @@ func Install(req InstallReq) (InstallResult, error) {
 	if req.CookieSecure {
 		kv["COOKIE_SECURE"] = "true"
 	}
+	// PII 加密密钥必须**在安装时顺手签发**，不能留给运维事后补：
+	// 一旦线上已经用内置 dev 密钥写过 PII，之后换钥旧数据永远解不回来
+	// （没有 re-key 机制）；而漏设的表现只是「加密形同虚设」，没人会察觉。
+	// 随机生成即可——这把钥匙不需要人记住，也不需要跨机器共用。
+	// 已存在则不动：重装场景下覆盖它会让存量密文变成天书。
+	generatedPII := false
+	if config.Resolved(pii.KeyEnvVar) == "" {
+		k := piiKey()
+		if k == "" {
+			return InstallResult{}, errors.New("生成 PII 加密密钥失败（随机源不可用），请手动设置 PII_ENC_KEY 后重试")
+		}
+		kv[pii.KeyEnvVar] = k
+		generatedPII = true
+	}
 	if err := config.WriteFileValues(path, kv); err != nil {
 		return InstallResult{Driver: drv, ConfigFile: path}, fmt.Errorf(
 			"数据库已初始化，但写入配置文件失败：%v。请手动创建 %s 并填入连接信息后重启服务", err, path)
 	}
 
 	installDone = true
+	if generatedPII {
+		log.Printf("[SETUP] 已生成 PII 加密密钥写入 %s（务必随配置文件一同备份：换钥后旧数据无法解密）", path)
+	}
 	log.Printf("[SETUP] 安装完成：driver=%s config=%s admin_user=%q", drv, path, adminUser)
 	return InstallResult{
 		OK:         true,

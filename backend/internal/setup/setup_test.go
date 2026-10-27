@@ -1,9 +1,11 @@
 package setup
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"weichuan/internal/config"
+	"weichuan/internal/pii"
 )
 
 func TestMain(m *testing.M) {
@@ -170,6 +173,40 @@ func TestGeneratedSecretsAreStrongAndUnique(t *testing.T) {
 	}
 	if valueOf(t, first, "ADMIN_PASS") == valueOf(t, second, "ADMIN_PASS") {
 		t.Fatal("两次生成的 ADMIN_PASS 相同")
+	}
+}
+
+// 生成的 PII 密钥必须能被 pii 包原样接受。
+//
+// 这条专门防一个隐蔽的坑：pii 按 base64.StdEncoding 解码并要求恰好 32 字节，
+// 而同文件里的 secret() 用的是 RawURLEncoding（- / _ 是合法字符）。
+// 直接拿 secret(32) 当 PII_ENC_KEY，只有在随机值里恰好出现 - 或 _ 时才会
+// 「密钥格式错误」——本地跑十次都正常、上线某次就起不来，极难归因。
+func TestGeneratedPIIKeyAcceptedByPIIPackage(t *testing.T) {
+	raw := piiKey()
+	if raw == "" {
+		t.Fatal("piiKey() 不应返回空串（随机源可用）")
+	}
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("生成的 PII 密钥不是合法标准 base64：%v（值 %q）", err, raw)
+	}
+	if len(b) != 32 {
+		t.Fatalf("生成的 PII 密钥应解码为 32 字节，实际 %d", len(b))
+	}
+
+	// 真正交给 pii 校验，而不是只比对编码规则
+	t.Setenv(pii.KeyEnvVar, raw)
+	pii.Reload()
+	t.Cleanup(func() {
+		os.Unsetenv(pii.KeyEnvVar)
+		pii.Reload()
+	})
+	if err := pii.KeyError(); err != nil {
+		t.Fatalf("生成的密钥被 pii 判为格式错误：%v", err)
+	}
+	if pii.UsingPlaceholderKey() {
+		t.Fatal("给了真密钥后不应再报告占位密钥")
 	}
 }
 

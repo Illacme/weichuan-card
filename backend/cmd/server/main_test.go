@@ -1,15 +1,64 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"weichuan/internal/config"
+	"weichuan/internal/pii"
 	"weichuan/internal/storage"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+// PII 密钥门槛的四条边界必须钉死。方向错在两头都很贵：
+// 漏拦 = 生产用源码里公开的 dev 密钥加密、且没人会察觉；
+// 误拦 = 连走向导的新装都起不来，所有人被挡在门外。
+func TestPIIKeyGate(t *testing.T) {
+	// pii 的密钥是包级状态，改完必须还原，否则会污染同包其它用例
+	t.Cleanup(func() { pii.Reload() })
+	valid := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+
+	t.Run("给了合法密钥则放行", func(t *testing.T) {
+		t.Setenv(pii.KeyEnvVar, valid)
+		t.Setenv("ALLOW_INSECURE", "")
+		pii.Reload()
+		if err := piiKeyGate(); err != nil {
+			t.Fatalf("合法密钥应放行，实际被拦：%v", err)
+		}
+	})
+	t.Run("占位密钥必须拦下", func(t *testing.T) {
+		t.Setenv(pii.KeyEnvVar, "")
+		t.Setenv("ALLOW_INSECURE", "")
+		pii.Reload()
+		err := piiKeyGate()
+		if err == nil {
+			t.Fatal("未设置 PII_ENC_KEY 时生产必须拒绝启动")
+		}
+		if !strings.Contains(err.Error(), pii.KeyEnvVar) {
+			t.Fatalf("错误信息应指明该改哪个环境变量，实际：%v", err)
+		}
+	})
+	t.Run("ALLOW_INSECURE 是本地联调的逃生门", func(t *testing.T) {
+		t.Setenv(pii.KeyEnvVar, "")
+		t.Setenv("ALLOW_INSECURE", "1")
+		pii.Reload()
+		if err := piiKeyGate(); err != nil {
+			t.Fatalf("ALLOW_INSECURE=1 应放行本地联调：%v", err)
+		}
+	})
+	t.Run("密钥格式错误不受逃生门影响", func(t *testing.T) {
+		t.Setenv(pii.KeyEnvVar, "not-a-valid-base64!!")
+		t.Setenv("ALLOW_INSECURE", "1")
+		pii.Reload()
+		if err := piiKeyGate(); err == nil {
+			t.Fatal("配了格式错误的密钥必须拦下：放行会让此后每一次加解密都失败")
+		}
+	})
+}
 
 // clientIPAfter 装好可信代{配置后取一次 ClientIP，模拟「这个请求是谁发来的」。
 // remoteAddr 是对端（反代）地址，xff 是请求自带的 X-Forwarded-For。

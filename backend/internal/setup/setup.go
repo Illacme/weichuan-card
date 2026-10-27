@@ -172,6 +172,20 @@ func secret(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// piiKey 生成 PII 静态加密密钥：32 个随机字节的**标准** base64（44 字符）。
+//
+// 刻意不复用 secret()：那个用的是 RawURLEncoding，而 pii 包按
+// base64.StdEncoding 解码——RawURL 的 '-' / '_' 会被判为非法字符，
+// 拿 secret(32) 的返回值当 PII_ENC_KEY 会直接「密钥格式错误」起不来，
+// 且这种错误只在换了随机值之后才偶发出现，极难排查。
+func piiKey() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
 // Engine 构造「未配置模式」的引擎：与主流程一致的 Recovery，只挂引导/安装路由。
 func Engine() *gin.Engine {
 	r := gin.New()

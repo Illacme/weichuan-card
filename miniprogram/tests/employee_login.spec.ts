@@ -16,7 +16,6 @@ vi.mock('../utils/request', () => ({
 }))
 vi.mock('../utils/wechat', () => ({
   getOpenid: mocks.getOpenid,
-  getWechatNickname: vi.fn(async () => ''),
 }))
 
 let wxStub: any

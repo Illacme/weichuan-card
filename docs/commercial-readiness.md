@@ -212,7 +212,7 @@
 | 小程序 | `pages/apply/open/` | 表单明示同意勾选 + 授权检查 + 上传带 openid |
 | 小程序 | `pages/employee/edit/` · `pages/poster/` | 隐私接口调用前授权检查 |
 | 小程序 | `pages/employee/me/` | 隐私政策入口（登录前后两态） |
-| 小程序 | `utils/wechat.ts` | 识别 getUserProfile 的占位昵称 |
+| 小程序 | `utils/wechat.ts` | 删除失效的 `getWechatNickname`（getUserProfile 已收回，见第七轮改用原生填写能力） |
 | 小程序 | `utils/contact.ts` · `components/employee-card/` | 隐私被拒的失败分支（原来会静默失效） |
 | 后端 | `internal/license/embed.go` | 公钥支持 `LICENSE_PUB` 覆盖 + 占位密钥自检 |
 | 后端 | `cmd/server/main.go` | 私有部署用占位公钥即拒绝启动（排在验签之前） |
@@ -266,7 +266,13 @@
 
 **反向验证**：摘掉 `Employee.BeforeCreate` → `TestEmployeePIIEncryptedAtRest` 报「姓名应以密文落库」；摘掉 `OpenApply.BeforeCreate` → 报「申请人姓名应以密文落库」；均还原后全绿。
 
-**仍需人工完成（新增）**：生产环境必须注入 `PII_ENC_KEY`（`openssl rand -base64 32`）——**一旦线上已用 dev 密钥写入数据，换钥后再也解不回来**，因此必须在首次写入业务数据之前就设定。
+**PII 加密密钥（2026-10-27 由「只告警」收紧为「启动硬门槛」，见第七轮记录）**：此前未设置 `PII_ENC_KEY` 时进程仍带内置 dev 密钥启动，生产漏设无人察觉。现在：
+
+- **手工部署**未设置 → `cmd/server` 拒绝启动并打印生成命令；逃生门 `ALLOW_INSECURE=1`（仅本地联调，放行时打 `[SECURITY][ALLOW_INSECURE]` 留痕）。
+- **安装向导**自动签发一把随机密钥写进 `data/runtime.env`，走向导的新装不受影响。
+- **配置文件形态已打通**：`PII_ENC_KEY` 现在既能用环境变量、也能写在配置文件里（此前 `pii` 包在 `init` 里只读环境变量，而 `init` 早于配置加载，写进文件的密钥根本读不到）。
+
+时间约束不变：**必须在首次写入业务数据之前设定**——一旦已用 dev 密钥写入 PII，换钥后旧数据再也解不回来（没有 re-key 机制）。走向导的部署请**务必把 `data/runtime.env` 纳入备份**。
 
 ---
 
@@ -426,3 +432,61 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 | 恢复演练（SQLite / MySQL 各一次） | 均通过，记录存 `docs/drill-records/2026-10-27-{sqlite,mysql}.md` |
 | 端到端冒烟 `scripts/e2e_smoke.sh` | 七步全 PASS |
 | 第三方许可清单 `--check`（新增 116 个 dev 依赖后） | 仍一致（清单只统计运行时依赖） |
+
+---
+
+## 第七轮实施记录（两项「人工事项」收口，2026-10-27）
+
+第六轮结束时还剩两条被标为「人工」的项：`PII_ENC_KEY` 生产必设、真实昵称要改
+`<input type="nickname">`。复盘后两者的「不可代码化」程度并不一样，本轮分别处理。
+
+### 1. PII_ENC_KEY：从「只告警」收紧为「启动硬门槛」，并让安装向导自动签发
+
+**原来为什么不敢拦**：怕拒启把「clone 即跑 / 首次安装 / 测试」全搞挂。
+**解法是先把「首次安装」这条堵上**——让安装向导自己签发密钥，于是被拦的就只剩
+「手工部署漏设」这一真正需要有人喊一声的场景。
+
+- `setup.Install`：安装时若 `PII_ENC_KEY` 尚未配置，随机生成 32 字节并写入 `data/runtime.env`。
+  - **必须用 `base64.StdEncoding`，不能复用同文件的 `secret()`（RawURLEncoding）**：
+    `pii` 包按 StdEncoding 解码，`-` / `_` 会被判为非法字符；拿 `secret(32)` 当密钥会
+    「密钥格式错误」，且只在随机值里恰好出现这两个字符时才暴露——本地跑十次都正常、
+    上线某次就起不来。`TestGeneratedPIIKeyAcceptedByPIIPackage` 钉死这条。
+- `cmd/server`：新增 `piiKeyGate()`——未设置 → 拒绝启动；格式错误 → 拒绝启动且
+  **不受 `ALLOW_INSECURE` 影响**（放行会让此后每次加解密都失败）；`ALLOW_INSECURE=1` → 放行并留痕。
+- **打通配置文件形态**：`pii` 包在包级 `init` 里读环境变量，而 `init` 早于 `config.Load()`——
+  写进配置文件的密钥此前**根本读不到**。新增 `pii.Reload()`，由 `syncPIIKeyFromConfig()`
+  把配置值补进环境变量后重新装载，两种部署形态才一致。
+
+真跑验证（编译出 `/tmp/wc-server`）：① 配置文件无密钥 → 打印 FATAL 并退出；
+② 追加 `openssl rand -base64 32` → 正常起（`database driver=sqlite` … `listen`）；
+③ `ALLOW_INSECURE=1` → 起并打 `[SECURITY][ALLOW_INSECURE]` 留痕。
+
+### 2. 昵称：改用官方「头像昵称填写能力」
+
+`wx.getUserProfile` 自 2022-10-25 被平台收回，此后永远返回占位值「微信用户」，
+原来的「授权获取」按钮点了等于白点。头像此前已是 `open-type="chooseAvatar"`，
+本轮把昵称补齐为同一套能力：
+
+- `pages/apply/open/open.wxml`：昵称行由「文本 + 授权获取按钮」改为
+  `<input type="nickname">`，值经既有 `bindinput` 写入 `form.nickname`。
+- `pages/apply/open/open.ts`：删除 `authorizeNickname` 与 `getWechatNickname` 导入。
+- `utils/wechat.ts`：**删除** `getWechatNickname`——它是「调它就能拿到昵称」的错觉来源，
+  留着只会让人再踩一次；删除处留注释说明改用原生填写能力。
+- 授权弹窗交给微信自兜（与既有 `chooseAvatar` 处理一致），代码不额外拦；
+  前提是 MP 后台已声明「收集你的昵称、头像」（未声明平台直接禁用，`errno 112`）。
+
+**踩到的坑**：源码守门用例最初写 `expect(wxml).toMatch(/type="nickname"/)`，
+被**自己写的注释**命中——注释里也提到了 `type="nickname"` 这个写法，
+于是「把控件改回普通 input」这种真回退也不会变红。修法是匹配前先剥掉 `<!-- -->`。
+反向验证：改成 `type="text"` → 红；还原 → 绿。
+
+### 3. 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `go build` / `go vet` / `golangci-lint run` | 干净 / 干净 / **0 issue** |
+| `go test`（pii / setup / cmd/server） | 全绿（新增 `TestReloadPicksUpNewKey`、`TestGeneratedPIIKeyAcceptedByPIIPackage`、`TestPIIKeyGate` 四个子例） |
+| 真二进制三种形态（漏设 / 已设 / ALLOW_INSECURE） | 拒绝启动 / 正常起 / 放行并留痕 |
+| `scripts/e2e_smoke.sh` | 七步全 PASS（走向导的新装不被新门槛拦住） |
+| 小程序 `apply_open.spec.ts` / `employee_login.spec.ts` | 23 + 9 全绿 |
+| 反向验证 ×2 | 门槛置空 → `TestPIIKeyGate` 红；`type="nickname"` 改 `text` → 守门红；均还原后转绿 |

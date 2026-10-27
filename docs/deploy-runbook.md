@@ -518,7 +518,7 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
    | 代码里的调用 | 需声明的隐私类型 |
    |---|---|
    | `wx.chooseMedia`（头像 / 海报背景选图） | 收集你选中的照片或视频信息 |
-   | `wx.getUserProfile`（昵称） | 收集你的昵称、头像 |
+   | `<input type="nickname">`（微信昵称，2026-10-27 起取代 `wx.getUserProfile`） | 收集你的昵称、头像 |
    | `<button open-type="chooseAvatar">`（微信头像） | 收集你的昵称、头像 |
    | `wx.saveImageToPhotosAlbum`（海报存相册） | 使用你的相册（仅写入）权限 |
    | `wx.setClipboardData`（复制手机号 / 邮箱） | 读取你的剪切板 |
