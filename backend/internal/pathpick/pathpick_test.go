@@ -211,17 +211,37 @@ func TestEntriesSortedDirsBeforeFiles(t *testing.T) {
 // ---- 空切片 / 选中路径：界面渲染的直接依赖 ----
 
 func TestSuggestNeverReturnsNil(t *testing.T) {
-	// 必须回 []，不能回 nil：Go 的 nil slice 序列化成 JSON null，界面按数组用
-	// （suggestions.length），null 会让选择器渲染抛 TypeError、弹窗体出不来。
+	// 第一层契约（与环境无关，正是 2026-10-25「弹窗渲染不出来」那条 bug 的回归点）：
+	// 必须回 []，不能回 nil——nil slice 序列化成 JSON null，界面按数组用
+	// （suggestions.length），null 会让渲染抛 TypeError、弹窗体出不来。
+	for _, kind := range []mpupload.Kind{
+		mpupload.KindNodeBin, mpupload.KindModuleDir, mpupload.KindSourceDir,
+	} {
+		require.NotNil(t, Suggest(kind, nil), "kind=%s 返回了 nil，会被序列化成 JSON null", kind)
+	}
+
+	// 第二层：目录类在空目录里扫不到任何候选，必须是「空数组」而不是 nil。
+	//
+	// 这条断言**必须先钉死扫描范围**：Suggest 除了调用方给的 extraRoots，还会扫家目录
+	// 与默认根（/opt /srv /usr/local ...）。CI runner 的家目录里正好躺着刚 checkout 出来的
+	// 仓库，miniprogram/project.config.json 会被当成源码目录候选——于是「扫不到」只在
+	// 本机成立，换个机器就红（2026-10-27 实测：CI 红、本机绿；本机是因为家目录太大、
+	// 2000 个目录的扫描预算先耗尽了才没扫到）。这里把 HOME 指到空目录、默认根清空，
+	// 让「扫不到」成为环境无关的事实。
 	empty := t.TempDir()
+	t.Setenv("HOME", empty)
+	saved := defaultRoots
+	defaultRoots = nil
+	t.Cleanup(func() { defaultRoots = saved })
+
 	for _, kind := range []mpupload.Kind{
 		mpupload.KindNodeBin, mpupload.KindModuleDir, mpupload.KindSourceDir,
 	} {
 		got := Suggest(kind, []string{empty})
 		require.NotNil(t, got, "kind=%s 返回了 nil，会被序列化成 JSON null", kind)
-		// 目录类在空目录里扫不到任何候选，必须是「空数组」而不是 nil
+		// node_bin 走 LookPath + 常见安装位置，机器上装了 node 就该有候选，不断言空。
 		if kind != mpupload.KindNodeBin {
-			require.Empty(t, got)
+			require.Empty(t, got, "kind=%s 在空目录里不应扫到候选", kind)
 		}
 	}
 }
