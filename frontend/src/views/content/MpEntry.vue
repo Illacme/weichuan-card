@@ -190,12 +190,23 @@ onMounted(load)
 </script>
 
 <style scoped>
-.scope-tip {
-  margin-bottom: 16px;
+/* .page-bar 不是全局类：每个页面各自在 scoped 样式里定义一次（见其他内容页）。
+   漏了这段就没有 flex，标题与按钮会各占一行、按钮贴左。 */
+.page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
-/* 内嵌时只剩「重新加载」按钮，别让它贴左 */
+.page-bar h3 {
+  margin: 0;
+}
+/* 内嵌在「小程序设置」页签里时没有标题，只剩「重新加载」——不要让它贴左 */
 .page-bar.only-action {
   justify-content: flex-end;
+}
+.scope-tip {
+  margin-bottom: 16px;
 }
 .scope-tip-body {
   font-size: 12px;
