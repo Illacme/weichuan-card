@@ -7,7 +7,7 @@
     <view class="guest-hint">暂无账号？提交开通申请，超管审核通过后即可登录</view>
     <!-- 隐私政策入口：未登录访客也要能查阅（微信审核要求应用内可查阅隐私指引） -->
     <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
-      <text class="cell-label">隐私政策</text>
+      <text class="cell-label muted">隐私政策</text>
       <text class="cell-arrow">›</text>
     </view>
   </view>
@@ -67,7 +67,7 @@
     <view class="group-label">隐私与合规</view>
     <view class="section cells">
       <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
-        <text class="cell-label">隐私政策</text>
+        <text class="cell-label muted">隐私政策</text>
         <text class="cell-arrow">›</text>
       </view>
       <!-- 原「我的数据」：查阅 / 复制本人个人信息（PIPL 查阅复制权），名字易与「数据统计」混淆故改名 -->

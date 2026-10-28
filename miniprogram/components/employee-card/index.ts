@@ -68,11 +68,15 @@ Component({
     // 但**必须有 fail 回调**：接口被拒（未声明隐私类型 / 未授权）时若不接
     // fail，用户点了复制却毫无反应——「复制」是本页最高频动作，静默失效最致命。
     onCopy(e: any) {
-      const value = e.currentTarget.dataset.copy
+      const ds = e.currentTarget.dataset
+      const value = ds.copy
+      const type = ds.type || ''
       if (!value) return
       wx.setClipboardData({
         data: value,
-        success: () => wx.showToast({ title: '已复制', icon: 'success' }),
+        // 提示必须明确复制的是什么：手机/座机/邮箱在名片上并排，只弹「已复制」
+        // 用户分不清刚存的是哪个号；带上类型（已复制手机号/座机号/邮箱）一目了然
+        success: () => wx.showToast({ title: type ? `已复制${type}` : '已复制', icon: 'success' }),
         fail: (err: any) => {
           const msg = (err && err.errMsg) || ''
           if (msg.indexOf('privacy') >= 0) {

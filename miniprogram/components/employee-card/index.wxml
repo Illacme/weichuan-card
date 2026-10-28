@@ -36,21 +36,21 @@
       <view class="ec-col">
         <view class="ec-line">
           <text class="ec-label">手机</text>
-          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-copy="{{employee.phone}}">{{employee.phone}}</view>
+          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-type="手机号" data-copy="{{employee.phone}}">{{employee.phone}}</view>
         </view>
         <view class="ec-line" wx:if="{{employee.phone2}}">
           <text class="ec-label"></text>
-          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-copy="{{employee.phone2}}">{{employee.phone2}}</view>
+          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-type="副手机号" data-copy="{{employee.phone2}}">{{employee.phone2}}</view>
         </view>
       </view>
       <view class="ec-col ec-col-r">
         <view class="ec-line">
           <text class="ec-label">座机</text>
-          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-copy="{{employee.landline || company.tel}}">{{employee.landline || company.tel}}</view>
+          <view class="ec-val ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-type="座机号" data-copy="{{employee.landline || company.tel}}">{{employee.landline || company.tel}}</view>
         </view>
         <view class="ec-line ec-line-email">
           <text class="ec-label">邮箱</text>
-          <view class="ec-val ec-val-email ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-copy="{{employee.email}}">{{employee.email}}</view>
+          <view class="ec-val ec-val-email ec-tap" hover-class="ec-tap-hover" bindtap="onCopy" data-type="邮箱" data-copy="{{employee.email}}">{{employee.email}}</view>
         </view>
       </view>
     </view>
