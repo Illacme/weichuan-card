@@ -78,19 +78,25 @@ export const routes = [
         meta: { title: '业务服务', group: '企业内容' },
       },
       {
+        // 小程序端的「访客第一眼」：入口（先落到哪一页）+ 首页样式（那一页怎么排）。
+        // 两者是不同接口、不同保存动作，但同属一个心智模型——企业管理员配的是
+        // 「客户打开小程序看到什么」，拆成两个菜单项时客户要自己去猜哪项影响哪里。
+        path: 'content/mp-settings',
+        name: 'mp-settings',
+        component: () => import('@/views/content/MpSettings.vue'),
+        meta: { title: '小程序设置', group: '企业内容' },
+      },
+      // 旧路径保留重定向：文档、收藏、聊天记录里的链接不能失效。
+      // 不带 meta.group —— 它们不在侧边栏，加了会让「路由↔菜单」守门用例误判。
+      {
         path: 'content/home-layout',
         name: 'home-layout',
-        component: () => import('@/views/content/HomeLayout.vue'),
-        meta: { title: '首页布局', group: '企业内容' },
+        redirect: { path: '/content/mp-settings', query: { tab: 'appearance' } },
       },
       {
-        // 小程序入口：裸启动（扫体验版二维码 / 直接打开）落到名片墙还是某个员工的名片。
-        // 放在「企业内容」组而不是「系统设置」：后者是 platformOnly，而这一项
-        // 本来就该由企业管理员自己决定（他才知道自家是「全员名片」还是「一张名片打天下」）。
         path: 'content/mp-entry',
         name: 'mp-entry',
-        component: () => import('@/views/content/MpEntry.vue'),
-        meta: { title: '小程序入口', group: '企业内容' },
+        redirect: { path: '/content/mp-settings', query: { tab: 'entry' } },
       },
       {
         // 企业管理（多租户）：仅平台超级管理员可见可访问

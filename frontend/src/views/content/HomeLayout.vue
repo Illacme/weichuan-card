@@ -1,7 +1,7 @@
 <template>
   <el-card>
-    <div class="page-bar">
-      <h3>首页布局</h3>
+    <div class="page-bar" :class="{ 'only-action': props.embedded }">
+      <h3 v-if="!props.embedded">首页布局</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
@@ -60,6 +60,9 @@ import { Refresh } from '@element-plus/icons-vue'
 import { getHomeLayout, saveHomeLayout } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
+
+// embedded=true：被「小程序设置」内嵌在「名片首页样式」页签里时，不再重复自己的标题。
+const props = defineProps<{ embedded?: boolean }>()
 
 const BLOCKS = ['achievement', 'service']
 const loading = ref(false)
@@ -128,6 +131,10 @@ onMounted(load)
 .desc {
   color: #606266;
   font-size: 13px;
+}
+/* 内嵌时只剩「重新加载」按钮，别让它贴左 */
+.page-bar.only-action {
+  justify-content: flex-end;
 }
 .order-tag {
   margin-right: 8px;

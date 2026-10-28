@@ -1,7 +1,7 @@
 <template>
   <el-card>
-    <div class="page-bar">
-      <h3>小程序入口</h3>
+    <div class="page-bar" :class="{ 'only-action': props.embedded }">
+      <h3 v-if="!props.embedded">小程序入口</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
@@ -81,6 +81,10 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getMpEntry, saveMpEntry, searchEntryStaff, type MpEntryMode } from '@/api/mpEntry'
+
+// embedded=true：被「小程序设置」内嵌在页签里时，不再重复自己的页面标题
+// （页签名已经是「访客先看到谁」）。独立访问（旧链接 /content/mp-entry 重定向前）仍用它。
+const props = defineProps<{ embedded?: boolean }>()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -188,6 +192,10 @@ onMounted(load)
 <style scoped>
 .scope-tip {
   margin-bottom: 16px;
+}
+/* 内嵌时只剩「重新加载」按钮，别让它贴左 */
+.page-bar.only-action {
+  justify-content: flex-end;
 }
 .scope-tip-body {
   font-size: 12px;

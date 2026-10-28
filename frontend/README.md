@@ -115,7 +115,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 | 业绩分类 | `GET/POST/PUT/DELETE /api/admin/categories` | 删除强校验：锁定或存在关联项目拦截                              |
 | 项目案例 | `GET/POST/PUT/DELETE /api/admin/projects`   | 详情含 `<wx-video channel-id>` 视频号块；相册为 URL 数组    |
 | 业务服务 | `GET/POST/PUT/DELETE /api/admin/services`   | content 含视频号块                                  |
-| 首页布局 | `GET/PUT /api/admin/home-layout`            | 板块顺序 + **首页背景图**（可从素材库「背景」分类直接选用）+ 遮罩浓度滑块与效果预览 |
+| 小程序设置 | `GET/PUT /api/admin/mp-entry`<br>`GET/PUT /api/admin/home-layout` | 一页两页签，回答同一个问题「客户打开小程序看到什么」：<br>· **访客先看到谁**——裸启动落到名片墙还是指定员工的名片<br>· **名片首页样式**——板块顺序 + **首页背景图**（可从素材库「背景」分类直接选用）+ 遮罩浓度与效果预览<br>两者接口独立、各自保存；`el-tab-pane` 带 `lazy`（未激活页签不挂载，否则进页面打双份接口）。旧路径 `/content/home-layout`、`/content/mp-entry` 重定向到对应页签 |
 
 > 富文本编辑器（项目案例.详情 / 业务服务.内容）已接入 wangEditor v5 可视化编辑，并注册「视频号块」自定义节点；详见下方「富文本编辑器（wangEditor）」。
 
