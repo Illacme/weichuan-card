@@ -13,9 +13,10 @@
 //
 // 打开后还要做两件事（脚本改不了，必须人做）：
 //   1. 小程序后台「设置 → 第三方服务 → 插件管理」添加腾讯视频插件并等授权通过；
-//   2. 后端设环境变量 MP_TENCENT_VIDEO=true 并重启，否则后台该档仍不可选/保存被拒。
+//   2. 后台「系统设置 → 功能开关 → 腾讯视频档」打开（即时生效，不用重启），否则该档仍不可选/保存被拒。
 //
-// 插件版本号以 MP 后台「插件详情」里显示的为准，可用 PLUGIN_VERSION=2.0.5 覆盖。
+// 插件版本号默认 2.6.2（1.X 已停止维护），若 MP 后台「插件详情」显示更高版本，用
+// PLUGIN_VERSION=2.6.3 之类覆盖（必须是 2.X，不能回退到 1.X）。
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,7 +26,9 @@ const APP_JSON = join(MP_DIR, 'app.json')
 const COMP_JSON = join(MP_DIR, 'components/company-video/index.json')
 
 const PROVIDER = 'wxa75efa648b60994b'
-const PLUGIN_VERSION = process.env.PLUGIN_VERSION || '1.3.6'
+// 注意：腾讯视频插件 1.X 已不再维护（官方明确提示升级到 2.1.X 后续版本），故默认 2.6.2。
+// 若 MP 后台「插件详情」显示更高版本，用 PLUGIN_VERSION=2.6.3 之类覆盖（必须 2.X）。
+const PLUGIN_VERSION = process.env.PLUGIN_VERSION || '2.6.2'
 const COMPONENT_KEY = 'txv-video'
 const COMPONENT_PATH = 'plugin://tencentvideo/video'
 
@@ -64,7 +67,7 @@ if (cmd === 'on') {
   writeJson(APP_JSON, app)
   writeJson(COMP_JSON, comp)
   console.log(`已开启：app.json 声明 tencentvideo@${PLUGIN_VERSION}，组件注册 ${COMPONENT_KEY}`)
-  console.log('接下来：① MP 后台添加并授权该插件；② 后端设 MP_TENCENT_VIDEO=true 并重启')
+  console.log('接下来：① MP 后台添加并授权该插件；② 后台「系统设置 → 功能开关 → 腾讯视频档」打开（即时生效，不用重启）')
   process.exit(0)
 }
 

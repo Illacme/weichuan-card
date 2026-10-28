@@ -30,7 +30,6 @@
     object-fit="contain"
     use-poster="{{true}}"
     controls="{{true}}"
-    show-center-play-btn="{{true}}"
     bindplay="onVideoPlay"
     binderror="onVideoError"
   />
