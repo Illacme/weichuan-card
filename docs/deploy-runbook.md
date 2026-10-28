@@ -262,17 +262,20 @@ openssl rand -base64 12   # → ADMIN_PASS（或自定义强口令）
 
 ### 小程序端必改（容易漏，且只影响真机）
 
-`miniprogram/utils/config.ts` 的 `DEFAULT_BASE_URL` **默认为空**（源码里不放任何地址——
-免得把某台开发机的内网 IP、或明文 http 地址随源码分发给别人）。
-它是小程序**首次**拉配置用的引导种子：空着或连不通，就永远拿不到后台下发的正确基址
-（后台配置只有在种子能连通一次之后才生效），届时只能重新打包提审。
+`miniprogram/utils/config.ts` 的 `DEFAULT_BASE_URL` 是小程序**首次**拉配置用的引导种子：
+空着或连不通，就永远拿不到后台下发的正确基址（后台配置只有在种子能连通一次之后才生效），
+届时只能重新打包提审。
 
-- 生产：填 https 域名（如 `https://card.example.com`）后重新打包
-- 真机联调：填电脑局域网 IP（如 `http://192.168.1.20:8080`），跑 preflight 时加
+本仓库是已上线部署仓，`DEFAULT_BASE_URL` **已预填生产域名**
+`https://weichuan.ziyuanxingqiu.cn`——首次冷启动即可连后端，无需再改代码即可发出首个请求；
+之后正式基址由后台「系统设置 → 小程序 → 小程序接口地址」（`miniprogram_base_url`）下发覆盖。
+若换域名，改这一处（或后台下发）并重新打包小程序即可。
+
+- 生产：种子已预填 `https://weichuan.ziyuanxingqiu.cn`；如需换域名改这一处后重新打包
+- 真机联调：可临时把种子改回电脑局域网 IP（如 `http://192.168.1.20:8080`），跑 preflight 时加
   `PREFLIGHT_ALLOW_PRIVATE=1`，**别把这段改动提交**
-- 守卫：`scripts/preflight.sh` 第 3 节对「空值 / `127.0.0.1` / 私有网段」直接判 FAIL；
-  `miniprogram/tests/config.spec.ts`（内网 IP / 非 https 明文即红）与
-  `brand.spec.ts`（源码不得出现演示租户名）是第二道闸
+- 守卫：`scripts/preflight.sh` 第 3 节对「`127.0.0.1` / 私有网段 / 明文 http」直接判 FAIL；
+  `miniprogram/tests/config.spec.ts`（内网 IP / 非 https 明文即红）是第二道闸
 
 `preflight.sh` 第 3 项会检查这一处；未改时判 FAIL。
 
@@ -439,28 +442,26 @@ done
 
 ## 5. HTTPS（生产必须，小程序合法域名的前提）
 
-compose 自身对外是 http。推荐前置 Caddy 自动申请证书（最省事，无需手动续期）：
+compose 自身对外是 http。仓库已内置 Caddy 服务（`profile=https`），自动申请并续期
+Let's Encrypt 证书，无需手动操作：
 
-```yaml
-# 追加到 docker-compose.yml
-caddy:
-  image: caddy:2
-  restart: unless-stopped
-  ports: ["80:80", "443:443"]
-  volumes:
-    - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    - caddy_data:/data
-  depends_on: [frontend]
+```bash
+# 生产形态：在默认 backend+frontend 之外，额外起 Caddy 终结 TLS（80/443 对外）
+docker compose --profile https up -d --build
 ```
 
+Caddyfile 已放在 `deploy/caddy/Caddyfile`，域名写死为 `weichuan.ziyuanxingqiu.cn`（换域名只改这一处）：
+
 ```
-# Caddyfile（把域名换成实际域名，Caddy 自动签发 + 续期 Let's Encrypt 证书）
-your-domain.com {
-  reverse_proxy frontend:80
+weichuan.ziyuanxingqiu.cn {
+    reverse_proxy frontend:80
 }
 ```
 
-同时确认 `.env` 里 `COOKIE_SECURE=true`——否则 httpOnly Cookie 不带 `Secure` 标志，HTTPS 下浏览器虽仍会发送，但丧失了「永不走明文」的保证（A2 加固在生产打折）。
+> 首次申请证书需要 80 端口对外可达（ACME http-01 挑战），请确保服务器防火墙放行 80/443。
+> 证书与账户数据落在 `caddy_data` 卷，删掉会重新申请（Let's Encrypt 有频率限制，别频繁删）。
+
+同时确认 `.env` 里 `COOKIE_SECURE=true`——否则 httpOnly Cookie 不带 `Secure` 标志，HTTPS 下浏览器虽仍会发送，但丧失了「永不走明文」的保证（A2 加固在生产打折）。本仓库 `.env.example` 已默认 `true`。
 
 > 也可用云厂商 SLB/ALB 或自建 nginx 终结 TLS，效果等价；`COOKIE_SECURE=true` 同样必须。
 
@@ -507,10 +508,10 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 
 ## 8. 小程序侧切换（提审前）
 
-1. 接口基址改为 `https://你的域名`：基址**不再写死在代码里**，改由后台「系统设置 → 小程序 → 小程序接口地址」下发（`miniprogram/utils/config.ts` 的 `miniprogram_base_url`；`app.ts` 里的 `DEFAULT_BASE_URL` 只是首次冷启动前的引导种子）。改完清一次小程序缓存再验证。
+1. 接口基址：本仓库 `miniprogram/utils/config.ts` 已预填生产种子 `https://weichuan.ziyuanxingqiu.cn`（首次冷启动即可连后端）；正式基址仍由后台「系统设置 → 小程序 → 小程序接口地址」（`miniprogram_base_url`）下发覆盖，二者一致即可。若换域名，改这一处（或后台下发）并重新打包小程序；改完清一次小程序缓存再验证。
 2. 微信公众平台 → 开发管理 → 开发设置 → 服务器域名：
-   - `request` 合法域名：`https://你的域名`
-   - `uploadFile` 合法域名：`https://你的域名`（头像上传）
+   - `request` 合法域名：`https://weichuan.ziyuanxingqiu.cn`
+   - `uploadFile` 合法域名：`https://weichuan.ziyuanxingqiu.cn`（头像上传）
    - `downloadFile` 合法域名：同上（如用到）
    - **域名必须已备案；每月修改次数有限，一次填对。**
 3. **开发管理 → 用户隐私保护指引**（微信审核必查项，漏了会被打回）：代码侧调用的隐私接口必须逐个声明对应类型——

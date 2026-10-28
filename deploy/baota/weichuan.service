@@ -1,0 +1,70 @@
+# 微传名片后端 · systemd 单元（裸机 / 宝塔场景）
+#
+# 安装：
+#   cp deploy/baota/weichuan.service /etc/systemd/system/weichuan.service
+#   systemctl daemon-reload
+#   systemctl enable --now weichuan
+#
+# 日志：journalctl -u weichuan -f
+#
+# 重要前提：
+#   1) 二进制 /www/wwwroot/weichuan/server 已就位（交叉编译：
+#      GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server ./cmd/server）
+#   2) 前端 dist/ 已放到 /www/wwwroot/weichuan/dist（由宝塔站点托管，本单元不管）
+#   3) 目录 /www/wwwroot/weichuan/data 与 /www/wwwroot/weichuan/uploads 已建好、
+#      且运行用户对它们有写权限（向导会把配置/库写进 data/，上传落进 uploads/）
+#   4) ⚠️ 后端默认绑定 0.0.0.0:PORT（全部网卡，见 backend/cmd/server/main.go 的
+#      r.Run(":"+cfg.Port)），所以 8080 端口必须对公网只放行 127.0.0.1。
+#      防火墙命令见 deploy/baota/nginx-site.conf 顶部「部署前必做」。
+
+[Unit]
+Description=微传名片后端 (weichuan backend)
+Documentation=https://github.com/Illacme/weichuan-card
+After=network.target
+
+[Service]
+# 运行用户：建议建专用低权用户（如 weichuan）并 chown 目录；此处用 root 仅为示例
+User=root
+Group=root
+
+# 工作目录：配置文件（runtime.env）、SQLite 库、上传目录都相对它解析
+WorkingDirectory=/www/wwwroot/weichuan
+
+# 启动命令：直接跑二进制，无需任何命令行参数
+ExecStart=/www/wwwroot/weichuan/server
+
+# 自动重启：仅兜底进程崩溃。
+# 注意：安装向导用「替换式自重启」(reexec) 原地替换进程、不会退出，
+# 所以首次安装写配置后的重启不需要 systemd 介入，本项不会误伤它。
+Restart=on-failure
+RestartSec=3
+
+# ---- 环境变量：只放「界面 / 安装向导无法设置」的项 ----
+# 时区：统计 stat_date 按服务端本地日期落库；不设会静默用 UTC，
+# 导致北京时间 0:00-8:00 的数据落到前一天。务必保留。
+Environment=TZ=Asia/Shanghai
+
+# 监听端口（默认 8080，与下方 nginx 反代目标一致）
+Environment=PORT=8080
+
+# 配置文件位置：安装向导会把 DB_DSN / JWT_KEY / ADMIN_USER / ADMIN_PASS /
+# PII_ENC_KEY / COOKIE_SECURE 写进这里。显式写清，避免 WorkingDirectory 变动后找不到。
+Environment=CONFIG_FILE=/www/wwwroot/weichuan/data/runtime.env
+
+# 本地存储落盘目录（默认 ./uploads 相对 WorkingDirectory，这里显式写清）
+Environment=UPLOAD_DIR=/www/wwwroot/weichuan/uploads
+
+# 以下两项已可在「安装向导 / 后台设置」里配置，无需写在这里：
+#   COOKIE_SECURE    —— 经 https 域名进安装向导时，前端默认勾选 cookieSecure，
+#                       向导会把它写入上面的 runtime.env（见 frontend SetupInstaller.vue）
+#   UPLOAD_BASE_URL  —— 装完登录后台，「系统设置 → 文件存储」填
+#                       https://weichuan.ziyuanxingqiu.cn/uploads 即可（需重启生效）
+# 若你是走 http（非 https 域名）跑的安装向导，前端不会自动勾选 cookieSecure，
+# 那时请取消下面一行的注释：
+# Environment=COOKIE_SECURE=true
+
+# 资源限制
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

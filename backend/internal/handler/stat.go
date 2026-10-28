@@ -20,13 +20,26 @@ import (
 // ===== 埋点统计（stat_events）的共享件 =====
 // 数据流：小程序埋点（visit/call/save/project_view/service_view/video_play/
 // share/poster_save）→ POST /api/stat/track（公开，按 IP 限流）→ stat_events
-// 原始表 → /api/admin/stats（汇总 + 按员工 + 按天趋势 + 内容意向 TOP 榜，
+// 原始表 → /api/admin/stats（汇总 + 按员工 + 按天趋势 + 内容浏览 TOP 榜，
 // 日期范围可调）→ PC 后台「数据统计」页 / CSV 导出。
 //
-// 两类事件的分工：visit/call/save 是「转化」——有没有人找上门；
-// project_view/service_view/video_play/share/poster_save 是「意向」——
-// 访客对什么内容感兴趣。后者带 target_id（案例 / 服务 id），后台才能回答
-// 「哪个案例热」，这是统计对企业客户的核心价值。
+// 八类事件分三组，分组的意义见各组注释：
+//
+//	转化（3）   visit / call / save
+//	           有没有人找上门。visit 按页面实例去重，是「次数」不是「人数」。
+//	内容浏览（3）project_view / service_view / video_play
+//	           访客对什么内容感兴趣。这三类是唯一带 target_id（强制存在且同租户）
+//	           的事件，也只有它们进 TOP 榜——「对什么内容感兴趣」必须有对象才答得上。
+//	裂变（2）   share / poster_save
+//	           把名片传出去的动作。**不算「内容浏览」**，两个理由：
+//	           ① 不带 target_id，回答不了「对什么内容感兴趣」；
+//	           ② 主体可能是员工本人——海报页唯一入口是「我的 → 生成海报」，
+//	              只有本人才进得去，把员工自存自己海报算成「访客意向」会虚高。
+//	           两者都记在「被传播的那张名片的主人」名下（海报上印谁就记谁）。
+//
+// 历史包袱：这三组曾长期被叫作「转化 + 意向（五类）」，share/poster_save 混在
+// 「意向」里。2026-10-27 按上面的理由拆成三组——**只改口径与展示，不改埋点**，
+// 数据库里的事件类型与含义一律不动，故历史数据无需迁移。
 
 // statEventTypes 埋点类型白名单。
 // 为什么不「非空即可」：event_type 是自由字符串列，而查询侧只认这几类做
@@ -45,7 +58,7 @@ import (
 //	poster_save  保存海报                              targetId=0
 //
 // project_view/service_view 为什么强制校验 target：这两个事件的 target_id
-// 直接进后台「内容意向 TOP 榜」的对象名 JOIN，伪造一个别家 targetId 会把
+// 直接进后台「内容浏览 TOP 榜」的对象名 JOIN，伪造一个别家 targetId 会把
 // 别家的案例名泄进本家榜单——必须在进水口挡掉（见 validateStatTarget）。
 var statEventTypes = map[string]bool{
 	"visit":        true, // 访问名片（小程序首页，按页面实例去重）
@@ -104,7 +117,7 @@ func normalizeSource(s string) string {
 // validateStatTarget 校验埋点的 targetId：project_view / service_view 必须
 // 指向一个真实存在、且与员工同租户的业务对象；其余事件只要求非负。
 //
-// 为什么只有这两类强制：它们的 target_id 直接进后台「内容意向 TOP 榜」的
+// 为什么只有这两类强制：它们的 target_id 直接进后台「内容浏览 TOP 榜」的
 // 对象名 JOIN——放过一个别家 targetId，别家的案例名就会出现在本家榜单里
 // （跨租户信息泄露的静默形态）。visit/video_play/poster_save 天然没有关联
 // 对象；share 的 targetId 语义是「转发的名片(0)/案例/服务」，但分享不按
@@ -195,9 +208,9 @@ func validStatDate(s string) bool {
 }
 
 // statStaffRow 按员工聚合的一行：员工资料 + 计数。
-// 前三个（visit/call/save）是转化，后五个是意向（见文件头两类事件的分工）。
-// 意向计数进 byStaff 与 CSV 导出，但 PC 表格不展示（列宽装不下）——
-// 后台要看「哪个员工带来的内容意向多」时导出来看。
+// 前三个（visit/call/save）是转化；中间三个是内容浏览；最后两个是裂变动作
+// （分组理由见文件头）。内容浏览与裂变计数进 byStaff 与 CSV 导出，
+// 但 PC 表格分成两列展示（「内容浏览」「裂变」），在界面里也**不相加**。
 // 零数据员工也出现在结果里（计数 0）——「有员工但没访问」是运营要看到的事实。
 type statStaffRow struct {
 	StaffID     int64
@@ -271,8 +284,9 @@ func statRowsByStaff(c *gin.Context, db *gorm.DB, from, to string) ([]statStaffR
 }
 
 // statTrendRow 按天聚合的一行（升序返回）。
-// 后五项与 statStaffRow 的意向计数同源：趋势图上「访客什么时候对什么感兴趣」
-// 与按员工的分布是两个维度，两边的口径必须一致（都按同一事件类型白名单聚合）。
+// 后五个与 statStaffRow 的分项同源：趋势图上「访客什么时候对什么内容感兴趣、
+// 什么时候在传播」与按员工的分布是两个维度，两边的口径必须一致
+// （都按同一事件类型白名单聚合，分项不合并）。
 type statTrendRow struct {
 	Day         string `gorm:"column:day"`
 	Visit       int64  `gorm:"column:visit"`
@@ -328,7 +342,7 @@ func statTrend(c *gin.Context, db *gorm.DB, from, to string) ([]statTrendRow, er
 	return rows, nil
 }
 
-// ===== 内容意向 TOP 榜 =====
+// ===== 内容浏览 TOP 榜 =====
 
 // statTopLimit TOP 榜默认条数。10 条一屏放得下，也够运营看出头部内容；
 // 全量榜没有终端场景（要看全部走明细筛 eventType + targetId 下钻）。
@@ -341,7 +355,7 @@ type statTopRow struct {
 	Count    int64  `gorm:"column:cnt"`
 }
 
-// statTopTargets 「内容意向 TOP 榜」：某类内容事件按 target 聚合取前 limit 个。
+// statTopTargets 「内容浏览 TOP 榜」：某类内容事件按 target 聚合取前 limit 个。
 //
 // 参数 table/nameCol 由调用方写死传入（project_cases.name /
 // biz_services.title），不是用户输入——本函数只有两个调用点。
@@ -717,9 +731,9 @@ func RegisterStatsExport(r *gin.Engine, db *gorm.DB) {
 }
 
 // statsCSV 生成 CSV 内容。
-// 后五列是内容意向（案例浏览/服务浏览/视频播放/转发/海报保存）：PC 表格
-// 列宽装不下 11 列，CSV 没有这个限制——「哪个员工带来的内容意向多」
-// 就靠导出来看（与 byStaff 接口同源同口径）。
+// 后五列是三类内容浏览（案例浏览/服务浏览/视频播放）+ 两类裂变（转发/海报保存），
+// 逐个事件一列、不合并成「意向」一列：CSV 的用途就是让人自己再算，
+// 分项一经合并就再也拆不开（界面上合并成两列是为了少占宽度，导出没有这个限制）。
 // BOM 不可省：没有它 Excel 双击打开时按本地代码页解析，中文全乱码——
 // 而「导出来就是要用 Excel 打开」正是这个接口的存在理由。
 func statsCSV(rows []statStaffRow) ([]byte, error) {
@@ -788,4 +802,207 @@ func statsDisposition(from, to string) string {
 	}
 	name += ".csv"
 	return "attachment; filename=\"stats.csv\"; filename*=UTF-8''" + url.QueryEscape(name)
+}
+
+// ===== 员工本人统计（小程序「数据统计」页） =====
+//
+// 与 /api/admin/stats 的关系：同一批 stat_events、同一套八类事件口径，
+// 区别只在范围——管理端是「本租户所有员工」，这里恒是「登录的这一个员工」。
+// 所以过滤条件用 stat_events.staff_id = ? 直接命中，不需要管理端那个
+// staff_id IN (SELECT ...) 子查询（那是为租户隔离建的，员工查自己天然隔离）。
+//
+// 为什么四个查询收进一个 statMeSnapshot：四处必须共用完全相同的
+// 「本人 + 日期范围」条件。若各写各的，漏挂一处 stat_date 就会出现
+// 「汇总按 30 天算、趋势画的是全部时间」——数字对不上、没人报错，
+// 正是本项目最忌讳的静默错位（同「明细是汇总的下钻」那条口径约定）。
+
+// statMeTopLimit 员工端内容浏览 TOP 榜条数。
+// 只给 3 条：手机一屏放得下；员工能据此行动的只有「哪几个案例该置顶」，
+// 看到第 4 名不会改变任何决定。管理端给 10 条是因为 PC 有横向空间。
+const statMeTopLimit = 3
+
+// statMeSummary 员工本人八类事件汇总。
+// gorm 别名必须 snake_case（多词写驼峰会静默扫不进、恒 0，见 statRowsByStaff 注释）；
+// json 输出驼峰，与员工端其余接口（staffId / createdAt）一致。
+type statMeSummary struct {
+	Visit       int64 `gorm:"column:visit" json:"visit"`
+	Call        int64 `gorm:"column:call" json:"call"`
+	Save        int64 `gorm:"column:save" json:"save"`
+	ProjectView int64 `gorm:"column:project_view" json:"projectView"`
+	ServiceView int64 `gorm:"column:service_view" json:"serviceView"`
+	VideoPlay   int64 `gorm:"column:video_play" json:"videoPlay"`
+	Share       int64 `gorm:"column:share" json:"share"`
+	PosterSave  int64 `gorm:"column:poster_save" json:"posterSave"`
+}
+
+// statMeWhere 给员工端每条查询统一挂上「本人 + 日期范围」两个条件。
+//
+// 列名一律带 stat_events. 前缀：TOP 榜要 LEFT JOIN 业务表，不带前缀的
+// staff_id / stat_date 在两库上都会报 ambiguous，而错误点在 SQL 拼装处，
+// 排查成本远高于统一加一次前缀。
+func statMeWhere(db *gorm.DB, staffID int64, from, to string) *gorm.DB {
+	q := db.Where("stat_events.staff_id = ?", staffID)
+	if from != "" {
+		q = q.Where("stat_events.stat_date >= ?", from)
+	}
+	if to != "" {
+		q = q.Where("stat_events.stat_date <= ?", to)
+	}
+	return q
+}
+
+// statMeSummaryOf 员工本人汇总（一次 SUM(CASE) 八个计数）。
+// 零行时 Scan 不回错、结构体保持零值——「没有事件」与「计数为 0」同形，正是要的。
+func statMeSummaryOf(db *gorm.DB, staffID int64, from, to string) (statMeSummary, error) {
+	var s statMeSummary
+	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
+		Select("SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+		Scan(&s).Error
+	return s, err
+}
+
+// statMeTrend 员工本人按天趋势（升序）。
+// 只回有事件的日期，无事件日期由前端在首尾之间补零——与管理端 statTrend 同口径，
+// 避免同一条曲线在两处各写一套日期推导、补零结果还不一样。
+func statMeTrend(db *gorm.DB, staffID int64, from, to string) ([]statTrendRow, error) {
+	var rows []statTrendRow
+	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
+		Select(statDateExpr+" AS `day`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, "+
+			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+		Group("stat_date").Order("stat_date asc").
+		Scan(&rows).Error
+	return rows, err
+}
+
+// statMeTopTargets 员工本人「内容浏览 TOP 榜」（某类内容事件按 target 聚合）。
+//
+// table / nameCol 由本文件内两个调用点写死传入（project_cases.name /
+// biz_services.title），不是用户输入。
+//
+// LEFT JOIN + deleted_at IS NULL + COALESCE 回落「已删除」：与管理端
+// statTopTargets 同口径——案例被删后它的历史浏览仍要留在榜上，
+// 否则「榜单各行加起来对不上汇总」。
+func statMeTopTargets(db *gorm.DB, staffID int64, from, to, eventType, table, nameCol string) ([]statTopRow, error) {
+	var rows []statTopRow
+	err := statMeWhere(db.Table("stat_events"), staffID, from, to).
+		Joins("LEFT JOIN "+table+" ON "+table+".id = stat_events.target_id AND "+table+".deleted_at IS NULL").
+		Where("stat_events.event_type = ?", eventType).
+		Select("stat_events.target_id AS target_id, COALESCE("+table+"."+nameCol+", '已删除') AS `name`, COUNT(*) AS cnt").
+		Group("stat_events.target_id, " + table + "." + nameCol).
+		// 次级排序固定 target_id：同票数时顺序稳定（也让测试可断言）
+		Order("cnt DESC, stat_events.target_id ASC").
+		Limit(statMeTopLimit).
+		Scan(&rows).Error
+	return rows, err
+}
+
+// statMeSourceDist 员工本人「访客从哪来」：对 visit 事件按 source 分组。
+//
+// 口径与管理端 statSourceDist 完全一致（只看 visit、空串归一 unknown），
+// 只是范围从「本租户」收成「本人」——员工看自己的渠道构成，不需要租户子查询。
+//
+// 为什么给员工看这个：海报是唯一需要员工主动产出的物料（生成 → 传播），
+// 而「海报到底带来了多少访问」只有这一处能回答。另两个裂变计数
+// （share / poster_save）主体可能是员工本人，证明不了海报有没有用。
+func statMeSourceDist(db *gorm.DB, staffID int64, from, to string) ([]statSourceRow, error) {
+	var rows []statSourceRow
+	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
+		Where("stat_events.event_type = ?", "visit").
+		Select("CASE WHEN stat_events.source = '' THEN 'unknown' ELSE stat_events.source END AS `source`, COUNT(*) AS cnt").
+		Group("stat_events.source").
+		// 次级排序固定 source：同计数时顺序稳定（也让测试可以断言顺序）
+		Order("cnt DESC, source ASC").
+		Scan(&rows).Error
+	return rows, err
+}
+
+// statMeSnapshotResult 员工端统计页一次取齐的全部数据。
+//
+// 合成结构体而不是多返回值：字段已有 5 个（汇总 / 趋势 / 两个 TOP 榜 / 来源分布），
+// 位置参数一长，调用方与后续新增字段都极易错位——而错位在这里不报错，
+// 只会「某个区块静默拿到零值」。
+type statMeSnapshotResult struct {
+	Summary     statMeSummary
+	Trend       []statTrendRow
+	TopProjects []statTopRow
+	TopServices []statTopRow
+	SourceDist  []statSourceRow
+}
+
+// statMeSnapshot 员工端一次取齐：汇总 + 按天趋势 + 案例/服务内容浏览 TOP + 来源分布。
+//
+// 任一查询失败即整包失败（调用方回 code:1）：半份数据比报错更糟——
+// 前端会把「趋势缺失」画成贴底的平线，看着像「这几天没人来」。
+func statMeSnapshot(db *gorm.DB, staffID int64, from, to string) (statMeSnapshotResult, error) {
+	var out statMeSnapshotResult
+	var err error
+	if out.Summary, err = statMeSummaryOf(db, staffID, from, to); err != nil {
+		return out, err
+	}
+	if out.Trend, err = statMeTrend(db, staffID, from, to); err != nil {
+		return out, err
+	}
+	if out.TopProjects, err = statMeTopTargets(db, staffID, from, to, "project_view", "project_cases", "name"); err != nil {
+		return out, err
+	}
+	if out.TopServices, err = statMeTopTargets(db, staffID, from, to, "service_view", "biz_services", "title"); err != nil {
+		return out, err
+	}
+	if out.SourceDist, err = statMeSourceDist(db, staffID, from, to); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// ===== 统计数据 → 响应体的共用转换 =====
+// 管理端 /api/admin/stats 与员工端 /api/employee/me/stat 用同一套形状
+// （trend 的日期键都叫 date、TOP 榜都是 {targetId,name,count}），
+// 抽成函数是为了两边不会各自漂移——前端两处渲染逻辑正是互相参照着写的。
+
+// statTrendJSON 趋势行 → 响应。八项全给：前端图例可点选，
+// 勾到哪个指标都得有线，少一项就成了「勾了却没线」的静默缺数据。
+func statTrendJSON(rows []statTrendRow) []gin.H {
+	out := make([]gin.H, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, gin.H{
+			"date": t.Day, "visit": t.Visit, "call": t.Call, "save": t.Save,
+			"projectView": t.ProjectView, "serviceView": t.ServiceView,
+			"videoPlay": t.VideoPlay, "share": t.Share, "posterSave": t.PosterSave,
+		})
+	}
+	return out
+}
+
+// statTopJSON TOP 榜行 → 响应 {targetId, name, count}。
+func statTopJSON(rows []statTopRow) []gin.H {
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, gin.H{"targetId": r.TargetID, "name": r.Name, "count": r.Count})
+	}
+	return out
+}
+
+// statSourceJSON 来源分布行 → 响应 {source, count}。
+// source 是后端归一后的英文类别（白名单见 statSourceTypes），
+// 中文标签由各端自己翻译——后端不掺和展示文案，加一种来源不必改两边。
+func statSourceJSON(rows []statSourceRow) []gin.H {
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, gin.H{"source": r.Source, "count": r.Count})
+	}
+	return out
 }

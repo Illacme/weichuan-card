@@ -307,6 +307,14 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   border-radius: 8rpx 0 8rpx 0;
 }
 .drag-tip { font-size: 22rpx; color: #aaa; text-align: center; margin-top: 12rpx; }
+/* 只读态说明（海报页访客视角）：比 drag-tip 稍大、居中偏灰蓝，
+   它是「这是什么 + 我能做什么」，不是操作提示，不该和操作提示长得一样 */
+.visitor-tip {
+  font-size: 25rpx;
+  color: #7a8ca0;
+  text-align: center;
+  margin-top: 16rpx;
+}
 
 /* 单行选项组：不再有左侧标签列（工具条已经说明了这一行是什么），
    腾出的宽度让 5 个胶囊也能一行排下 */
@@ -373,6 +381,12 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .cell-label.danger { color: #e64340; }
 .cell-value { color: #aaa; font-size: 24rpx; margin-right: 12rpx; }
 .cell-arrow { color: #ccc; font-size: 32rpx; }
+/* 分组小标题：灰色、位于两组白色卡片之间，用于区隔功能组（名片 / 数据 / 账号 / 隐私与合规） */
+.group-label { color: #999; font-size: 24rpx; padding: 0 24rpx; margin: 24rpx 0 4rpx; }
+/* 退出登录：独立按钮（非列表项），中性色与下方红色「注销账号」拉开距离，避免同级红色误触 */
+.logout-wrap { margin: 32rpx 0 8rpx; }
+.logout-btn { background: #fff; color: #666; border: 1rpx solid #e8e8e8; border-radius: 16rpx; font-size: 32rpx; line-height: 2.6; }
+.logout-btn::after { border: none; }
 
 /* 修改密码弹窗 */
 .mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 10; }
@@ -389,12 +403,9 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .done-title { font-size: 36rpx; font-weight: 600; margin-top: 32rpx; }
 .done-tip { color: #888; margin-top: 16rpx; line-height: 1.6; }
 
-/* 员工数据统计页 */
+/* 员工数据统计页（.stat-cards/.stat-card/.stat-num/.stat-label 已废弃：
+   三卡改成带转化率的样式，随页面进了 pages/employee/stat/stat.wxss） */
 .stat-page { padding: 24rpx; }
-.stat-cards { display: flex; }
-.stat-card { flex: 1; background: #fff; border-radius: 12rpx; margin: 0 8rpx; padding: 40rpx 0; text-align: center; }
-.stat-num { font-size: 48rpx; font-weight: 600; color: #1a8cff; }
-.stat-label { color: #888; font-size: 26rpx; margin-top: 12rpx; }
 .stat-tip { color: #999; font-size: 24rpx; margin-top: 24rpx; line-height: 1.6; }
 /* 空状态（需求 B11：暂无访问数据） */
 .stat-empty { padding: 120rpx 48rpx; text-align: center; }

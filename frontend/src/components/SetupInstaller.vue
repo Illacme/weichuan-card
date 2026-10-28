@@ -10,7 +10,7 @@
     <div class="si-dialog" role="dialog" aria-label="安装向导">
       <header class="si-head">
         <div class="si-head-title">
-          <span class="si-logo">微</span>
+          <img class="si-logo" src="/logo.png" alt="微传名片" />
           <span>安装向导</span>
         </div>
         <span class="si-head-tag">首次部署</span>
@@ -256,7 +256,10 @@ const form = reactive({
   adminPass: '',
   adminPass2: '',
   jwtKey: '',
-  cookieSecure: false,
+  // 默认按访问协议判定：HTTPS（生产域名，如 宝塔反代后的 weichuan.ziyuanxingqiu.cn）
+  // 下自动勾选「Cookie 强制 HTTPS」，省去手动勾、实现安装即零配置；
+  // HTTP（本地开发 / 尚未配 TLS）下保持不勾，避免 Secure Cookie 在 http 下无法落盘导致登录失效。
+  cookieSecure: window.location.protocol === 'https:',
 })
 
 const configFile = computed(() => props.status.configFile || './data/runtime.env')
@@ -544,13 +547,11 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: #409eff;
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 14px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  display: inline-block;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 .si-head-tag {
   font-size: 12px;

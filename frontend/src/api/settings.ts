@@ -98,6 +98,10 @@ export function updateSettings(values: Record<string, string>) {
 
 // 公开配置（GET /api/public/settings）：仅返回非敏感项（品牌名 / 小程序基址 / 锁定租户），
 // 无需登录——小程序冷启动与后台品牌展示都走这个接口。
-export function getPublicSettings() {
-  return http.get<{ code: number; data?: Record<string, string> }>('/public/settings')
+// company：登录页白标码（?company=），命中 enabled 企业时回传 login_brand_name（该企业简称）；
+// 未命中（不传 / 不匹配 / 企业停用）则不回传该键，前端据此回落全局品牌名。
+export function getPublicSettings(company?: string) {
+  const params: Record<string, string> = {}
+  if (company) params.company = company
+  return http.get<{ code: number; data?: Record<string, string> }>('/public/settings', { params })
 }

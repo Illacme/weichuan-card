@@ -73,7 +73,21 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		var pending int64
 		db.Model(&model.CardModifyApply{}).Where("staff_id = ? AND status = ?", staffID, "pending").Count(&pending)
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": e, "pendingModify": pending > 0})
+		// 企业名称（非敏感，供小程序「个人信息」页展示「所属企业」）：
+		// 与 pendingModify 同理挂在根级，不塞进 data——不动既有 data=Employee 契约。
+		// 查库失败只是名称留空，不阻断名片读取（员工自己仍能看资料）。
+		companyName, companyShortName := "", ""
+		if e.CompanyID > 0 {
+			var comp model.Company
+			if db.First(&comp, "id = ?", e.CompanyID).Error == nil {
+				companyName = comp.Name
+				companyShortName = comp.ShortName
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0, "data": e, "pendingModify": pending > 0,
+			"companyName": companyName, "companyShortName": companyShortName,
+		})
 	})
 
 	// 员工提交名片修改（待审，对外仍显示旧信息）
@@ -158,36 +172,44 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	})
 
 	// 员工本人统计（?from=&to= 日期范围，YYYY-MM-DD 闭区间，均可缺省=全部时间）。
-	// 一次 SUM(CASE) 拿三类计数，而不是三次 Count：三条 SQL 三条错误路径，
-	// 而这里要的只是「范围内三个数」。
-	r.GET("/api/employee/me/stat", middleware.AuthMiddleware(db, "employee"), func(c *gin.Context) {
+	//
+		// 一次 statMeSnapshot 拿齐五块：八类事件汇总 + 按天趋势 + 案例/服务
+		// 内容浏览 TOP3 + **访客来源分布**。前四块见上方说明，来源分布单独说：
+		// 海报是唯一需要员工主动产出的物料（生成 → 传播），「海报带来了多少访问」
+		// 只有来源分布能回答——裂变那两个计数（share/poster_save）主体可能是
+		// 员工本人，证明不了海报有没有用。
+		//
+		// 兼容性：data 里原有的 visit/call/save 三个键保留不动（additive），
+		// 老版本小程序照旧能读；新增五个意向计数与 trend/topProjects/topServices/sourceDist。
+		// 形状对齐管理端 /api/admin/stats 的 data.summary / data.trend / data.topXxx / data.sourceDist。
+		r.GET("/api/employee/me/stat", middleware.AuthMiddleware(db, "employee"), func(c *gin.Context) {
 		staffID := c.GetInt64("staffId")
 		from, to, ok := statDateRange(c)
 		if !ok {
+			// 坏参数不静默忽略：筛了却没生效比不筛更难排查
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "日期参数错误"})
 			return
 		}
-		var row struct {
-			Visit int64 `gorm:"column:visit"`
-			Call  int64 `gorm:"column:call"`
-			Save  int64 `gorm:"column:save"`
-		}
-		q := db.Model(&model.StatEvent{}).Where("staff_id = ?", staffID).
-			Select("SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
-				"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
-				"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS `save`")
-		if from != "" {
-			q = q.Where("stat_date >= ?", from)
-		}
-		if to != "" {
-			q = q.Where("stat_date <= ?", to)
-		}
-		// 零行时 Scan 不回错、row 保持零值——「没有事件」与「计数为 0」同形，正是要的
-		if err := q.Scan(&row).Error; err != nil {
+		snap, err := statMeSnapshot(db, staffID, from, to)
+		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"visit": row.Visit, "call": row.Call, "save": row.Save}})
+		sum := snap.Summary
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"data": gin.H{
+				"visit": sum.Visit, "call": sum.Call, "save": sum.Save,
+				"projectView": sum.ProjectView, "serviceView": sum.ServiceView,
+				"videoPlay": sum.VideoPlay, "share": sum.Share, "posterSave": sum.PosterSave,
+				"trend":       statTrendJSON(snap.Trend),
+				"topProjects": statTopJSON(snap.TopProjects),
+				"topServices": statTopJSON(snap.TopServices),
+				// 访客来源分布：只统计 visit（扫码/转发卡片/搜索/海报/未知/其他），
+				// 各行 count 之和恒等于上面的 visit——前端可据此对账
+				"sourceDist": statSourceJSON(snap.SourceDist),
+			},
+		})
 	})
 
 	// 员工修改本人密码
@@ -663,9 +685,12 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	//      反引号在 SQLite 同样合法（MySQL 兼容引用符），两边都能跑。
 	//   4. ?from=&to= 日期范围（YYYY-MM-DD 闭区间，可缺省）：stat_date 有索引，
 	//      字符串字典序即时间序，范围查询直接走索引；缺省即「全部时间」。
-	//   5. summary 后五个 + topProjects/topServices 是「内容意向」：事件带
-	//      target_id（migrations/0021），按 target 聚合 JOIN 对象名，回答
-	//      「访客对什么内容感兴趣」——统计对企业客户的核心价值。
+	//   5. summary 后五个分两组：前三个（projectView/serviceView/videoPlay）
+	//      是「内容浏览」，带 target_id（migrations/0021），按 target 聚合
+	//      JOIN 对象名进 topProjects/topServices，回答「访客对什么内容感兴趣」——
+	//      统计对企业客户的核心价值。后两个（share/posterSave）是「裂变动作」：
+	//      不带 target_id、主体可能是员工本人，故不进 TOP 榜、也不与浏览相加
+	//      （分组理由详见 stat.go 文件头）。
 	r.GET("/api/admin/stats", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		from, to, ok := statDateRange(c)
 		if !ok {
@@ -730,30 +755,8 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				"posterSave":  r.PosterSave,
 			})
 		}
-		trendList := make([]gin.H, 0, len(trend))
-		for _, t := range trend {
-			trendList = append(trendList, gin.H{
-				// 八项全给：前端图例可点选，勾到哪个指标都要有线
-				"date": t.Day, "visit": t.Visit, "call": t.Call, "save": t.Save,
-				"projectView": t.ProjectView, "serviceView": t.ServiceView,
-				"videoPlay": t.VideoPlay, "share": t.Share, "posterSave": t.PosterSave,
-			})
-		}
-		topList := func(rows []statTopRow) []gin.H {
-			out := make([]gin.H, 0, len(rows))
-			for _, r := range rows {
-				out = append(out, gin.H{"targetId": r.TargetID, "name": r.Name, "count": r.Count})
-			}
-			return out
-		}
-		// 来源分布行 → 响应：{source, count}
-		topListSource := func(rows []statSourceRow) []gin.H {
-			out := make([]gin.H, 0, len(rows))
-			for _, r := range rows {
-				out = append(out, gin.H{"source": r.Source, "count": r.Count})
-			}
-			return out
-		}
+		// 趋势 / TOP 榜 / 来源分布的响应形状由 stat.go 的三个转换函数统一
+		// （与员工端共用），避免两处各自拼 gin.H 后悄悄漂移
 		// 裂变榜行 → 响应：{staffId, name, count}
 		topListFission := func(rows []statFissionRow) []gin.H {
 			out := make([]gin.H, 0, len(rows))
@@ -771,11 +774,11 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 					"videoPlay": sumVideoPlay, "share": sumShare, "posterSave": sumPosterSave,
 				},
 				"byStaff":     list,
-				"trend":       trendList,
-				"topProjects": topList(topProjects),
-				"topServices": topList(topServices),
+				"trend":       statTrendJSON(trend),
+				"topProjects": statTopJSON(topProjects),
+				"topServices": statTopJSON(topServices),
 				// 流量来源分布：visit 事件按 source 分组（scan/share_card/search/poster/unknown/other）
-				"sourceDist": topListSource(sourceDist),
+				"sourceDist": statSourceJSON(sourceDist),
 				// 裂变榜：按 staff_id 聚合「source=share_card 的 visit」（谁的名片被转发带来的新访客多）
 				"fissionTop": topListFission(fissionTop),
 			},

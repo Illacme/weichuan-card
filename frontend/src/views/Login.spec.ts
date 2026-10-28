@@ -21,6 +21,7 @@ vi.mock('element-plus', () => ({
 }))
 
 import { adminLogin } from '@/api/auth'
+import { getPublicSettings } from '@/api/settings'
 import { useAuthStore } from '@/store/auth'
 
 // 轻量 stub：仅渲染插槽 / 捕获 props，避免引入完整 Element Plus（jsdom 下过重易 OOM）。
@@ -124,5 +125,26 @@ describe('Login', () => {
 
     expect(auth.loggedIn).toBe(false)
     expect(router.currentRoute.value.path).toBe('/login')
+  })
+
+  it('带 company 白标码命中时，登录页标题显示该企业简称', async () => {
+    vi.mocked(getPublicSettings).mockImplementation(async (company?: string) =>
+      (company === 'langhui'
+        ? { code: 0, data: { brand_name: '微传名片', login_brand_name: '朗汇机电' } }
+        : { code: 0, data: { brand_name: '微传名片' } }) as { code: number; data: Record<string, string> }
+    )
+    const { w } = await setup('/login?company=langhui')
+    await vi.waitFor(() => expect(w.text()).toContain('朗汇机电'))
+    expect(w.text()).toContain('朗汇机电 · 管理后台')
+  })
+
+  it('白标码不匹配时回落全局品牌名', async () => {
+    vi.mocked(getPublicSettings).mockImplementation(async () => ({
+      code: 0,
+      data: { brand_name: '微传名片' },
+    }))
+    const { w } = await setup('/login?company=nope')
+    await vi.waitFor(() => expect(w.text()).toContain('微传名片'))
+    expect(w.text()).toContain('微传名片 · 管理后台')
   })
 })

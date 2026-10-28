@@ -45,7 +45,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const companies = [
   {
     id: 1, name: '甲方公司', shortName: '甲方', status: 'enabled', createdAt: '2026-10-01T10:00:00',
-    employeeCount: 12, adminCount: 2, wxConfigured: true,
+    employeeCount: 12, adminCount: 2, wxConfigured: true, loginCode: 'jiufang',
     storageBytes: 1572864, licenseExists: true, licenseEdition: 'platform', licenseSeats: 0,
     licenseExpiresAt: '', licenseExpired: false,
   },
@@ -800,5 +800,54 @@ describe('企业管理 · 授权与存储配额', () => {
     // 而且要说清为什么没改，不能让运营以为配额也一起保存了
     expect(ElMessage.warning).toHaveBeenCalledWith(expect.stringContaining('存储配额未改动'))
     expect(ElMessage.success).toHaveBeenCalledWith('授权已保存')
+  })
+})
+
+// 登录页白标码（login_code）。
+//
+// 失败模式：客户多了以后，登录页「微传名片 · 管理后台」对所有企业一模一样，
+// 客户分不清是不是自己的后台入口；且运营在列表里看不出哪家配了白标码。
+// 钉住三件事：列表能看出谁配了（?company= 是什么）、开通时能填并随请求提交、
+// 编辑时能回填并带新值提交。
+describe('企业管理 · 登录页白标码', () => {
+  beforeEach(resetAll)
+
+  it('列表白标码列：已配置显示 ?company= 码，未配置显示「未配置」', async () => {
+    const w = await setup()
+    expect(rowOf(w, 1).find('.login-code-cell').text()).toContain('?company=jiufang')
+    expect(rowOf(w, 2).find('.muted').text()).toBe('未配置')
+  })
+
+  it('开通企业：填写白标码后随创建请求一起提交', async () => {
+    const w = await setup()
+    await w.findAll('button.el-button').find((b: any) => b.text().includes('开通企业'))!.trigger('click')
+    await flush()
+    const dlg = w.find('.el-dialog')
+    expect(dlg.exists()).toBe(true)
+    // 开通弹窗输入顺序：企业名称 / 企业简称 / 登录白标码 / 管理员用户名 / 管理员密码
+    const inputs = dlg.findAll('input.el-input')
+    await inputs[0].setValue('新公司') // name 必填
+    await inputs[1].setValue('新简称')
+    await inputs[2].setValue('newcode') // 登录白标码
+    await dlg.findAll('.el-button').find((b: any) => b.text().includes('开通'))!.trigger('click')
+    await flush()
+
+    expect(mocks.createCompany).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '新公司', loginCode: 'newcode' })
+    )
+  })
+
+  it('编辑企业：回填空白标码，保存时带新值提交（允许清空）', async () => {
+    const w = await setup()
+    await btnIn(rowOf(w, 1), '编辑').trigger('click')
+    await flush()
+    const dlg = w.find('.el-dialog')
+    // 编辑弹窗输入顺序：企业名称 / 企业简称 / 登录白标码
+    expect((dlg.findAll('input.el-input')[2].element as HTMLInputElement).value).toBe('jiufang')
+    await dlg.findAll('input.el-input')[2].setValue('jiufang2')
+    await dlg.findAll('.el-button').find((b: any) => b.text() === '保存')!.trigger('click')
+    await flush()
+
+    expect(mocks.updateCompany).toHaveBeenCalledWith(1, expect.objectContaining({ loginCode: 'jiufang2' }))
   })
 })

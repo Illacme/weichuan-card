@@ -127,7 +127,7 @@ function eventLabel(t: string): string {
   return eventTypes.find((e) => e.value === t)?.label ?? t
 }
 // 配色：访问/拨号/保存与趋势图三系列对齐（访问蓝 / 拨号绿 / 保存橙），
-// 同一指标全站一个色；后五项是内容意向事件，统一走 info 灰蓝，
+// 同一指标全站一个色；内容浏览三类与裂变两类统一走 info 灰蓝，
 // 不与转化三色的语义混淆（它们没有趋势图系列，不需要色位对应）。
 function tagType(t: string): 'success' | 'warning' | 'primary' | 'info' | undefined {
   if (t === 'call') return 'success'

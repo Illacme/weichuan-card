@@ -17,5 +17,5 @@
   <button class="copy-btn" wx:if="{{items.length}}" bindtap="copyAll">复制全部信息</button>
 
   <!-- 微信隐私授权弹窗：复制前由 ensurePrivacy 弹出，用户同意后才继续 -->
-  <privacy-consent visible="{{privacyVisible}}" />
+  <privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />
 </view>

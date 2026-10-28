@@ -37,7 +37,7 @@ Page({
         updatedAtText: r.data.updatedAt ? formatDateTime(r.data.updatedAt) : '',
         loading: false,
       })
-      // 内容意向埋点：服务详情加载成功才算一次「浏览」（同案例详情口径）。
+      // 内容浏览埋点：服务详情加载成功才算一次「浏览」（同案例详情口径）。
       // targetId = 服务 id，后台 TOP 服务榜靠它聚合（后端校验存在+同租户）。
       track('service_view', this.data.staffId, this.data.id)
     } catch {

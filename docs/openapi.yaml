@@ -445,7 +445,7 @@ paths:
   /api/stat/track:
     post:
       tags: [公开内容]
-      summary: 埋点上报（转化 + 内容意向）
+      summary: 埋点上报（转化 + 内容浏览 + 裂变）
       description: |
         事件白名单（权威定义在 `backend/internal/handler/stat.go`）：
 
@@ -458,7 +458,11 @@ paths:
         | service_view | 浏览服务详情 | 服务 ID（强制，须与员工同租户） |
         | video_play | 播放公司视频 | 0 |
         | share | 转发（名片 / 案例 / 服务） | 0 或对象 ID（不强制存在） |
-        | poster_save | 保存海报 | 0 |
+        | poster_save | 海报**成功写入相册**（失败不计） | 0 |
+
+        前三行是「转化」，`project_view`/`service_view`/`video_play` 是「内容浏览」
+        （唯一带强制 targetId 的三类，也只有它们进 TOP 榜），`share`/`poster_save`
+        是「裂变」（把名片传出去的动作，主体可能是员工本人）。三组在统计侧互不相加。
 
         公开接口但按 IP 限流 60 次/分（桶键带 `track:` 前缀，与登录限流分桶），
         并校验员工存在、事件类型在白名单内、强制类事件的 targetId 存在且同租户；
@@ -653,6 +657,12 @@ paths:
                   pendingModify:
                     type: boolean
                     description: 是否有待审的名片修改申请（编辑名片页据此展示"审核中"标签）
+                  companyName:
+                    type: string
+                    description: 所属企业全称（根级，不在 data 内；供小程序「个人信息」页展示「所属企业」）
+                  companyShortName:
+                    type: string
+                    description: 所属企业简称（根级，不在 data 内；有值时优先于全称展示）
     put:
       tags: [员工端]
       summary: 提交名片信息修改申请（审核通过后才生效）
@@ -687,12 +697,50 @@ paths:
   /api/employee/me/stat:
     get:
       tags: [员工端]
-      summary: 本人名片访问统计
+      summary: 本人名片统计（八类事件汇总 + 按天趋势 + 内容浏览 TOP3 + 访客来源分布）
+      description: |
+        口径与管理端 `/api/admin/stats` 完全一致，只是范围恒为「登录的这一个员工」
+        （`stat_events.staff_id = 登录员工`，不走租户子查询——查自己天然隔离）。
+
+        八类事件分三组，与埋点白名单同源，**三组互不相加**：
+        - 转化：`visit` / `call` / `save`（有没有人找上门）；
+        - 内容浏览：`projectView` / `serviceView` / `videoPlay`（访客对什么内容感兴趣。
+          这三类是唯一带 `targetId` 的事件，也只有它们进 TOP 榜）；
+        - 裂变：`share` / `posterSave`（把名片传出去的动作。不带 `targetId`，且主体
+          可能是员工本人——海报页唯一入口「我的 → 生成海报」只有本人进得去，
+          混进内容浏览会把它抬高）。
+
+        全是**次数**不是人数：`visit` 是名片被打开的次数（按页面实例去重），
+        系统没有访客标识，UV 算不出来。因此「拨号率 = call ÷ visit」可能超过
+        100%（同一访客可重复点击），它是「每次访问带来多少行动」。
+
+        `trend` 只含有事件的日期，无事件日期由前端按所选范围补零——
+        与 `/api/admin/stats` 同一约定，避免两端各写一套日期推导。
+
+        `sourceDist` 只统计 `visit`（进入名片的入口事件），故**各行 count 之和
+        恒等于 `visit`**。这一块是员工端唯一能证明海报有用的数字：裂变里的
+        `posterSave` 主体可能是员工本人（自己存自己的海报），而「海报」渠道
+        带来的访问必然来自外部。口径与管理端 `sourceDist` 完全一致。
       security:
         - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: 起始日期 YYYY-MM-DD（闭区间，缺省 = 不限下界）
+          schema:
+            type: string
+            example: "2026-10-21"
+        - name: to
+          in: query
+          required: false
+          description: 结束日期 YYYY-MM-DD（闭区间，缺省 = 不限上界）
+          schema:
+            type: string
+            example: "2026-10-27"
       responses:
         "200":
-          description: code=0 成功
+          description: code=0 成功；code=1 日期参数错误 / 查询失败
           content:
             application/json:
               schema:
@@ -702,16 +750,100 @@ paths:
                     $ref: "#/components/schemas/Code"
                   data:
                     type: object
+                    description: |
+                      前三个键是既有契约（老版本小程序只读这三个，新增项均为 additive）。
+                      `trend` / `topProjects` / `topServices` 与 `/api/admin/stats` 的
+                      同名结构形状一致（日期键都叫 `date`，TOP 榜都是
+                      `{targetId,name,count}`）。
                     properties:
                       visit:
                         type: integer
-                        description: 浏览次数
+                        description: 名片被打开次数（按页面实例去重，非 UV）
                       call:
                         type: integer
-                        description: 拨打次数
+                        description: 拨号按钮点击次数
                       save:
                         type: integer
-                        description: 保存次数
+                        description: 保存按钮点击次数
+                      projectView:
+                        type: integer
+                        description: 案例详情浏览次数（targetId=案例 ID）
+                      serviceView:
+                        type: integer
+                        description: 服务详情浏览次数（targetId=服务 ID）
+                      videoPlay:
+                        type: integer
+                        description: 公司视频播放次数（组件级去重）
+                      share:
+                        type: integer
+                        description: 转发次数（名片/案例/服务）
+                      posterSave:
+                        type: integer
+                        description: |
+                          海报成功写入手机相册的次数（仅成功计，权限拒绝/写入失败不计）。
+                          不带 targetId、不进 TOP 榜；主体可能是员工本人（自存自己的海报），
+                          故与内容浏览分开统计。
+                      trend:
+                        type: array
+                        description: 按天趋势（升序，只含有事件的日期；八项全给以便前端图例切换）
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              example: "2026-10-27"
+                            visit:
+                              type: integer
+                            call:
+                              type: integer
+                            save:
+                              type: integer
+                            projectView:
+                              type: integer
+                            serviceView:
+                              type: integer
+                            videoPlay:
+                              type: integer
+                            share:
+                              type: integer
+                            posterSave:
+                              type: integer
+                      topProjects:
+                        type: array
+                        description: 看最多的案例 TOP3（对象已删时 name 回落「已删除」，计数不减）
+                        items:
+                          type: object
+                          properties:
+                            targetId:
+                              type: integer
+                              description: 案例 ID
+                            name:
+                              type: string
+                              description: 案例名；已删除/查不到时为「已删除」
+                            count:
+                              type: integer
+                              description: 浏览次数
+                      topServices:
+                        type: array
+                        description: 看最多的服务 TOP3（同上）
+                        items:
+                          type: object
+                          properties:
+                            targetId:
+                              type: integer
+                              description: 服务 ID
+                            name:
+                              type: string
+                            count:
+                              type: integer
+                      sourceDist:
+                        type: array
+                        description: |
+                          访客从哪来：只统计 visit 事件，按归一后的 source 分组（降序，
+                          无访问 = 空数组不是 null）。**各行 count 之和恒等于 visit**——
+                          前端据此对账，两者漂移说明查询口径被改坏了。
+                        items:
+                          $ref: "#/components/schemas/StatSourceItem"
 
   /api/employee/password:
     put:
@@ -734,6 +866,139 @@ paths:
       responses:
         "200":
           description: code=0 成功；code=1 原密码错误 / 参数错误
+
+  # ───────────────────────── 海报个性化设置 ─────────────────────────
+  /api/employee/poster-prefs:
+    get:
+      tags: [员工端]
+      summary: 读取本人海报设置（自定义背景 + 版式）
+      description: |
+        跟着**员工账号**走而不只存本机：员工会换手机、重装微信，只记在
+        wx.setStorageSync 里换设备就全丢，还得重挑一遍背景、重调一遍版式。
+
+        响应带 `staffId`（2026-10-28 起）：海报页会被转发给任何人，登录员工
+        也完全可能打开**别人**的海报页，端上要靠它判断给不给编辑入口，
+        否则还得为这个判断单独打一次 `/api/employee/me`。
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: code=0 成功；没存过时 exists=false + 默认版式（不是 404）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/PosterPrefsPayload"
+    put:
+      tags: [员工端]
+      summary: 写入本人海报设置（整体覆盖，upsert）
+      description: |
+        背景清单与版式都在写入前归一：白名单外的枚举落默认、越界数值夹紧、
+        清单超限截断、选中项不在清单里则清空。**不报错**——版式是体验项，
+        用户传了个错值不该让整次保存失败（他还得重调一遍）。
+
+        回传归一后的结果：端上据此纠正本地状态（比如上传第 10 张被截断），
+        避免「本地显示有、后端没有」的错位。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bgId:
+                  type: string
+                  description: 当前背景；不在清单里的自定义 id 会被清空
+                  example: c-abcdef12
+                backgrounds:
+                  type: array
+                  maxItems: 9
+                  items:
+                    $ref: "#/components/schemas/PosterBackground"
+                layout:
+                  type: object
+                  description: |
+                    版式**补丁**形态：字段可缺省，缺省即保持默认。布尔字段传
+                    false 才是「关掉」——这与响应里的完整形态不同，是为了区分
+                    「客户端没传」和「客户端明确要关」。
+                  properties:
+                    template: { type: string }
+                    showAvatar: { type: boolean }
+                    showName: { type: boolean }
+                    showTitle: { type: boolean }
+                    showCompany: { type: boolean }
+                    showAddress: { type: boolean }
+                    showPhone: { type: boolean }
+                    showLandline: { type: boolean }
+                    showEmail: { type: boolean }
+                    showQr: { type: boolean }
+                    textColor: { type: string }
+                    customText: { type: string }
+                    offsetX: { type: integer }
+                    offsetY: { type: integer }
+                    qrOffsetX: { type: integer }
+                    qrOffsetY: { type: integer }
+                    qrSize: { type: integer }
+                    avatarSize: { type: integer }
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误 / 保存失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/PosterPrefsPayload"
+
+  /api/poster-prefs:
+    get:
+      tags: [公开内容]
+      summary: 海报版式公开快照（只读，?staffId=）
+      description: |
+        **无鉴权**（按 IP 限流 60/分，桶键带 `posterpref:` 前缀，与 login:/track:
+        在共享计数表里分家）。
+
+        为什么必须有这个端点：海报页是编辑器而不是图片查看页，转发链接只带
+        `staffId`，访客打开时是**当场用「员工名片数据 + 版式」重新生成**一张。
+        没有快照，访客看到的就是客户端默认版式——员工调的排版、挑的自定义
+        背景、写的那句 slogan 全都传不出去，海报作为「可传播的物料」
+        其实根本没被传递，被传递的只是一个生成器的链接。
+
+        与员工端点读同一行数据，只暴露**渲染这一张海报所需的最小集**：
+        `backgrounds` 只回当前选中的那一张自定义背景，未选中的（最多 9 张）
+        是员工私有素材，不该挂在无鉴权接口上。内置素材 `poster-*` 客户端自带
+        清单，一张都不回。
+
+        存在性与停用判定与 `/api/card` 同口径：员工不存在 code=1、已停用 code=2。
+      parameters:
+        - name: staffId
+          in: query
+          required: true
+          description: 员工编号（与 /api/card 同一个参数）
+          schema:
+            type: integer
+            example: 42
+      responses:
+        "200":
+          description: code=0 成功；code=1 缺少 staffId / 员工不存在 / 查询失败；code=2 员工已停用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/PosterPrefsPayload"
 
   # ───────────────────────── 超管-申请审核 ─────────────────────────
   /api/apply/open:
@@ -1163,12 +1428,20 @@ paths:
   /api/admin/stats:
     get:
       tags: [超管-员工管理]
-      summary: 全局名片统计（汇总 + 按员工 + 按天趋势 + 内容意向 TOP 榜 + 来源分布 + 裂变榜）
+      summary: 全局名片统计（汇总 + 按员工 + 按天趋势 + 内容浏览 TOP 榜 + 来源分布 + 裂变榜）
       description: |
-        汇总转化三指标（visit/call/save）+ 内容意向五指标（projectView/serviceView/
-        videoPlay/share/posterSave），并按员工分组（零数据员工补 0）、按天趋势，
-        以及按 `target_id` 聚合的 TOP 案例 / TOP 服务榜；另有按 `source` 聚合的
-        来源分布（sourceDist）与裂变榜（fissionTop）。
+        汇总转化三指标（visit/call/save）+ 内容浏览三指标（projectView/serviceView/
+        videoPlay）+ 裂变两指标（share/posterSave），并按员工分组（零数据员工补 0）、
+        按天趋势，以及按 `target_id` 聚合的 TOP 案例 / TOP 服务榜；另有按 `source`
+        聚合的来源分布（sourceDist）与裂变榜（fissionTop）。
+
+        **三组互不相加**（2026-10-27 口径修正，只改分组不改埋点）：
+        - 转化：有没有人找上门；
+        - 内容浏览：访客对什么内容感兴趣。这三类是唯一带 `targetId`（强制存在且
+          同租户）的事件，也只有它们进 TOP 榜——「对什么内容感兴趣」得有对象才答得上；
+        - 裂变：把名片传出去的动作。不带 `targetId`，且主体可能是员工本人
+          （海报页唯一入口「我的 → 生成海报」只有本人进得去），混进内容浏览会把
+          浏览总量抬高。两者都记在「被传播的那张名片的主人」名下。
 
         TOP 榜对象已删除时 `name` 为「已删除」且**计数不减**——榜单与汇总口径
         对得上，不会出现「汇总 3 条、榜单加起来 2 条」的对账事故。
@@ -1212,7 +1485,9 @@ paths:
                     properties:
                       summary:
                         type: object
-                        description: 前三项是转化，后五项（targetId 类事件）是内容意向
+                        description: |
+                          前三项是转化；中间三项是内容浏览（带 targetId，进 TOP 榜）；
+                          最后两项是裂变（share / posterSave，不与内容浏览相加）。
                         properties:
                           visit:
                             type: integer
@@ -2155,8 +2430,19 @@ paths:
     get:
       summary: 公开配置（无需登录）
       description: |
-        仅下发非敏感的三项：brand_name / miniprogram_base_url / pinned_company_id。
+        仅下发非敏感项：brand_name / miniprogram_base_url / pinned_company_id 等。
         小程序冷启动与 PC 登录页取品牌名都走这个接口，因此**不能要求登录**。
+        支持查询参数 ?company=<白标码>：精确匹配 enabled 企业的 login_code，
+        命中则 data 额外返回 login_brand_name（该企业 short_name），用于登录页按企业区分显示简称；
+        未命中（无参数 / 不匹配 / 企业停用）则不返回该键，前端回落全局 brand_name。
+        安全口径：只回传 short_name，绝不泄露企业 ID / 名称 / 管理员等其它字段。
+      parameters:
+        - name: company
+          in: query
+          required: false
+          description: 登录页白标码（?company=）。命中 enabled 企业时回传其简称作为登录品牌名
+          schema:
+            type: string
       tags: [设置]
       responses:
         "200":
@@ -4176,7 +4462,7 @@ components:
     StatTopItem:
       type: object
       description: |
-        内容意向 TOP 榜的一行：按 target_id 聚合出的对象与次数。
+        内容浏览 TOP 榜的一行：按 target_id 聚合出的对象与次数。
         对象被删除时 name 为「已删除」且计数不减（与汇总口径对得上）。
       properties:
         targetId:
@@ -4187,6 +4473,90 @@ components:
           example: 车间改造
         count:
           type: integer
+
+    PosterBackground:
+      type: object
+      description: |
+        一张自定义背景图。id 由客户端生成（`c-` + 随机），后端只校验格式；
+        file 只接受站内相对路径或 http(s) 绝对地址（它最终会进 canvas 的 img.src）。
+      properties:
+        id:
+          type: string
+          example: c-abcdef12
+        name:
+          type: string
+          example: 活动照
+        file:
+          type: string
+          example: /uploads/2026/10/my-bg.jpg
+
+    PosterLayout:
+      type: object
+      description: |
+        海报版式。存库与回传都用这个「完整形态」（每个字段都有具体值），
+        写入则用同名的指针形态（bool 用指针才能区分「没传」和「明确关闭」）。
+        白名单外的枚举值落默认、越界数值夹紧，**不报错**——版式是体验项，
+        传错值不该让整次保存失败。
+      properties:
+        template:
+          type: string
+          enum: [classic, center, minimal, card, split, left, stack, poster]
+          example: center
+        showAvatar: { type: boolean }
+        showName: { type: boolean }
+        showTitle: { type: boolean }
+        showCompany: { type: boolean }
+        showAddress: { type: boolean }
+        showPhone: { type: boolean }
+        showLandline: { type: boolean, description: 默认关（老海报不该突然多一行） }
+        showEmail: { type: boolean, description: 默认关，同上 }
+        showQr: { type: boolean, description: 默认开——它是整张海报唯一的落地入口 }
+        textColor:
+          type: string
+          enum: [auto, light, dark]
+        customText:
+          type: string
+          maxLength: 30
+          description: 一句话宣传语，按 rune 截断，换行压成空格（canvas 不认 \n）
+        offsetX: { type: integer, description: 信息区横向位移，±480 夹紧 }
+        offsetY: { type: integer }
+        qrOffsetX: { type: integer, description: 二维码位移，与信息区各自独立 }
+        qrOffsetY: { type: integer }
+        qrSize:
+          type: integer
+          description: 码尺寸档位；0 = 自动（按内容高度自适应）
+          enum: [0, 76, 104, 140]
+        avatarSize:
+          type: integer
+          enum: [56, 72, 88]
+
+    PosterPrefsPayload:
+      type: object
+      description: |
+        海报设置响应体。员工端与公开快照**同一形状**，端上不必分两套解析。
+      properties:
+        staffId:
+          type: integer
+          description: |
+            设置所属员工（2026-10-28 起带）。端上据此判断「这张名片是不是我的」
+            ——海报页会被转发给任何人，登录员工也可能打开别人的海报页。
+        bgId:
+          type: string
+          description: 当前背景；空串 = 白底，`poster-*` = 内置素材，`c-*` = 自定义
+        backgrounds:
+          type: array
+          description: |
+            自定义背景清单。员工端给**全部**（他自己的素材库）；公开快照只给
+            **当前选中的那一张**——未选中的那几张是私有素材，不该挂在无鉴权接口上。
+          items:
+            $ref: "#/components/schemas/PosterBackground"
+        layout:
+          $ref: "#/components/schemas/PosterLayout"
+        exists:
+          type: boolean
+          description: |
+            false = 服务端没有可信记录（新员工 / 从没调过）。此时员工端沿用本机缓存，
+            公开快照端一律从默认值重算。
 
     StatSourceItem:
       type: object

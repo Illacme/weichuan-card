@@ -14,7 +14,7 @@ interface WxRequestOpts {
   method: string
   data?: any
   header: Record<string, string>
-  success: (res: { data: any }) => void
+  success: (res: { data: any; statusCode?: number }) => void
   fail: (err: any) => void
 }
 
@@ -26,18 +26,18 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
 function installWx() {
   const store: Record<string, string> = {}
   const calls: WxRequestOpts[] = []
-  const script = new Map<number, any | 'fail'>()
+  const script = new Map<number, { v: any | 'fail'; statusCode?: number }>()
   const waiting = new Map<number, WxRequestOpts>()
 
   const deliver = (idx: number, opts: WxRequestOpts) => {
-    const v = script.get(idx)
-    if (v === undefined) {
+    const s = script.get(idx)
+    if (s === undefined) {
       waiting.set(idx, opts) // 尚未预设应答：挂起等 respond
       return
     }
     waiting.delete(idx)
-    if (v === 'fail') opts.fail(new Error('network'))
-    else opts.success({ data: v })
+    if (s.v === 'fail') opts.fail(new Error('network'))
+    else opts.success({ data: s.v, statusCode: s.statusCode })
   }
 
   vi.stubGlobal('getApp', () => ({ globalData: { baseUrl: 'http://test' } }))
@@ -56,8 +56,10 @@ function installWx() {
     },
   })
 
-  const respond = (idx: number, v: any | 'fail') => {
-    script.set(idx, v)
+  // respond(i, v, statusCode?)：应答第 i 个请求。statusCode 缺省不投递（视同 200），
+  // 与既有用例「桩不传 statusCode」的形态保持兼容。
+  const respond = (idx: number, v: any | 'fail', statusCode?: number) => {
+    script.set(idx, { v, statusCode })
     const opts = waiting.get(idx)
     if (opts) deliver(idx, opts)
   }
@@ -102,6 +104,50 @@ describe('request 基础行为', () => {
     const p = request('POST', '/api/stat/track', { a: 1 })
     respond(0, 'fail')
     await expect(p).rejects.toThrow('network')
+  })
+})
+
+// 网关兜底页（nginx 404/502 的 HTML）不是接口信封。真实事故（2026-10-27）：
+// 生产 nginx 没配 /api/ 反代，wx.request 对 HTTP 404 仍走 success 且 data 是 HTML
+// 字符串，旧实现 resolve 出去 → 首页把「服务不可达」误判成业务态，提示
+// 「员工不存在，请检查编号」——用户照着改编号永远改不好。钉死：非信封 / >=400
+// 一律 reject（页面走「网络异常，加载失败」错误态）。
+describe('网关兜底页不冒充接口信封', () => {
+  it('success 交付 HTML 字符串（无 statusCode，wx.request 对 404 HTML 的实际形态）→ reject', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+
+    const p = request('GET', '/api/card?staffId=1')
+    respond(0, '<html><body>404 Not Found</body></html>')
+    await expect(p).rejects.toThrow('接口不可用')
+  })
+
+  it('statusCode 502 + HTML → reject（后端挂掉时网关的典型返回）', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+
+    const p = request('GET', '/api/card?staffId=1')
+    respond(0, '<html>502 Bad Gateway</html>', 502)
+    await expect(p).rejects.toThrow('接口不可用')
+  })
+
+  it('statusCode >= 400 即使响应体是 JSON 信封也 reject（防代理层劫持被当业务结果）', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+
+    const p = request('GET', '/api/card?staffId=1')
+    respond(0, { code: 0, employee: { name: 'x' } }, 404)
+    await expect(p).rejects.toThrow('接口不可用')
+  })
+
+  it('无 statusCode 的正常信封（单测桩形态）视同 200 → resolve 不受影响', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+
+    const p = request('GET', '/api/card?staffId=1')
+    respond(0, { code: 0, employee: { name: 'x' } })
+    const r = await p
+    expect(r.code).toBe(0)
   })
 })
 

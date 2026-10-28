@@ -16,11 +16,18 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('../utils/request', () => mocks)
 
+// 页面 staffId（用例统一用 42），也是「登录员工本人」的编号：
+// 海报页据此判断这张名片归不归我编辑。
+const MY_STAFF = 42
+
 let captured: any = null
 
 beforeEach(() => {
   captured = null
   vi.resetModules()
+  // 登录员工的编号（globalData.myStaffId）：海报页判「是不是本人」的两个来源之一。
+  // 个别用例（打开别人的名片 / 老后端）会覆盖成别的值。
+  vi.stubGlobal('getApp', () => ({ globalData: { myStaffId: MY_STAFF } }))
   vi.stubGlobal('Page', (opts: any) => {
     captured = opts
   })
@@ -78,11 +85,14 @@ function instance(opts: any) {
 // 让两个接口都返回可用数据（card 在响应根级，wxacode 在 data.url）。
 // posters：给 /api/assets/posters 的返回；不传则视为「没拉到清单」（返回 {}），
 // 页面应退化成原来的白底海报——这条兜底路径必须先于新功能保证不回归。
+// prefs：给员工接口（/api/employee/poster-prefs）的返回；
+// publicPrefs：给公开快照（/api/poster-prefs?staffId=）的返回，访客走这一支。
 function mockApis(
   card: any = { employee: { name: '张伟', avatar: '/uploads/a.png' } },
   codeUrl = '/uploads/wxacode/42.jpg',
   posters: any = null,
-  prefs: any = null
+  prefs: any = null,
+  publicPrefs: any = null
 ) {
   mocks.request.mockImplementation(async (method: string, url: string) => {
     if (url.includes('/api/wechat/wxacode')) return { code: 0, data: { url: codeUrl } }
@@ -90,8 +100,12 @@ function mockApis(
     if (url.includes('/api/assets/posters')) return posters || {}
     // 默认「后端没存过」：客户端应沿用本机缓存（exists=false）
     if (url.includes('/api/employee/poster-prefs')) {
-      if (method === 'PUT') return { code: 0, data: {} }
-      return prefs || { code: 0, data: { exists: false } }
+      if (method === 'PUT') return { code: 0, data: { staffId: MY_STAFF } }
+      return prefs || { code: 0, data: { exists: false, staffId: MY_STAFF } }
+    }
+    // 公开快照（访客 / 打开别人的名片）：只回渲染这一张海报所需的最小集
+    if (url.includes('/api/poster-prefs')) {
+      return publicPrefs || { code: 0, data: { exists: false, staffId: MY_STAFF } }
     }
     return {}
   })
@@ -611,7 +625,10 @@ const CUSTOM_BG = { id: 'c-abc123', name: '活动照', file: '/uploads/2026/10/m
 describe('poster 页 · 自定义背景与版式', () => {
   // ---- 读取个性化设置 ----
 
-  it('未登录：不请求个性化设置接口', async () => {
+  // 未登录也要拉设置——但拉的是**公开快照**（只回渲染这一张所需的最小集），
+  // 不是员工接口（那要鉴权，且会带上他全部的私有背景）。
+  // 没有这一支，访客看到的是「默认版式重新生成的一张」，员工排的版式传不出去。
+  it('未登录：请求公开快照而不是员工接口', async () => {
     const opts = await loadPage()
     mockApis(undefined, undefined, { code: 0, data: { items: POSTER_LIST } })
     stubStorage({}) // 无 empToken
@@ -621,7 +638,8 @@ describe('poster 页 · 自定义背景与版式', () => {
 
     expect(page.data.canUpload).toBe(false)
     const urls = mocks.request.mock.calls.map((c) => c[1])
-    expect(urls.some((u: string) => u.indexOf('poster-prefs') >= 0)).toBe(false)
+    expect(urls.some((u: string) => u.indexOf('/api/employee/poster-prefs') >= 0)).toBe(false)
+    expect(urls).toContain('/api/poster-prefs?staffId=42')
   })
 
   it('已登录：应用后端保存的版式与自定义背景', async () => {
@@ -1858,7 +1876,10 @@ describe('poster 页 · 节气日自动选背景', () => {
   async function bootAt(y: number, m: number, d: number, storage: Record<string, string> = {}) {
     at(y, m, d)
     const opts = await loadPage()
-    stubStorage(storage)
+    // 默认登录：本机缓存（posterBg/posterLayout）只对**本人**生效——
+    // 访客手机上的那份跟员工排的版式无关，读它就会让「别人看到的」和
+    // 「员工排的」对不上（公开快照 exists=false 时一律从默认重算）。
+    stubStorage({ empToken: 'tk-1', ...storage })
     mockApis(CARD_SIMPLE, undefined, { code: 0, data: { items: TERM_LIST } })
     stubCanvasNode()
     const page = instance(opts)
@@ -2028,7 +2049,8 @@ describe('poster 页 · 节日日自动选背景（优先于节气）', () => {
   ) {
     at(y, m, d)
     const opts = await loadPage()
-    stubStorage(storage)
+    // 同节气那组：默认登录，本机缓存只对本人生效
+    stubStorage({ empToken: 'tk-1', ...storage })
     mockApis(CARD_SIMPLE, undefined, { code: 0, data: { items: list } })
     stubCanvasNode()
     const page = instance(opts)
@@ -2177,5 +2199,115 @@ describe('poster 页 · 节日日自动选背景（优先于节气）', () => {
     expect(page.data.bgId).toBe('poster-yuandan')
     expect(page.data.todayName).toBe('元旦')
     expect(page.data.todayKind).toBe('festival')
+  })
+})
+
+// ===== 公开快照与只读态（2026-10-28）=====
+//
+// 背景：转发链接只带 staffId，访客打开海报页是**当场重新生成**一张。
+// 原先访客拿不到员工的版式，看到的是默认版式——员工调的排版、挑的背景、
+// 写的 slogan 全部传不出去，海报作为「可传播的物料」其实没被传递。
+// 这一组用例守两件事：① 访客能拿到员工的版式；② 但拿不到编辑权。
+
+describe('poster 页 · 公开快照与只读态', () => {
+  // 员工排好的一份快照：居中模板 + 自定义背景 + 一句 slogan
+  const SNAPSHOT = {
+    code: 0,
+    data: {
+      exists: true,
+      staffId: MY_STAFF,
+      bgId: 'c-abc123',
+      backgrounds: [CUSTOM_BG],
+      // 座机默认关：显式打开过，正好用来验证「访客拿到的是员工的设置」
+      layout: { template: 'center', showLandline: true, customText: '24 小时上门维修' },
+    },
+  }
+
+  async function bootVisitor(
+    storage: Record<string, string> = {},
+    publicPrefs: any = SNAPSHOT,
+    staffId = '42',
+    prefs: any = null
+  ) {
+    const opts = await loadPage()
+    stubStorage(storage)
+    mockApis(undefined, undefined, { code: 0, data: { items: POSTER_LIST } }, prefs, publicPrefs)
+    stubCanvasNode()
+    const page = instance(opts)
+    await page.onLoad({ staffId })
+    await new Promise((r) => setTimeout(r, 0))
+    return page
+  }
+
+  it('访客：用公开快照里的版式与背景渲染，且拿不到编辑权', async () => {
+    const page = await bootVisitor() // 无 empToken
+    expect(page.data.canEdit).toBe(false)
+    // 关键：员工排的版式真的传过来了
+    expect(page.data.layout.template).toBe('center')
+    expect(page.data.layout.customText).toBe('24 小时上门维修')
+    expect(page.data.layout.showLandline).toBe(true)
+    expect(page.data.bgId).toBe('c-abc123')
+    expect(page.data.customs).toHaveLength(1)
+    // 说明这行字：访客得知道这是谁的、他能做什么
+    expect(page.data.visitorTip).toContain('张伟')
+  })
+
+  // 访客手机上的本机缓存跟员工排的版式无关：读它会让「别人看到的」
+  // 和「员工排的」对不上（员工自己那份存在他自己手机 + 服务端账号里）
+  it('访客：本机缓存不生效（别人手机上的偏好与我无关）', async () => {
+    const page = await bootVisitor(
+      { 'posterBg:42': 'poster-lichun', 'posterLayout:42': '{"template":"minimal"}' },
+      { code: 0, data: { exists: false } }
+    )
+    expect(page.data.layout.template).toBe('classic') // 默认，不是本机的 minimal
+    expect(page.data.canEdit).toBe(false)
+  })
+
+  it('访客：一次 PUT 都不发（改不动，也不该往服务端写）', async () => {
+    const page = await bootVisitor()
+    mocks.request.mockClear()
+    await page.savePrefsNow()
+    expect(mocks.request.mock.calls.filter((c) => c[0] === 'PUT')).toHaveLength(0)
+  })
+
+  it('访客：上传背景被挡（那是员工自己的素材库）', async () => {
+    const page = await bootVisitor()
+    await page.uploadBg()
+    expect((globalThis as any).wx.showModal).toHaveBeenCalled()
+    expect((globalThis as any).wx.chooseMedia).not.toHaveBeenCalled()
+  })
+
+  // 登录员工也会被转发到同事的名片：那时他不该拿到编辑入口。
+  // 判据是「我的 staffId == 页面 staffId」，不是「有没有登录」。
+  it('登录员工打开别人的海报页：只读', async () => {
+    const page = await bootVisitor({ empToken: 'tk-1' }, SNAPSHOT, '99')
+    expect(page.data.canUpload).toBe(true) // 确实登录了
+    expect(page.data.canEdit).toBe(false) // 但这张不是我的
+    mocks.request.mockClear()
+    await page.savePrefsNow()
+    expect(mocks.request.mock.calls.filter((c) => c[0] === 'PUT')).toHaveLength(0)
+  })
+
+  // 防回归：后端 staffId 是新增字段，老后端不回。若只认它，员工升级后
+  // 会突然改不动自己的海报——本机 globalData 那份必须能兜住。
+  it('老后端不回 staffId：靠本机的员工编号认定本人，仍可编辑', async () => {
+    // 后端 staffId 是 2026-10-28 新增字段。若只认它，员工升级小程序后
+    // 会突然改不动自己的海报——本机 globalData 那份必须能兜住。
+    const legacy = {
+      code: 0,
+      data: { exists: true, bgId: 'poster-brand', backgrounds: [], layout: { template: 'stack' } }, // 无 staffId
+    }
+    const page = await bootVisitor({ empToken: 'tk-1' }, null, '42', legacy)
+
+    expect(page.data.canEdit).toBe(true)
+    expect(page.data.layout.template).toBe('stack')
+  })
+
+  it('本人：可编辑，且没有只读说明', async () => {
+    const page = await bootVisitor({ empToken: 'tk-1' }, null, '42', SNAPSHOT)
+
+    expect(page.data.canEdit).toBe(true)
+    expect(page.data.visitorTip).toBe('')
+    expect(page.data.layout.template).toBe('center')
   })
 })

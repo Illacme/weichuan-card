@@ -23,13 +23,10 @@
       </view>
     </view>
 
+    <!-- 名片：看 / 改 / 分享。看与改是同一张名片，故相邻；分享紧随其后 -->
     <view class="section cells">
       <view class="cell" bindtap="goMyCard" hover-class="cell-hover">
         <text class="cell-label">我的名片</text>
-        <text class="cell-arrow">›</text>
-      </view>
-      <view class="cell" bindtap="goPoster" hover-class="cell-hover">
-        <text class="cell-label">生成海报</text>
         <text class="cell-arrow">›</text>
       </view>
       <view class="cell" bindtap="goEdit" hover-class="cell-hover">
@@ -37,30 +34,52 @@
         <text class="cell-value">{{pendingModify ? '审核中' : '修改需超管审核'}}</text>
         <text class="cell-arrow">›</text>
       </view>
+      <view class="cell" bindtap="goPoster" hover-class="cell-hover">
+        <text class="cell-label">生成海报</text>
+        <text class="cell-arrow">›</text>
+      </view>
+    </view>
+
+    <!-- 数据：对外访客/转化分析（与下方「个人信息」是两个东西，靠分组与命名区分） -->
+    <view class="group-label">数据</view>
+    <view class="section cells">
       <view class="cell" bindtap="goStat" hover-class="cell-hover">
         <text class="cell-label">数据统计</text>
         <text class="cell-arrow">›</text>
       </view>
-      <view class="cell" bindtap="goMydata" hover-class="cell-hover">
-        <text class="cell-label">我的数据</text>
-        <text class="cell-arrow">›</text>
-      </view>
+    </view>
+
+    <!-- 账号安全 -->
+    <view class="group-label">账号</view>
+    <view class="section cells">
       <view class="cell" bindtap="openPwd" hover-class="cell-hover">
         <text class="cell-label">修改密码</text>
         <text class="cell-arrow">›</text>
       </view>
-      <view class="cell" bindtap="logout" hover-class="cell-hover">
-        <text class="cell-label danger">退出登录</text>
+    </view>
+
+    <!-- 退出登录：独立按钮，与下方红色「注销账号」拉开，避免同级红色误触 -->
+    <view class="logout-wrap">
+      <button class="logout-btn" bindtap="onLogoutTap">退出登录</button>
+    </view>
+
+    <!-- 隐私与合规：隐私政策 / 个人信息（查阅复制，PIPL）/ 注销账号（删除权，不可恢复） -->
+    <view class="group-label">隐私与合规</view>
+    <view class="section cells">
+      <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
+        <text class="cell-label">隐私政策</text>
+        <text class="cell-arrow">›</text>
+      </view>
+      <!-- 原「我的数据」：查阅 / 复制本人个人信息（PIPL 查阅复制权），名字易与「数据统计」混淆故改名 -->
+      <view class="cell" bindtap="goMydata" hover-class="cell-hover">
+        <text class="cell-label">个人信息</text>
+        <text class="cell-value">查阅 / 复制</text>
         <text class="cell-arrow">›</text>
       </view>
       <!-- 注销账号：PIPL 删除权。不可恢复，故走二次强确认（见 me.ts cancelAccount） -->
       <view class="cell" bindtap="cancelAccount" hover-class="cell-hover">
         <text class="cell-label danger">注销账号</text>
-        <text class="cell-arrow">›</text>
-      </view>
-      <!-- 隐私政策入口：微信审核要求用户可在应用内查阅隐私保护指引 -->
-      <view class="cell" bindtap="goPrivacy" hover-class="cell-hover">
-        <text class="cell-label">隐私政策</text>
+        <text class="cell-value">不可恢复</text>
         <text class="cell-arrow">›</text>
       </view>
     </view>

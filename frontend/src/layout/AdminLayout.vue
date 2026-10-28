@@ -4,7 +4,7 @@
     <div class="aside-backdrop" :class="{ show: asideOpen }" @click="asideOpen = false" />
     <el-aside width="220px" class="admin-aside" :class="{ open: asideOpen }">
       <div class="brand">
-        <span class="brand-logo">智</span>
+        <img class="brand-logo" src="/logo.png" alt="微传名片" />
         <span class="brand-name">{{ brandName }}</span>
       </div>
       <el-menu
@@ -254,12 +254,10 @@ function onCommand(cmd: string) {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  background: #409eff;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
+  background: #fff;
+  display: block;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 .brand-name {
   font-size: 15px;

@@ -1,0 +1,14 @@
+# 微传名片 · Caddy 反向代理（自动签发 + 续期 Let's Encrypt 证书）
+#
+# 启用方式（docker-compose 已加 caddy 服务，profile=https）：
+#   docker compose --profile https up -d --build
+#
+# Caddy 会自动为下方域名申请证书，并在到期前自动续期，无需手动操作。
+# 前端 nginx（frontend:80）已同时托管 SPA 并反代 /api、/uploads 到 backend:8080，
+# 故这里只需把对外 80/443 流量整体转发给 frontend 即可。
+#
+# 注意：首次申请证书需要 80 端口对外可达（ACME http-01 挑战），请确保防火墙放行 80/443。
+
+weichuan.ziyuanxingqiu.cn {
+    reverse_proxy frontend:80
+}

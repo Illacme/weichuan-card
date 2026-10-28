@@ -10,6 +10,7 @@ import (
 	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
+	"weichuan/internal/model"
 	"weichuan/internal/mpupload"
 	"weichuan/internal/pathpick"
 	"weichuan/internal/setting"
@@ -45,7 +46,19 @@ func RegisterSettings(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	})
 
 	r.GET("/api/public/settings", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": setting.Public()})
+		data := setting.Public()
+		// 登录页白标：?company=<白标码> 精确匹配 enabled 企业的 login_code，
+		// 命中则回传该企业 short_name 作为登录页品牌名（login_brand_name），
+		// 未命中（无参数 / 不匹配 / 企业停用）一律回落全局 brand_name。
+		// 安全口径：参数化查询（防注入）+ 只回传 short_name，绝不泄露企业 ID / 名称 /
+		// 管理员等其它字段；company 为空时也不设置该键，前端据此回落。
+		if code := strings.TrimSpace(c.Query("company")); code != "" {
+			var comp model.Company
+			if db.Where("login_code = ? AND status = ?", code, "enabled").First(&comp).Error == nil {
+				data["login_brand_name"] = comp.ShortName
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": data})
 	})
 
 	plat := middleware.PlatformAdminMiddleware(db)

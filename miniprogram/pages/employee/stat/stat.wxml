@@ -1,29 +1,167 @@
+<!-- 员工数据统计页：时间筛选 + 转化三卡 + 趋势柱状 + 内容浏览 TOP3 + 裂变。
+     类名统一 st- 前缀（页面级 wxss 只作用于本页，但 card/panel 这类通用名
+     一旦将来被加进 app.wxss 就会悄悄改写本页样式，加前缀把这个可能性关掉）。 -->
 <view class="stat-page">
   <view class="loading" wx:if="{{loading}}">加载中…</view>
 
   <block wx:elif="{{stat}}">
-    <!-- 空状态（需求 B11）：三项计数全 0 时占位，避免空荡荡的三个 0 -->
-    <view class="stat-empty" wx:if="{{!stat.visit && !stat.call && !stat.save}}">
+    <!-- 时间筛选：三档分段控件。范围一变就是另一份数据，必须重新请求 -->
+    <view class="st-range">
+      <view
+        wx:for="{{ranges}}"
+        wx:key="key"
+        class="st-range-item {{rangeKey === item.key ? 'st-range-on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onRangeTap"
+      >{{item.label}}</view>
+    </view>
+
+    <!-- 空状态（需求 B11）：八项全 0 才占位，避免一屏零 -->
+    <view class="stat-empty" wx:if="{{empty}}">
       <view class="stat-empty-icon">📊</view>
-      <view class="stat-empty-text">暂无访问数据</view>
+      <view class="stat-empty-text">这段时间还没有人访问</view>
       <view class="stat-empty-hint">把名片分享给客户，被浏览后这里会出现统计</view>
     </view>
-    <view class="stat-cards" wx:else>
-      <view class="stat-card">
-        <view class="stat-num">{{stat.visit}}</view>
-        <view class="stat-label">名片访问</view>
+
+    <block wx:else>
+      <!-- 转化三卡：拨号/保存带转化率（率的口径见页脚说明） -->
+      <view class="st-kpis">
+        <view class="st-kpi">
+          <view class="st-kpi-num">{{stat.visit}}</view>
+          <view class="st-kpi-label">名片访问</view>
+          <view class="st-kpi-sub">打开次数</view>
+        </view>
+        <view class="st-kpi">
+          <view class="st-kpi-num">{{stat.call}}</view>
+          <view class="st-kpi-label">拨号点击</view>
+          <view class="st-kpi-sub">拨号率 {{rateCall}}</view>
+        </view>
+        <view class="st-kpi">
+          <view class="st-kpi-num">{{stat.save}}</view>
+          <view class="st-kpi-label">保存点击</view>
+          <view class="st-kpi-sub">保存率 {{rateSave}}</view>
+        </view>
       </view>
-      <view class="stat-card">
-        <view class="stat-num">{{stat.call}}</view>
-        <view class="stat-label">拨号点击</view>
+
+      <!-- 趋势：柱状。指标可切，切换只换取值字段、不重新请求 -->
+      <view class="st-panel">
+        <view class="st-panel-head">
+          <view class="st-panel-title">趋势</view>
+          <view class="st-panel-extra">峰值 {{trendMax}} 次</view>
+        </view>
+        <view class="st-metrics">
+          <view
+            wx:for="{{metrics}}"
+            wx:key="key"
+            class="st-metric {{metricKey === item.key ? 'st-metric-on' : ''}}"
+            data-key="{{item.key}}"
+            bindtap="onMetricTap"
+          >{{item.label}}</view>
+        </view>
+        <view class="st-chart">
+          <view class="st-bar-col" wx:for="{{trend}}" wx:key="date">
+            <view class="st-bar-wrap">
+              <view class="st-bar" style="height:{{item.height}}%"></view>
+            </view>
+            <view class="st-bar-x">{{item.showLabel ? item.label : ''}}</view>
+          </view>
+        </view>
+        <view class="st-chart-foot">区间合计 {{metricTotal}} 次</view>
       </view>
-      <view class="stat-card">
-        <view class="stat-num">{{stat.save}}</view>
-        <view class="stat-label">保存点击</view>
+
+      <!-- 内容浏览：访客在看什么。三类明细 + 案例/服务 TOP3。
+           只有这一组进 TOP 榜——这三类事件带 targetId（案例/服务 id），
+           「对什么内容感兴趣」才有对象可指。 -->
+      <view class="st-panel">
+        <view class="st-panel-head">
+          <view class="st-panel-title">内容浏览</view>
+          <view class="st-panel-extra">共 {{browseTotal}} 次</view>
+        </view>
+        <view class="st-intent">
+          <view class="st-intent-cell" wx:for="{{browseItems}}" wx:key="label">
+            <view class="st-intent-num">{{item.value}}</view>
+            <view class="st-intent-label">{{item.label}}</view>
+          </view>
+        </view>
+
+        <block wx:if="{{topProjects.length}}">
+          <view class="st-sub-title">看最多的案例</view>
+          <view class="st-rank" wx:for="{{topProjects}}" wx:key="targetId">
+            <view class="st-rank-no st-rank-no-{{index + 1}}">{{index + 1}}</view>
+            <view class="st-rank-name">{{item.name}}</view>
+            <view class="st-rank-cnt">{{item.count}} 次</view>
+          </view>
+        </block>
+
+        <block wx:if="{{topServices.length}}">
+          <view class="st-sub-title">看最多的服务</view>
+          <view class="st-rank" wx:for="{{topServices}}" wx:key="targetId">
+            <view class="st-rank-no st-rank-no-{{index + 1}}">{{index + 1}}</view>
+            <view class="st-rank-name">{{item.name}}</view>
+            <view class="st-rank-cnt">{{item.count}} 次</view>
+          </view>
+        </block>
+
+        <view class="st-panel-empty" wx:if="{{!topProjects.length && !topServices.length}}">
+          这段时间还没有人点开你的案例或服务
+        </view>
       </view>
-    </view>
-    <view class="stat-tip">
-      自访客浏览你的名片起实时累计：访问为名片被打开次数，拨号/保存为对应按钮被点击次数。
-    </view>
+
+      <!-- 裂变：把名片传出去的动作。单独一块、不与内容浏览相加——
+           海报保存的主体很可能是你自己（「我的 → 生成海报」只有本人进得去），
+           混进内容浏览会把「访客在看什么」这个数抬高。 -->
+      <view class="st-panel">
+        <view class="st-panel-head">
+          <view class="st-panel-title">裂变</view>
+          <view class="st-panel-extra">共 {{fissionTotal}} 次</view>
+        </view>
+        <view class="st-intent">
+          <view class="st-intent-cell" wx:for="{{fissionItems}}" wx:key="label">
+            <view class="st-intent-num">{{item.value}}</view>
+            <view class="st-intent-label">{{item.label}}</view>
+          </view>
+        </view>
+        <view class="st-panel-note">
+          转发 / 海报保存都是「把名片传出去」的动作，可能由你自己或收到名片的对方发起。
+        </view>
+      </view>
+
+      <!-- 访客从哪来：把「名片访问」按进入渠道拆开（visit 事件）。
+           放在裂变**之后**是有意的：上一块是「我发出去了多少次」（含本人自存，
+           证明不了效果），这一块是「各条路真的带回来多少访问」——「海报」那一行
+           才是海报有没有用的唯一凭据。两块挨着，员工才能自己对照。 -->
+      <view class="st-panel">
+        <view class="st-panel-head">
+          <view class="st-panel-title">访客从哪来</view>
+          <view class="st-panel-extra">共 {{sourceTotal}} 次访问</view>
+        </view>
+        <block wx:if="{{sourceDist.length}}">
+          <view class="st-src">
+            <view class="st-src-row" wx:for="{{sourceDist}}" wx:key="source">
+              <view class="st-src-label">{{item.label}}</view>
+              <view class="st-src-bar-wrap">
+                <view class="st-src-bar" style="width:{{item.width}}%"></view>
+              </view>
+              <view class="st-src-cnt">{{item.count}}</view>
+              <view class="st-src-pct">{{item.pct}}%</view>
+            </view>
+          </view>
+        </block>
+        <view class="st-panel-empty" wx:else>这段时间还没有人访问你的名片</view>
+        <view class="st-panel-note">
+          按进入名片的渠道拆分访问次数，各行相加等于上面的「名片访问」。
+          「海报」= 扫海报上的码进来，可与上方裂变里的「海报保存」对照看。
+        </view>
+      </view>
+
+      <!-- 口径说明：这些数字怎么算的，必须写在用户看得到的地方 -->
+      <view class="stat-tip">
+        均为「次数」而非人数：访问 = 名片被打开的次数，同一个客户看两次算两次。
+        拨号率 / 保存率 = 点击次数 ÷ 访问次数，同一访客可重复点击，故可能超过 100%。
+        内容浏览、裂变两块各自独立统计，不相加。
+        「访客从哪来」按进入渠道拆分访问次数，各行相加等于名片访问数。
+        日期按手机本地时区计算。
+      </view>
+    </block>
   </block>
 </view>

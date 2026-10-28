@@ -2,5 +2,5 @@
   "usingComponents": {
     "privacy-consent": "/components/privacy-consent/index"
   },
-  "navigationBarTitleText": "我的数据"
+  "navigationBarTitleText": "个人信息"
 }

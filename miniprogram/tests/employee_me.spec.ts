@@ -228,6 +228,21 @@ describe('employee/me 页', () => {
     expect(lastToast()).toBe('已退出登录')
   })
 
+  // bindtap 会把事件对象当首个实参传给 handler：若按钮直接绑 logout，
+  // silent 会被事件对象（truthy）顶成「静默」，成功提示永远不弹。
+  // onLogoutTap 必须显式走 logout(false)，这里用带事件对象的调用守住这条。
+  it('点「退出登录」按钮（带事件对象）仍弹提示，不被误判为静默', async () => {
+    storage.set('empToken', 'tk-1')
+    const p = await page()
+    p.data.me = { staffId: 42 }
+
+    // 模拟真实 tap：事件对象作为首个实参传入
+    ;(p as any).onLogoutTap({ type: 'tap', detail: {} })
+
+    expect(storage.has('empToken')).toBe(false)
+    expect(lastToast()).toBe('已退出登录')
+  })
+
   // 改密后的静默登出不该再弹「已退出登录」，那时已经提示过「请重新登录」了
   it('静默登出不弹提示', async () => {
     const p = await page()
@@ -278,6 +293,13 @@ describe('employee/me 注销账号', () => {
     expect(storage.has('empToken')).toBe(false)
     expect(storage.has('empRefreshToken')).toBe(false)
     expect(app.globalData.myStaffId).toBe(0)
+
+    // 成功后 800ms 才 reLaunch（先把 toast 亮出来）。这个定时器必须在本文件内
+    // 走完：本套件以「单 fork 顺序跑全部文件」执行，遗留的定时器会在后一个
+    // 文件里触发，那时 wx 桩已换成没有 reLaunch 的最小桩 → 抛未捕获异常，
+    // 表现为「某个毫不相干的文件莫名红了」（2026-10-27 实测抓到）。
+    await new Promise((r) => setTimeout(r, 900))
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/index/index' })
   })
 
   it('第一次取消确认：不调注销接口、不动本地态', async () => {

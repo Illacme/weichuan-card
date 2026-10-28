@@ -30,6 +30,24 @@ func resolveShortName(raw string) string {
 	return defaultShortName
 }
 
+// validLoginCode 校验登录页白标码格式：小写字母 / 数字 / 连字符，且非空。
+// 仅作格式约束；唯一性在写入时另行校验（避免空串在多企业间冲突，故不依赖 DB 唯一索引）。
+func validLoginCode(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		// 写成「合法即继续」而不是把三个条件取反否定：后者 staticcheck 会提
+		// QF1001（could apply De Morgan's law），而展开的否定式（r < 'a' || r > 'z'）
+		// 远比白名单本身难读——白名单要一眼看出「允许什么」。
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // independentLocked 是否开启「独立版企业锁定」（后台「系统设置 → 功能开关 → independent_lock」）。
 // 开启后企业管理整体只读：列表 / 管理员列表照常可查，
 // 但新建企业、编辑企业、启停企业、新建企业管理员一律拒绝。
@@ -175,19 +193,20 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 				exp = lic.ExpiresAt.Format("2006-01-02")
 				expired = now.After(lic.ExpiresAt)
 			}
-			data = append(data, gin.H{
-				"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
-				"createdAt":     comp.CreatedAt,
-				"employeeCount": empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
-				"wxConfigured": wxOK[comp.ID],
-				// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
-				"storageBytes":     storeBytes[comp.ID],
-				"licenseExists":    lic.ID > 0,
-				"licenseEdition":   lic.Edition,
-				"licenseSeats":     lic.Seats,
-				"licenseExpiresAt": exp,
-				"licenseExpired":   expired,
-			})
+		data = append(data, gin.H{
+			"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
+			"loginCode":      comp.LoginCode,
+			"createdAt":      comp.CreatedAt,
+			"employeeCount":  empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
+			"wxConfigured": wxOK[comp.ID],
+			// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
+			"storageBytes":     storeBytes[comp.ID],
+			"licenseExists":    lic.ID > 0,
+			"licenseEdition":   lic.Edition,
+			"licenseSeats":     lic.Seats,
+			"licenseExpiresAt": exp,
+			"licenseExpired":   expired,
+		})
 		}
 		pagedOK(c, data, total, page, size)
 	})
@@ -204,12 +223,26 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		var req struct {
 			Name          string `json:"name"`
 			ShortName     string `json:"shortName"`
+			LoginCode     string `json:"loginCode"`
 			AdminUsername string `json:"adminUsername"`
 			AdminPassword string `json:"adminPassword"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Name == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
+		}
+		// 登录白标码（?company=）：填写时才校验格式与唯一性
+		if req.LoginCode != "" {
+			if !validLoginCode(req.LoginCode) {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登录白标码仅限小写字母、数字、连字符"})
+				return
+			}
+			var cnt int64
+			db.Model(&model.Company{}).Where("login_code = ?", req.LoginCode).Count(&cnt)
+			if cnt > 0 {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登录白标码已存在"})
+				return
+			}
 		}
 		// 企业管理员二选一：要么都填（建账号），要么都不填（后续再建）
 		if (req.AdminUsername == "") != (req.AdminPassword == "") {
@@ -224,7 +257,7 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 				return
 			}
 		}
-		comp := model.Company{Name: req.Name, ShortName: resolveShortName(req.ShortName), Status: "enabled", CreatedAt: time.Now()}
+		comp := model.Company{Name: req.Name, ShortName: resolveShortName(req.ShortName), LoginCode: req.LoginCode, Status: "enabled", CreatedAt: time.Now()}
 		// 企业行 + 种子内容 + 试用授权放在**同一个事务**里。
 		//
 		// 为什么不各自 Create 了事：B4 的机制是「新租户靠这条试用授权行才受约束」，
@@ -275,19 +308,34 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		var req struct {
 			Name      string `json:"name"`
 			ShortName string `json:"shortName"`
+			LoginCode string `json:"loginCode"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Name == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		// 登录白标码（?company=）：填写时校验格式与唯一性（排除自身）；
+		// 留空表示清除该企业的白标码（登录页回落全局品牌）
+		if req.LoginCode != "" {
+			if !validLoginCode(req.LoginCode) {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登录白标码仅限小写字母、数字、连字符"})
+				return
+			}
+			var cnt int64
+			db.Model(&model.Company{}).Where("login_code = ? AND id <> ?", req.LoginCode, id).Count(&cnt)
+			if cnt > 0 {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登录白标码已存在"})
+				return
+			}
+		}
 		if db.Model(&model.Company{}).Where("id = ?", id).
-			Updates(map[string]interface{}{"name": req.Name, "short_name": resolveShortName(req.ShortName)}).RowsAffected == 0 {
+			Updates(map[string]interface{}{"name": req.Name, "short_name": resolveShortName(req.ShortName), "login_code": req.LoginCode}).RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionCompanyUpdate, TargetType: "company", TargetID: strconv.FormatInt(id, 10),
-			Detail: map[string]any{"name": req.Name, "shortName": req.ShortName},
+			Detail: map[string]any{"name": req.Name, "shortName": req.ShortName, "loginCode": req.LoginCode},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})

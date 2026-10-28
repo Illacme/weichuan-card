@@ -61,6 +61,7 @@ miniprogram/
 | action-bar | wx.makePhoneCall + POST /api/stat/track(call/save) |
 | company-video | POST /api/stat/track(video_play，组件级去重) |
 | poster | GET /api/card, GET /api/wechat/wxacode?staffId=&from=poster + POST /api/stat/track(share：发送给好友 / 右上角转发；poster_save：保存成功后) |
+| employee/stat | GET /api/employee/me/stat（八类计数 + 按天趋势 + 案例/服务 TOP3 + 来源分布） |
 
 ## 埋点（utils/track.ts）
 - 统一入口 `track(event, staffId, targetId = 0, source = '')`：staffId ≤ 0 或事件不在白名单里**就地丢弃**（不发请求），
@@ -96,8 +97,15 @@ miniprogram/
   绝不参与权限 / 租户 / 计费判断。
 - 已知边界：`<channel-video>`（视频号）官方只开放 `binderror`，无播放事件——视频号档
   位的 video_play 缺失是文档级限制，不是实现缺陷；`<video>` 档位正常上报。
-- 埋点在 PC 后台「名片统计」消费：转化三指标 + 内容意向五指标 + TOP 案例/服务榜 +
-  明细下钻 + **流量来源分布 + 裂变榜**。
+- 埋点在 PC 后台「名片统计」消费：转化三指标 + 内容浏览三指标 + 裂变两指标 +
+  TOP 案例/服务榜 + 明细下钻 + **流量来源分布 + 裂变榜**。
+  三组**互不相加**：内容浏览只有带 targetId 的案例/服务/视频三类（进 TOP 榜），
+  `share` / `poster_save` 属裂变动作——它们不带 targetId，且海报页唯一入口
+  「我的 → 生成海报」只有员工本人进得去，主体可能是本人（见 `backend/README.md`）。
+- 员工端「我的 → 数据统计」自己消费同一份埋点：八项计数 + 按天趋势 + 案例/服务 TOP3 +
+  **访客从哪来**（只统计 `visit`，各行之和恒等于访问数，可与转化卡对账）。
+  其中「海报」一行是员工唯一能证明海报真的带来访问的凭据——裂变里的
+  「海报保存」主体可能是本人，证明不了效果。
 
 ## 员工头像上传
 - 员工修改页 `pages/employee/edit` 的头像由「URL 文本输入」改为「选图上传」：用 `wx.chooseMedia` 选图，经 `wx.uploadFile` 调后端 `POST /api/employee/upload`（员工鉴权，复用同一 storage.Uploader），返回 URL 写回 `form.avatar`，再随 `PUT /api/employee/me` 提交审核。与 PC 端 `UploadField` 调用 `/api/admin/upload` 同一思路、同一存储层，仅鉴权角色不同。
@@ -108,7 +116,17 @@ miniprogram/
 - 背景层与蒙层用 `position: fixed` + 负 `z-index` 铺在最底层，内容按常规流绘制天然在其上方，不会互相遮挡；有背景时顶栏改为半透明白、板块卡片加圆角阴影（`.has-bg`）。
 
 ## 小程序码 + 海报生成
-- 后端 `GET /api/wechat/wxacode?staffId=` 调用微信 `getwxacodeunlimit` 生成小程序码（scene=`staffId=12`），按员工磁盘缓存到 `uploads/wxacode/<id>.jpg` 并返回可访问 URL（复用 `/uploads` 静态托管），避免反复消耗微信配额；access_token 在服务端内存缓存并在失效时自动刷新重试。
+- **海报页对访客是「只读预览」**（2026-10-28 起）：`canEdit` = 登录 && 页面 `staffId` 就是我自己
+  （两个来源：员工接口回的 `staffId`，或登录时写进 `globalData.myStaffId` 的那份；
+  两个都没有才降级只读）。只读态隐藏拖动层 / 工具条 / 选项面板 / 上传入口，
+  只留「保存到相册」「发送给好友」——海报是发给外人看的营销物料，
+  被收件人改写再转发出去，品牌就不可控。只读态顶部有一行说明这是谁的名片。
+- **访客看到的必须是员工排的那张**：转发链接只带 `staffId`，而版式原本只存在员工本机
+  （`posterLayout:<staffId>`）与他的账号里（`/api/employee/poster-prefs` 要鉴权）——
+  访客两者都拿不到，会落回 `DEFAULT_LAYOUT`，员工调的排版 / 挑的背景 / 写的 slogan
+  全部传不出去。故新增公开快照 `GET /api/poster-prefs?staffId=`（无鉴权、只回渲染
+  这一张所需的最小集），访客用它渲染；本机缓存**只对本人**生效。
+- 后端 `GET /api/wechat/wxacode?staffId=` 调用微信 `getwxacodeunlimit` 生成小程序码（scene=`staffId=12&from=poster`），按员工磁盘缓存到 `uploads/wxacode/<id>.jpg` 并返回可访问 URL（复用 `/uploads` 静态托管），避免反复消耗微信配额；access_token 在服务端内存缓存并在失效时自动刷新重试。
 - 小程序端 `pages/poster/poster` 用 canvas 2d 把「头像 / 姓名 / 职位 / 公司 / 地址 / 电话 / 小程序码」合成为海报图，`wx.canvasToTempFilePath` 导出后 `wx.saveImageToPhotosAlbum` 保存到相册。
 - 首页「生成分享海报」与「我的」页「生成海报」均跳转到 poster 页（携带 staffId）。
 
@@ -367,12 +385,7 @@ miniprogram/
 
 ## 运行
 1. 微信开发者工具 → 导入项目 → 选择 `miniprogram/` 目录（appid 可用测试号）。
-2. 把 `utils/config.ts` 的 `DEFAULT_BASE_URL` 填成后端地址（**默认为空**，源码里不放任何地址；
-   它是「还没拿到后台配置时」的引导种子）；开发阶段 `project.config.json` 已设 `urlCheck:false`
-   允许 http。**这段改动只用于本机联调，不要提交**——空值 / 私有网段会被
-   `scripts/preflight.sh` 第 3 节判 FAIL。
-   联调起来后即可由 PC 后台「系统设置 → 小程序 → `miniprogram_base_url`」下发正式基址，
-   不必再改代码打包（目标域名仍需是已配置的 request 合法域名）。
+2. **基址按运行环境自动切换**（见 `utils/config.ts` 的 `resolveBaseUrl()`）：微信开发者工具（`envVersion='develop'`）自动用 `DEV_BASE_URL`（默认 `http://127.0.0.1:8080`，需在开发者工具勾选「不校验合法域名」，`project.config.json` 已设 `urlCheck:false`）；体验版 / 正式版（`trial`/`release`）用 `DEFAULT_BASE_URL`（生产域名 `https://weichuan.ziyuanxingqiu.cn`）。**无需再手动改代码**；临时想让 develop 连别的地址，可在开发者工具 Console 执行 `wx.setStorageSync('mpBaseUrlOverride', 'https://xxx')`（删除该键或写空串即恢复自动）。生产基址也可由 PC 后台「系统设置 → 小程序 → `miniprogram_base_url`」下发覆盖（目标域名仍需是已配置的 request 合法域名）。
 3. 生产需在小程序后台配置 request 合法域名（https）。
 
 ## 本地联调（推荐：免 MySQL 的 devserver）
@@ -384,7 +397,7 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 内置演示数据：平台超管 `admin / admin123456`；演示员工 手机 `13832603521` / 密码 `weichuan123`（高立新，业务经理，staffId=1）；公司信息、7 个业绩分类、多个项目案例、4 个业务服务、首页布局。
 小程序侧联调步骤：
 1. 微信开发者工具导入 `miniprogram/`（测试号 appid，`urlCheck:false` 已开）。
-2. 把 `utils/config.ts` 的 `DEFAULT_BASE_URL`（默认空）填成开发机地址：模拟器用 `http://127.0.0.1:8080`，真机用电脑局域网 IP（同网段、关防火墙）。
+2. 无需改代码：微信开发者工具模拟器（`envVersion='develop'`）会自动走 `DEV_BASE_URL=http://127.0.0.1:8080` 连本机 devserver（`project.config.json` 已设 `urlCheck:false`）；真机调试若需连本机，把 `DEV_BASE_URL` 改成电脑局域网 IP（同网段、关防火墙）。体验版 / 正式版恒走生产 `DEFAULT_BASE_URL`，互不影响。
 3. 首页直接打开会弹「输入员工编号」，输入 `1` 进入演示员工名片；或经 PC 后台生成的分享链接 / 小程序码进入（scene=`staffId=1`）。
 4. 员工登录页用 `13832603521 / weichuan123` 登录，可改头像（上传走 `/api/employee/upload`）、提交名片修改（待平台/企业管理员审核）。
 5. 多租户联调：平台超管在 PC 后台「企业管理」开通企业并建企业管理员 → 企业管理员登录管理自己企业的内容 → 小程序申请页填 `companyId` 或用 `?companyId=` 访问公开接口验证隔离（见「多租户与企业独立版」）。

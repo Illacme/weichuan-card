@@ -137,6 +137,18 @@ function doRequest<T>(
       },
       success: (res) => {
         const result = res.data as ApiResult<T>
+        // 网关/反代兜底页（nginx 404/502 的 HTML）不是接口信封：resolve 出去会让
+        // 调用方把「服务不可达」误判成业务态（如员工不存在 → 引导用户改编号，
+        // 真实原因却是后端没通）。统一按网络错误 reject，让页面走 error 态。
+        // 后端约定业务错误恒为 HTTP 200 + {code}（401/403 也在 200 信封里），
+        // 因此 statusCode>=400 或响应体不是对象都只可能来自代理/网关。
+        // statusCode 不判定 undefined（单测桩不传该字段，缺省视为 200）。
+        const badStatus = typeof res.statusCode === 'number' && res.statusCode >= 400
+        const notEnvelope = typeof result !== 'object' || result === null
+        if (badStatus || notEnvelope) {
+          reject(new Error(`接口不可用（HTTP ${res.statusCode ?? '-'}）`))
+          return
+        }
         if (result && result.code === 401 && !retried) {
           // 先用 refresh 令牌换新 access，再重试一次
           if (!refreshing) {

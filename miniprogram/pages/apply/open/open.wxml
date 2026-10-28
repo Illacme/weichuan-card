@@ -91,4 +91,4 @@
 
 <!-- 微信隐私授权弹窗：调用隐私接口（选图 / 昵称）前由 ensurePrivacy 弹出，
      用户同意后才继续。组件挂在页面末尾，遮罩层覆盖全屏。 -->
-<privacy-consent visible="{{privacyVisible}}" />
+<privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />

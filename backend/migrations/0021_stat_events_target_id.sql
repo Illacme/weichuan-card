@@ -10,7 +10,7 @@
 -- （visit / video_play / poster_save / 转发名片）记 0。事件类型的完整
 -- 清单与各类型的 target 约定见 internal/handler/stat.go 的 statEventTypes。
 --
--- 复合索引 (event_type, target_id)：后台「内容意向 TOP 榜」的查询形状是
+-- 复合索引 (event_type, target_id)：后台「内容浏览 TOP 榜」的查询形状是
 --   WHERE event_type = 'project_view' ... GROUP BY target_id ORDER BY n DESC，
 -- 前缀 event_type 走索引过滤，target_id 随聚合覆盖，不必回表。
 --

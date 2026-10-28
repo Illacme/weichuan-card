@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
@@ -385,13 +387,66 @@ func nearestPosterQrSize(v int) int {
 	return best
 }
 
-// RegisterPoster 注册海报个性化设置接口（员工鉴权）。
+// RegisterPoster 注册海报个性化设置接口。
 //
-// 为什么不做成公开端点：自定义背景是员工自己上传的私有素材，
-// 别人（包括扫海报进来的访客）没有理由读到他的背景库；访客看海报时
-// 渲染的是**已生成的图片**，不需要这些配置。
+// 两套端点，读的是同一行数据，暴露的字段不同：
+//   - /api/employee/poster-prefs（员工鉴权）：读写完整设置，含**全部**自定义背景
+//     （员工自己的素材库，他有权增删）。
+//   - /api/poster-prefs?staffId=（公开）：只读快照，只含「渲染这一张海报」所需的最小集。
+//
+// 为什么必须有公开快照（2026-10-28 补）：
+// 原先的注释写的是「访客不需要这些配置，因为他渲染的是已生成的图片」——
+// 这个前提是错的。海报页是**编辑器**，转发链接只带 staffId，访客打开时是
+// 当场用「员工名片数据 + 客户端默认版式」重新生成一张，员工调的排版、挑的
+// 自定义背景、写的那句 slogan 全都传不出去。海报作为「可传播的营销物料」，
+// 物料本身并没有被传递，被传递的只是一个生成器的链接。
+// 公开快照让「访客看到的」=「员工排的」，是海报能成立的前提。
 func RegisterPoster(r *gin.Engine, db *gorm.DB) {
 	emp := middleware.AuthMiddleware(db, "employee")
+
+	// 公开快照按 IP 限流：staffId 是可枚举整数，不限流时一个脚本能把这张表
+	// 刷成全表扫描。桶键带 posterpref: 前缀——rate_limit_hits 是 login:/refresh:
+	// /track: 共用的，裸 IP 当键会挤进同一行计数，把同 IP 的登录打到 429。
+	publicLimiter := middleware.NewRateLimiter(func() int { return 60 }, 60, time.Minute).
+		WithKey(func(c *gin.Context) string { return "posterpref:" + c.ClientIP() }).
+		WithMessage("请求过于频繁，请稍后再试").
+		WithCounter(dbRateCounter{db: db})
+
+	r.GET("/api/poster-prefs", publicLimiter.Handler(), func(c *gin.Context) {
+		staffID, _ := strconv.ParseInt(c.Query("staffId"), 10, 64)
+		if staffID <= 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "缺少 staffId"})
+			return
+		}
+		// 存在性与停用判定与 /api/card 同一口径（code:1 不存在 / code:2 停用）：
+		// 停用的员工不该继续对外发他的版式与自定义背景。
+		var e model.Employee
+		if err := db.Select("staff_id, status").Where("staff_id = ?", staffID).First(&e).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "员工不存在"})
+			return
+		}
+		if e.Status == "disabled" {
+			c.JSON(http.StatusOK, gin.H{"code": 2, "msg": "该员工名片已停用"})
+			return
+		}
+		var p model.PosterPref
+		if err := db.Where("staff_id = ?", staffID).First(&p).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 没存过（新员工 / 从没调过版式）：回默认而不是 404——
+				// 客户端据此照旧走内置默认款或当天节气素材，两种情况渲染结果
+				// 本来就一样。exists=false 让端上不必区分。
+				c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(
+					staffID, "", nil, DefaultPosterLayout(), false)})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
+			return
+		}
+		// 只回当前选中那一张自定义背景，不回整份清单（见 publicPosterBackgrounds）
+		bgs := decodePosterBackgrounds(p.Backgrounds)
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(
+			staffID, p.BgID, publicPosterBackgrounds(p.BgID, bgs), decodePosterLayout(p.Layout), true)})
+	})
 
 	r.GET("/api/employee/poster-prefs", emp, func(c *gin.Context) {
 		staffID := c.GetInt64("staffId")
@@ -402,14 +457,18 @@ func RegisterPoster(r *gin.Engine, db *gorm.DB) {
 				// 「老用户但没调过」——两种情况渲染结果本来就一样。
 				// exists=false 是给客户端的一个信号：服务端没有可信记录，
 				// 请沿用本机缓存的选择（否则换新账号第一进页面会把手挑的背景冲掉）。
-				c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload("", nil, DefaultPosterLayout(), false)})
+				// staffId 一并返回：海报页会被转发给任何人，登录员工也可能打开
+				// **别人**的海报页，端上要靠它判断「这张是不是我的」才能决定给不给
+				// 编辑入口——否则还得为这个判断单独打一次 /api/employee/me。
+				c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(
+					staffID, "", nil, DefaultPosterLayout(), false)})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(
-			p.BgID, decodePosterBackgrounds(p.Backgrounds), decodePosterLayout(p.Layout), true)})
+			staffID, p.BgID, decodePosterBackgrounds(p.Backgrounds), decodePosterLayout(p.Layout), true)})
 	})
 
 	r.PUT("/api/employee/poster-prefs", emp, func(c *gin.Context) {
@@ -470,8 +529,28 @@ func RegisterPoster(r *gin.Engine, db *gorm.DB) {
 
 		// 回传归一后的结果：客户端据此纠正自己的本地状态（比如上传了第 10 张被截断、
 		// 或者选中的自定义背景刚好被这次保存丢掉），避免「本地显示有、后端没有」的错位。
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(bgID, bgs, layout, true)})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": posterPrefPayload(staffID, bgID, bgs, layout, true)})
 	})
+}
+
+// publicPosterBackgrounds 公开快照只回「当前选中的那一张」自定义背景，
+// 而不是整份清单（最多 9 条）。
+//
+// 为什么必须收窄：backgrounds 是员工自己上传的私有素材，未被选中的那几张
+// 从未打算公开；而渲染这一张海报只需要 bgId 指向的那一张。全量下发等于把
+// 员工整个私有图库挂在无鉴权接口上——任何人拿到 staffId（本来就是公开的，
+// /api/card 同样靠它取数）就能翻遍他传过的所有背景。
+// 内置素材（poster-*）客户端自带清单，白底不需要任何图，都回空。
+func publicPosterBackgrounds(bgID string, bgs []PosterBackground) []PosterBackground {
+	if !strings.HasPrefix(bgID, "c-") {
+		return nil
+	}
+	for _, bg := range bgs {
+		if bg.ID == bgID {
+			return []PosterBackground{bg}
+		}
+	}
+	return nil
 }
 
 // isPosterBgAvailable 判断选中的背景是否还在。
@@ -488,11 +567,12 @@ func isPosterBgAvailable(bgID string, bgs []PosterBackground) bool {
 	return false
 }
 
-func posterPrefPayload(bgID string, bgs []PosterBackground, layout PosterLayout, exists bool) gin.H {
+// posterPrefPayload 统一响应形状：员工端与公开快照共用，端上不必分两套解析。
+func posterPrefPayload(staffID int64, bgID string, bgs []PosterBackground, layout PosterLayout, exists bool) gin.H {
 	if bgs == nil {
 		bgs = []PosterBackground{} // 序列化成 []，客户端不必判 null
 	}
-	return gin.H{"bgId": bgID, "backgrounds": bgs, "layout": layout, "exists": exists}
+	return gin.H{"staffId": staffID, "bgId": bgID, "backgrounds": bgs, "layout": layout, "exists": exists}
 }
 
 // decodePosterLayout 读库并归一。库里可能有历史脏值（改过白名单 / 手工改库），

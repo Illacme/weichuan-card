@@ -52,17 +52,18 @@
       <!-- 按天趋势：只含所选范围内有事件的日期；点某一天可下钻当天明细（常驻首屏，运营每天看健康度） -->
       <StatTrend :points="trend" @pick="onTrendPick" />
 
-      <!-- 折叠区1：内容意向（五卡 + TOP 双榜），默认收起，点标题展开（方案A 同页分区） -->
+      <!-- 折叠区1：内容浏览三卡 + 裂变动作两卡 + TOP 双榜，默认收起（方案A 同页分区） -->
       <section class="fold fold-intent" :class="{ open: intentOpen }">
         <div class="fold-head" @click="intentOpen = !intentOpen">
-          <span class="fold-title">内容意向<span class="fold-sub">访客对什么内容感兴趣</span></span>
+          <span class="fold-title">内容浏览与裂变<span class="fold-sub">访客在看什么 · 名片被传出去多少</span></span>
           <el-icon class="fold-arrow"><ArrowDown /></el-icon>
         </div>
         <div v-show="intentOpen" class="fold-body">
-          <!-- 内容意向五卡：案例/服务/视频/转发/海报（事件与 targetId 口径见
-               backend/internal/handler/stat.go 文件头——与转化三卡分工明确） -->
+          <!-- 内容浏览三卡：案例/服务/视频。这三类是唯一「指向具体内容对象」的事件
+               （targetId 强制存在且同租户），所以只有它们进 TOP 榜，
+               也才配叫「访客对什么内容感兴趣」。口径见 stat.go 文件头。 -->
           <div class="intent-block">
-            <div class="intent-title">内容意向<span class="intent-sub">访客对什么内容感兴趣</span></div>
+            <div class="intent-title">内容浏览<span class="intent-sub">访客对什么内容感兴趣</span></div>
             <div class="stat-cards intent-cards">
               <div class="stat-card">
                 <div class="stat-label">案例浏览</div>
@@ -76,6 +77,15 @@
                 <div class="stat-label">视频播放</div>
                 <div class="stat-value">{{ summary.videoPlay }}</div>
               </div>
+            </div>
+          </div>
+          <!-- 裂变动作两卡：转发 / 海报保存。
+               为什么不并入上面的「内容浏览」：这两类不带 targetId、不指向任何内容对象，
+               且执行者可能是员工本人（「我的 → 生成海报」入口只有本人才进得去），
+               混进「访客对什么内容感兴趣」既答不了那个问题，又会把意向总量抬高。 -->
+          <div class="intent-block">
+            <div class="intent-title">裂变动作<span class="intent-sub">把名片传出去的动作 · 主体可能是员工本人</span></div>
+            <div class="stat-cards intent-cards">
               <div class="stat-card">
                 <div class="stat-label">转发</div>
                 <div class="stat-value">{{ summary.share }}</div>
@@ -86,7 +96,7 @@
               </div>
             </div>
           </div>
-          <!-- 内容意向 TOP 榜：按 target_id 聚合（口径见 stat.go statTopTargets）。
+          <!-- 内容浏览 TOP 榜：按 target_id 聚合（口径见 stat.go statTopTargets）。
                点某行直接下钻该对象的明细——「哪个案例热」到这里就有答案。
                对象被删除后行仍在（计数不减），避免「汇总 3 条、榜单加起来 2 条」。 -->
           <div class="top-boards">
@@ -172,13 +182,23 @@
             <el-table-column prop="visit" label="访问" width="110" align="right" sortable />
             <el-table-column prop="call" label="拨号" width="110" align="right" sortable />
             <el-table-column prop="save" label="保存" width="110" align="right" sortable />
-            <!-- 内容意向：五类意向事件的合计，悬浮看拆分。做成一列而不是五列——
-                 五列会把表格推到 1200px+ 需要横向滚动，而「谁带来的意向多」用
-                 一个数就够读；细分走行「明细」下钻（那里能按事件类型逐类筛） -->
-            <el-table-column prop="intent" label="内容意向" width="120" align="right" sortable>
+            <!-- 内容浏览：三类浏览事件的合计，悬浮看拆分。做成一列而不是三列——
+                 三列会把表格推到需要横向滚动，而「谁带来的浏览多」用一个数就够读；
+                 细分走行「明细」下钻（那里能按事件类型逐类筛） -->
+            <el-table-column prop="browse" label="内容浏览" width="110" align="right" sortable>
               <template #default="{ row }">
-                <el-tooltip placement="top" :content="intentTip(row)">
-                  <span class="intent-cell">{{ row.intent }}</span>
+                <el-tooltip placement="top" :content="browseTip(row)">
+                  <span class="intent-cell">{{ row.browse }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <!-- 裂变：转发 + 海报保存的合计。与「内容浏览」分列而不是合并：
+                 两者的主体和行为性质都不同（可能是员工自己把名片传出去），
+                 合成一个数会让「谁的内容被看得多」和「谁在使劲传播」混成一谈 -->
+            <el-table-column prop="fission" label="裂变" width="90" align="right" sortable>
+              <template #default="{ row }">
+                <el-tooltip placement="top" :content="fissionTip(row)">
+                  <span class="intent-cell">{{ row.fission }}</span>
                 </el-tooltip>
               </template>
             </el-table-column>
@@ -189,7 +209,7 @@
             </el-table-column>
           </el-table>
           <p class="tip">
-            口径：只记前端点击、不校验真实结果（需求 §6）。「内容意向」是案例浏览/服务浏览/视频播放/转发/海报保存五类事件的合计，悬浮可看拆分，行「明细」可逐类下钻。想看某员工的名片实际效果，在小程序首页输入其编号即可预览。
+            口径：只记前端点击、不校验真实结果（需求 §6）。「内容浏览」是案例浏览/服务浏览/视频播放三类事件的合计——这三类都指向具体内容对象（案例/服务），才叫「访客对什么内容感兴趣」。「裂变」是转发 + 海报保存的合计，主体可能是员工本人（「我的 → 生成海报」只有本人进得去），故单独成列、不与内容浏览相加。悬浮可看拆分，行「明细」可逐类下钻。想看某员工的名片实际效果，在小程序首页输入其编号即可预览。
           </p>
 
           <el-pagination
@@ -235,8 +255,9 @@ const { keyword, currentPage, size, total, paged } = useTable(
     (r.name || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw)
 )
 const loading = ref(false)
-// 方案A 同页分区折叠：内容意向（五卡+TOP榜）与按员工表默认收起，点分区标题展开。
-// 常驻首屏只留工具条+转化三卡+趋势图，保住转化vs意向的同屏对比与下钻闭环，只给首屏减负。
+// 方案A 同页分区折叠：内容浏览与裂变（三卡+两卡+TOP榜）与按员工表默认收起，
+// 点分区标题展开。常驻首屏只留工具条+转化三卡+趋势图，保住转化 vs 内容浏览的
+// 同屏对比与下钻闭环，只给首屏减负。
 const intentOpen = ref(false)
 const staffOpen = ref(false)
 const sourceOpen = ref(false)
@@ -336,15 +357,20 @@ function onTopRowClick(eventType: 'project_view' | 'service_view', row: StatTopI
   openDetail(0, eventType, row.targetId, row.name)
 }
 
-// 「内容意向」列的悬浮文案：给出五类拆分，省掉五列表格
-function intentTip(row: any): string {
+// 「内容浏览」列的悬浮文案：只给三类浏览事件。这里不放转发/海报保存——
+// 那两项在单独的「裂变」列里，混进来就等于把两列拆了个寂寞。
+function browseTip(row: any): string {
   const parts = [
     `案例浏览 ${row.projectView || 0}`,
     `服务浏览 ${row.serviceView || 0}`,
     `视频播放 ${row.videoPlay || 0}`,
-    `转发 ${row.share || 0}`,
-    `海报保存 ${row.posterSave || 0}`,
   ]
+  return parts.join(' · ')
+}
+
+// 「裂变」列的悬浮文案：转发 / 海报保存两项。
+function fissionTip(row: any): string {
+  const parts = [`转发 ${row.share || 0}`, `海报保存 ${row.posterSave || 0}`]
   return parts.join(' · ')
 }
 
@@ -353,16 +379,14 @@ async function load() {
   try {
     const r = await adminStats(rangeParam.value)
     summary.value = r.summary
-    // 意向合计在前端算：后端每行已给五个分项（CSV 要用分项），
-    // 表格只要一个「内容意向」数——多算一列比多传五列更省，也不改接口契约
+    // 浏览合计 / 裂变合计在前端算：后端每行已给五个分项（CSV 要用分项），
+    // 表格只要两个数——多算两列比多传五列更省，也不改接口契约。
+    // 两者**不相加**：内容浏览答「访客在看什么」，裂变答「名片被传出去多少」，
+    // 后者主体可能是员工本人（见页脚口径说明）。
     rows.value = r.byStaff.map((x: any) => ({
       ...x,
-      intent:
-        (x.projectView || 0) +
-        (x.serviceView || 0) +
-        (x.videoPlay || 0) +
-        (x.share || 0) +
-        (x.posterSave || 0),
+      browse: (x.projectView || 0) + (x.serviceView || 0) + (x.videoPlay || 0),
+      fission: (x.share || 0) + (x.posterSave || 0),
     }))
     trend.value = r.trend
     topProjects.value = r.topProjects
@@ -421,8 +445,8 @@ onMounted(load)
   border-radius: 6px;
   background: #fafcff;
 }
-/* 内容意向区：五张意向卡横排，窄屏自动换行成 2~3 个一排
-   （不跟三卡一起纵向堆叠——五张全屏高卡片会把趋势图挤出首屏） */
+/* 内容浏览/裂变区：卡片横排，窄屏自动换行成 2~3 个一排
+   （不跟三卡一起纵向堆叠——满屏高的卡片会把趋势图挤出首屏） */
 .intent-block {
   margin-bottom: 4px;
 }
@@ -545,7 +569,7 @@ onMounted(load)
   color: #909399;
   font-size: 12px;
 }
-/* 分区折叠（方案A 同页分区）：常驻区之外的「内容意向」「按员工」默认收起，点标题展开。
+/* 分区折叠（方案A 同页分区）：常驻区之外的「内容浏览与裂变」「按员工」默认收起，点标题展开。
    折叠区本身在移动端即承担手风琴角色，配合下方媒体查询的堆叠即可，无需额外机制。 */
 .fold {
   margin-bottom: 16px;
@@ -598,7 +622,7 @@ onMounted(load)
   .stat-value {
     font-size: 24px;
   }
-  /* 意向五卡不堆叠（五张满宽卡片太高），靠换行挤成 2~3 个一排 */
+  /* 内容浏览/裂变卡片不堆叠（满宽卡片太高），靠换行挤成 2~3 个一排 */
   .intent-cards {
     flex-direction: row;
     gap: 8px;

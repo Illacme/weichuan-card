@@ -198,7 +198,7 @@ func main() {
 	setup.RegisterSetupAlias(r)
 
 	log.Printf("dev server listening on :%s (storage=local, db=sqlite)", port)
-	log.Printf("演示账号：平台超管 %s/%s；员工手机 13832603521 / 密码 weichuan123（高立新，业务经理）", cfg.AdminUser, cfg.AdminPass)
+	log.Printf("演示账号：\n  平台超管(PC 后台) %s/%s\n  企业管理员(PC 后台·朗汇) langhui/langhui123\n  企业员工(小程序·非 PC 后台) 手机 13832603521 / 密码 weichuan123（高立新，业务经理）", cfg.AdminUser, cfg.AdminPass)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal(err)
 	}
@@ -230,7 +230,9 @@ func seedDemoData(db *gorm.DB, cfg config.Config) {
 	assets := writeSeedAssets(cfg.UploadDir)
 
 	// 1 号租户：朗汇机电（存量演示数据全部归属；多租户第一期的小程序缺省也落这里）
-	db.Where("id = ?", 1).FirstOrCreate(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled"})
+	db.Where("id = ?", 1).FirstOrCreate(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled", LoginCode: "langhui"})
+	// FirstOrCreate 命中存量行时不会更新其它列，故白标码需显式补写（幂等，反复启动安全）
+	db.Model(&model.Company{}).Where("id = ?", 1).Update("login_code", "langhui")
 
 	// 公司信息 / 简介（company_id=1）
 	db.Where("company_id = ?", 1).FirstOrCreate(&model.CompanyInfo{
@@ -339,6 +341,16 @@ func seedDemoData(db *gorm.DB, cfg config.Config) {
 		var got model.Employee
 		db.Where("phone_bidx = ?", pii.BlindIndex("13832603521")).First(&got)
 		fmt.Printf("演示员工 staffId=%d\n", got.StaffID)
+	}
+
+	// 1 个演示企业管理员（朗汇 company_id=1）：用于以「企业管理员」角色在 PC 后台联调，
+	// 区别于平台超管（只看本企业数据）。独立账号（用户名+密码），与员工(Employee)体系互不通用
+	// ——员工走小程序、企业管理员走 PC 后台，两套登录端点/令牌形态都不同。
+	var compAdminCnt int64
+	db.Model(&model.Admin{}).Where("username = ?", "langhui").Count(&compAdminCnt)
+	if compAdminCnt == 0 {
+		hash, _ := auth.HashPassword("langhui123")
+		db.Create(&model.Admin{CompanyID: 1, Username: "langhui", PasswordHash: hash})
 	}
 }
 

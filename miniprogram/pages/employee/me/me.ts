@@ -62,7 +62,8 @@ Page({
   goStat() {
     wx.navigateTo({ url: '/pages/employee/stat/stat' })
   },
-  // 我的数据：查阅/复制本人个人信息（PIPL 查阅复制权）
+  // 个人信息（原「我的数据」）：查阅/复制本人个人信息（PIPL 查阅复制权）。
+  // 改名的原因：原「我的数据」与「数据统计」名字几乎一样，用户分不清；此页实为合规查阅页，非分析报表。
   goMydata() {
     wx.navigateTo({ url: '/pages/mydata/mydata' })
   },
@@ -106,6 +107,12 @@ Page({
     } finally {
       this.setData({ pwdSaving: false })
     }
+  },
+  // 「退出登录」按钮的 tap 入口：bindtap 会把事件对象作为首个实参传给 handler，
+  // 若直接把按钮绑到 logout，silent 会被这个事件对象（truthy）顶成「静默」，
+  // 成功提示就永远不弹。这里显式转成 logout(false)，把「用户主动退出」与「改密后的静默登出」区分干净。
+  onLogoutTap() {
+    this.logout(false)
   },
   // 退出登录：清令牌 + globalData.myStaffId，回到未登录态
   logout(silent = false) {

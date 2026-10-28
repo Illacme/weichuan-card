@@ -384,7 +384,7 @@ if [ -z "$pub" ]; then
   esac
 fi
 if [ -z "$pub" ]; then
-  warn "PUBLIC_BASE_URL 未设置：跳过外部可达性与证书有效期检查。建议设为对外 https 地址（如 https://card.example.com）——第 8 节的本机探活覆盖不了「反代/证书/防火墙」这一半故障"
+  warn "PUBLIC_BASE_URL 未设置：跳过外部可达性与证书有效期检查。建议设为对外 https 地址（如 https://weichuan.ziyuanxingqiu.cn）——第 8 节的本机探活覆盖不了「反代/证书/防火墙」这一半故障"
 else
   case "$pub" in
     https://*)

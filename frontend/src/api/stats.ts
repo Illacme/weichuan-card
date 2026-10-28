@@ -1,7 +1,7 @@
 import axios from 'axios'
 import http from './request'
 
-// 全局名片统计（超管）：汇总 + 按员工 + 按天趋势 + 内容意向 TOP 榜。
+// 全局名片统计（超管）：汇总 + 按员工 + 按天趋势 + 内容浏览 TOP 榜。
 // 与员工端 /api/employee/me/stat（仅本人）互补，见 backend/internal/handler/apply.go。
 //
 // from/to 为 YYYY-MM-DD（闭区间），均可缺省——缺省即「全部时间」口径。
@@ -20,8 +20,10 @@ function cleanParams(range: StatRange): Record<string, string> {
 }
 
 // 汇总口径与后端 backend/internal/handler/apply.go 的 /api/admin/stats 对齐：
-// visit/call/save 是「转化」三指标；后五项是「内容意向」（migrations/0021 起，
-// 事件带 target_id），回答「访客对什么内容感兴趣」——统计对企业客户的核心价值。
+// visit/call/save 是「转化」三指标；projectView/serviceView/videoPlay 是
+// 「内容浏览」（migrations/0021 起带 target_id，回答「访客对什么内容感兴趣」，
+// 也进 TOP 榜）；share/posterSave 是「裂变」（把名片传出去的动作，不带 target_id、
+// 主体可能是员工本人，故不与内容浏览相加）。分组理由见后端 stat.go 文件头。
 export interface StatSummary {
   visit: number
   call: number

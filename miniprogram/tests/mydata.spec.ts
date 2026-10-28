@@ -35,6 +35,9 @@ let storage: Map<string, any>
 
 const meData = {
   code: 0,
+  // 所属企业由后端在根级下发（不在 data 内）
+  companyName: '测试公司全称',
+  companyShortName: '测试公司',
   data: {
     staffId: 42,
     name: '张伟',
@@ -93,6 +96,14 @@ it('onShow 拉资料并渲染带标签键值对，过滤空值，头像拼绝对
   expect(byLabel['姓名']).toBe('张伟')
   expect(byLabel['账号状态']).toBe('正常')
   expect(byLabel['员工编号']).toBe('42')
+  // 注册时间必须格式化掉 RFC3339 的 T/毫秒/偏移（原值 2026-01-01T00:00:00Z），否则页面又长又折行
+  expect(byLabel['注册时间']).toBe('2026-01-01 00:00')
+  expect(byLabel['注册时间']).not.toContain('T')
+  // 内部租户外键（companyId）不是「关于我本人的信息」，不应出现在个人信息页
+  expect(labels).not.toContain('所属企业编号')
+  // 所属企业：根级下发、优先简称，且插在「职位」之后
+  expect(byLabel['所属企业']).toBe('测试公司')
+  expect(labels[labels.indexOf('职位') + 1]).toBe('所属企业')
   // 头像拼成绝对
   expect(p.data.avatar).toBe('https://cdn.test/uploads/a.png')
 })

@@ -43,9 +43,9 @@ Page({
         updatedAtText: r.data.updatedAt ? formatDateTime(r.data.updatedAt) : '',
         loading: false,
       })
-      // 内容意向埋点：案例详情加载成功才算一次「浏览」——加载失败/不存在不计，
+      // 内容浏览埋点：案例详情加载成功才算一次「浏览」——加载失败/不存在不计，
       // 否则统计里的案例热度混进大量根本没看到内容的误报。targetId 必须带：
-      // 后台「内容意向 TOP 榜」靠它回答「哪个案例热」（后端校验存在+同租户）。
+      // 后台「内容浏览 TOP 榜」靠它回答「哪个案例热」（后端校验存在+同租户）。
       track('project_view', this.data.staffId, this.data.id)
     } catch {
       this.setData({ loading: false, error: true })

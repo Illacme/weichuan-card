@@ -205,8 +205,31 @@ services:
         max-size: "10m"
         max-file: "7"
 
+  # HTTPS 终结（Caddy 自动申请 + 续期 Let's Encrypt 证书）。
+  # 默认不启（零依赖形态只暴露 8080 http）；生产用：
+  #   docker compose --profile https up -d --build
+  # 启了之后对外只走 80/443（Caddy），8080 仍可作为绕过反代的后端直连调试端口。
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    profiles: [https]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
+
 volumes:
   mysql_data: # 仅 --profile mysql 时创建
   uploads_data:
   # 后端配置（runtime.env）与可选 SQLite 库文件；删掉它会回到「未配置」状态
   data_data:
+  caddy_data: # 仅 --profile https 时创建：Caddy 证书与账户数据，删掉会重新申请证书

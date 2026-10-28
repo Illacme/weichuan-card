@@ -20,13 +20,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// ===== 统计模块（埋点进水口 + 日期维度 + 导出 + 内容意向）专项测试 =====
+// ===== 统计模块（埋点进水口 + 日期维度 + 导出 + 内容浏览）专项测试 =====
 //
 // 覆盖本轮改造的五个面：
 //  1. 进水口：/api/stat/track 限流（按 IP）+ staffId 存在校验 + 事件白名单
 //     + targetId 校验（project_view/service_view 强制存在且同租户）；
 //  2. 查询：/api/admin/stats 与 /api/employee/me/stat 的 from/to 日期范围 + 按天趋势
-//     + 内容意向汇总与 TOP 榜；
+//     + 内容浏览汇总与 TOP 榜；
 //  3. 导出：/api/admin/stats/export 的 BOM / 转义 / 公式注入 / 租户隔离 / 意向列；
 //  4. 明细：/api/admin/stats/detail 的倒序分页 / 四类筛选 / 对象名 / 租户隔离 / 坏参数拒收。
 //
@@ -435,7 +435,239 @@ func TestEmployeeStatDateRange(t *testing.T) {
 	require.EqualValues(t, 1, body["code"])
 }
 
-// ===== 2.5 内容意向汇总与 TOP 榜 =====
+// loginStatEmployee 给员工设密码并登录，返回 Bearer token（员工端统计测试专用）。
+func loginStatEmployee(t *testing.T, r *gin.Engine, db *gorm.DB, staffID int64, phone, pass string) string {
+	t.Helper()
+	hash, err := auth.HashPassword(pass)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.Employee{}).Where("staff_id = ?", staffID).
+		Update("password_hash", hash).Error)
+	c := newTestClient(r, t)
+	_, body := c.do("POST", "/api/employee/login", map[string]interface{}{
+		"phone": phone, "password": pass,
+	}, "")
+	require.EqualValues(t, 0, body["code"])
+	return body["token"].(string)
+}
+
+// TestEmployeeStatSnapshot：员工端 /api/employee/me/stat 的四块内容——
+// 八类事件汇总 + 按天趋势 + 案例/服务内容浏览 TOP3，
+// 且三块共用同一个日期范围口径、且只统计本人（同租户同事的数字一个字都不能串）。
+//
+// 为什么「串到同事」要专门断言：stat_events 没带 company_id，员工端靠
+// staff_id = ? 隔离。若这里误写成管理端那套 staff_id IN (本租户) 子查询，
+// 页面看起来完全正常（数字都变大而已），员工会觉得「我哪有这么多访问」——
+// 静默错误，没人会想到报 bug。
+func TestEmployeeStatSnapshot(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "孙七", "工程师", "13800000030")
+	s2 := mkStatEmployee(t, db, 1, "同事", "销售", "13800000031")
+	caseA := mkStatCase(t, db, 1, "热门案例")
+	caseB := mkStatCase(t, db, 1, "冷门案例")
+	caseC := mkStatCase(t, db, 1, "第三案例")
+	caseD := mkStatCase(t, db, 1, "第四案例") // 只碰过一次 → 被 TOP3 的 limit 挡掉
+	svc1 := mkStatService(t, db, 1, "服务一")
+
+	d0, d1 := dayOffset(0), dayOffset(-1)
+	// 本人：d1 = 2 次访问 + 3 次热门案例浏览；d0 = 拨号/保存/视频/转发/海报 + 三种案例 + 服务
+	mkStatEvent(t, db, s1, "visit", d1)
+	mkStatEvent(t, db, s1, "visit", d1)
+	mkStatEvent(t, db, s1, "call", d0)
+	mkStatEvent(t, db, s1, "save", d0)
+	mkStatEvent(t, db, s1, "video_play", d0)
+	mkStatEvent(t, db, s1, "share", d0)
+	mkStatEvent(t, db, s1, "poster_save", d0)
+	mkStatEvent(t, db, s1, "project_view", d1, caseA)
+	mkStatEvent(t, db, s1, "project_view", d1, caseA)
+	mkStatEvent(t, db, s1, "project_view", d1, caseA)
+	mkStatEvent(t, db, s1, "project_view", d0, caseB)
+	mkStatEvent(t, db, s1, "project_view", d0, caseB)
+	mkStatEvent(t, db, s1, "project_view", d0, caseC)
+	mkStatEvent(t, db, s1, "project_view", d0, caseD)
+	mkStatEvent(t, db, s1, "service_view", d0, svc1)
+	// 同租户同事的事件：会把 visit/call/projectView 全部顶高一位，串了立刻红
+	mkStatEvent(t, db, s2, "visit", d0)
+	mkStatEvent(t, db, s2, "call", d0)
+	mkStatEvent(t, db, s2, "project_view", d0, caseA)
+
+	empToken := loginStatEmployee(t, r, db, s1, "13800000030", "emp-pass-2")
+	c := newTestClient(r, t)
+
+	// 全部时间：八类计数逐项断言（漏一项就是某个指标恒 0 的静默缺数据）
+	_, body := c.do("GET", "/api/employee/me/stat", nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, 2, data["visit"])
+	require.EqualValues(t, 1, data["call"])
+	require.EqualValues(t, 1, data["save"])
+	require.EqualValues(t, 7, data["projectView"])
+	require.EqualValues(t, 1, data["serviceView"])
+	require.EqualValues(t, 1, data["videoPlay"])
+	require.EqualValues(t, 1, data["share"])
+	require.EqualValues(t, 1, data["posterSave"])
+
+	// 趋势：两天、升序、只含本人
+	trend := data["trend"].([]interface{})
+	require.Len(t, trend, 2)
+	require.Equal(t, d1, trend[0].(map[string]interface{})["date"])
+	require.EqualValues(t, 2, trend[0].(map[string]interface{})["visit"])
+	require.EqualValues(t, 3, trend[0].(map[string]interface{})["projectView"])
+	require.Equal(t, d0, trend[1].(map[string]interface{})["date"])
+	require.EqualValues(t, 1, trend[1].(map[string]interface{})["call"])
+	require.EqualValues(t, 1, trend[1].(map[string]interface{})["serviceView"])
+
+	// 内容浏览 TOP3：热门(3) > 冷门(2) > 第三(1)，第四名不入榜
+	top := data["topProjects"].([]interface{})
+	require.Len(t, top, 3, "员工端 TOP 榜只给 3 条")
+	require.EqualValues(t, caseA, top[0].(map[string]interface{})["targetId"])
+	require.Equal(t, "热门案例", top[0].(map[string]interface{})["name"])
+	require.EqualValues(t, 3, top[0].(map[string]interface{})["count"])
+	require.Equal(t, "冷门案例", top[1].(map[string]interface{})["name"])
+	require.EqualValues(t, 2, top[1].(map[string]interface{})["count"])
+	require.EqualValues(t, 1, top[2].(map[string]interface{})["count"])
+
+	svcTop := data["topServices"].([]interface{})
+	require.Len(t, svcTop, 1)
+	require.EqualValues(t, svc1, svcTop[0].(map[string]interface{})["targetId"])
+	require.Equal(t, "服务一", svcTop[0].(map[string]interface{})["name"])
+
+	// 只取今天：日期范围必须同样作用于趋势与 TOP 榜，否则「汇总按 30 天、
+	// 趋势画全部」这类错位就会出现，而页面上完全看不出来
+	_, body = c.do("GET", "/api/employee/me/stat?from="+d0+"&to="+d0, nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data = body["data"].(map[string]interface{})
+	require.EqualValues(t, 0, data["visit"], "范围外的访问不该算进来")
+	require.EqualValues(t, 1, data["call"])
+	require.EqualValues(t, 4, data["projectView"], "范围外（昨天）的 3 次案例浏览不该算进来")
+	trend = data["trend"].([]interface{})
+	require.Len(t, trend, 1, "范围外的日期不应出现在趋势里")
+	require.Equal(t, d0, trend[0].(map[string]interface{})["date"])
+	top = data["topProjects"].([]interface{})
+	require.Len(t, top, 3)
+	require.Equal(t, "冷门案例", top[0].(map[string]interface{})["name"],
+		"热门案例的事件全在范围外，不该再排第一")
+}
+
+// TestEmployeeStatSourceDist：员工端「访客从哪来」。
+// 这是唯一能回答「海报有没有用」的数据——裂变两计数（share/poster_save）
+// 主体可能是员工本人，证明不了海报带来了访问。
+//
+// 两条硬约束：
+//  1. 各行 count 之和**必须等于**同一范围的 visit 数（对账口径）：
+//     每一行 visit 都要落进某一个来源桶，漏了就等于「访问 20 次、来源加起来 18 次」，
+//     而这类缺口在页面上完全看不出来。
+//  2. 只统计 visit（call/save 等不带入口语义），范围与本人隔离同其余四块。
+func TestEmployeeStatSourceDist(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "吴九", "工程师", "13800000040")
+	s2 := mkStatEmployee(t, db, 1, "同事", "销售", "13800000041")
+
+	d0 := dayOffset(0)
+	// 本人：扫码 3 + 海报 2 + 转发 1 = 6 次访问；另有 2 次拨号（不该进分布）
+	mkStatEventSrc(t, db, s1, "visit", d0, "scan")
+	mkStatEventSrc(t, db, s1, "visit", d0, "scan")
+	mkStatEventSrc(t, db, s1, "visit", d0, "scan")
+	mkStatEventSrc(t, db, s1, "visit", d0, "poster")
+	mkStatEventSrc(t, db, s1, "visit", d0, "poster")
+	mkStatEventSrc(t, db, s1, "visit", d0, "share_card")
+	mkStatEvent(t, db, s1, "call", d0)
+	mkStatEvent(t, db, s1, "save", d0)
+	// 同事的访问：一个字都不能出现在吴九的分布里
+	mkStatEventSrc(t, db, s2, "visit", d0, "poster")
+
+	empToken := loginStatEmployee(t, r, db, s1, "13800000040", "emp-pass-4")
+	c := newTestClient(r, t)
+	_, body := c.do("GET", "/api/employee/me/stat", nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+
+	// 汇总：visit 6（同事那次不算）
+	require.EqualValues(t, 6, data["visit"])
+
+	dist := data["sourceDist"].([]interface{})
+	// 按 count DESC、source ASC：scan(3) > poster(2) > share_card(1)
+	require.Len(t, dist, 3)
+	require.Equal(t, "scan", dist[0].(map[string]interface{})["source"])
+	require.EqualValues(t, 3, dist[0].(map[string]interface{})["count"])
+	require.Equal(t, "poster", dist[1].(map[string]interface{})["source"])
+	require.EqualValues(t, 2, dist[1].(map[string]interface{})["count"])
+	require.Equal(t, "share_card", dist[2].(map[string]interface{})["source"])
+	require.EqualValues(t, 1, dist[2].(map[string]interface{})["count"])
+
+	// 对账：分布各行之和 == visit（拨号/保存不进分布）
+	var sum int64
+	for _, it := range dist {
+		sum += int64(it.(map[string]interface{})["count"].(float64))
+	}
+	require.EqualValues(t, data["visit"], sum, "来源分布各行之和必须等于访问数")
+}
+
+// TestEmployeeStatRangeAppliesToAllBlocks：日期范围必须同时作用于五块数据。
+// 任一块漏挂 stat_date，页面就会出现「汇总 30 天、趋势画全部」这种
+// 看不出来、只能靠对账发现的错位。
+func TestEmployeeStatRangeAppliesToAllBlocks(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "郑十", "工程师", "13800000042")
+	caseA := mkStatCase(t, db, 1, "老案例")
+
+	d0, d9 := dayOffset(0), dayOffset(-9) // 9 天前：落在 30 天内、7 天外
+	mkStatEventSrc(t, db, s1, "visit", d9, "poster")
+	mkStatEvent(t, db, s1, "project_view", d9, caseA)
+	mkStatEventSrc(t, db, s1, "visit", d0, "scan")
+
+	empToken := loginStatEmployee(t, r, db, s1, "13800000042", "emp-pass-5")
+	c := newTestClient(r, t)
+
+	// 30 天：两块都看得到（1 次海报访问 + 1 次案例浏览）
+	_, body := c.do("GET", "/api/employee/me/stat?from="+dayOffset(-29)+"&to="+d0, nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, 2, data["visit"])
+	require.EqualValues(t, 1, data["projectView"])
+	require.Len(t, data["topProjects"].([]interface{}), 1)
+	require.Len(t, data["trend"].([]interface{}), 2) // d9 与 d0 两天
+	distAll := data["sourceDist"].([]interface{})
+	require.Len(t, distAll, 2, "范围内有海报与扫码两个来源")
+
+	// 7 天：9 天前那次掉出范围 → 五块同步收窄
+	_, body = c.do("GET", "/api/employee/me/stat?from="+dayOffset(-6)+"&to="+d0, nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data = body["data"].(map[string]interface{})
+	require.EqualValues(t, 1, data["visit"])
+	require.EqualValues(t, 0, data["projectView"])
+	require.Len(t, data["topProjects"].([]interface{}), 0)
+	require.Len(t, data["trend"].([]interface{}), 1)
+	distWeek := data["sourceDist"].([]interface{})
+	require.Len(t, distWeek, 1)
+	require.Equal(t, "scan", distWeek[0].(map[string]interface{})["source"],
+		"海报那次访问在范围外，来源分布里不该再有海报")
+}
+// 名字回落「已删除」，计数不减——否则「榜单各行加起来对不上汇总」，
+// 而这正是最难排查的一类对账事故（同管理端 statTopTargets 的口径约定）。
+func TestEmployeeStatTopDeletedTarget(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "周八", "工程师", "13800000032")
+	caseGone := mkStatCase(t, db, 1, "已下架案例")
+
+	d0 := dayOffset(0)
+	mkStatEvent(t, db, s1, "project_view", d0, caseGone)
+	mkStatEvent(t, db, s1, "project_view", d0, caseGone)
+	// 软删除（与业务下线同一条路径）
+	require.NoError(t, db.Delete(&model.ProjectCase{}, caseGone).Error)
+
+	empToken := loginStatEmployee(t, r, db, s1, "13800000032", "emp-pass-3")
+	c := newTestClient(r, t)
+	_, body := c.do("GET", "/api/employee/me/stat", nil, empToken)
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, 2, data["projectView"], "对象被删，汇总计数不能跟着减")
+	top := data["topProjects"].([]interface{})
+	require.Len(t, top, 1)
+	require.Equal(t, "已删除", top[0].(map[string]interface{})["name"])
+	require.EqualValues(t, 2, top[0].(map[string]interface{})["count"])
+}
+
+// ===== 2.5 内容浏览汇总与 TOP 榜 =====
 
 // TestAdminStatsIntentSummaryAndTop：意向五计数 + TOP 案例/服务榜 +
 // 租户隔离 + 日期范围 + 已删对象回落「已删除」（计数不减，保对账）。

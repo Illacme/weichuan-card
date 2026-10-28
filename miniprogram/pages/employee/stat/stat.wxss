@@ -1,0 +1,276 @@
+/* 员工数据统计页（页面级样式，只作用于本页）。
+   类名一律 st- 前缀：app.wxss 里的 .card / .panel 这类通用名一旦将来出现，
+   会把本页悄悄改写；加前缀把这个可能性关掉。
+   配色沿用全局主题蓝 #1a8cff，卡片与 .emp-card 同款圆角阴影。 */
+
+/* ===== 时间筛选（三档分段控件） ===== */
+.st-range {
+  display: flex;
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 6rpx;
+  margin-bottom: 20rpx;
+}
+.st-range-item {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 27rpx;
+  color: #666;
+  border-radius: 12rpx;
+}
+.st-range-on {
+  background: #1a8cff;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ===== 转化三卡 ===== */
+.st-kpis {
+  display: flex;
+  justify-content: space-between;
+}
+.st-kpi {
+  flex: 1;
+  background: #fff;
+  border-radius: 16rpx;
+  margin: 0 6rpx;
+  padding: 28rpx 8rpx 24rpx;
+  text-align: center;
+  box-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+}
+.st-kpi:first-child { margin-left: 0; }
+.st-kpi:last-child { margin-right: 0; }
+.st-kpi-num {
+  font-size: 52rpx;
+  font-weight: 600;
+  color: #1a8cff;
+  line-height: 1.1;
+}
+.st-kpi-label {
+  color: #555;
+  font-size: 26rpx;
+  margin-top: 10rpx;
+}
+/* 转化率副标：比标签再淡一档——它是解释性的，不该抢大数的注意力 */
+.st-kpi-sub {
+  color: #999;
+  font-size: 22rpx;
+  margin-top: 6rpx;
+}
+
+/* ===== 面板（趋势 / 内容浏览 / 裂变共用） ===== */
+.st-panel {
+  background: #fff;
+  border-radius: 16rpx;
+  margin-top: 20rpx;
+  padding: 24rpx 20rpx;
+  box-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+}
+.st-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.st-panel-title {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+.st-panel-extra {
+  color: #999;
+  font-size: 24rpx;
+}
+.st-panel-empty {
+  color: #aaa;
+  font-size: 24rpx;
+  padding: 32rpx 0 8rpx;
+  text-align: center;
+}
+
+/* ===== 趋势柱状图 =====
+   为什么不用 canvas：30 根柱子用 view 的高度百分比就能画，
+   而 canvas 要处理 DPR、绘制时序、页面隐藏后重绘——为一个柱状图不值。 */
+.st-metrics {
+  display: flex;
+  margin: 16rpx 0 12rpx;
+}
+.st-metric {
+  padding: 8rpx 20rpx;
+  margin-right: 12rpx;
+  border-radius: 999rpx;
+  background: #f2f6fb;
+  color: #666;
+  font-size: 24rpx;
+}
+.st-metric-on {
+  background: #e6f2ff;
+  color: #1a8cff;
+  font-weight: 600;
+}
+.st-chart {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-top: 8rpx;
+}
+.st-bar-col {
+  flex: 1;
+  max-width: 56rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.st-bar-wrap {
+  width: 100%;
+  height: 220rpx;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.st-bar {
+  width: 60%;
+  min-height: 0;
+  background: linear-gradient(180deg, #6cb6ff 0%, #1a8cff 100%);
+  border-radius: 6rpx 6rpx 0 0;
+}
+/* 刻度标签：30 天时只标每 5 天，靠列自身的宽度居中，不需要另画一条轴 */
+.st-bar-x {
+  height: 26rpx;
+  line-height: 26rpx;
+  font-size: 20rpx;
+  color: #aaa;
+  white-space: nowrap;
+}
+.st-chart-foot {
+  color: #999;
+  font-size: 23rpx;
+  margin-top: 8rpx;
+  text-align: right;
+}
+
+/* ===== 内容浏览 / 裂变 =====
+   格子用弹性均分而不是固定 20%：内容浏览三格、裂变两格，
+   固定宽度会让两格那组挤在左边、右边留一大片空白。 */
+.st-intent {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 16rpx;
+}
+.st-intent-cell {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 8rpx 0;
+}
+.st-intent-num {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333;
+}
+.st-intent-label {
+  color: #999;
+  font-size: 21rpx;
+  margin-top: 4rpx;
+}
+/* 裂变块的说明文字：这组数字容易被误读成「客户行为」，必须就近解释 */
+.st-panel-note {
+  color: #aaa;
+  font-size: 22rpx;
+  line-height: 1.5;
+  margin-top: 12rpx;
+}
+
+/* ===== 访客从哪来（渠道分布横条） ===== */
+.st-src {
+  margin-top: 16rpx;
+}
+.st-src-row {
+  display: flex;
+  align-items: center;
+  padding: 10rpx 0;
+}
+/* 标签固定宽度而不是自适应：渠道名长短不一（扫码 / 未知 / 转发），
+   自适应会让各条形的左边缘参差不齐，长短就没法一眼比出来 */
+.st-src-label {
+  width: 100rpx;
+  flex-shrink: 0;
+  font-size: 25rpx;
+  color: #555;
+}
+.st-src-bar-wrap {
+  flex: 1;
+  min-width: 0;
+  height: 16rpx;
+  background: #f2f6fb;
+  border-radius: 999rpx;
+  overflow: hidden;
+  margin: 0 16rpx;
+}
+.st-src-bar {
+  height: 100%;
+  border-radius: 999rpx;
+  background: linear-gradient(90deg, #6cb6ff 0%, #1a8cff 100%);
+}
+/* 次数右对齐且定宽：数字位数不齐时条形右端会跟着抖 */
+.st-src-cnt {
+  width: 80rpx;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 25rpx;
+  color: #1a8cff;
+}
+/* 占比：比次数再淡一档——它是解释性的，不该抢走「几次」这个确数 */
+.st-src-pct {
+  width: 76rpx;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 22rpx;
+  color: #999;
+}
+
+.st-sub-title {
+  color: #888;
+  font-size: 24rpx;
+  margin: 24rpx 0 8rpx;
+}
+
+/* ===== TOP3 排行 =====
+   用 flex + 省略号，不靠固定宽度：案例名长度不可控（长名字折行会把
+   名次和次数挤到两行去，看着像三条记录）。 */
+.st-rank {
+  display: flex;
+  align-items: center;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid #f2f2f2;
+}
+.st-rank:last-child { border-bottom: none; }
+.st-rank-no {
+  width: 36rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: #f0f0f0;
+  color: #999;
+  font-size: 22rpx;
+  margin-right: 16rpx;
+  flex-shrink: 0;
+}
+/* 前三名各有其颜色：金/银/铜。其余保持灰底 */
+.st-rank-no-1 { background: #ffb020; color: #fff; }
+.st-rank-no-2 { background: #a8b6c8; color: #fff; }
+.st-rank-no-3 { background: #d99a6c; color: #fff; }
+.st-rank-name {
+  flex: 1;
+  font-size: 27rpx;
+  color: #333;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-right: 12rpx;
+}
+.st-rank-cnt {
+  color: #1a8cff;
+  font-size: 25rpx;
+  flex-shrink: 0;
+}

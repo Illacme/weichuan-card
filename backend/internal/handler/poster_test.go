@@ -13,7 +13,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"weichuan/internal/model"
 
 	"github.com/stretchr/testify/require"
 )
@@ -271,4 +274,108 @@ func TestPosterBgIDRejectsUnsafe(t *testing.T) {
 	for _, id := range bad {
 		require.False(t, posterBgIDRe.MatchString(id), id)
 	}
+}
+
+// ===== 公开版式快照（带 DB） =====
+//
+// 这个端点是海报能成立的前提：转发链接只带 staffId，访客打开海报页是**当场
+// 重新生成**一张，不是看已生成的图片。拿不到员工的版式，访客看到的就是默认
+// 版式——员工调的排版、挑的背景、写的 slogan 全都传不出去（2026-10-28 修）。
+
+func TestPosterPrefsPublicSnapshot(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "孙海报", "销售经理", "13800000040")
+	tok := loginStatEmployee(t, r, db, s1, "13800000040", "emp-pass-p1")
+	c := newTestClient(r, t)
+
+	// 员工端写入：两张自定义背景（只选第二张）+ 改过模板与自定义文案
+	_, body := c.do("PUT", "/api/employee/poster-prefs", map[string]interface{}{
+		"bgId": "c-abcdef12",
+		"backgrounds": []map[string]interface{}{
+			{"id": "c-11111111", "name": "没选中的那张", "file": "/uploads/bg1.jpg"},
+			{"id": "c-abcdef12", "name": "活动照", "file": "/uploads/bg2.jpg"},
+		},
+		"layout": map[string]interface{}{
+			"template": "center", "customText": "24 小时上门维修", "showLandline": true,
+		},
+	}, tok)
+	require.EqualValues(t, 0, body["code"])
+
+	// 公开快照（无令牌）：版式原样带过去——这是「访客看到的 = 员工排的」的核心
+	_, body = c.do("GET", "/api/poster-prefs?staffId="+fmt.Sprint(s1), nil, "")
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, true, data["exists"])
+	require.EqualValues(t, "c-abcdef12", data["bgId"])
+	layout := data["layout"].(map[string]interface{})
+	require.EqualValues(t, "center", layout["template"])
+	require.EqualValues(t, "24 小时上门维修", layout["customText"])
+	require.EqualValues(t, true, layout["showLandline"])
+
+	// 关键：只回选中那一张。未选中的自定义背景是员工私有素材，
+	// 全量下发等于把整个图库挂在无鉴权接口上（staffId 本来就是公开的）
+	bgs := data["backgrounds"].([]interface{})
+	require.Len(t, bgs, 1, "公开快照只能回当前选中的那一张背景")
+	require.EqualValues(t, "c-abcdef12", bgs[0].(map[string]interface{})["id"])
+
+	// 员工本人仍看得到完整清单；staffId 一并返回（端上据此判「是不是我的名片」）
+	_, body = c.do("GET", "/api/employee/poster-prefs", nil, tok)
+	require.EqualValues(t, 0, body["code"])
+	empData := body["data"].(map[string]interface{})
+	require.Len(t, empData["backgrounds"].([]interface{}), 2)
+	require.EqualValues(t, s1, empData["staffId"])
+}
+
+// 选中的是内置素材（poster-*）时，公开快照一张自定义背景都不回：
+// 内置清单客户端自带，回任何一条都是多余的外发。
+func TestPosterPrefsPublicSnapshotBuiltinBg(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "周内置", "技术", "13800000041")
+	tok := loginStatEmployee(t, r, db, s1, "13800000041", "emp-pass-p2")
+	c := newTestClient(r, t)
+
+	_, body := c.do("PUT", "/api/employee/poster-prefs", map[string]interface{}{
+		"bgId":        "poster-brand",
+		"backgrounds": []map[string]interface{}{{"id": "c-22222222", "name": "私有图", "file": "/uploads/private.jpg"}},
+		"layout":      map[string]interface{}{"template": "stack"},
+	}, tok)
+	require.EqualValues(t, 0, body["code"])
+
+	_, body = c.do("GET", "/api/poster-prefs?staffId="+fmt.Sprint(s1), nil, "")
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, "poster-brand", data["bgId"])
+	require.Len(t, data["backgrounds"].([]interface{}), 0, "内置素材不需要下发任何自定义背景")
+	require.EqualValues(t, "stack", data["layout"].(map[string]interface{})["template"])
+}
+
+func TestPosterPrefsPublicSnapshotEdges(t *testing.T) {
+	r, db := setupStatEngine(t)
+	s1 := mkStatEmployee(t, db, 1, "吴新员", "客服", "13800000042")
+	s2 := mkStatEmployee(t, db, 1, "郑停用", "客服", "13800000043")
+	c := newTestClient(r, t)
+
+	// 缺 staffId
+	_, body := c.do("GET", "/api/poster-prefs", nil, "")
+	require.EqualValues(t, 1, body["code"])
+
+	// 员工不存在
+	_, body = c.do("GET", "/api/poster-prefs?staffId=999999", nil, "")
+	require.EqualValues(t, 1, body["code"])
+
+	// 没存过版式（新员工）：exists=false + 默认版式 + 空背景，而不是 404。
+	// 端上据此照旧走内置默认款 / 当天节气素材，两种情况渲染结果本来就一样。
+	_, body = c.do("GET", "/api/poster-prefs?staffId="+fmt.Sprint(s1), nil, "")
+	require.EqualValues(t, 0, body["code"])
+	data := body["data"].(map[string]interface{})
+	require.EqualValues(t, false, data["exists"])
+	require.EqualValues(t, "", data["bgId"])
+	require.Len(t, data["backgrounds"].([]interface{}), 0)
+	require.EqualValues(t, PosterTemplateClassic, data["layout"].(map[string]interface{})["template"])
+
+	// 停用员工：与 /api/card 同口径（code:2），停用了就不该继续外发他的素材
+	require.NoError(t, db.Model(&model.Employee{}).Where("staff_id = ?", s2).
+		Update("status", "disabled").Error)
+	_, body = c.do("GET", "/api/poster-prefs?staffId="+fmt.Sprint(s2), nil, "")
+	require.EqualValues(t, 2, body["code"])
 }

@@ -111,7 +111,7 @@ describe('service/detail 页', () => {
     expect(p.onShareAppMessage().title).toBe('业务服务')
   })
 
-  // ---- 内容意向埋点（后台「内容意向 TOP 榜」的数据源） ----
+  // ---- 内容浏览埋点（后台「内容浏览 TOP 榜」的数据源） ----
 
   // 同案例详情口径：加载成功才计浏览，失败/不存在不计
   it('详情加载成功后上报 service_view（targetId=服务 id）', async () => {

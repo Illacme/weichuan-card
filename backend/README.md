@@ -326,8 +326,24 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 ### 海报个性化设置接口
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| GET | /api/employee/poster-prefs | employee | 读自己的海报设置：`{bgId, backgrounds, layout, exists}`。`exists=false` = 服务端没有可信记录（新员工 / 没调过），客户端此时应以本机缓存为准——否则换新账号第一次进页面会把用户手挑的背景冲掉 |
+| GET | /api/employee/poster-prefs | employee | 读自己的海报设置：`{staffId, bgId, backgrounds, layout, exists}`。`exists=false` = 服务端没有可信记录（新员工 / 没调过），客户端此时应以本机缓存为准——否则换新账号第一次进页面会把用户手挑的背景冲掉。`staffId` 供端上判断「这张名片是不是我的」（海报页会被转发给任何人） |
 | PUT | /api/employee/poster-prefs | employee | 覆盖写：body `{bgId, backgrounds:[{id,name,file}], layout}`，返回归一后的同一结构（客户端据此纠正本地状态） |
+| GET | /api/poster-prefs?staffId= | **否**（按 IP 限流 60/分，桶键 `posterpref:`） | **版式公开快照**（只读）。无此端点时访客看到的是默认版式——员工排的版式传不出去，见下方说明 |
+
+#### 为什么要有公开快照
+
+海报页是**编辑器**而不是图片查看页：转发链接只带 `staffId`，访客打开时是当场用
+「员工名片数据 + 版式」重新生成一张。版式原本只存在于员工本机（按 `staffId` 分键的
+storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访客两者都拿不到**，
+于是拿到的是客户端 `DEFAULT_LAYOUT` ——员工调的排版、挑的自定义背景、写的那句 slogan
+全都传不出去。海报作为「可传播的营销物料」，物料本身并没有被传递，被传递的只是
+一个生成器的链接。
+
+公开快照与员工端点读同一行数据，只暴露**渲染这一张海报所需的最小集**：
+`backgrounds` 只回当前选中的那一张自定义背景（`publicPosterBackgrounds`），
+未选中的（最多 9 张）是员工私有素材，不该挂在无鉴权接口上；内置素材 `poster-*`
+客户端自带清单，一张都不回。存在性与停用判定与 `/api/card` 同口径
+（不存在 code=1、已停用 code=2）。
 
 > 存 `poster_prefs` 表（`staff_id` 唯一），两个 JSON 列：`backgrounds`（自定义背景清单，上限 9 条）
 > 与 `layout`（版式）。不拆列是因为版式可选项会随需求增删，拆列每加一项都要写迁移；
@@ -396,7 +412,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | POST | /api/apply/open/avatar | 否 | 申请开通时上传头像（公开端点，仅图片，供访客在账号创建前设置头像） |
 | GET  | /api/employee/me | employee | 本人名片信息 |
 | PUT  | /api/employee/me | employee | 提交名片修改申请（待审，对外仍显旧信息；可含 landline）。姓名 / 职位经内容安全检测，命中违规返回 code=1 且不落库 |
-| GET  | /api/employee/me/stat | employee | 本人访问/拨号/保存统计（?from=&to= 日期范围 YYYY-MM-DD，可缺省=全部） |
+| GET  | /api/employee/me/stat | employee | 本人统计（?from=&to= 日期范围 YYYY-MM-DD，可缺省=全部）：八类事件计数 + 按天趋势 + 案例/服务 TOP3 + **来源分布**（只统计 visit，各行之和 = visit） |
 | PUT  | /api/employee/password | employee | 修改本人密码 |
 | GET  | /api/admin/apply/open | admin | 开通申请列表（按租户隔离；平台超管可用 ?companyId= 收窄） |
 | POST | /api/admin/apply/open/:id/approve | admin | 通过 → 自动建员工账号并生成初始密码（员工落到申请所属租户） |
@@ -408,7 +424,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | POST | /api/admin/employees | admin | 新增员工（生成账号+初始密码；企业管理员落本企业，平台超管可用 ?companyId= 指定） |
 | PUT  | /api/admin/employees/:id | admin | 编辑员工资料（即时生效，不经审核流；姓名/手机必填，不含状态与密码；按租户隔离） |
 | GET  | /api/admin/stats | 名片统计（汇总 + 按员工 + 按天趋势 + TOP 案例/服务榜，零数据员工补 0；趋势与按员工均含八项指标；?from=&to= 日期范围；按租户隔离） |
-| GET  | /api/admin/stats/export | 统计 CSV 导出（同 stats 口径与租户隔离；UTF-8 BOM + 公式注入防护；含内容意向五列） |
+| GET  | /api/admin/stats/export | 统计 CSV 导出（同 stats 口径与租户隔离；UTF-8 BOM + 公式注入防护；含内容浏览三类 + 裂变两类共五列，逐类一列不合并） |
 | GET  | /api/admin/stats/detail | 埋点明细列表（汇总的下钻：逐条事件，按 id 倒序分页 {code:0,data,total,page,size}；?staffId=&eventType=&targetId=&from=&to= 筛选，白名单外值 code:1；同租户隔离） |
 | POST | /api/admin/employees/:id/disable | admin | 停用账号（按租户隔离；目标不存在/越权返回 code=1「未找到」，不再假装成功；记审计 employee.status） |
 | POST | /api/admin/employees/:id/enable | admin | 启用账号（同上，含审计） |
@@ -561,28 +577,41 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 > 早先的「一个全局 token」会让 A 企业命中 B 企业的 token——微信会拿 B 的身份执行操作，
 > 在版本发布场景等于把代码发到别家小程序。回归测试见 `TestAccessTokenCacheIsKeyedByAppID`。
 
-## 埋点事件与内容意向（统计口径）
+## 埋点事件与三组统计口径
 
-事件白名单（权威定义见 `internal/handler/stat.go` 文件头）分两类，回答两个不同问题：
+事件白名单（权威定义见 `internal/handler/stat.go` 文件头）分**三组**，回答三个不同问题：
 
-| 事件 | 语义 | targetId | 类别 |
+| 事件 | 语义 | targetId | 组别 |
 |---|---|---|---|
 | visit | 访问名片（小程序首页） | 0 | 转化 |
 | call | 点击拨号 | 0 | 转化 |
 | save | 点击保存（存通讯录） | 0 | 转化 |
-| project_view | 浏览案例详情 | 案例 ID（强制） | 意向 |
-| service_view | 浏览服务详情 | 服务 ID（强制） | 意向 |
-| video_play | 播放公司视频（组件级去重） | 0 | 意向 |
-| share | 转发（名片 / 案例 / 服务） | 0 或对象 ID（不强制存在） | 意向 |
-| poster_save | 保存海报 | 0 | 意向 |
+| project_view | 浏览案例详情 | 案例 ID（强制） | 内容浏览 |
+| service_view | 浏览服务详情 | 服务 ID（强制） | 内容浏览 |
+| video_play | 播放公司视频（组件级去重） | 0 | 内容浏览 |
+| share | 转发（名片 / 案例 / 服务） | 0 或对象 ID（不强制存在） | 裂变 |
+| poster_save | 海报**成功写入相册**（失败不计） | 0 | 裂变 |
+
+**三组互不相加**（2026-10-27 口径修正，只改分组与展示，不改埋点、无需迁移历史数据）：
+- **转化**：有没有人找上门。
+- **内容浏览**：访客对什么内容感兴趣。这三类是唯一带**强制** targetId 的事件，
+  也只有它们进 TOP 榜——「对什么内容感兴趣」得有对象才答得上。
+- **裂变**：把名片传出去的动作。两个理由不能并进内容浏览：① 不带 targetId，
+  回答不了「对什么内容感兴趣」；② **主体可能是员工本人**——海报页唯一入口是
+  「我的 → 生成海报」（`pages/employee/me` → `pages/poster/poster`），只有本人才进得去，
+  把它算成「访客意向」会把浏览总量抬高。两者都记在「被传播的那张名片的主人」名下。
+
+> 早先的分法是「转化 + 意向（五类）」，share/poster_save 混在「意向」里。
+> 数据集层面这两类事件的含义从未变过，改动只在前端分组文案与表格列（
+> 管理端由一列「意向」拆成「内容浏览」「裂变」两列）。
 
 - **进水口校验**：`validateStatTarget` 对 `project_view` / `service_view` 强制要求 targetId 存在且**与员工同租户**（`ProjectCase`/`BizService` 都带 `company_id`）；查不到或跨租户一律 `code:1`（同一句回包，不泄露别家对象是否存在）。这是防伪造——放过一个别家 targetId，别家案例名就会出现在自家 TOP 榜上。
 - **target_id 列**：`migrations/0021_stat_events_target_id.sql`（MySQL）+ 模型 `StatEvent.TargetID`（SQLite 由 AutoMigrate 补齐）。
 - **source 列（流量来源 / 裂变）**：`migrations/0022_stat_events_source.sql`（MySQL）+ 模型 `StatEvent.Source`（SQLite 由 AutoMigrate 补齐）。只统计 `visit` 事件：`statSourceDist` 按归一后的 source 分组出**来源分布**，`statFissionTop` 对 `source='share_card'` 的 visit 按员工聚合出**裂变榜**（回答「谁的名片被转发带来的新访客最多」）。归一白名单见 `stat.go` 的 `statSourceTypes`：空串 / 纯空白→`unknown`、白名单原样、其余任意值→`other`。
   - **source 来自客户端，只作统计维度，绝不参与权限 / 租户 / 计费判断**——白名单归一就是为了挡住「谁都能塞一个自定义来源把分布图玩坏」（静默污染）。
   - 裂变榜的 `LEFT JOIN employees` **不带 `deleted_at IS NULL`**：employees 表没有该列（员工是硬删除），带上会让 MySQL 直接报「无此列」。
-  - 两处 SQL 形状已进 `runAPIFlow`（`handler_test.go` 的「内容意向埋点与 TOP 榜」子测试），由 `TestAPIFlowMySQL` 用真 MySQL 跑同一套断言守着。
-- **趋势与按员工都给八项**：`statTrend` 与 `statRowsByStaff` 一次聚合八类事件（同一白名单），前端图例可点选——勾到哪个指标都要有线，否则「勾了却没线」就是静默缺数据。两条 SQL 的**别名必须 snake_case**（`project_view`），写驼峰会静默扫不进来、计数恒 0 不报错（`handler_test.go` 的「内容意向埋点与 TOP 榜」parity 断言守着这条）。
+  - 两处 SQL 形状已进 `runAPIFlow`（`handler_test.go` 的「内容浏览埋点与 TOP 榜」子测试），由 `TestAPIFlowMySQL` 用真 MySQL 跑同一套断言守着。
+- **趋势与按员工都给八项**：`statTrend` 与 `statRowsByStaff` 一次聚合八类事件（同一白名单），前端图例可点选——勾到哪个指标都要有线，否则「勾了却没线」就是静默缺数据。两条 SQL 的**别名必须 snake_case**（`project_view`），写驼峰会静默扫不进来、计数恒 0 不报错（`handler_test.go` 的「内容浏览埋点与 TOP 榜」parity 断言守着这条）。
 - **口径一致性**：TOP 榜用 `LEFT JOIN` + `deleted_at IS NULL` + `COALESCE(name,'已删除')`——对象被删除后行仍在、计数不减，避免「汇总 3 条、榜单加起来 2 条」这类最难排查的对账事故。明细的「对象」列与榜单同源（`statTargetName`）。
 - **限流分桶**：埋点限流器的桶键带 `track:` 前缀，与 `login:` / `refresh:` 分开计数——三者共用 `rate_limit_hits` 表，键不隔离时办公网 NAT 下的访客埋点会把管理员登录挤到 429（回归测试 `TestTrackDoesNotStarveLogin`）。
 

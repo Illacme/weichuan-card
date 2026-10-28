@@ -9,7 +9,7 @@
          否则拖海报会把整页一起拖走。加载 / 失败时撤掉，让遮罩上的按钮可点。 -->
     <view
       class="poster-drag"
-      wx:if="{{!loading && !error}}"
+      wx:if="{{!loading && !error && canEdit}}"
       data-target="content"
       bindtouchstart="onDragStart"
       catchtouchmove="onDragMove"
@@ -22,7 +22,7 @@
          进位置页才亮出来，让人知道这块是可以单独拖的。 -->
     <view
       class="qr-hit {{tool === 'pos' ? 'show' : ''}}"
-      wx:if="{{!loading && !error && qrRect.size}}"
+      wx:if="{{!loading && !error && canEdit && qrRect.size}}"
       style="left:{{qrRect.left}}px;top:{{qrRect.top}}px;width:{{qrRect.size}}px;height:{{qrRect.size}}px"
       data-target="qr"
       bindtouchstart="onDragStart"
@@ -41,20 +41,28 @@
     </view>
   </view>
 
-  <!-- 常驻提示：拖动这件事没有任何视觉线索，藏进工具里没人会发现 -->
-  <view class="drag-tip" wx:if="{{!loading && !error}}">按住海报拖动信息区 · 按住二维码可单独挪码</view>
+  <!-- 常驻提示：拖动这件事没有任何视觉线索，藏进工具里没人会发现。
+       只读态不显示——访客没有拖动可拖的东西。 -->
+  <view class="drag-tip" wx:if="{{!loading && !error && canEdit}}">按住海报拖动信息区 · 按住二维码可单独挪码</view>
+
+  <!-- 只读态说明：访客是从别人那儿转来的，得先说明这是谁的、他能做什么，
+       否则一整块海报加两个按钮会被当成「打不开的页面」。 -->
+  <view class="visitor-tip" wx:if="{{!loading && !error && !canEdit && visitorTip}}">{{visitorTip}}</view>
 
   <!-- 小程序码缺失：必须显式告诉用户。悄悄画一张没有码的图发出去，
-       对方扫不出任何东西，等于发了一张废纸（常见原因是后端没配 AppID）。 -->
-  <view class="qr-warn" wx:if="{{!loading && !error && qrError && layout.showQr}}">
+       对方扫不出任何东西，等于发了一张废纸（常见原因是后端没配 AppID）。
+       只读态不提示：那是制作者的责任，访客看了也修不了（「重试」是编辑动作）。 -->
+  <view class="qr-warn" wx:if="{{!loading && !error && canEdit && qrError && layout.showQr}}">
     <text class="qr-warn-txt">小程序码未生成：{{qrMsg}}</text>
     <text class="qr-warn-btn" bindtap="retryQr">重试</text>
   </view>
 
   <!-- 底部工具条：一个工具一行选项。
        不做「两个 tab + 五行选项」是因为画布本身占 920rpx，五行铺开必然把
-       「位置」和「保存/分享」顶到屏幕外——而位置恰恰最需要边看边调。 -->
-  <view class="poster-tools">
+       「位置」和「保存/分享」顶到屏幕外——而位置恰恰最需要边看边调。
+       只读态整块不渲染：海报是发给外人看的物料，被收件人改写再转发出去，
+       品牌就不可控了（见 poster.ts 的 canEdit 注释）。 -->
+  <view class="poster-tools" wx:if="{{canEdit}}">
     <view
       wx:for="{{tools}}"
       wx:key="key"
@@ -64,7 +72,7 @@
     >{{item.name}}</view>
   </view>
 
-  <view class="poster-panel">
+  <view class="poster-panel" wx:if="{{canEdit}}">
     <!-- 背景：横滑一排缩略图。首项「原样」= 白底，其后是「上传」入口、
          我的背景（自定义）、内置素材（24 节气 + 20 场景）。
          当天是节气时，该节气的素材会被排到内置素材最前并自动选中
@@ -221,4 +229,4 @@
 </view>
 
 <!-- 微信隐私授权弹窗：选图上传背景 / 存海报到相册前由 ensurePrivacy 弹出 -->
-<privacy-consent visible="{{privacyVisible}}" />
+<privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />

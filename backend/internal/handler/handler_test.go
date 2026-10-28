@@ -138,6 +138,11 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
+	// 海报个性化设置：GET/PUT /api/employee/poster-prefs + 公开快照 GET /api/poster-prefs。
+	// 原先这里没注册（只在两个 cmd/main.go 里注册），于是任何带 DB 的海报接口测试
+	// 都会拿到 gin 的 404 纯文本——JSON 解析报 "invalid character 'p' after top-level
+	// value"（"404 page not found" 里的 p），看不出是路由缺失。
+	RegisterPoster(r, db)
 
 	// 静态托管需要目录存在
 	require.NoError(t, os.MkdirAll(cfg.UploadDir, 0755))
@@ -166,7 +171,7 @@ func setupSQLiteEngine(t *testing.T) *gin.Engine {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(model.All()...))
 	// 1 号租户（朗汇）：公开接口缺省落点；存量行为不随多租户改造而变
-	require.NoError(t, db.Create(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled"}).Error)
+	require.NoError(t, db.Create(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled", LoginCode: "langhui"}).Error)
 
 	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
 	require.NoError(t, err)
@@ -450,6 +455,9 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 员工本人名片 + 统计
 		_, body = c.do("GET", "/api/employee/me", nil, empToken)
 		require.EqualValues(t, 0, body["code"])
+		// 根级下发所属企业名称（小程序「个人信息」页展示「所属企业」用）：员工建在 1 号朗汇租户
+		require.Equal(t, "廊坊市朗汇机电设备有限公司", body["companyName"])
+		require.Equal(t, "朗汇机电", body["companyShortName"])
 		_, body = c.do("GET", "/api/employee/me/stat", nil, empToken)
 		require.EqualValues(t, 0, body["code"])
 
@@ -579,11 +587,11 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 0, body["code"])
 	})
 
-	// ===== 6.5 内容意向埋点与 TOP 榜 =====
+	// ===== 6.5 内容浏览埋点与 TOP 榜 =====
 	// parity 重点：target_id 落库值、按 target 聚合 + LEFT JOIN 对象名
 	// （COALESCE 回落「已删除」）、明细 targetId 筛选——这几种 SQL 形状
 	// 在 MySQL 8.0 与 SQLite 上必须同结果，故进共用流（migrations/0021）。
-	t.Run("内容意向埋点与TOP榜", func(t *testing.T) {
+	t.Run("内容浏览埋点与TOP榜", func(t *testing.T) {
 		_, body := c.do("POST", "/api/admin/categories", map[string]interface{}{
 			"name": "意向分类", "icon": "ic", "sort": 20, "isLocked": false,
 		}, adminToken)

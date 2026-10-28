@@ -71,7 +71,7 @@ describe('adminStats', () => {
     expect(r.topServices).toEqual([])
   })
 
-  it('解包内容意向：TOP 榜与意向计数原样透出，并解包来源分布与裂变榜', async () => {
+  it('解包内容浏览：TOP 榜与意向计数原样透出，并解包来源分布与裂变榜', async () => {
     mocks.httpGet.mockResolvedValue({
       data: {
         summary: { visit: 10, call: 2, save: 3, projectView: 7, serviceView: 5, videoPlay: 4, share: 6, posterSave: 1 },

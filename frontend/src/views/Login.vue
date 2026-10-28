@@ -2,8 +2,8 @@
   <div class="login-wrap">
     <el-card class="login-card">
       <div class="login-head">
-        <div class="login-logo">智</div>
-        <h2>{{ settings.displayBrandName }} · 管理后台</h2>
+        <img class="login-logo" src="/logo.png" alt="微传名片" />
+        <h2>{{ settings.loginDisplayBrand }} · 管理后台</h2>
         <p class="login-sub">管理员登录（平台 / 企业）</p>
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="onSubmit">
@@ -59,9 +59,12 @@ const rules: FormRules = {
 }
 
 // 登录页标题品牌名取自后台「系统设置 → brand_name」（公开接口，无需登录）；
-// 未配置 / 接口不可用时由 store 回落内置默认「微传名片」。
+// 若 URL 带 ?company=<白标码> 且命中某 enabled 企业，则显示该企业简称（白标），
+// 否则回落全局品牌名 / 内置默认「微传名片」。
 onMounted(() => {
-  settings.load()
+  const q = route.query.company
+  const company = (typeof q === 'string' && q.trim()) || undefined
+  settings.load(company)
 })
 
 async function onSubmit() {
@@ -107,13 +110,10 @@ async function onSubmit() {
   width: 48px;
   height: 48px;
   border-radius: 10px;
-  background: #409eff;
-  color: #fff;
-  font-size: 26px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  display: block;
+  object-fit: cover;
   margin: 0 auto 10px;
 }
 .login-sub {

@@ -47,6 +47,25 @@ const TRACK_EVENTS: TrackEvent[] = [
   'poster_save',
 ]
 
+// SOURCE_LABELS 来源类别 → 中文标签（后端只回英文类别，端上做展示翻译）。
+// 取值与后端 stat.go 的 statSourceTypes、前端 api/stats.ts 的 SOURCE_LABELS
+// **必须三处一致**：对不上时页面会出现一行裸英文，而统计数字本身完全正常——
+// 典型的「不报错、但看着像数据缺失」。
+export const SOURCE_LABELS: { [k: string]: string } = {
+  scan: '扫码',
+  share_card: '转发',
+  search: '搜索',
+  poster: '海报',
+  unknown: '未知',
+  other: '其他',
+}
+
+// source 中文标签（未知类别原样返回，不吞掉——新类别出现时要能看见它，
+// 而不是显示成空白让人以为是数据丢了）。
+export function sourceLabel(s: string): string {
+  return SOURCE_LABELS[s] || s
+}
+
 // 微信启动场景值 → 流量来源。只覆盖「明确可判定」的区间，识别不了就返回**空串**
 // （宁可少分一类，也绝不把扫描误判成转发、把搜索误判成扫码）。
 //

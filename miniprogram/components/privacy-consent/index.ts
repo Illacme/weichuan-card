@@ -35,6 +35,9 @@ Component({
     },
   },
   methods: {
+    // catchtouchmove 需要组件内声明处理函数（否则控制台报 noop is not a function）；
+    // 遮罩靠它阻止背景滚动。
+    noop() {},
     // 用户点了「同意」：bindagreeprivacyauthorization 事件触发即代表
     // 微信侧已收到同意同步（此事件只在 open-type="agreePrivacyAuthorization"
     // 的按钮上有效），此时结束等待、后续隐私接口可正常调用。

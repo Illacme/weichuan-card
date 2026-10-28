@@ -235,6 +235,41 @@ func TestSecretSettingsNeverLeakRealValue(t *testing.T) {
 	require.Equal(t, "env-secret", resolveWXAppSecret(cfg))
 }
 
+// TestPublicSettingsLoginCode 登录页白标（?company=）验证：
+// 命中 enabled 企业的白标码 → 回传该企业简称（login_brand_name）；
+// 未命中（无参数 / 不匹配 / 企业停用）→ 不回传该键，前端回落全局品牌。
+// 安全口径：只回传 short_name，绝不泄露企业 ID / 名称等其它字段。
+func TestPublicSettingsLoginCode(t *testing.T) {
+	// 测试种子：1 号租户朗汇，login_code=langhui，short_name=朗汇机电
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+
+	// 1) 命中 → 回传 login_brand_name = 朗汇机电
+	code, body := c.do("GET", "/api/public/settings?company=langhui", nil, "")
+	require.Equal(t, http.StatusOK, code)
+	require.EqualValues(t, 0, body["code"])
+	pub := body["data"].(map[string]interface{})
+	require.Equal(t, "朗汇机电", pub["login_brand_name"], "命中白标码应回传企业简称")
+
+	// 2) 不匹配 → 不回传该键（前端回落全局品牌名）
+	_, body = c.do("GET", "/api/public/settings?company=nope", nil, "")
+	pub = body["data"].(map[string]interface{})
+	_, hasLoginBrand := pub["login_brand_name"]
+	require.False(t, hasLoginBrand, "白标码不匹配不应回传 login_brand_name")
+
+	// 3) 无参数 → 同样不回传该键
+	_, body = c.do("GET", "/api/public/settings", nil, "")
+	pub = body["data"].(map[string]interface{})
+	_, hasLoginBrand = pub["login_brand_name"]
+	require.False(t, hasLoginBrand, "无 company 参数不应回传 login_brand_name")
+
+	// 4) 仅回传 short_name：响应里不应出现企业 id / 全称等其它字段
+	_, body = c.do("GET", "/api/public/settings?company=langhui", nil, "")
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "廊坊市朗汇机电设备有限公司", "公开接口不得泄露企业全称")
+}
+
 // TestReadOnlySettingsCannotBeWrittenFromUI 只读项（DB 连接串 / JWT 密钥 / Cookie 安全）
 // 必须在界面可见（管理员得知道当前配了什么），但不可改——改错会把「改回来的入口」一起弄丢。
 func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {

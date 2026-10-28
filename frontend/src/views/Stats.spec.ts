@@ -25,7 +25,8 @@ const mocks = vi.hoisted(() => ({
       posterSave: 1,
     },
     byStaff: [
-      // 意向分项也带上：表格「内容意向」列是它们的合计（张三 11 / 李四 9）
+      // 五类事件分项都带上：表格「内容浏览」列取前三类之和，
+      // 「裂变」列取后两类之和（张三 7/4，李四 6/3）
       {
         staffId: 1, name: '张三', title: '工程师', visit: 7, call: 2, save: 3,
         projectView: 4, serviceView: 2, videoPlay: 1, share: 3, posterSave: 1,
@@ -160,7 +161,7 @@ const StatDetailStub = defineComponent({
     :data-event-type="String(eventType)" :data-target-id="String(targetId)" :data-target-name="String(targetName)" />`,
 })
 
-// 悬浮提示桩：只渲染默认槽，content 走 props（便于断言「内容意向」列的拆分文案）
+// 悬浮提示桩：只渲染默认槽，content 走 props（便于断言「内容浏览」「裂变」两列的拆分文案）
 const ElTooltip = defineComponent({
   name: 'ElTooltip',
   props: ['content', 'placement'],
@@ -252,7 +253,7 @@ describe('Stats', () => {
     expect(w.text()).toContain('12')
   })
 
-  it('员工列定义含编号/姓名/职位/访问/拨号/保存/内容意向/操作八个列', async () => {
+  it('员工列定义含编号/姓名/职位/访问/拨号/保存/内容浏览/裂变/操作九个列', async () => {
     const w = mount(Stats, mountOpts)
     await flushLoad(w)
 
@@ -268,7 +269,8 @@ describe('Stats', () => {
       '访问',
       '拨号',
       '保存',
-      '内容意向',
+      '内容浏览',
+      '裂变',
       '操作',
     ])
   })
@@ -407,26 +409,37 @@ describe('Stats', () => {
     })
   })
 
-  it('内容意向五卡渲染（案例/服务/视频/转发/海报）', async () => {
+  // 「内容浏览」只含三类指向上内容对象的事件；转发/海报保存进「裂变动作」。
+  // 这个分组是口径修正的核心：混在一起时「访客对什么内容感兴趣」答不出来，
+  // 且会把内容浏览总量抬高（海报保存的主体很可能是员工本人）。
+  it('内容浏览三卡与裂变两卡分成两组渲染，互不串台', async () => {
     const w = mount(Stats, mountOpts)
     await flushLoad(w)
 
-    const text = w.text()
-    // 标题 + 数值成对出现，避免「数字凑巧在别处出现」的假通过
-    expect(text).toContain('案例浏览')
-    expect(text).toContain('服务浏览')
-    expect(text).toContain('视频播放')
-    expect(text).toContain('转发')
-    expect(text).toContain('海报保存')
-    // 数值取自汇总（7/4/2/6/1），且不与转化三卡的 12/3/5 混淆：
-    // 意向卡区块内的顺序是固定的，取该区块文本比对
-    const intent = w.find('.intent-block').text()
-    expect(intent).toContain('7')
-    expect(intent).toContain('4')
-    expect(intent).toContain('2')
-    expect(intent).toContain('6')
-    expect(intent).toContain('1')
-    expect(intent).not.toContain('undefined')
+    const blocks = w.findAll('.intent-block')
+    expect(blocks).toHaveLength(2)
+
+    const browse = blocks[0].text()
+    expect(browse).toContain('内容浏览')
+    expect(browse).toContain('案例浏览')
+    expect(browse).toContain('服务浏览')
+    expect(browse).toContain('视频播放')
+    // 数值取自汇总（7/4/2）
+    expect(browse).toContain('7')
+    expect(browse).toContain('4')
+    expect(browse).toContain('2')
+    // 转发/海报保存绝不能出现在内容浏览组里——否则口径又混回去了
+    expect(browse).not.toContain('转发')
+    expect(browse).not.toContain('海报保存')
+
+    const fission = blocks[1].text()
+    expect(fission).toContain('裂变动作')
+    expect(fission).toContain('转发')
+    expect(fission).toContain('海报保存')
+    expect(fission).not.toContain('案例浏览')
+    expect(fission).not.toContain('服务浏览')
+
+    expect(browse + fission).not.toContain('undefined')
   })
 
   it('TOP 榜渲染案例与服务两张榜（名称 + 次数）', async () => {
@@ -493,21 +506,29 @@ describe('Stats', () => {
     expect(drawer.props('targetId')).toBe(0)
   })
 
-  it('员工表「内容意向」列是五类之和，悬浮给拆分', async () => {
+  it('员工表「内容浏览」列是三浏览之和、「裂变」列是转发+海报，各自悬浮拆分', async () => {
     const w = mount(Stats, mountOpts)
     await flushLoad(w)
 
-    // 张三 4+2+1+3+1 = 11
+    // 张三：浏览 4+2+1 = 7，裂变 3+1 = 4
     const rows = tablesOf(w).staff.props('data') as any[]
-    expect(rows[0].intent).toBe(11)
-    expect(rows[1].intent).toBe(9) // 李四 3+2+1+3+0
+    expect(rows[0].browse).toBe(7)
+    expect(rows[0].fission).toBe(4)
+    // 李四：浏览 3+2+1 = 6，裂变 3+0 = 3
+    expect(rows[1].browse).toBe(6)
+    expect(rows[1].fission).toBe(3)
 
     // 单元格渲染的是合计数
     const cells = w.findAll('.intent-cell').map((c) => c.text())
-    expect(cells).toContain('11')
-    // 悬浮文案给出五类拆分（省掉五列表格）
+    expect(cells).toContain('7')
+    expect(cells).toContain('4')
+
+    // 两列的悬浮文案各自只给本组拆分（省掉五列表格，但不许互相串）
     const tips = w.findAllComponents(ElTooltip).map((t) => t.props('content'))
-    expect(tips).toContain('案例浏览 4 · 服务浏览 2 · 视频播放 1 · 转发 3 · 海报保存 1')
+    expect(tips).toContain('案例浏览 4 · 服务浏览 2 · 视频播放 1')
+    expect(tips).toContain('转发 3 · 海报保存 1')
+    // 「内容浏览」的提示里不能混进裂变项
+    expect(tips.some((s) => typeof s === 'string' && s.includes('案例浏览') && s.includes('海报保存'))).toBe(false)
   })
 
   it('TOP 榜无数据时显示空态文案（不像加载失败）', async () => {
@@ -533,7 +554,7 @@ describe('Stats', () => {
     expect(w.text()).toContain('范围内暂无转发带来的访问')
   })
 
-  it('内容意向折叠区默认收起，点标题展开（方案A 同页分区）', async () => {
+  it('内容浏览与裂变折叠区默认收起，点标题展开（方案A 同页分区）', async () => {
     const w = mount(Stats, mountOpts)
     await flushLoad(w)
     // 默认收起：v-show 把 fold-body 设为 display:none
@@ -542,8 +563,8 @@ describe('Stats', () => {
     await w.find('.fold-intent .fold-head').trigger('click')
     await nextTick()
     expect((w.find('.fold-intent .fold-body').attributes('style') || '')).not.toContain('display: none')
-    // 展开后五卡与 TOP 榜仍在 DOM（数据渲染不依赖折叠态）
-    expect(w.find('.intent-block').exists()).toBe(true)
+    // 展开后两组卡片与 TOP 榜仍在 DOM（数据渲染不依赖折叠态）
+    expect(w.findAll('.intent-block')).toHaveLength(2)
     expect(tablesOf(w).top).toHaveLength(2)
     expect(w.find('.fold-intent').classes()).toContain('open')
   })

@@ -36,6 +36,12 @@
         <el-table-column label="简称" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.shortName || '微传名片' }}</template>
         </el-table-column>
+        <el-table-column label="白标码" min-width="140" show-overflow-tooltip v-if="!isPhone">
+          <template #default="{ row }">
+            <span v-if="row.loginCode" class="login-code-cell">?company={{ row.loginCode }}</span>
+            <span v-else class="muted">未配置</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 'enabled' ? 'success' : 'info'" effect="light">
@@ -120,6 +126,13 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="登录白标码">
+          <el-input
+            v-model="createForm.loginCode"
+            placeholder="选填；登录页 ?company= 区分显示该企业简称，如 langhui"
+            clearable
+          />
+        </el-form-item>
         <el-divider content-position="left">
           <span class="divider-hint">企业管理员（选填，留空稍后添加）</span>
         </el-divider>
@@ -149,8 +162,15 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="登录白标码">
+          <el-input
+            v-model="editForm.loginCode"
+            placeholder="选填；?company= 区分显示该企业简称，留空清除"
+            clearable
+          />
+        </el-form-item>
         <div class="edit-tip">
-          简称修改后同步后台侧边栏品牌名（留空默认「微传名片」）；公司信息里的简称（仅小程序展示）不受影响，由企业管理员在「公司信息」页维护。
+          简称修改后同步后台侧边栏品牌名（留空默认「微传名片」）；公司信息里的简称（仅小程序展示）不受影响，由企业管理员在「公司信息」页维护。登录白标码留空将清除该企业白标，登录页回落全局品牌。
         </div>
       </el-form>
       <template #footer>
@@ -390,7 +410,7 @@ onMounted(load)
 const createVisible = ref(false)
 const creating = ref(false)
 const createFormRef = ref<FormInstance>()
-const createForm = reactive({ name: '', shortName: '', adminUsername: '', adminPassword: '' })
+const createForm = reactive({ name: '', shortName: '', loginCode: '', adminUsername: '', adminPassword: '' })
 
 const createRules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
@@ -404,6 +424,7 @@ function openCreate() {
 function resetCreate() {
   createForm.name = ''
   createForm.shortName = ''
+  createForm.loginCode = ''
   createForm.adminUsername = ''
   createForm.adminPassword = ''
   createFormRef.value?.clearValidate()
@@ -418,6 +439,7 @@ async function submitCreate() {
     await createCompany({
       name: createForm.name,
       shortName: createForm.shortName || undefined,
+      loginCode: createForm.loginCode.trim() || undefined,
       adminUsername: createForm.adminUsername || undefined,
       adminPassword: createForm.adminPassword || undefined,
     })
@@ -435,7 +457,7 @@ async function submitCreate() {
 const editVisible = ref(false)
 const editing = ref(false)
 const editFormRef = ref<FormInstance>()
-const editForm = reactive({ id: 0, name: '', shortName: '' })
+const editForm = reactive({ id: 0, name: '', shortName: '', loginCode: '' })
 
 const editRules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
@@ -446,6 +468,7 @@ function openEdit(row: any) {
   editForm.id = row.id
   editForm.name = row.name
   editForm.shortName = row.shortName || ''
+  editForm.loginCode = row.loginCode || ''
   editVisible.value = true
 }
 
@@ -453,6 +476,7 @@ function resetEdit() {
   editForm.id = 0
   editForm.name = ''
   editForm.shortName = ''
+  editForm.loginCode = ''
   editFormRef.value?.clearValidate()
 }
 
@@ -462,7 +486,11 @@ async function submitEdit() {
   if (!ok) return
   editing.value = true
   try {
-    await updateCompany(editForm.id, { name: editForm.name, shortName: editForm.shortName })
+    await updateCompany(editForm.id, {
+      name: editForm.name,
+      shortName: editForm.shortName,
+      loginCode: editForm.loginCode.trim(),
+    })
     ElMessage.success('已保存')
     editVisible.value = false
     await load()
@@ -941,5 +969,13 @@ function todayStr(): string {
   color: #909399;
   line-height: 1.6;
   margin-left: 10px;
+}
+.login-code-cell {
+  font-family: monospace;
+  font-size: 12px;
+  color: #409eff;
+}
+.muted {
+  color: #c0c4cc;
 }
 </style>

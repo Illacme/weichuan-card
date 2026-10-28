@@ -243,6 +243,14 @@ Page({
     // canUpload：有员工登录态才允许上传自定义背景（/api/employee/upload 要鉴权）。
     // 访客扫海报进来也能调版式（本地生效），但传不了自己的图。
     canUpload: false,
+    // canEdit：这张海报归不归我编辑（== 登录员工 && 页面 staffId 就是我自己）。
+    // 与 canUpload 分家是必要的：海报页会被转发给任何人，登录员工也完全可能
+    // 打开**别人**的海报页——那时他不该拿到编辑入口。
+    // 只读态下隐藏拖动层 / 工具条 / 上传，只留「保存」「转发」两个传播动作：
+    // 海报是发给外人看的营销物料，被收件人改写再转发出去，品牌就不可控了。
+    canEdit: false,
+    // 只读态的一行说明：告诉访客这是谁的名片、他能做什么（见 wxml）
+    visitorTip: '',
     uploading: false,
     // 二维码的透明热区（canvas 坐标系 = CSS px，画布固定 320×460）。
     // 独立成一个热区而不是靠算触摸点：算坐标要拿 canvas 的 boundingClientRect，
@@ -275,10 +283,15 @@ Page({
         // 海报背景清单拉不到（老后端 / 断流）不该拖垮出图：退化成白底即可，
         // 所以单独立 catch，不能让它把 Promise.all 带崩——海报本身才是主功能。
         request('GET', '/api/assets/posters').catch(() => null),
-        // 个性化设置同理：拉不到就用本地缓存，绝不影响出图
+        // 个性化设置同理：拉不到就用本地缓存，绝不影响出图。
+        //
+        // 本人走员工接口（读写 + 完整背景清单）；访客走公开快照
+        // （GET /api/poster-prefs?staffId=，只回渲染这一张海报所需的最小集）。
+        // 没有这一支，访客看到的就是「员工名片数据 + 客户端默认版式」重新生成的
+        // 一张——员工调的排版、挑的背景、写的 slogan 全都传不出去。
         this.data.canUpload
           ? request('GET', '/api/employee/poster-prefs').catch(() => null)
-          : Promise.resolve(null),
+          : request('GET', '/api/poster-prefs?staffId=' + sid).catch(() => null),
       ])
       // /api/wechat/wxacode 成功返回 {code:0,data:{url}}（data.url 正确）；
       // /api/card 的 employee/company/profile 在响应根级（非 data 包裹），故此处直接存整个响应。
@@ -292,7 +305,7 @@ Page({
       // 头像为后端相对路径，canvas 的 img.src 需绝对 URL 才能加载
       const cardAny = card as any
       if (cardAny.employee) cardAny.employee.avatar = assetUrl(cardAny.employee.avatar)
-      this.setData({ card, qrUrl, qrError: !qrUrl, qrMsg, ...this.buildState(posters, prefs) })
+      this.setData({ card, qrUrl, qrError: !qrUrl, qrMsg, ...this.buildState(posters, prefs, cardAny) })
       // 导航栏标题按**员工所属企业**设置（海报在这里是替企业做的营销物料）。
       // 全局标题只有产品名，不覆盖就永远是「微传名片」——多租户下等于没品牌。
       // 放在 setData 之后：企业信息随 card 一起回来，此时才拿得到简称。
@@ -335,7 +348,7 @@ Page({
   // 节气时（2020-2040 有 14 处，如 2026-03-20 龙抬头撞春分、2038-02-04 春节
   // 撞立春）用节日那张——正月初四用户想看到「春节」而不是「立春」。
   // 判节日是纯查表 + 几次判等，比节气还便宜，放前面不心疼。
-  buildState(postersResp: any, prefsResp: any) {
+  buildState(postersResp: any, prefsResp: any, cardResp?: any) {
     const raw: any[] = postersResp && postersResp.code === 0 && postersResp.data && postersResp.data.items
       ? postersResp.data.items
       : []
@@ -373,8 +386,26 @@ Page({
         custom: true,
       }))
 
-    const layout = normalizeLayout(pd && pd.exists ? pd.layout : this.readLayout())
-    const savedBg = pd && pd.exists ? pd.bgId || BG_NONE : this.readBg()
+    // canEdit：这张海报归不归我编辑。判据是「我的 staffId == 页面 staffId」，
+    // 而不是「有没有登录」——登录员工完全可能打开**别人**转发来的海报页，
+    // 那时把我的版式套在他的名片上既怪异又危险（改动会存进我自己的设置里）。
+    //
+    // 我的 staffId 有两个来源，缺一不可少：
+    //  1. 员工接口回的 staffId（2026-10-28 起后端带）；
+    //  2. 登录时写进 globalData.myStaffId 的那份（「我的」页会写，海报页的主入口
+    //     正是「我的 → 生成海报」，进去时必然已就绪）。
+    // 只认 1 会让**老后端 + 新小程序**的员工自己也变成只读（他自己排的版式
+    // 突然改不动了）；只认 2 则覆盖不到「换设备后没开过『我的』页」的路径。
+    // 两个都没有时才降级只读——宁可少给编辑权，也不能把别人的名片开放给他改。
+    const myStaff = Number(pd && pd.staffId) || myStaffId()
+    const owner = !!this.data.canUpload && myStaff > 0 && myStaff === this.data.staffId
+
+    // 版式来源：服务端有记录就用它；没有时**只有本人**才回落到本机缓存——
+    // 本机那份是员工自己手机上的偏好，跟访客无关。访客一律从默认重新算，
+    // 这样「别人看到的」永远等于「员工排的」（公开快照 exists=false 时
+    // 说明员工根本没调过，此时默认版式本来就是他要的效果）。
+    const layout = normalizeLayout(pd && pd.exists ? pd.layout : owner ? this.readLayout() : null)
+    const savedBg = pd && pd.exists ? pd.bgId || BG_NONE : owner ? this.readBg() : null
     // 「存的正好是默认商务款」也算没自己选过：见 resolveBgId 里同一处的说明。
     // 不这么判的话，第一次在节日日调了下版式就会把偏好固化成默认款，
     // 之后每个节日日都不再自动换了——而当天图的意义就在于「当天」。
@@ -390,6 +421,10 @@ Page({
       customs,
       layout,
       bgId,
+      canEdit: owner,
+      // 只读态的一行说明：访客进来看见的是一整块海报加两个按钮，
+      // 不写清楚「这是谁的、我能做什么」，他会以为这是个打不开的页面。
+      visitorTip: owner || !cardResp ? '' : visitorTipOf(cardResp),
       // 当天命中的素材 id（非节日/非节气日、表外年份为空串）。wxml 用它给那张
       // 缩略图打一个名字角标：自动选中只靠蓝色边框看不出来是因为当天，
       // 用户会以为是上次的选择。
@@ -471,7 +506,9 @@ Page({
   // chooseMedia 是微信隐私接口：调用前须取得用户对隐私政策的同意，
   // 未同意则不打开选图器（用户不同意就不能采集照片，直接放弃本次操作）。
   async uploadBg() {
-    if (!this.data.canUpload) {
+    // 判据用 canEdit 而不是 canUpload：登录员工打开**别人**的海报页时也有令牌，
+    // 但那张海报不归他改，更不该让他把自己的背景图传到别人的素材库里。
+    if (!this.data.canEdit) {
       wx.showModal({
         title: '提示',
         content: '登录员工账号后可以上传自己的背景图',
@@ -767,14 +804,14 @@ Page({
   },
   // 防抖同步：连点「上移」5 次不该发 5 个 PUT。
   syncPrefs() {
-    if (!this.data.canUpload) return // 未登录：只存本地
+    if (!this.data.canEdit) return // 只读态（含「登录但打开别人的海报」）：一次都不写
     const that = this
     if ((this as any)._saveTimer) clearTimeout((this as any)._saveTimer)
     ;(this as any)._saveTimer = setTimeout(() => that.savePrefsNow(), 600)
   },
   // 立即保存（测试与页面 onHide 直接调，不等防抖）
   savePrefsNow() {
-    if (!this.data.canUpload) return Promise.resolve(null)
+    if (!this.data.canEdit) return Promise.resolve(null)
     const that = this
     const body = {
       // 自动挑的节气图不落库：写默认款（= 「没有自己的选择」）。
@@ -1733,6 +1770,27 @@ function pickToday(
     return { id: term.posterId, name: term.name, kind: 'term' }
   }
   return null
+}
+
+// myStaffId 本机已知的「登录员工编号」（0 = 不知道）。
+// 从 globalData 读而不是每次打接口——「我的」页登录成功后就写好了，
+// 而海报页的主入口正是「我的 → 生成海报」。取值失败（小程序环境外、单测未桩）
+// 一律返回 0，由调用方降级处理。
+function myStaffId(): number {
+  try {
+    const app: any = typeof getApp === 'function' ? (getApp as any)() : null
+    return app && app.globalData ? Number(app.globalData.myStaffId) || 0 : 0
+  } catch {
+    return 0
+  }
+}
+
+// visitorTipOf 只读态的一行说明（纯函数，单测可断言）。
+// 有名有姓时点出「这是谁的名片」——访客是从别人那儿转来的，先确认人再看内容；
+// 取不到名字就只说能做什么，绝不蹦出「未知员工」这种内部味的话。
+function visitorTipOf(card: any): string {
+  const name = card && card.employee ? String(card.employee.name || '') : ''
+  return name ? `${name}的名片海报 · 保存或转发帮 TA 传播` : '保存或转发这张名片海报'
 }
 
 // resolveBgId 选中项兜底。三种情况要分开：

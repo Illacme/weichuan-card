@@ -52,7 +52,11 @@ type Company struct {
 	ID        int64     `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
 	Name      string    `gorm:"column:name" json:"name"`
 	ShortName string    `gorm:"column:short_name" json:"shortName"` // 企业简称：PC 后台侧边栏品牌名 + 公司信息简称的初始值；公司信息里的简称仅用于小程序展示，两者相互独立
-	Status    string    `gorm:"column:status;default:enabled" json:"status"`
+	// LoginCode 登录页白标码（?company=）：小写字母/数字/连字符 slug，仅精确匹配。
+	// 命中 enabled 企业时，公开接口回传该企业 ShortName 作为登录页品牌名；未命中回落全局 brand_name。
+	// 空串 = 未配置（多数企业不配，登录页回落全局品牌）。唯一性由后端写入时校验（见 handler/companies.go）。
+	LoginCode string `gorm:"column:login_code" json:"loginCode"`
+	Status    string `gorm:"column:status;default:enabled" json:"status"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
