@@ -1,4 +1,5 @@
 import { request, assetUrl } from '../../../utils/request'
+import { thumbnailURL, onThumbError } from '../../../utils/thumb'
 
 Page({
   data: {
@@ -45,7 +46,10 @@ Page({
     this.setData({ loading: true, error: false })
     try {
       const r = await request('GET', '/api/projects', { categoryId: this.data.categoryId })
-      const list = (r.data || []).map((p: any) => ({ ...p, cover: assetUrl(p.cover) }))
+      const list = (r.data || []).map((p: any) => {
+        const cover = assetUrl(p.cover)
+        return { ...p, cover, coverThumb: thumbnailURL(cover) }
+      })
       this.setData({ list, loading: false })
       // 标题栏回显分类名（跳转页文档 §1.2）：列表接口已回填 categoryName，无需二次查询；
       // 分类被删导致空名时退化为固定标题；「全部」（categoryId=0）不回显分类名
@@ -62,4 +66,6 @@ Page({
       (this.data.staffId ? '&staffId=' + this.data.staffId : '')
     wx.navigateTo({ url })
   },
+
+  onImgErr: onThumbError,
 })

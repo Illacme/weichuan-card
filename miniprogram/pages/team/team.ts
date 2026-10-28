@@ -12,6 +12,7 @@
 //  3. 跳名片页要带上 companyId：平台模式下不传就会被后端兜到 1 号企业，
 //     点进去看到的是别人家公司的人。
 import { request, assetUrl } from '../../utils/request'
+import { thumbnailURL, onThumbError } from '../../utils/thumb'
 import { FALLBACK_BRAND, applyBrandTitle } from '../../utils/brand'
 
 Page({
@@ -67,12 +68,16 @@ Page({
         })
         return
       }
-      const list = (r.data || []).map((e: any) => ({
-        staffId: e.staffId,
-        name: e.name || '未命名',
-        title: e.title || '',
-        avatar: assetUrl(e.avatar),
-      }))
+      const list = (r.data || []).map((e: any) => {
+        const avatar = assetUrl(e.avatar)
+        return {
+          staffId: e.staffId,
+          name: e.name || '未命名',
+          title: e.title || '',
+          avatar,
+          avatarThumb: thumbnailURL(avatar),
+        }
+      })
       const total = Number(r.total) || 0
       const title = comp.shortName || comp.fullName || FALLBACK_BRAND
       this.setData({
@@ -110,4 +115,6 @@ Page({
     // 名片墙本身适合整包转发（「看我们团队」），落点就回到名片墙
     return { title: this.data.title, path: '/pages/team/team' }
   },
+
+  onImgErr: onThumbError,
 })

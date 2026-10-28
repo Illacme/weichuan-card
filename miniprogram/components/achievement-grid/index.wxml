@@ -1,7 +1,8 @@
 <view class="cat-grid">
   <view class="cat-item" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
     <!-- 有图：按设计稿正方形卡片整图展示（标题已绘制在图内，不重复渲染文字名称） -->
-    <image class="cat-icon" src="{{item.icon}}" mode="widthFix" lazy-load wx:if="{{item.icon}}" />
+    <image class="cat-icon" src="{{item.iconThumb}}" mode="widthFix" lazy-load wx:if="{{item.icon}}"
+      binderror="onImgErr" data-arr="categories" data-idx="{{index}}" data-key="iconThumb" data-full="{{item.icon}}" />
     <block wx:else>
       <view class="cat-placeholder">图</view>
       <view class="cat-name">{{item.name}}</view>

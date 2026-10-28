@@ -1,4 +1,5 @@
 import { request, assetUrl } from '../../utils/request'
+import { thumbnailURL } from '../../utils/thumb'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { track, deriveSource } from '../../utils/track'
 import { FALLBACK_BRAND } from '../../utils/brand'
@@ -182,9 +183,19 @@ Page({
       if (cardData.employee) cardData.employee.avatar = assetUrl(cardData.employee.avatar)
       if (cardData.company) cardData.company.logo = assetUrl(cardData.company.logo)
       if (cardData.profile) cardData.profile.cover = assetUrl(cardData.profile.cover)
-      const categories = (ach.categories || []).map((c: any) => ({ ...c, icon: assetUrl(c.icon) }))
-      const featured = (ach.featured || []).map((p: any) => ({ ...p, cover: assetUrl(p.cover) }))
-      const services = (svc.data || []).map((s: any) => ({ ...s, icon: assetUrl(s.icon) }))
+      // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
+      const categories = (ach.categories || []).map((c: any) => {
+        const icon = assetUrl(c.icon)
+        return { ...c, icon, iconThumb: thumbnailURL(icon) }
+      })
+      const featured = (ach.featured || []).map((p: any) => {
+        const cover = assetUrl(p.cover)
+        return { ...p, cover, coverThumb: thumbnailURL(cover) }
+      })
+      const services = (svc.data || []).map((s: any) => {
+        const icon = assetUrl(s.icon)
+        return { ...s, icon, iconThumb: thumbnailURL(icon) }
+      })
       const order = layout.order && layout.order.length ? layout.order : ['achievement', 'service']
       this.setData({
         employee: cardData.employee,

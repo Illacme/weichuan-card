@@ -62,12 +62,12 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 读取全部字节做 EXIF/GPS 剥离（非图片原样透传），再落盘。
+	// 读取全部字节：剥离 EXIF + 按长边压缩原图，并额外生成缩略图。
 	raw, err := io.ReadAll(src)
 	if err != nil {
 		return "", err
 	}
-	clean, err := ProcessImage(ext, raw)
+	full, thumb, err := ProcessUpload(ext, raw)
 	if err != nil {
 		return "", err
 	}
@@ -75,8 +75,14 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(dst, clean, 0644); err != nil {
+	if err := os.WriteFile(dst, full, 0644); err != nil {
 		return "", err
+	}
+	// 缩略图 best-effort：生成失败不影响主图上传（列表页改用原图即可）。
+	// 约定命名 <hash>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
+	if thumb != nil {
+		thumbName := strings.TrimSuffix(name, "."+ext) + "_thumb." + ext
+		_ = os.WriteFile(filepath.Join(l.Dir, thumbName), thumb, 0644) // 缩略图失败不阻断主图上传
 	}
 	return "/uploads/" + name, nil
 }

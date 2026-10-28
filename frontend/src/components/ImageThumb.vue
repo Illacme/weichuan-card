@@ -17,10 +17,11 @@
       </template>
       <el-image
         class="img-thumb"
-        :src="src"
+        :src="thumbSrc"
         :fit="fit"
         :style="thumbStyle"
         @click="viewerOpen = true"
+        @error="onErr"
       />
     </el-tooltip>
     <!-- 全屏查看统一走 ImageViewer（带分辨率/文件大小信息条），不用 el-image
@@ -30,8 +31,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, type PropType } from 'vue'
+import { computed, ref, watch, type PropType } from 'vue'
 import ImageViewer from './ImageViewer.vue'
+import { thumbnailURL } from '@/utils/thumb'
 
 const props = defineProps({
   src: { type: String, required: true },
@@ -47,6 +49,21 @@ const props = defineProps({
 })
 
 const viewerOpen = ref(false)
+// 缩略图加载失败（存量上传 / 外链 / SaveBytes 生成的二维码素材无缩略图）时回退原图。
+const failed = ref(false)
+watch(
+  () => props.src,
+  () => {
+    failed.value = false
+  },
+)
+
+// 列表网格用缩略图降低带宽与首屏耗时；悬停浮层与全屏查看器始终用原图（props.src）。
+const thumbSrc = computed(() => (failed.value ? props.src : thumbnailURL(props.src)))
+
+function onErr() {
+  failed.value = true
+}
 
 const thumbStyle = computed(() => ({
   width: props.width + 'px',

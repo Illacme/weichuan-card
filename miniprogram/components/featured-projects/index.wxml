@@ -1,7 +1,8 @@
 <view class="featured" wx:if="{{featured.length}}">
   <view class="feat-item" wx:for="{{featured}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
     <!-- 等比缩放充满显示区（aspectFill），不放标题文字；项目名在列表/详情页展示 -->
-    <image class="feat-cover" src="{{item.cover}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}" />
+    <image class="feat-cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
+      binderror="onImgErr" data-arr="featured" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />
     <view class="feat-cover" wx:else></view>
   </view>
 </view>

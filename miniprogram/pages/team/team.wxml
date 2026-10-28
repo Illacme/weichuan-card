@@ -33,7 +33,8 @@
       data-id="{{item.staffId}}"
       bindtap="onTap"
     >
-      <image class="team-avatar" src="{{item.avatar}}" mode="aspectFill" wx:if="{{item.avatar}}" />
+      <image class="team-avatar" src="{{item.avatarThumb}}" mode="aspectFill" wx:if="{{item.avatar}}"
+        binderror="onImgErr" data-arr="list" data-idx="{{index}}" data-key="avatarThumb" data-full="{{item.avatar}}" />
       <view class="team-avatar team-avatar-ph" wx:else>{{item.name}}</view>
       <view class="team-cell-name">{{item.name}}</view>
       <view class="team-cell-title" wx:if="{{item.title}}">{{item.title}}</view>

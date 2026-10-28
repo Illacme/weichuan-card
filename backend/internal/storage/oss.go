@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -59,18 +60,26 @@ func (o *OssUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 读取全部字节做 EXIF/GPS 剥离（非图片原样透传），再用剥离后的字节上传。
+	// 读取全部字节：剥离 EXIF + 按长边压缩原图，并额外生成缩略图。
 	raw, err := io.ReadAll(src)
 	if err != nil {
 		return "", err
 	}
-	clean, err := ProcessImage(ext, raw)
+	full, thumb, err := ProcessUpload(ext, raw)
 	if err != nil {
 		return "", err
 	}
 	// 对象名直接用 name：URL 为 BaseURL/name，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/name）形态一致
-	if err := o.Bucket.PutObject(name, bytes.NewReader(clean), oss.ContentType(fh.Header.Get("Content-Type"))); err != nil {
+	if err := o.Bucket.PutObject(name, bytes.NewReader(full), oss.ContentType(fh.Header.Get("Content-Type"))); err != nil {
 		return "", fmt.Errorf("oss put: %w", err)
+	}
+	// 缩略图 best-effort：生成失败不影响主图上传（列表页改用原图即可）。
+	// 约定命名 <hash>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
+	if thumb != nil {
+		tn := strings.TrimSuffix(name, "."+ext) + "_thumb." + ext
+		if perr := o.Bucket.PutObject(tn, bytes.NewReader(thumb), oss.ContentType(fh.Header.Get("Content-Type"))); perr != nil {
+			log.Printf("[WARN] 缩略图上传失败 %s: %v", tn, perr)
+		}
 	}
 	return strings.TrimRight(o.BaseURL, "/") + "/" + name, nil
 }

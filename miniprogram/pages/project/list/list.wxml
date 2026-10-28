@@ -14,7 +14,8 @@
 </view>
 <view class="list" wx:else>
   <view class="item" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
-    <image class="cover" src="{{item.cover}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}" />
+    <image class="cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
+      binderror="onImgErr" data-arr="list" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />
     <view class="meta">
       <view class="name">{{item.name}}</view>
       <view class="summary">{{item.summary}}</view>
