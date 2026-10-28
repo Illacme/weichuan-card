@@ -48,7 +48,14 @@ function syncQuery() {
 </script>
 
 <style scoped>
-.mp-settings {
-  max-width: 960px;
+/* 不设 max-width：这页和其他内容页一样撑满内容区（早期写死 960px 会让卡片在
+   宽屏下缩在左边、右边一大片空白）。
+   el-tabs 的 .el-tabs__content 自带 15px padding，会把卡片左右各缩进一格，
+   与页面上其他卡片对不齐——这里清掉，只在页签与卡片之间留间距。 */
+.mp-settings :deep(.el-tabs__content) {
+  padding: 0;
+}
+.mp-settings :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
 </style>

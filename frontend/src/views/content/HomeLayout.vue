@@ -7,7 +7,9 @@
 
     <p class="desc">控制小程序首页「经典业绩」与「业务服务」的先后顺序，并可设置首页背景图做品牌化包装。</p>
 
-    <el-form label-width="120px" style="max-width: 560px">
+    <!-- 表单宽度与「访客先看到谁」对齐（720）：560 时「从素材库选择」按钮的文字会被
+         挤成两行，撑满卡片后这个窄表单也显得孤零零 -->
+    <el-form label-width="120px" style="max-width: 720px">
       <el-form-item label="板块顺序">
         <el-radio-group v-model="firstBlock">
           <el-radio value="achievement">业绩在前，服务在后</el-radio>
