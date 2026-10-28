@@ -37,6 +37,8 @@
         <div class="header-title">{{ currentTitle }}</div>
         <div class="header-right">
           <template v-if="!isPhone">
+            <!-- 平台超管：切换当前管理的企业（企业管理员没有这个选择器） -->
+            <CompanyPicker v-if="auth.isPlatform" :model-value="tenant.currentId" />
             <span v-if="auth.companyName" class="header-company">
               <el-icon><OfficeBuilding /></el-icon>
               {{ auth.companyName }}
@@ -62,6 +64,11 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-if="auth.companyName" disabled>{{ auth.companyName }}</el-dropdown-item>
+                <!-- 手机端顶栏放不下选择器：收进下拉，点开弹窗选（与内联选择器同一组件） -->
+                <el-dropdown-item v-if="auth.isPlatform" command="company">
+                  <el-icon><OfficeBuilding /></el-icon>
+                  {{ tenant.currentId ? '切换企业：' + tenant.currentName : '选择企业' }}
+                </el-dropdown-item>
                 <el-dropdown-item command="pwd">
                   <el-icon><Key /></el-icon> 修改密码
                 </el-dropdown-item>
@@ -75,13 +82,40 @@
       </el-header>
 
       <el-main class="admin-main">
-        <router-view v-slot="{ Component }">
-          <component :is="Component" />
+        <!--
+          平台超管未选企业时的空态：企业内容 / 统计 / 审核 / 员工这些页面一次只能对着
+          一家企业看和改。不拦的话后端会兜到 1 号企业（零数据的商用版里可能不存在）或
+          直接按「全部企业」出数——前者是**改着 A 家写进 B 家**，后者是把几家数据混一起，
+          两种都比「让你先选一家」糟。
+        -->
+        <div v-if="needPickCompany" class="pick-empty">
+          <el-icon class="pick-icon"><OfficeBuilding /></el-icon>
+          <p class="pick-title">请先选择要管理的企业</p>
+          <p class="pick-desc">
+            当前是平台超管身份，可以管理所有企业。这个页面的内容与数据都归属于某一家企业，
+            请先在
+            <b>右上角选择企业</b>
+            ，再查看或编辑。
+          </p>
+          <el-button type="primary" @click="pickerOpen = true">选择企业</el-button>
+        </div>
+        <router-view v-else v-slot="{ Component }">
+          <!-- key 带上当前企业：切换企业必重建页面组件，让各页的 onMounted 重新取数。
+               不重建的话页面仍是上一家的数据，而「保存」按钮却是活的——最坏的一种错。 -->
+          <component :is="Component" :key="route.path + '#' + tenant.currentId" />
         </router-view>
       </el-main>
     </el-container>
 
     <ChangePasswordDialog v-model="showPwd" />
+
+    <!-- 手机端 / 空态入口：与顶栏内联选择器共用 CompanyPicker -->
+    <el-dialog v-model="pickerOpen" title="选择要管理的企业" width="420px" append-to-body>
+      <CompanyPicker :model-value="tenant.currentId" @change="onPicked" />
+      <template #footer>
+        <span class="pick-tip">切换后当前页面会按所选企业重新加载。</span>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -91,20 +125,30 @@ import { useRoute, useRouter } from 'vue-router'
 import { UserFilled, Key, SwitchButton, Document, Van, DataLine, OfficeBuilding, School, Menu } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
 import { useSettingsStore } from '@/store/settings'
+import { useTenantStore } from '@/store/tenant'
 import { adminLogout, getMe } from '@/api/auth'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
+import CompanyPicker from '@/components/CompanyPicker.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 
 const auth = useAuthStore()
 const settings = useSettingsStore()
+const tenant = useTenantStore()
 const route = useRoute()
 const router = useRouter()
 const showPwd = ref(false)
+// 企业选择弹窗（手机端下拉入口 + 空态里的「选择企业」按钮共用）
+const pickerOpen = ref(false)
 // 窄屏抽屉：<1200 时侧栏离场为抽屉，由汉堡按钮/遮罩/路由切换控制开合
 const asideOpen = ref(false)
 // 手机端（<768）把顶栏右侧的公司名/用户名/改密/退出收进头像下拉，避免顶栏拥挤
 const { isPhone } = useBreakpoint()
 const avatarText = computed(() => (auth.username || '管理员').charAt(0))
+
+// 身份 → 租户作用域同步。**必须放在 setup 而不是 onMounted**：子页面的 onMounted
+// 先于父组件执行，它们一挂载就发请求；晚一步同步，首屏那几个请求就漏了 ?companyId=，
+// 拿回的是「全部企业」或 1 号企业的数据（这正是本功能要消灭的静默串数据）。
+tenant.syncIdentity(auth.isPlatform, auth.companyId)
 
 // 页面刷新后恢复身份：令牌在 httpOnly Cookie 中，JS 读不到 claims，
 // 用 /api/admin/me 取回「平台超管 / 企业管理员」与当前企业（服务端为准，覆盖本地缓存）。
@@ -114,12 +158,36 @@ onMounted(async () => {
   if (auth.loggedIn && !auth.profileLoaded) {
     try {
       const resp = await getMe()
-      if (resp.code === 0 && resp.data) auth.hydrate(resp.data)
+      if (resp.code === 0 && resp.data) {
+        auth.hydrate(resp.data)
+        // 服务端为准再同步一次：localStorage 里的身份可能已过期（被改成企业管理员、
+        // 或所属企业被换掉），而它决定要不要注入 companyId
+        tenant.syncIdentity(resp.data.isPlatform, resp.data.companyId)
+        if (resp.data.isPlatform) tenant.ensureLoaded().catch(() => {})
+      }
     } catch {
       // 网络异常时保留本地缓存身份，不阻塞界面
     }
   }
+  // 平台超管：预取企业候选，顶栏选择器点开即有内容
+  if (auth.isPlatform) tenant.ensureLoaded().catch(() => {})
 })
+
+/**
+ * 哪些页面「必须选定一家企业」。
+ * 平台级页面（企业管理 / 系统设置 / 账号 / 操作日志 / CDN / 内容安全）不在其列——
+ * 它们是跨企业的，选不选都能用。
+ * `/` 是开通审核（ApplyOpen）的落地路径，同样属于企业数据，别忘了它。
+ */
+const COMPANY_SCOPED = [/^\/$/, /^\/content\//, /^\/apply\//, /^\/stats$/, /^\/employees$/]
+
+const needPickCompany = computed(
+  () => tenant.needPick && COMPANY_SCOPED.some((re) => re.test(route.path))
+)
+
+function onPicked() {
+  pickerOpen.value = false
+}
 
 const allMenuGroups = [
   {
@@ -215,12 +283,15 @@ async function onLogout() {
     // 忽略网络异常，本地照常登出
   }
   auth.logout()
+  // 清掉「当前管理的企业」：换人登录不该继承上一个人的视角（尤其平台超管切到企业管理员时）
+  tenant.clear()
   router.replace('/login')
 }
 
-// 手机端头像下拉指令：修改密码 / 退出（与桌面端两个按钮行为一致）
+// 手机端头像下拉指令：修改密码 / 退出 / 切换企业（与桌面端行为一致）
 function onCommand(cmd: string) {
   if (cmd === 'pwd') showPwd.value = true
+  else if (cmd === 'company') pickerOpen.value = true
   else if (cmd === 'logout') onLogout()
 }
 </script>
@@ -329,6 +400,38 @@ function onCommand(cmd: string) {
 .admin-main {
   background: #f5f7fa;
   padding: 16px;
+}
+
+/* 平台超管未选企业的空态：居中卡片，视觉上等同于「这页暂时没内容」，
+   而不是报错——它不是错误，只是还没选上下文。 */
+.pick-empty {
+  max-width: 460px;
+  margin: 12vh auto 0;
+  padding: 32px 28px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  text-align: center;
+}
+.pick-icon {
+  font-size: 40px;
+  color: #c0c4cc;
+}
+.pick-title {
+  margin: 12px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+.pick-desc {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #909399;
+}
+.pick-tip {
+  font-size: 12px;
+  color: #909399;
 }
 
 /* ===== 窄屏响应式：<1200 侧栏变抽屉 =====

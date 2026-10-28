@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, defineComponent } from 'vue'
+import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
 
@@ -31,6 +31,23 @@ vi.mock('@/store/settings', () => ({
   useSettingsStore: () => ({ load: mocks.settingsLoad, displayBrandName: '微传名片' }),
 }))
 vi.mock('@/api/auth', () => ({ getMe: mocks.getMe, adminLogout: mocks.adminLogout }))
+
+// tenant 也用普通对象：需要断言「同步身份」「登出清视角」这些副作用，
+// 真 store 还得额外挂 pinia，收益不成比例（store 自身的行为由 store/tenant.spec.ts 覆盖）。
+const tenant = {
+  currentId: 0,
+  currentName: '',
+  needPick: false,
+  companies: [] as any[],
+  loading: false,
+  loaded: false,
+  syncIdentity: vi.fn(),
+  ensureLoaded: vi.fn(async () => {}),
+  setCurrent: vi.fn(),
+  search: vi.fn(async () => {}),
+  clear: vi.fn(),
+}
+vi.mock('@/store/tenant', () => ({ useTenantStore: () => tenant }))
 vi.mock('@/composables/useBreakpoint', async () => {
   const { ref } = await import('vue')
   return { useBreakpoint: () => ({ isPhone: ref(mocks.isPhone) }) }
@@ -76,16 +93,51 @@ const ElTag = defineComponent({
 })
 const ElIcon = defineComponent({ name: 'ElIcon', template: `<i><slot /></i>` })
 const ElAvatar = defineComponent({ name: 'ElAvatar', props: ['size'], template: `<span class="el-avatar"><slot /></span>` })
+// 下拉：把子项的 command 真的回传到 el-dropdown 的 @command 上。
+// 不接这一层的话「手机端点头像 → 切换企业」这条路径在测试里永远点不动，
+// 只能直接调 vm 上的方法——那就等于没测事件接线。
 const ElDropdown = defineComponent({
   name: 'ElDropdown',
   emits: ['command'],
-  template: `<div class="el-dropdown"><slot /><slot name="dropdown" /></div>`,
+  setup(_, { slots, emit }) {
+    provide('dropdownCommand', (c: string) => emit('command', c))
+    return () => h('div', { class: 'el-dropdown' }, [slots.default?.(), slots.dropdown?.()])
+  },
 })
 const ElDropdownMenu = defineComponent({ name: 'ElDropdownMenu', template: `<div class="el-dropdown-menu"><slot /></div>` })
 const ElDropdownItem = defineComponent({
   name: 'ElDropdownItem',
   props: ['command', 'divided', 'disabled'],
-  template: `<button class="el-dropdown-item" @click="$emit('command')"><slot /></button>`,
+  setup(props, { slots }) {
+    const fire = inject<((c: string) => void) | null>('dropdownCommand', null)
+    return () =>
+      h(
+        'button',
+        {
+          class: 'el-dropdown-item',
+          onClick: () => {
+            if (props.command) fire?.(props.command as string)
+          },
+        },
+        slots.default?.()
+      )
+  },
+})
+const ElSelect = defineComponent({
+  name: 'ElSelect',
+  props: ['modelValue', 'placeholder', 'loading', 'filterable', 'clearable', 'remote', 'remoteMethod', 'fallbackPlacements'],
+  template: `<div class="el-select" v-bind="$attrs"><slot /></div>`,
+  inheritAttrs: true,
+})
+const ElOption = defineComponent({
+  name: 'ElOption',
+  props: ['label', 'value'],
+  template: `<div class="el-option" :data-value="value">{{ label }}</div>`,
+})
+const ElDialog = defineComponent({
+  name: 'ElDialog',
+  props: ['modelValue', 'title', 'width', 'appendToBody'],
+  template: `<div v-if="modelValue" class="el-dialog"><slot /><slot name="footer" /></div>`,
 })
 const ChangePasswordDialog = defineComponent({
   name: 'ChangePasswordDialog',
@@ -110,6 +162,9 @@ const mountOpts = {
       'el-dropdown': ElDropdown,
       'el-dropdown-menu': ElDropdownMenu,
       'el-dropdown-item': ElDropdownItem,
+      'el-select': ElSelect,
+      'el-option': ElOption,
+      'el-dialog': ElDialog,
       ChangePasswordDialog,
       RouterView: defineComponent({ name: 'RouterView', template: `<div class="router-view" />` }),
     },
@@ -165,6 +220,14 @@ describe('layout/AdminLayout', () => {
     mocks.adminLogout.mockClear()
     mocks.settingsLoad.mockClear()
     mocks.isPhone = false
+    tenant.currentId = 0
+    tenant.currentName = ''
+    tenant.needPick = false
+    tenant.companies = []
+    tenant.syncIdentity.mockClear()
+    tenant.ensureLoaded.mockClear()
+    tenant.setCurrent.mockClear()
+    tenant.clear.mockClear()
   })
 
   it('平台超管：菜单包含「平台管理」组的全部入口', async () => {
@@ -324,5 +387,153 @@ describe('layout/AdminLayout', () => {
     await nextTick()
 
     expect((w.vm as any).asideOpen).toBe(false)
+  })
+})
+
+// ===== 平台超管「切换当前企业」 =====
+// 这是本功能的三条硬约束，缺一条就会静默出事故：
+//   ① 未选企业时，企业内容/统计/审核/员工页必须挡住（后端会兜到 1 号企业或「全部企业」）；
+//   ② 平台级页面（企业管理/系统设置/…）不受影响，选不选都能用；
+//   ③ 企业管理员永远看不到选择器，也永远不进空态。
+describe('layout/AdminLayout 企业作用域', () => {
+  // 这个 describe 同样要逐例重置：mocks.isPhone / tenant.* 都是模块级单例，
+  // 上一个用例改过就漏到下一个（曾经因为漏了这段，最后一条「退出」用例
+  // 继承了手机端布局、找不到顶栏按钮而红）。
+  beforeEach(() => {
+    auth.loggedIn = true
+    auth.profileLoaded = true
+    auth.isPlatform = false
+    auth.companyName = ''
+    auth.companyShortName = ''
+    auth.username = 'admin'
+    auth.hydrate.mockClear()
+    auth.logout.mockClear()
+    mocks.getMe.mockClear()
+    mocks.adminLogout.mockClear()
+    mocks.settingsLoad.mockClear()
+    mocks.isPhone = false
+    tenant.currentId = 0
+    tenant.currentName = ''
+    tenant.needPick = false
+    tenant.companies = []
+    tenant.syncIdentity.mockClear()
+    tenant.ensureLoaded.mockClear()
+    tenant.setCurrent.mockClear()
+    tenant.clear.mockClear()
+  })
+
+  it('挂载时把身份同步给租户作用域（子页面 onMounted 先发请求，必须早于它）', async () => {
+    auth.isPlatform = true
+    await mountLayout()
+    // 第二个参数是 auth.companyId（本 mock 里未声明 → undefined），关键是「身份已同步」
+    expect(tenant.syncIdentity).toHaveBeenCalledWith(auth.isPlatform, undefined)
+  })
+
+  it('平台超管未选企业：企业内容页显示空态，不渲染页面', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    const { w } = await mountLayout('/content/projects')
+
+    expect(w.find('.pick-empty').exists()).toBe(true)
+    expect(w.find('.router-view').exists()).toBe(false)
+    expect(w.text()).toContain('请先选择要管理的企业')
+  })
+
+  it('平台超管未选企业：审核 / 统计 / 员工页同样挡住', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    for (const path of ['/', '/employees', '/stats', '/apply/modify']) {
+      const { w } = await mountLayout(path)
+      expect(w.find('.pick-empty').exists(), path).toBe(true)
+    }
+  })
+
+  // 选不选企业跟「企业管理」「系统设置」这些平台级页面无关，不该把它们也挡住
+  it('平台超管未选企业：平台级页面照常渲染', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    const { w } = await mountLayout('/companies')
+
+    expect(w.find('.pick-empty').exists()).toBe(false)
+    expect(w.find('.router-view').exists()).toBe(true)
+  })
+
+  it('平台超管已选企业：正常渲染页面，无空态', async () => {
+    auth.isPlatform = true
+    tenant.needPick = false
+    tenant.currentId = 3
+    const { w } = await mountLayout('/content/projects')
+
+    expect(w.find('.pick-empty').exists()).toBe(false)
+    expect(w.find('.router-view').exists()).toBe(true)
+  })
+
+  // 企业管理员只有一个企业，needPick 恒 false —— 空态绝不该出现在他身上
+  it('企业管理员：不进空态', async () => {
+    auth.isPlatform = false
+    tenant.needPick = false
+    const { w } = await mountLayout('/content/projects')
+
+    expect(w.find('.pick-empty').exists()).toBe(false)
+    expect(w.find('.router-view').exists()).toBe(true)
+  })
+
+  it('桌面端：平台超管顶栏有企业选择器，企业管理员没有', async () => {
+    auth.isPlatform = true
+    const { w: platformView } = await mountLayout()
+    expect(platformView.find('.company-picker').exists()).toBe(true)
+
+    auth.isPlatform = false
+    const { w: tenantView } = await mountLayout()
+    expect(tenantView.find('.company-picker').exists()).toBe(false)
+  })
+
+  it('空态里的「选择企业」按钮打开选择弹窗', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    const { w } = await mountLayout('/content/projects')
+    expect(w.find('.el-dialog').exists()).toBe(false)
+
+    await w.find('.pick-empty .el-button').trigger('click')
+    await nextTick()
+
+    expect(w.find('.el-dialog').exists()).toBe(true)
+    expect(w.find('.el-dialog .company-picker').exists()).toBe(true)
+  })
+
+  // 手机端顶栏放不下选择器：收进头像下拉，点「选择企业」弹窗选
+  it('手机端：下拉里的「选择企业」打开同一个弹窗', async () => {
+    mocks.isPhone = true
+    auth.isPlatform = true
+    tenant.needPick = true
+    const { w } = await mountLayout('/content/projects')
+
+    const item = w.findAll('.el-dropdown-item').find((b: any) => b.text().includes('选择企业'))
+    expect(item).toBeTruthy()
+
+    await item!.trigger('click')
+    await nextTick()
+    expect(w.find('.el-dialog').exists()).toBe(true)
+  })
+
+  it('手机端：已选企业时下拉显示「切换企业：企业名」', async () => {
+    mocks.isPhone = true
+    auth.isPlatform = true
+    tenant.needPick = false
+    tenant.currentId = 2
+    tenant.currentName = '朗汇机电'
+    const { w } = await mountLayout('/content/projects')
+
+    const item = w.findAll('.el-dropdown-item').find((b: any) => b.text().includes('切换企业'))
+    expect(item?.text()).toContain('朗汇机电')
+  })
+
+  // 换人登录不该继承上一个人的视角（平台超管 → 企业管理员时尤其明显）
+  it('退出：同时清掉当前企业视角', async () => {
+    const { w } = await mountLayout()
+    await w.findAll('.el-button').find((b: any) => b.text().includes('退出'))!.trigger('click')
+    await flushPromises()
+
+    expect(tenant.clear).toHaveBeenCalled()
   })
 })

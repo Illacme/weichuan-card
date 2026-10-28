@@ -358,11 +358,12 @@ func applyMediaCheckEvent(db *gorm.DB, ev wechat.MediaCheckEvent) error {
 func listMediaChecks(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		page, size := pageParams(c)
-		q := db.Model(&model.MediaCheck{})
-		// 租户隔离：平台超管（company_id=0）看全部，企业管理员只看自己企业
-		if cid := middleware.CurrentCompanyID(c); cid != 0 {
-			q = q.Where("company_id = ?", cid)
-		}
+		// 租户隔离走统一的 scopeCond：企业管理员只看自己企业；平台超管缺省看全部，
+		// 传 ?companyId= 则收窄到某一家（与「切换当前企业」同一个参数）。
+		// 原先是手写 `if cid := CurrentCompanyID(c); cid != 0`，平台超管无法收窄——
+		// 而顶栏选了企业之后，前端所有 /admin/** 请求都会自动带上 companyId，
+		// 这里不认就会「界面说在看 A 家、其实列的是所有家」。
+		q := db.Model(&model.MediaCheck{}).Scopes(scopeCond(c))
 		if cond, arg := statusCond(c.Query("status"),
 			string(model.MediaCheckPending), string(model.MediaCheckPass),
 			string(model.MediaCheckReview), string(model.MediaCheckRisky),

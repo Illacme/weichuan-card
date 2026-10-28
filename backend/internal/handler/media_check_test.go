@@ -515,4 +515,12 @@ func TestListMediaChecksScoped(t *testing.T) {
 
 	_, body = c.do("GET", "/api/admin/media-checks?onlyTakedownable=1", nil, adminToken)
 	require.EqualValues(t, 1, body["total"], "只有命中违规且未处置的算「可下架」")
+
+	// 顶栏「切换当前企业」会让前端给所有 /admin/** 自动带上 companyId：
+	// 平台超管据此收窄到某一家。不认这个参数就会出现「界面说在看 A 家、
+	// 列表里却是所有家」——比看不到更糟，因为没人会怀疑。
+	_, body = c.do("GET", "/api/admin/media-checks?companyId=2", nil, adminToken)
+	require.EqualValues(t, 1, body["total"], "平台超管指定 companyId 后只看该企业")
+	list = body["data"].([]interface{})
+	require.EqualValues(t, other.ID, list[0].(map[string]interface{})["id"])
 }

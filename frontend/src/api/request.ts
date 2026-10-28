@@ -6,6 +6,7 @@ import axios, {
 import router from '@/router'
 import { ElMessage } from 'element-plus'
 import { setLastRequestId } from './clientError'
+import { getCompanyScope } from '@/store/companyScope'
 
 /**
  * 统一响应体约定（见《三端联调与接口总表》§2）：
@@ -68,6 +69,24 @@ const http = axios.create({
   timeout: 15000,
   withCredentials: true, // 携带 httpOnly Cookie（同源部署）
 }) as ApiHttp
+
+// 平台超管「当前管理的企业」自动透传：给 /admin/** 请求补 ?companyId=。
+//
+// 后端对平台超管的缺省行为是「不按企业过滤」（统计/审核）或「回落 1 号企业」（企业内容），
+// 这两种在「切换企业」的语境下都是错的：前者把别家数据混进来，后者更糟——**改着 B 企业的
+// 资料实际写进了 1 号企业**。逐个 api 函数加参数必漏（漏了不报错，只是静默串数据），
+// 所以收在一处注入。
+//
+// 只对 `/admin/` 前缀生效：公开接口与安装向导不吃 companyId，不给他们添噪。
+// 调用方显式传了 companyId（如 getStorageUsage(companyId)）时不覆盖。
+http.interceptors.request.use((cfg) => {
+  const { companyId, active } = getCompanyScope()
+  if (!active || !cfg.url || !cfg.url.startsWith('/admin/')) return cfg
+  const params = (cfg.params ?? {}) as Record<string, unknown>
+  if (params.companyId != null) return cfg
+  cfg.params = { ...params, companyId }
+  return cfg
+})
 
 // 并发 401 时的单飞锁：多个请求同时 401 只触发一次刷新，其余复用同一次结果
 let refreshing: Promise<boolean> | null = null

@@ -26,6 +26,15 @@ info:
     - 关键字段筛选（keyword / status）同样在服务端完成：前端只筛当前页会出现
       「搜得到但翻页后又没了」的错觉。
 
+    ## 多租户作用域（`?companyId=`）
+    - 后台有两级身份：平台超管（`admins.company_id=0`）可见全部企业，企业管理员只见本企业。
+    - 企业内容 / 数据统计 / 审核管理 / 员工管理这些接口都接受 `?companyId=` **收窄到某一家企业**，
+      参数定义见 `components.parameters.CompanyScope`。
+    - **企业管理员传了也无效**：后端一律按令牌里的 `company_id` 过滤，越权读改别家会被挡下。
+    - 前端不逐接口传：`api/request.ts` 的请求拦截器给 `/admin/**` 统一补上，值来自顶栏企业选择器。
+      平台超管**未选企业**时界面直接拦成空态，不放请求——因此这两种历史缺省行为（统计类「全部企业」、
+      内容类「回落 1 号企业」）在界面上不会出现。
+
     ## 两种鉴权方式
     - **小程序端（Bearer）**：`Authorization: Bearer <access token>`，token 由 JS 显式携带。
     - **PC 管理后台（httpOnly Cookie）**：登录后服务端下发 `access_token` / `refresh_token`
@@ -1059,6 +1068,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/Size"
         - name: keyword
@@ -1157,6 +1167,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/Size"
         - name: keyword
@@ -1492,6 +1503,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - name: from
           in: query
           required: false
@@ -1638,6 +1650,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - name: from
           in: query
           required: false
@@ -1667,6 +1680,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - name: from
           in: query
           required: false
@@ -1733,6 +1747,8 @@ paths:
   # ───────────────────────── 超管-内容管理 ─────────────────────────
   /api/admin/company-info:
     get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 企业基础信息
       security:
@@ -1750,6 +1766,8 @@ paths:
                   data:
                     $ref: "#/components/schemas/CompanyInfo"
     put:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 更新企业基础信息
       security:
@@ -1766,6 +1784,8 @@ paths:
 
   /api/admin/company-profile:
     get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 公司简介
       security:
@@ -1783,6 +1803,8 @@ paths:
                   data:
                     $ref: "#/components/schemas/CompanyProfile"
     put:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 更新公司简介
       security:
@@ -1799,6 +1821,8 @@ paths:
 
   /api/admin/categories:
     get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 业绩分类列表
       security:
@@ -1818,6 +1842,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/AchievementCategory"
     post:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 新增分类
       security:
@@ -1905,6 +1931,7 @@ paths:
       security:
         - cookieAuth: []
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - name: categoryId
           in: query
           required: true
@@ -1926,6 +1953,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/ProjectCase"
     post:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 新增项目
       security:
@@ -2004,6 +2033,8 @@ paths:
 
   /api/admin/services:
     get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 业务服务列表
       security:
@@ -2023,6 +2054,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/BizService"
     post:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 新增业务服务
       security:
@@ -2093,6 +2126,8 @@ paths:
 
   /api/admin/home-layout:
     get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 首页布局顺序
       security:
@@ -2115,6 +2150,8 @@ paths:
                         items:
                           type: string
     put:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
       summary: 更新首页布局顺序
       security:
@@ -3703,6 +3740,7 @@ paths:
         **租户隔离**：平台超管（company_id=0）看全部，企业管理员只看本企业。
       tags: [内容安全]
       parameters:
+        - $ref: "#/components/parameters/CompanyScope"
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/Size"
         - name: status
@@ -3830,6 +3868,25 @@ components:
         type: integer
         default: 20
         maximum: 100
+
+    # 多租户作用域：平台超管「当前正在管理哪家企业」。
+    # 前端不逐接口传——api/request.ts 的请求拦截器统一给 /admin/** 补上，
+    # 值来自顶栏企业选择器（store/tenant.ts）。理由见 info.description「多租户作用域」。
+    CompanyScope:
+      name: companyId
+      in: query
+      required: false
+      description: |
+        目标企业 id。**仅平台超管（admins.company_id=0）有效**：企业管理员传了也会被忽略，
+        后端始终按令牌里的 company_id 收窄（防越权读改别家企业）。
+
+        平台超管不传时有两种历史行为，都容易让人误解，所以界面强制先选企业：
+        统计 / 审核 / 员工类走 `tenantScope`，缺省是「全部企业」；
+        企业内容类走 `targetCompanyID`，缺省**回落 1 号企业**——「改着 A 家内容写进
+        1 号企业」就是这么来的。
+      schema:
+        type: integer
+        format: int64
 
   securitySchemes:
     bearerAuth:

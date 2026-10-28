@@ -23,10 +23,16 @@ vi.mock('@/router', () => ({
 }))
 
 import http from '@/api/request'
+import { setCompanyScope } from '@/store/companyScope'
 
 // 取出已注册的响应拦截 fulfilled（axios 把 fulfilled/rejected 存在 handlers 数组）
 function respFulfilled() {
   return (http.interceptors.response as any).handlers[0].fulfilled
+}
+
+// 请求拦截同理（本文件只有一个请求拦截器）
+function reqFulfilled() {
+  return (http.interceptors.request as any).handlers[0].fulfilled
 }
 
 describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
@@ -187,5 +193,50 @@ describe('request 响应拦截：HTTP 非 2xx 时的错误文案', () => {
     // 拿不到 msg 就原样抛出 axios 错误，至少保留 status / response 供排障
     expect(err).toBe(raw)
     expect(elMessage.error).toHaveBeenCalledWith('网络异常，请稍后重试')
+  })
+})
+
+// 平台超管「当前管理的企业」由拦截器统一透传成 ?companyId=。
+//
+// 为什么必须收在一处：后端对平台超管的缺省行为是「不按企业过滤」（统计/审核）或
+// 「回落 1 号企业」（企业内容）。逐个 api 函数加参数必漏，而漏了不报错——
+// 页面会静默显示别家企业的数据，最坏的一种是「改着 A 家写进 B 家」。
+describe('request 请求拦截：当前企业自动透传', () => {
+  beforeEach(() => {
+    setCompanyScope(0, false)
+  })
+
+  it('平台超管已选企业：/admin/** 自动带 companyId', () => {
+    setCompanyScope(3, true)
+    const cfg = reqFulfilled()({ url: '/admin/categories', params: { page: 1 } })
+    expect(cfg.params).toEqual({ page: 1, companyId: 3 })
+  })
+
+  it('原本没有 params：也要补上', () => {
+    setCompanyScope(7, true)
+    const cfg = reqFulfilled()({ url: '/admin/company-info' })
+    expect(cfg.params).toEqual({ companyId: 7 })
+  })
+
+  // 企业管理员 / 平台超管未选企业：一个参数都不加，由后端按身份自行收窄
+  it('作用域未激活：不加任何参数', () => {
+    setCompanyScope(0, false)
+    const cfg = reqFulfilled()({ url: '/admin/categories' })
+    expect(cfg.params).toBeUndefined()
+  })
+
+  // 公开接口与安装向导不吃 companyId，不该被塞进一个来路不明的查询参数
+  it('非 /admin 前缀：不加参数', () => {
+    setCompanyScope(3, true)
+    for (const url of ['/card', '/achievements', '/refresh', '/setup/status']) {
+      expect(reqFulfilled()({ url }).params).toBeUndefined()
+    }
+  })
+
+  // 调用方显式传了 companyId（如按企业查存储用量）就以调用方为准
+  it('调用方已显式指定 companyId：不覆盖', () => {
+    setCompanyScope(3, true)
+    const cfg = reqFulfilled()({ url: '/admin/companies/9/storage', params: { companyId: 9 } })
+    expect(cfg.params).toEqual({ companyId: 9 })
   })
 })
