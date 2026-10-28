@@ -9,9 +9,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // mock 两个重依赖：
 //   - element-plus 的 ElMessage（避免真实 toast）
 //   - @/router 的 default 导出（避免加载 vue-router 全链路 + 真实跳转）
-const { elMessage, routerReplace } = vi.hoisted(() => ({
+const { elMessage, routerReplace, authLogout } = vi.hoisted(() => ({
   elMessage: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn() },
   routerReplace: vi.fn(),
+  authLogout: vi.fn(),
 }))
 
 vi.mock('element-plus', () => ({ ElMessage: elMessage }))
@@ -21,6 +22,9 @@ vi.mock('@/router', () => ({
     replace: routerReplace,
   },
 }))
+// 401 后必须连内存里的登录态一起清（store 不清 → 守卫仍认为已登录 →
+// replace('/login') 被弹回后台 → 界面「已登录」但每个请求都 401）。
+vi.mock('@/store/auth', () => ({ useAuthStore: () => ({ logout: authLogout }) }))
 
 import http from '@/api/request'
 import { setCompanyScope } from '@/store/companyScope'
@@ -49,16 +53,19 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     expect(data).toEqual({ code: 0, msg: 'ok', data: { a: 1 } })
   })
 
-  it('code=401 且刷新失败：清登录态、跳登录并 reject', async () => {
+  it('code=401 且刷新失败：清登录态（含内存 store）、跳登录并 reject', async () => {
     localStorage.setItem('admin_user', 'admin')
     localStorage.setItem('admin_loggedin', '1')
     // /api/refresh 返回非 0 → 刷新失败
     vi.spyOn(http, 'post').mockResolvedValue({ code: 1 } as any)
-    const p = respFulfilled()({ data: { code: 401, msg: '登录失效，请重新登录' }, config: {} })
-    await expect(p).rejects.toThrow('登录失效，请重新登录')
+    const p = respFulfilled()({ data: { code: 401, msg: '未登录' }, config: {} })
+    await expect(p).rejects.toThrow('未登录')
     expect(localStorage.getItem('admin_user')).toBeNull()
     expect(localStorage.getItem('admin_loggedin')).toBeNull()
-    expect(elMessage.error).toHaveBeenCalledWith('登录失效，请重新登录')
+    // 只清 localStorage 不够：store 里 loggedIn 仍为 true 时守卫会把用户弹回后台
+    expect(authLogout).toHaveBeenCalled()
+    // 提示用「登录已失效」而不是后端那两句内部术语（未登录 / 刷新令牌无效）
+    expect(elMessage.error).toHaveBeenCalledWith('登录已失效，请重新登录')
     expect(routerReplace).toHaveBeenCalledWith('/login')
   })
 
@@ -74,8 +81,10 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     expect(routerReplace).not.toHaveBeenCalled()
   })
 
-  it('code=401 刷新请求自身（__skipRefresh）不再递归刷新', async () => {
-    // 刷新端点自身返回 401 时，应直接走清登录态，不再调用 http.post 去刷新
+  it('code=401 刷新请求自身（__skipRefresh）：静默 reject，不递归刷新也不弹提示', async () => {
+    // 刷新端点自身返回 401 时：既不重复刷新，也不清场/跳转/弹提示——
+    // 发起刷新的那个原请求会自己走 clearSession + 「登录已失效」。
+    // 两边都处理的结果是一次失效弹两条（「刷新令牌无效」+「未登录」）。
     const postSpy = vi.spyOn(http, 'post')
     localStorage.setItem('admin_user', 'admin')
     const p = respFulfilled()({
@@ -84,8 +93,9 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     })
     await expect(p).rejects.toThrow('刷新令牌无效')
     expect(postSpy).not.toHaveBeenCalled()
-    expect(localStorage.getItem('admin_user')).toBeNull()
-    expect(routerReplace).toHaveBeenCalledWith('/login')
+    expect(localStorage.getItem('admin_user')).toBe('admin')
+    expect(elMessage.error).not.toHaveBeenCalled()
+    expect(routerReplace).not.toHaveBeenCalled()
   })
 
   it('code=403：警告并 reject', async () => {

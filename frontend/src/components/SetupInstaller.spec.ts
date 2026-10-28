@@ -37,7 +37,9 @@ const ElCheckbox = defineComponent({
   name: 'ElCheckbox',
   props: ['modelValue'],
   emits: ['update:modelValue'],
-  template: `<label class="stub-chk"><slot /></label>`,
+  // 支持点击切换：v-model 靠 update:modelValue 回写，stub 不实现这个事件
+  // 就没法在测试里勾选（曾经漏了，结果「勾选演示数据」这类用例根本点不动）。
+  template: `<label class="stub-chk" @click="$emit('update:modelValue', !modelValue)"><slot /></label>`,
 })
 const ElAlert = defineComponent({
   name: 'ElAlert',
@@ -226,5 +228,69 @@ describe('SetupInstaller', () => {
     expect(w.text()).toContain('所有人已登录的状态立即失效')
     expect(w.text()).toContain('登录 Cookie 加 Secure 标记')
     expect(w.text()).toContain('浏览器只在 HTTPS 连接下发送')
+  })
+
+  it('管理员步骤含「装载演示企业数据」勾选项，默认不勾（商用零数据基线）', async () => {
+    const w = mountInstaller()
+    const admin = block(w, '管理员账号')
+    const chk = admin.find('.si-demo .stub-chk')
+    expect(chk.exists()).toBe(true)
+    expect(w.text()).toContain('同时装载演示企业数据（朗汇机电样板）')
+    expect(w.text()).toContain('不勾选则装完是空白系统')
+    // 填合法密码才能越过本地预检、进入确认条
+    await field(admin, '密码').setValue('installer-pass-123')
+    await field(admin, '确认密码').setValue('installer-pass-123')
+    // 默认不勾：确认条列出的是「空白（装完先创建企业）」
+    await button(w, '开始安装').trigger('click')
+    expect(w.find('.si-confirm').exists()).toBe(true)
+    // 仅看确认块：勾选项的 label 还在隐藏的管理员步骤里，整体 text() 会误命中
+    const confirm = w.find('.si-confirm')
+    expect(confirm.text()).toContain('空白（装完先创建企业）')
+    expect(confirm.text()).not.toContain('装载演示企业数据（朗汇机电样板）')
+  })
+
+  it('勾选演示数据：确认条列出样板企业，安装 payload 带上 loadDemoData=true', async () => {
+    vi.mocked(runInstall).mockResolvedValue({
+      ok: true,
+      driver: 'mysql',
+      dsn: 'root:******@tcp(mysql:3306)/weichuan',
+      configFile: './data/runtime.env',
+      restarted: false,
+      message: '',
+    })
+    const w = mountInstaller()
+    const admin = block(w, '管理员账号')
+    await field(admin, '密码').setValue('installer-pass-123')
+    await field(admin, '确认密码').setValue('installer-pass-123')
+    // 勾选演示数据
+    await w.find('.si-demo .stub-chk').trigger('click')
+    await nextTick()
+    await button(w, '开始安装').trigger('click')
+    expect(w.find('.si-confirm').exists()).toBe(true)
+    expect(w.text()).toContain('装载演示企业数据（朗汇机电样板）')
+    await button(w, '确认安装').trigger('click')
+    await vi.waitFor(() => expect(runInstall).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(runInstall).mock.calls[0][0]
+    expect(payload.loadDemoData).toBe(true)
+  })
+
+  it('不勾演示数据：payload 明确带 loadDemoData=false（零数据基线，不静默漏掉字段）', async () => {
+    vi.mocked(runInstall).mockResolvedValue({
+      ok: true,
+      driver: 'mysql',
+      dsn: 'root:******@tcp(mysql:3306)/weichuan',
+      configFile: './data/runtime.env',
+      restarted: false,
+      message: '',
+    })
+    const w = mountInstaller()
+    const admin = block(w, '管理员账号')
+    await field(admin, '密码').setValue('installer-pass-123')
+    await field(admin, '确认密码').setValue('installer-pass-123')
+    await button(w, '开始安装').trigger('click')
+    await button(w, '确认安装').trigger('click')
+    await vi.waitFor(() => expect(runInstall).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(runInstall).mock.calls[0][0]
+    expect(payload.loadDemoData).toBe(false)
   })
 })

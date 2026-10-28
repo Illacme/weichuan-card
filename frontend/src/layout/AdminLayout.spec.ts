@@ -474,6 +474,8 @@ describe('layout/AdminLayout 企业作用域', () => {
   it('平台超管未选企业：企业内容页显示空态，不渲染页面', async () => {
     auth.isPlatform = true
     tenant.needPick = true
+    // 有企业可选、只是还没选（零企业的情形是另一条用例）
+    tenant.companies = [{ id: 1, name: '甲公司' }]
     const { w } = await mountLayout('/content/projects')
 
     expect(w.find('.pick-empty').exists()).toBe(true)
@@ -481,9 +483,38 @@ describe('layout/AdminLayout 企业作用域', () => {
     expect(w.text()).toContain('请先选择要管理的企业')
   })
 
+  // 新装且没勾「装载演示数据」：系统里一家企业都没有。此时把人留在「请先选择要管理的
+  // 企业」是死路——点开选择器是空列表。直接送到「企业管理」，那里才有建企业的入口。
+  it('平台超管一家企业都没有：自动跳到「企业管理」', async () => {
+    auth.isPlatform = true
+    tenant.companies = []
+    const { router } = await mountLayout('/apply/open')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/companies')
+  })
+
+  it('企业列表加载失败（拿不到企业）：空态改成「还没有创建任何企业」，按钮去建企业', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    tenant.companies = []
+    // 列表拉取失败时不自动跳转（不知道到底有没有企业），停在空态但给对出口
+    tenant.ensureLoaded.mockRejectedValueOnce(new Error('网络异常'))
+    const { w, router } = await mountLayout('/content/projects')
+    await flushPromises()
+
+    expect(w.text()).toContain('还没有创建任何企业')
+    const btn = w.findAll('.el-button').find((b: any) => b.text() === '去创建企业')
+    expect(btn).toBeDefined()
+    await btn!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/companies')
+  })
+
   it('平台超管未选企业：审核 / 统计 / 员工页同样挡住', async () => {
     auth.isPlatform = true
     tenant.needPick = true
+    tenant.companies = [{ id: 1, name: '甲公司' }]
     for (const path of ['/', '/employees', '/stats', '/apply/modify']) {
       const { w } = await mountLayout(path)
       expect(w.find('.pick-empty').exists(), path).toBe(true)
@@ -533,6 +564,7 @@ describe('layout/AdminLayout 企业作用域', () => {
   it('空态里的「选择企业」按钮打开选择弹窗', async () => {
     auth.isPlatform = true
     tenant.needPick = true
+    tenant.companies = [{ id: 1, name: '甲公司' }]
     const { w } = await mountLayout('/content/projects')
     expect(w.find('.el-dialog').exists()).toBe(false)
 

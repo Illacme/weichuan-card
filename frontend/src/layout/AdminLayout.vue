@@ -90,14 +90,23 @@
         -->
         <div v-if="needPickCompany" class="pick-empty">
           <el-icon class="pick-icon"><OfficeBuilding /></el-icon>
-          <p class="pick-title">请先选择要管理的企业</p>
-          <p class="pick-desc">
+          <p class="pick-title">{{ noCompany ? '还没有创建任何企业' : '请先选择要管理的企业' }}</p>
+          <!-- 一家企业都没有时，「选择企业」弹窗里是空列表——点开等于走进死路。
+               这时唯一的出路是先去创建企业，文案与按钮都换成那一件事。 -->
+          <p v-if="noCompany" class="pick-desc">
+            系统里还没有企业，所以这里没有可选的对象。先到
+            <b>企业管理</b>
+            创建一家企业（可同时给企业管理员开账号），再回来配置内容与小程序。
+          </p>
+          <p v-else class="pick-desc">
             当前是平台超管身份，可以管理所有企业。这个页面的内容与数据都归属于某一家企业，
             请先在
             <b>右上角选择企业</b>
             ，再查看或编辑。
           </p>
-          <el-button type="primary" @click="pickerOpen = true">选择企业</el-button>
+          <el-button type="primary" @click="noCompany ? router.push('/companies') : (pickerOpen = true)">
+            {{ noCompany ? '去创建企业' : '选择企业' }}
+          </el-button>
         </div>
         <router-view v-else v-slot="{ Component }">
           <!-- key 带上当前企业：切换企业必重建页面组件，让各页的 onMounted 重新取数。
@@ -170,7 +179,19 @@ onMounted(async () => {
     }
   }
   // 平台超管：预取企业候选，顶栏选择器点开即有内容
-  if (auth.isPlatform) tenant.ensureLoaded().catch(() => {})
+  if (auth.isPlatform) {
+    tenant
+      .ensureLoaded()
+      .then(() => {
+        // 零企业（新装且没勾「装载演示数据」）：登录后落在企业作用域页面只会看到
+        // 「请先选择要管理的企业」，而列表是空的——用户不知道下一步该干什么。
+        // 直接送到「企业管理」，那里有唯一的出路：新建企业。
+        if (!tenant.companies.length && route.path !== '/companies') {
+          router.replace('/companies')
+        }
+      })
+      .catch(() => {})
+  }
 })
 
 /**
@@ -183,6 +204,12 @@ const COMPANY_SCOPED = [/^\/$/, /^\/content\//, /^\/apply\//, /^\/stats$/, /^\/e
 
 const needPickCompany = computed(
   () => tenant.needPick && COMPANY_SCOPED.some((re) => re.test(route.path))
+)
+
+// 一家企业都没有（新装且没勾「装载演示数据」的典型状态）。与 needPick 分开：
+// needPick 是「有多家可选但还没选」，这里是「根本没得选」，处理方式完全不同。
+const noCompany = computed(
+  () => auth.isPlatform && !tenant.loading && tenant.companies.length === 0
 )
 
 function onPicked() {

@@ -139,6 +139,19 @@
         </div>
         <p class="si-tip">建议 12 位以上，混合大小写字母、数字与符号；登录后可随时修改。</p>
 
+        <!-- 初始化数据：放在管理员这一步（最后一步的确认页只做复核），
+             与后端 /setup 内置页的选项同名同义（loadDemoData）。 -->
+        <div class="si-demo">
+          <el-checkbox v-model="form.loadDemoData">
+            同时装载演示企业数据（朗汇机电样板）
+          </el-checkbox>
+          <p class="si-demo-desc">
+            勾选后会自动创建一家样板企业，含 8 个业绩分类、10 个项目案例、4 项服务与配套图片，
+            方便先把小程序跑起来看效果；正式上线前删掉这家企业即可。
+            <b>不勾选则装完是空白系统</b>：登录后先到「企业管理」创建自己的企业，再录内容。
+          </p>
+        </div>
+
         <el-alert
           v-if="alertMsg"
           :type="alertType"
@@ -177,6 +190,10 @@
         <ul class="si-confirm-list">
           <li>写入配置文件并初始化数据库</li>
           <li>创建管理员账号 <b>{{ form.adminUser || 'admin' }}</b></li>
+          <li>
+            初始化数据
+            <b>{{ form.loadDemoData ? '装载演示企业数据（朗汇机电样板）' : '空白（装完先创建企业）' }}</b>
+          </li>
           <li>重启服务并加载配置</li>
           <li>完成后自动进入登录页</li>
         </ul>
@@ -256,6 +273,9 @@ const form = reactive({
   adminPass: '',
   adminPass2: '',
   jwtKey: '',
+  // 是否装载演示企业数据（默认不勾：商用版装完就该是一张白纸，由客户自己录真实内容）。
+  // 勾了才会建「朗汇机电」样板企业 + 分类/案例/服务 + 27 张配套素材。
+  loadDemoData: false,
   // 默认按访问协议判定：HTTPS（生产域名，如 宝塔反代后的 weichuan.ziyuanxingqiu.cn）
   // 下自动勾选「Cookie 强制 HTTPS」，省去手动勾、实现安装即零配置；
   // HTTP（本地开发 / 尚未配 TLS）下保持不勾，避免 Secure Cookie 在 http 下无法落盘导致登录失效。
@@ -302,6 +322,7 @@ function payload(): InstallPayload {
     adminPass2: form.adminPass2,
     jwtKey: form.jwtKey.trim(),
     cookieSecure: form.cookieSecure,
+    loadDemoData: form.loadDemoData,
   }
   if (engine.value === 'mysql') {
     return {
@@ -459,7 +480,11 @@ function poll() {
 
 function countdown() {
   let n = 3
-  progressTip.value = `安装完成，${n} 秒后进入登录页…`
+  // 装完就把下一步说清楚：零数据安装最大的困惑是「登进去什么都没有、也不知道去哪」。
+  const next = form.loadDemoData
+    ? '已装载演示企业数据，登录后可在「企业内容」里替换成自己的内容'
+    : '系统是空白的，登录后请先到「企业管理」创建一家企业'
+  progressTip.value = `安装完成——${next}。${n} 秒后进入登录页…`
   const t = window.setInterval(() => {
     n--
     if (n <= 0) {
@@ -468,7 +493,7 @@ function countdown() {
       window.location.href = '/'
       return
     }
-    progressTip.value = `安装完成，${n} 秒后进入登录页…`
+    progressTip.value = `安装完成——${next}。${n} 秒后进入登录页…`
   }, 1000)
 }
 
@@ -797,6 +822,24 @@ onMounted(() => {
 }
 .si-tip--hint {
   color: #e6a23c;
+}
+/* 初始化数据选项：浅底卡片，与上面的账号字段分开——它是「装完里面有什么」，
+   不是账号信息的一部分，贴在一起容易被当成必填项。 */
+.si-demo {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fafcff;
+}
+.si-demo-desc {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.7;
+}
+.si-demo-desc b {
+  color: #606266;
 }
 .si-dsn {
   margin: 14px 0 0;

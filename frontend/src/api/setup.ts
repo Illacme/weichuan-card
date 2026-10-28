@@ -59,6 +59,12 @@ export interface InstallPayload {
   adminPass2: string
   jwtKey?: string
   cookieSecure?: boolean
+  /**
+   * 是否装载演示企业数据（后端 demoseed）。缺省 false：
+   * 「没表态」与「明确不要」在这里不需要区分——安装是一次性动作，
+   * 向导里是一个明确的勾选框，不勾就是不装。
+   */
+  loadDemoData?: boolean
 }
 
 export interface TestConnectionResult {

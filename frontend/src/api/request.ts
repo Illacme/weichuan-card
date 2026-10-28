@@ -7,6 +7,7 @@ import router from '@/router'
 import { ElMessage } from 'element-plus'
 import { setLastRequestId } from './clientError'
 import { getCompanyScope } from '@/store/companyScope'
+import { useAuthStore } from '@/store/auth'
 
 /**
  * 统一响应体约定（见《三端联调与接口总表》§2）：
@@ -95,6 +96,15 @@ let refreshing: Promise<boolean> | null = null
 function clearSession() {
   localStorage.removeItem('admin_user')
   localStorage.removeItem('admin_loggedin')
+  // 内存里的登录态必须一起清。只清 localStorage 时路由守卫仍然认为「已登录」，
+  // 接着的 replace('/login') 会被守卫弹回后台——界面看起来一切正常（用户名、
+  // 身份都在），实际上每个请求都在 401，用户看到的是「已登录」和「未登录」
+  // 两条提示并存的荒谬画面。
+  try {
+    useAuthStore().logout()
+  } catch {
+    // pinia 尚未激活（安装页 / 单测直接拿 http 实例）：localStorage 已清，够了
+  }
 }
 
 // 用 refresh Cookie 换发新 access（服务端轮换下发新 Cookie）。__skipRefresh 防止刷新请求
@@ -128,7 +138,13 @@ http.interceptors.response.use(
     //      刷新失败再清登录态跳登录。已重试过（__retried）或刷新请求自身（__skipRefresh）不再刷新。
     if (data.code === 401) {
       const cfg = resp.config as any
-      if (cfg && !cfg.__skipRefresh && !cfg.__retried) {
+      // 刷新请求自身的 401：静默 reject，由发起刷新的一方统一提示。
+      // 不静默的话，一次令牌失效会连弹两条（「刷新令牌无效」+「未登录」）——
+      // 两句都是用户看不懂的内部术语，还挡住了界面。
+      if (cfg && cfg.__skipRefresh) {
+        return Promise.reject(new Error(data.msg || '未登录'))
+      }
+      if (cfg && !cfg.__retried) {
         if (!refreshing) {
           refreshing = tryRefresh().finally(() => {
             refreshing = null
@@ -141,7 +157,9 @@ http.interceptors.response.use(
         }
       }
       clearSession()
-      ElMessage.error(data.msg || '登录失效，请重新登录')
+      // 不用后端的 msg：401 的文案在服务端是「未登录」「刷新令牌无效」这类内部说法，
+      // 而此刻用户刚刚还在用，说「未登录」只会让人怀疑系统坏了。
+      ElMessage.error('登录已失效，请重新登录')
       if (router.currentRoute.value.path !== '/login') {
         router.replace('/login')
       }
