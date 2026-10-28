@@ -119,37 +119,18 @@ describe('index 首页', () => {
     expect(wxStub.showModal).not.toHaveBeenCalled()
   })
 
-  it('既无参数也无登录态：弹输入框，且 loading 必须落下', async () => {
+  // 裸启动（扫体验版二维码 / 直接打开）：微信不带任何参数。这里**绝不能**弹
+  // 「输入员工编号」——那是开发期联调兜底，访客第一次打开这家公司的小程序
+  // 看到的会是一个要他输入数字的弹窗。落点应该是名片墙。
+  it('既无参数也无登录态：跳名片墙，不弹输入框', async () => {
     mockApis()
     const p = await page({})
 
     expect(p.data.loading).toBe(false)
-    expect(wxStub.showModal).toHaveBeenCalledTimes(1)
-    expect(wxStub.showModal.mock.calls[0][0].editable).toBe(true)
-  })
-
-  it('输入框填了非法编号：提示并重新弹一次（不能静默失败）', async () => {
-    mockApis()
-    wxStub.showModal
-      .mockImplementationOnce((opt: any) => opt.success({ confirm: true, content: 'abc' }))
-      .mockImplementationOnce((opt: any) => opt.success({ confirm: false }))
-    const p = await page({})
-
-    expect(wxStub.showToast).toHaveBeenCalledWith({ title: '编号无效', icon: 'none' })
-    expect(wxStub.showModal).toHaveBeenCalledTimes(2)
-    expect(p.data.staffId).toBe(0)
-  })
-
-  it('输入框填了合法编号：加载该员工名片', async () => {
-    mockApis()
-    wxStub.showModal.mockImplementationOnce((opt: any) =>
-      opt.success({ confirm: true, content: ' 42 ' })
-    )
-    const p = await page({})
-    await flush()
-
-    expect(p.data.staffId).toBe(42)
-    expect(p.data.employee.name).toBe('张伟')
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/team/team' })
+    expect(wxStub.showModal).not.toHaveBeenCalled()
+    // 没有 staffId 就不该去拉名片（否则会打一个 staffId=0 的请求回来）
+    expect(mocks.request).not.toHaveBeenCalled()
   })
 
   // 平台模式下扫码/分享带 companyId 要粘滞到本机，企业内容才跟着走
@@ -276,19 +257,29 @@ describe('index 首页', () => {
     expect(after).toBe(before)
   })
 
-  // 弹窗输编号这条路径上 onShow 早于 staffId 就绪，只挂 onShow 会漏计
-  it('弹窗输入编号进入时也计入访问', async () => {
+  // 时序兜底：真机上 onLoad 之后立刻会 onShow，而 staffId 可能要等解析完成才就绪。
+  // 只挂 onShow 会漏计，所以 loadAll 成功后要再补一次 trackVisit（内部按 staffId 去重）。
+  //
+  // 这条用例原先是「弹窗输入编号进入时也计入访问」——弹窗那条路径已随「裸启动改跳
+  // 名片墙」删掉了，但**时序不变量本身还在**，所以按真机顺序手工驱动一遍来守它。
+  it('onShow 早于 staffId 就绪时，加载完成后补报访问', async () => {
     mockApis()
-    wxStub.showModal.mockImplementationOnce((opt: any) =>
-      opt.success({ confirm: true, content: '42' })
-    )
-    const p = await page({})
-    p.onShow() // 模拟真机顺序：onLoad 之后立刻 onShow（此时还没有 staffId）
-    await flush()
+    const p = await page({ staffId: '42' })
+    const tracks = () => mocks.request.mock.calls.filter((c) => c[1] === '/api/stat/track')
+    const before = tracks().length
 
-    const tracks = mocks.request.mock.calls.filter((c) => c[1] === '/api/stat/track')
-    expect(tracks).toHaveLength(1)
-    expect(tracks[0][2]).toEqual({ staffId: 42, eventType: 'visit' })
+    // 回到「staffId 尚未解析出来」的时刻，模拟 onShow 先到
+    p.data.staffId = 0
+    p.data.lastVisitStaffId = 0
+    p.onShow()
+    await flush()
+    expect(tracks().length).toBe(before) // 没有 staffId 就什么都不报
+
+    // staffId 就绪 → loadAll 末尾那次 trackVisit 补上
+    p.setData({ staffId: 42 })
+    p.trackVisit()
+    expect(tracks().length).toBe(before + 1)
+    expect(tracks()[before][2]).toEqual({ staffId: 42, eventType: 'visit' })
   })
 
   // ---- 顶栏「我的」入口 ----

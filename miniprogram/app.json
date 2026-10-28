@@ -1,5 +1,6 @@
 {
   "pages": [
+    "pages/team/team",
     "pages/index/index",
     "pages/employee/me/me",
     "pages/employee/stat/stat",
@@ -13,6 +14,7 @@
     "pages/privacy/privacy",
     "pages/mydata/mydata"
   ],
+  "entryPagePath": "pages/team/team",
   "window": {
     "navigationBarTitleText": "微传名片",
     "navigationBarBackgroundColor": "#ffffff",

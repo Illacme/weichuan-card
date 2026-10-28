@@ -487,6 +487,67 @@ paths:
                       type: string
                     example: [achievement, service]
 
+  /api/team:
+    get:
+      tags: [公开内容]
+      summary: 名片墙（企业全员）
+      description: |
+        小程序**裸启动**（扫微信「体验版二维码」/ 直接打开）时的落地页数据源。
+        裸启动不会带任何参数，页面拿不到 staffId——此前这种情况会弹一个「输入员工编号」
+        的输入框（开发期兜底），访客第一次打开这家公司的小程序就看到一个要数字的弹窗。
+        名片墙把落点换成「这家公司有谁」，点谁看谁的名片。
+
+        **只输出白名单字段**（`staffId` / `name` / `title` / `avatar`）：`model.Employee`
+        上还挂着 `Phone` / `Phone2` / `Email` / `Landline` / `OpenID`，把结构体直接序列化
+        出去等于把全员手机号交给任何扫过码的人。
+
+        只列 `status=enabled` 的员工（停用员工的名片本来就是 `code=2`，挂上去点进去只会看到
+        「该员工名片已停用」）。`total` 是启用员工总数，与 `data` 长度不等时说明被上限截断
+        （`repository.MaxTeamList`）。
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
+      responses:
+        "200":
+          description: code=0 成功；code=1 企业不存在或已停用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  company:
+                    type: object
+                    description: 企业抬头（企业信息未填时 fullName/shortName/logo 均为空串，端上回落品牌名）
+                    properties:
+                      id:
+                        type: integer
+                        format: int64
+                        description: 实际生效的企业 ID（由服务端解析，非回显请求参数）
+                      fullName:
+                        type: string
+                      shortName:
+                        type: string
+                      logo:
+                        type: string
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        staffId:
+                          type: integer
+                          format: int64
+                        name:
+                          type: string
+                        title:
+                          type: string
+                        avatar:
+                          type: string
+                  total:
+                    type: integer
+                    description: 该企业启用员工总数（可能大于 data 长度，表示被截断）
+
   /api/stat/track:
     post:
       tags: [公开内容]

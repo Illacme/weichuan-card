@@ -399,6 +399,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
 | GET  | /api/home-layout?companyId= | 首页板块顺序（根级 `order`）+ 首页背景（根级 `bgImage` / `bgMask`；`bgImage` 为空串即不设背景） |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
+| GET  | /api/team?companyId= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `total`。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网 |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
 
 ### 写 + 审核流（员工 / 管理员，账号密码，JWT）

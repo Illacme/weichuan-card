@@ -1,0 +1,106 @@
+/* 名片墙（裸启动落地页）。
+   类名一律 team- 前缀：组件开启 addGlobalClass 后能吃到页面样式，
+   通用名（name / cell / title）会和其它页面/组件撞车，历史上已经因此出过
+   样式泄漏（详见 app.wxss 里 ec- 前缀那段注释）。 */
+
+/* 顶部企业抬头：LOGO + 企业名 + 一句人数 */
+.team-hero {
+  background: #fff;
+  padding: 40rpx 32rpx 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.team-logo {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 24rpx;
+  background: #e8f1fb;
+  margin-bottom: 16rpx;
+}
+.team-name {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #1b2a3a;
+  text-align: center;
+  line-height: 1.35;
+}
+.team-sub {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #8a97a5;
+}
+
+/* 三列宫格 */
+.team-grid {
+  display: flex;
+  flex-wrap: wrap;
+  background: #fff;
+  padding: 8rpx 8rpx 24rpx;
+}
+.team-cell {
+  width: 33.33%;
+  box-sizing: border-box;
+  padding: 20rpx 8rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.team-avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: #e8f1fb;
+}
+/* 无头像时的占位：取姓名首字，比灰色空圈有信息量 */
+.team-avatar-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1b66df;
+  font-size: 40rpx;
+  font-weight: 600;
+  overflow: hidden;
+}
+.team-cell-name {
+  margin-top: 12rpx;
+  font-size: 28rpx;
+  color: #222;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.team-cell-title {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #8a97a5;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 空态 / 截断提示 / 通用说明文案 */
+.team-empty {
+  background: #fff;
+  padding: 120rpx 48rpx;
+  text-align: center;
+}
+.team-empty-title {
+  font-size: 30rpx;
+  color: #5f6f80;
+}
+.team-hint {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #9aa7b4;
+  line-height: 1.6;
+}
+.team-truncated {
+  padding: 24rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #9aa7b4;
+}

@@ -666,3 +666,64 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 > 测试桩也补了一处：`Companies.spec.ts` 的 `ElDialog` 桩原先声明了 `emits: ['closed']`
 > 却从不触发，于是「关掉弹窗再打开，勾选态是否复位」这类用例在桩上永远测不到。
 > 加上 `watch(modelValue)` 后桩才和真组件行为一致。
+
+## 第十一轮实施记录（裸启动落地页改为名片墙，2026-10-28）
+
+### 1. 现场问题
+
+「发布体验版后，扫体验版二维码进小程序，依然让我先输入员工编号」。
+
+要分成两层看，混在一起会得出错误结论：
+
+- **微信机制（不是缺陷）**：体验版二维码是**裸启动**，微信不会带任何参数——既没有
+  `staffId` 也没有 `scene`。能带参数的只有员工小程序码（`scene=staffId=`）与分享卡片。
+  所以「扫体验版码看到某个员工的名片」这件事在微信层面就做不到。
+- **产品缺陷（是）**：拿不到 `staffId` 时首页走了 `promptStaffId()`——一个
+  `wx.showModal({ editable: true, title: '输入员工编号' })`。代码注释自己写着
+  「联调取数 / 演示用」「缺省兜底」，但它实际成了**裸启动时唯一会出现的界面**：
+  客户第一次打开自家小程序，看到的就是一个要求输入数字的弹窗。
+
+### 2. 做法
+
+- **新增名片墙** `pages/team/team`：公司抬头（LOGO + 企业名）+ 全员宫格（头像 / 姓名 /
+  职位），点谁看谁。作为 `app.json` 的 `entryPagePath`——**不**动 `pages` 数组第一项：
+  分享链接写死了 `pages/index/index?staffId=`，把首页换成名片墙会让所有历史分享失效。
+- **新增公开接口** `GET /api/team`：只列 `status=enabled` 员工，只回
+  `staffId/name/title/avatar` 四个字段。`model.Employee` 上挂着 Phone / Phone2 / Email /
+  Landline / OpenID，直接序列化等于把全员手机号交给任何扫过码的人——白名单是硬要求。
+  同时回 `total`，人数超上限（`MaxTeamList=300`）时端上要能说清「只显示了前 N 位」。
+- **删掉 `promptStaffId`**：无 staffId 且无登录态时 `wx.reLaunch` 到名片墙。
+  保留 `app.globalData.myStaffId` 兜底（员工从「我的」返回自己名片时靠它，那条路径无参数）。
+- **列裁剪踩到的坑**：员工姓名是 PII 密文列，`AfterFind` 钩子靠 `name` 列解密。
+  `Select` 里漏掉 `name` 不会报错，只会让宫格上每个人都没有名字——`teamBriefCols`
+  的注释里写明了这一点。
+- **`/api/team` 进 `tenantAwarePath` 白名单**：漏了它，平台模式下访客会看到「平台缺省
+  企业（1 号）」的全员名单，一头雾水且看不出错在哪。
+- 名片墙四种状态分开画：加载失败（可重试）/ 企业不可用（不存在或停用）/ 公司还没人
+  （不是坏了，是还没人开通）/ 正常列表。混在一起访客只会以为系统坏了。
+
+### 3. 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `go test ./...` | 27 包全绿；`golangci-lint` 0 issue |
+| 新增 `TestPublicTeamWall` | 停用员工不上墙 / `total` 只数启用 / 字段白名单（phone·email·landline·openid 一律不出现）/ 姓名解出明文 / 按 staff_id 升序 / 租户隔离 / 企业不存在 code=1 |
+| 前端全量 `vitest` | **61 文件 / 889 例全绿**（新增 `team.spec.ts` 10 例；`index_home.spec.ts` 3 例改 1 例） |
+| `vue-tsc --noEmit` / `eslint` | 0 错 / 0 报错 |
+| `audit_class_collision.py` | 无跨模块全局类冲突（新类一律 `team-` 前缀） |
+| `openapi.yaml` | 新增 `/api/team`（含 `CompanyScope` 参数）；`yaml.safe_load` + 悬空 `$ref` 校验通过 |
+| 真机数据核对（devserver 实测） | `code=0`、`company.id=1`、`total=1`、字段恰为 `avatar/name/staffId/title`；`companyId=999` → `code=1`；`Cache-Control: public, max-age=60`；响应体里**搜不到**演示员工手机号 |
+| 反向验证 ×4 | ①多输出 `phone` → 白名单用例红；②去掉 `status=enabled` → 「停用员工不该上墙」红；③跳名片页去掉 `companyId` → 2 例红；④去掉 `reLaunch` → 「跳名片墙」红。均还原后全绿 |
+
+> 测试里踩到的坑（已记入注释）：`team.spec.ts` 的 `vi.mock` 路径写成 `'../../utils/request'`，
+> 从 `tests/` 出发那指向仓库根而不是 `miniprogram/`，mock 静默不生效、真实 request 被调用，
+> 表现是「spy 零次调用 + 页面走 error 态」——与「代码有 bug」长得一模一样。
+> 同级目录的 spec 一律用 `'../utils/…'`。
+
+### 4. 仍然存在的边界
+
+- **平台模式 + 本机未粘滞企业**：裸启动不知道是哪家企业，会落到后端缺省（1 号企业）。
+  零数据新装时 1 号企业不存在 → 名片墙显示「该企业暂不可用」。独立版（`pinned_company_id`
+  非 0）没有这个问题。彻底解决需要「平台首页/企业选择」，属于平台模式的产品形态问题，
+  不在本轮范围。
+- 名片墙不做分页（宫格 + 上限 300），企业人数上千时需要虚拟列表或分页。

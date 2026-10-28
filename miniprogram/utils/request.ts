@@ -79,7 +79,7 @@ function clearAuth() {
   wx.removeStorageSync('empRefreshToken')
 }
 
-// 需要带 companyId 的内容类 GET 前缀（业绩/服务/项目/布局/企业公开信息）。
+// 需要带 companyId 的内容类 GET 前缀（业绩/服务/项目/布局/企业公开信息/名片墙）。
 // 白名单式而非黑名单式：新增与租户无关的公开端点时不会意外带上参数。
 function tenantAwarePath(path: string): boolean {
   return (
@@ -87,7 +87,10 @@ function tenantAwarePath(path: string): boolean {
     path.indexOf('/api/services') === 0 ||
     path.indexOf('/api/projects') === 0 ||
     path.indexOf('/api/home-layout') === 0 ||
-    path.indexOf('/api/company') === 0
+    path.indexOf('/api/company') === 0 ||
+    // 名片墙：漏了它的话，平台模式下访客会把「平台缺省企业（1 号）」的
+    // 全员名单当成眼前这家公司的——一头雾水，而且看不出错在哪。
+    path.indexOf('/api/team') === 0
   )
 }
 

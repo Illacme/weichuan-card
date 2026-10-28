@@ -24,7 +24,7 @@ func GetCard(db *gorm.DB, staffID int64) (model.Employee, model.CompanyInfo, mod
 
 // C 端列表的条数上限与列裁剪（2026-10-19）。
 //
-// 这三个接口都是「一次全量展示」：小程序端没有分页 UI，靠 Limit 给天花板防止
+// 这些接口都是「一次全量展示」：小程序端没有分页 UI，靠 Limit 给天花板防止
 // payload 随内容增长无上限膨胀。列裁剪的收益比条数上限更大——案例的 detail 是
 // 富文本、album 是图集 JSON，服务的 content 是富文本，单条就可能几十 KB；
 // 而列表页只画封面 + 标题 + 摘要（详情由 /xxx/:id 单独取，不复用列表数据）。
@@ -32,13 +32,53 @@ const (
 	MaxProjectsList = 200 // 案例列表（含分类筛选）
 	MaxFeaturedList = 20  // 首页精选：首页只画得下这么多个
 	MaxServicesList = 50  // 业务服务：实际业务量级在个位数到十几个
+	MaxTeamList     = 300 // 名片墙（全员）：宫格一屏十几个，300 已够几百人企业翻很久
 )
 
 // 列表只取展示所需列；未选中的列为零值（detail 会是空串而不是富文本正文）。
 const (
 	projectBriefCols = "id, category_id, name, summary, cover"
 	serviceBriefCols = "id, title, icon, sort"
+	// teamBriefCols 名片墙的列裁剪。**name 必须在里面**：员工姓名是 PII 密文列
+	// （见 model.Employee.NameEnc），AfterFind 钩子要靠它解密出明文。裁掉 name
+	// 不会报错，只会让宫格上每个人都没有名字——一个 200 却全空白的接口最难查。
+	//
+	// 这里裁的是**读**的列，写出去的字段由 handler 另行白名单拼装：model.Employee
+	// 上还挂着 Phone / Email / Landline / OpenID，直接把结构体序列化给公开接口
+	// 等于把全员手机号泄给任何扫过码的人。
+	teamBriefCols = "staff_id, company_id, name, title, avatar, status"
 )
+
+// ListTeam 名片墙：某企业**启用中**的员工（按 staff_id 升序）。
+//
+// 存在的理由：小程序裸启动（扫体验版二维码 / 直接打开）时没有任何 staffId 参数，
+// 原先会弹「输入员工编号」——那是开发期兜底，访客看不懂。名片墙给访客一个
+// 「这家公司有谁」的落点，点谁看谁的名片。
+//
+// 只统计/返回 enabled：停用员工的名片在 /api/card 里本来就是 code=2，
+// 挂在墙上点进去只会得到「该员工名片已停用」，不如不列。
+//
+// 同时返回 total：limit 只给天花板（MaxTeamList），企业人数超限时前端要能说清
+// 「只显示了前 N 位」，而不是让人以为公司就这么点人。
+func ListTeam(db *gorm.DB, companyID int64, limit int) ([]model.Employee, int64, error) {
+	const enabledOnly = "company_id = ? AND status = ?"
+	var total int64
+	if err := db.Model(&model.Employee{}).Where(enabledOnly, companyID, "enabled").
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || limit > MaxTeamList {
+		limit = MaxTeamList
+	}
+	var list []model.Employee
+	err := db.Where(enabledOnly, companyID, "enabled").
+		Select(teamBriefCols).
+		Order("staff_id asc").Limit(limit).Find(&list).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
 
 // GetAchievements 分类（按 sort）+ 首页精选项目（按租户隔离）
 func GetAchievements(db *gorm.DB, companyID int64) ([]model.AchievementCategory, []model.ProjectCase, error) {

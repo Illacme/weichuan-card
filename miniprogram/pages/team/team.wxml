@@ -1,0 +1,53 @@
+<!-- 名片墙：小程序裸启动（扫体验版二维码 / 直接打开）时的落地页。
+     访客在这里先看到「这家公司有谁」，点某人进名片。
+     三种状态必须分开画，混在一起会让访客误以为系统坏了：
+       loading / error（网络）/ unavailable（企业不存在或停用）/ empty（公司还没人） -->
+<view class="team-hero">
+  <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo}}" />
+  <view class="team-name">{{title}}</view>
+  <view class="team-sub" wx:if="{{!loading && !error && !unavailable && total > 0}}">
+    共 {{total}} 位同事，点击查看名片
+  </view>
+</view>
+
+<view wx:if="{{loading}}" class="loading">加载中…</view>
+
+<view wx:elif="{{error}}" class="error-box">
+  <view class="error-text">网络异常，加载失败</view>
+  <button class="retry-btn" bindtap="load">重新加载</button>
+</view>
+
+<view wx:elif="{{unavailable}}" class="error-box">
+  <view class="error-text">该企业暂不可用</view>
+  <view class="team-hint">可能已停用或链接已失效，请向分享者确认后再试。</view>
+  <button class="retry-btn" bindtap="load">重试</button>
+</view>
+
+<view wx:else>
+  <!-- 宫格：三列，头像 + 姓名 + 职位 -->
+  <view class="team-grid" wx:if="{{list.length}}">
+    <view
+      class="team-cell"
+      wx:for="{{list}}"
+      wx:key="staffId"
+      data-id="{{item.staffId}}"
+      bindtap="onTap"
+    >
+      <image class="team-avatar" src="{{item.avatar}}" mode="aspectFill" wx:if="{{item.avatar}}" />
+      <view class="team-avatar team-avatar-ph" wx:else>{{item.name}}</view>
+      <view class="team-cell-name">{{item.name}}</view>
+      <view class="team-cell-title" wx:if="{{item.title}}">{{item.title}}</view>
+    </view>
+  </view>
+
+  <!-- 公司还没人开通名片：说清「不是坏了，是还没人」 -->
+  <view class="team-empty" wx:else>
+    <view class="team-empty-title">该公司还没有可展示的名片</view>
+    <view class="team-hint">员工开通名片后会出现在这里。</view>
+  </view>
+
+  <!-- 人数超过后端上限时才提示，避免正常情况多说一句废话 -->
+  <view class="team-truncated" wx:if="{{truncated}}">
+    仅显示前 {{list.length}} 位，共 {{total}} 位同事
+  </view>
+</view>

@@ -85,9 +85,18 @@ Page({
       this.setData({ staffId, source: deriveSource(sceneNum, query) })
       this.loadAll()
     } else {
-      // 未携带 staffId（直接打开 / 无分享参数）：弹窗输入员工编号后进入（联调取数 / 演示用）
+      // 既没有 staffId 参数、也没有登录态：**不弹输入框**，直接去名片墙。
+      //
+      // 这里原先是一个 wx.showModal 让访客「输入员工编号」——它是开发期联调用的
+      // 兜底，但裸启动（扫体验版二维码 / 直接打开小程序）恰好就是这条路径，
+      // 于是真实访客打开这家公司的小程序，看到的第一个界面是一个要他输入数字的弹窗。
+      // 名片墙（pages/team/team）才是自然的落点：先看「这家公司有谁」，点谁看谁。
+      //
+      // 为什么是 reLaunch 而不是 redirectTo：index 有可能是页面栈里唯一一页
+      // （直接打开），也可能是从名片墙 navigateTo 过来的（那种一定带 staffId，
+      // 走不到这里）；reLaunch 一律清栈重建，不会留下一个「返回还是空名片页」的栈。
       this.setData({ loading: false })
-      this.promptStaffId()
+      wx.reLaunch({ url: '/pages/team/team' })
     }
   },
   onShow() {
@@ -139,25 +148,9 @@ Page({
     track('visit', sid, 0, this.data.source)
   },
   // 输入员工编号进入名片（生产环境入口一般为分享链接 / 扫码，此处作为缺省兜底）
-  promptStaffId() {
-    const that = this
-    wx.showModal({
-      title: '输入员工编号',
-      editable: true,
-      placeholderText: '如 1',
-      success(r: any) {
-        if (!r.confirm) return
-        const id = parseInt((r.content || '').trim(), 10)
-        if (!id) {
-          wx.showToast({ title: '编号无效', icon: 'none' })
-          that.promptStaffId()
-          return
-        }
-        that.setData({ staffId: id })
-        that.loadAll()
-      },
-    })
-  },
+  // 已移除：它是开发期联调用的兜底，但裸启动（扫体验版二维码 / 直接打开）走的正是
+  // 这条路径，真实访客会被一个要数字的弹窗挡在门外。现在无 staffId 时跳名片墙
+  // （见 onLoad），名片墙为空也能告诉访客「这家公司还没人开通名片」。
   async loadAll() {
     const sid = this.data.staffId
     this.setData({ loading: true, error: false })

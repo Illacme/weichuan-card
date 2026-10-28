@@ -80,6 +80,53 @@ func New(db *gorm.DB) *gin.Engine {
 		}})
 	})
 
+	// 名片墙（企业全员）：小程序裸启动时的落地页数据源。
+	//
+	// 为什么需要它：扫体验版二维码 / 直接打开小程序是「裸启动」，微信不会带任何参数，
+	// 页面拿不到 staffId。原先那种情况会弹「输入员工编号」的输入框（开发期兜底），
+	// 真实访客看到的是一个要求输入数字的弹窗。名片墙给了一个自然的落点：
+	// 「这家公司有谁」，点谁看谁的名片。
+	//
+	// **只输出白名单字段**（staffId / name / title / avatar）：model.Employee 上还挂着
+	// Phone / Phone2 / Email / Landline / OpenID，把结构体直接序列化给公开接口，
+	// 等于把全员手机号交给任何扫过码的人。这里的 gin.H 是刻意的，不要"简化"成直接返回 list。
+	r.GET("/api/team", func(c *gin.Context) {
+		cid, ok := publicCompanyID(c, db)
+		if !ok {
+			return
+		}
+		list, total, err := repository.ListTeam(db, cid, repository.MaxTeamList)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
+			return
+		}
+		data := make([]gin.H, 0, len(list))
+		for _, e := range list {
+			data = append(data, gin.H{
+				"staffId": e.StaffID,
+				"name":    e.Name,
+				"title":   e.Title,
+				"avatar":  e.Avatar,
+			})
+		}
+		// 企业名 / LOGO 一起下发：名片墙顶部要画公司抬头，分两次请求会让首屏
+		// 先闪一下空标题再补上。
+		// id 用请求解析出的 cid 而不是 ci.CompanyID：企业信息还没填的新企业
+		// 根本没有 company_infos 行，此时 ci 是零值，CompanyID 会是 0——
+		// 端上拿 0 去拼「点某人」的 companyId 就会把访客带到别家。
+		var ci model.CompanyInfo
+		db.First(&ci, "company_id = ?", cid)
+		cdnCache(c, 60)
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"company": gin.H{
+				"id": cid, "fullName": ci.FullName,
+				"shortName": ci.ShortName, "logo": ci.Logo,
+			},
+			"data": data, "total": total,
+		})
+	})
+
 	// 经典业绩：分类 + 精选项目（按租户：?companyId= 缺省朗汇）
 	r.GET("/api/achievements", func(c *gin.Context) {
 		cid, ok := publicCompanyID(c, db)
