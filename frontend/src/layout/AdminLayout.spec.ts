@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
+import { routes } from '@/router'
 
 // 后台外壳：菜单分组与权限过滤、品牌名回落、登出、手机端分流。
 // 「企业管理员看不到平台管理组」是这里的核心安全约束——菜单藏不住就等于没权限，
@@ -206,6 +207,19 @@ function menuPaths(w: any): string[] {
   return w.findAll('.el-menu-item').map((i: any) => i.attributes('data-path'))
 }
 
+// 路由器里「应该出现在侧边栏」的条目：子路由带 meta.group 就说明它是菜单项
+// （group 只用来分组，没有它的路由如 /login、父级布局本身不是菜单）。
+function routeMenuEntries(): { path: string; title: string }[] {
+  const out: { path: string; title: string }[] = []
+  for (const r of routes as any[]) {
+    for (const c of r.children ?? []) {
+      if (!c.meta?.group) continue
+      out.push({ path: ('/' + c.path).replace(/\/{2,}/g, '/'), title: c.meta.title })
+    }
+  }
+  return out
+}
+
 describe('layout/AdminLayout', () => {
   beforeEach(() => {
     auth.loggedIn = true
@@ -238,6 +252,34 @@ describe('layout/AdminLayout', () => {
     expect(paths).toContain('/companies')
     expect(paths).toContain('/platform/settings')
     expect(paths).toContain('/platform/audit-logs')
+  })
+
+  // ── 守门：路由 ↔ 菜单必须一一对应 ──────────────────────────────
+  // 「加了页面忘加菜单项」的后果是功能做完了、用户永远找不到入口（本轮真实踩过：
+  // 「小程序入口」的页面和路由都加了，侧边栏却漏了这一项）；反过来「菜单指向不存在
+  // 的路由」点进去是空白页。两份清单都只存在于源码里（router 的 meta.group / 菜单
+  // 数组），所以拿真实 routes 断言，而不是在这里再抄一份期望列表——抄一份只会一起过时。
+  it('守门：每个带 meta.group 的路由都能在侧边栏找到入口', async () => {
+    auth.isPlatform = true // 平台超管视角：所有分组都可见
+    const { w } = await mountLayout()
+
+    const paths = menuPaths(w)
+    const missing = routeMenuEntries().filter((r) => !paths.includes(r.path))
+    expect(missing.map((m) => `${m.path}（${m.title}）`)).toEqual([])
+  })
+
+  it('守门：侧边栏每个菜单项都指向真实存在的路由', async () => {
+    auth.isPlatform = true
+    const { w } = await mountLayout()
+
+    const router = createRouter({ history: createMemoryHistory(), routes: routes as any })
+    // 判据用「匹配记录里有没有一条 path 正好等于它」：router 末尾有 catch-all
+    // （`/:pathMatch(.*)*`），所以 `matched.length > 0` 对任何乱写的路径都成立——
+    // 用那个判据这条守门永远绿，等于没写。
+    const dead = menuPaths(w).filter(
+      (p: string) => !router.resolve(p).matched.some((r: any) => r.path === p)
+    )
+    expect(dead).toEqual([])
   })
 
   // 企业管理员不得看到平台级入口（后端也会挡，但露出入口只会制造 403）

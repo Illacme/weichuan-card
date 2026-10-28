@@ -768,6 +768,7 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 | 前端全量 `vitest` | **62 文件 / 902 例全绿**（新增 `MpEntry.spec.ts` 10 例） |
 | `vue-tsc --noEmit` / `eslint` | 0 错 / 0 报错 |
 | `openapi.yaml` | 新增 `/api/admin/mp-entry`（GET/PUT）与 `MpEntry` schema；`/api/team` 补 `entry`。`yaml.safe_load` + 悬空 `$ref` 校验通过（41 个 $ref 全部可解析） |
+| 守门（本轮补） | `AdminLayout.spec.ts` 新增两条：①**每个带 `meta.group` 的路由都必须在侧边栏有菜单项**；②**每个菜单项都必须指向真实路由**。前者正是本轮漏掉的：路由和页面都加了，菜单数组是手写的，忘了加 → 功能做完用户永远找不到入口 |
 | 反向验证 ×7 | 前端 3 条：①名片墙分支不传 `staffId` → 「显式提交 0」红；②去掉 mismatch 判断 → 停用/删除两例红；③去掉 250ms 防抖 → 防抖用例红。后端 4 条：去掉回落 / 裸结构体写库 / 去掉租户校验 → 各自对应用例红。均还原后全绿 |
 
 > 守门测试抓到一个真问题：本轮加完 `handler.RegisterMPEntry` 后忘了注册到 `cmd/devserver`，

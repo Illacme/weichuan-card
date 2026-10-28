@@ -217,6 +217,9 @@ const allMenuGroups = [
       { path: '/content/projects', title: '项目案例' },
       { path: '/content/services', title: '业务服务' },
       { path: '/content/home-layout', title: '首页布局' },
+      // 小程序入口：扫「体验版二维码」/ 直接打开（裸启动）时访客先看到名片墙还是某位员工，
+      // 企业管理员自己就能改。与「首页布局」同属「访客第一眼看到什么」，放在它后面。
+      { path: '/content/mp-entry', title: '小程序入口' },
     ],
   },
   {
