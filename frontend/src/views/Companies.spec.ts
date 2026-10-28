@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, defineComponent, h, provide, inject, computed } from 'vue'
+import { nextTick, defineComponent, h, provide, inject, computed, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import Companies from './Companies.vue'
 
@@ -159,6 +159,14 @@ const ElOption = defineComponent({
   props: ['label', 'value'],
   template: `<option :value="value">{{ label }}</option>`,
 })
+// 开通企业的「复制分类模板」勾选框。同样把勾选态暴露成 data-checked、点一下即反转，
+// 这样「取消勾选后开通」这条链路能真的走一遍，而不是直接改组件内部状态。
+const ElCheckbox = defineComponent({
+  name: 'ElCheckbox',
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template: `<label class="el-checkbox" :data-checked="String(!!modelValue)" @click="$emit('update:modelValue', !modelValue)"><slot /></label>`,
+})
 const ElInputNumber = defineComponent({
   name: 'ElInputNumber',
   props: ['modelValue', 'min', 'max', 'step'],
@@ -176,6 +184,17 @@ const ElDialog = defineComponent({
   name: 'ElDialog',
   props: ['modelValue', 'title', 'width'],
   emits: ['closed'],
+  setup(props, { emit }) {
+    // 真实 el-dialog 在关闭动画结束后抛 closed（页面靠它对齐表单状态）。
+    // 桩原先只声明了 emit 却从不触发，于是「关掉弹窗再打开，勾选态是否复位」
+    // 这类用例在桩上永远测不到——补上这个 watch，桩才和真组件行为一致。
+    watch(
+      () => props.modelValue,
+      (v) => {
+        if (!v) emit('closed')
+      }
+    )
+  },
   // 真渲染两个插槽：弹窗里的输入框和底部按钮都要能点到
   template: `<div v-if="modelValue" class="el-dialog"><h3>{{ title }}</h3><slot /><slot name="footer" /></div>`,
 })
@@ -233,6 +252,7 @@ const mountOpts = {
       'el-form': ElForm,
       'el-form-item': ElFormItem,
       'el-switch': ElSwitch,
+      'el-checkbox': ElCheckbox,
       'el-select': ElSelect,
       'el-option': ElOption,
       'el-input-number': ElInputNumber,
@@ -849,5 +869,69 @@ describe('企业管理 · 登录页白标码', () => {
     await flush()
 
     expect(mocks.updateCompany).toHaveBeenCalledWith(1, expect.objectContaining({ loginCode: 'jiufang2' }))
+  })
+})
+
+// 开通企业时自动复制业绩分类模板（经典业绩 8 类）。
+// 失败模式：零数据版新企业一个分类都没有 → 企业管理员登录后业绩页空白、小程序业绩 Tab
+// 渲染不出来，得先自建分类才能录案例。但这件事必须**可取消**：客户行业完全对不上时，
+// 与其建完再一条条删，不如开的时候就不要。
+describe('企业管理 · 开通企业复制分类模板', () => {
+  beforeEach(resetAll)
+
+  async function openCreate() {
+    const w = await setup()
+    await w.findAll('button.el-button').find((b: any) => b.text().includes('开通企业'))!.trigger('click')
+    await flush()
+    return w
+  }
+
+  it('默认勾选，开通时显式提交 seedCategories=true', async () => {
+    const w = await openCreate()
+    const dlg = w.find('.el-dialog')
+    const box = dlg.find('.el-checkbox')
+    expect(box.exists()).toBe(true)
+    expect(box.attributes('data-checked')).toBe('true')
+
+    await dlg.findAll('input.el-input')[0].setValue('新公司')
+    await dlg.findAll('.el-button').find((b: any) => b.text().includes('开通'))!.trigger('click')
+    await flush()
+
+    expect(mocks.createCompany).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '新公司', seedCategories: true })
+    )
+  })
+
+  it('取消勾选后开通：提交 seedCategories=false（明确不要，不是"没填"）', async () => {
+    const w = await openCreate()
+    const dlg = w.find('.el-dialog')
+    await dlg.find('.el-checkbox').trigger('click')
+    await flush()
+    expect(dlg.find('.el-checkbox').attributes('data-checked')).toBe('false')
+
+    await dlg.findAll('input.el-input')[0].setValue('新公司')
+    await dlg.findAll('.el-button').find((b: any) => b.text().includes('开通'))!.trigger('click')
+    await flush()
+
+    // 必须是 false 而不是 undefined：后端用指针区分「没传」与「传了 false」，
+    // 传 undefined 会被当成没表态 → 照样复制模板，用户取消了个寂寞。
+    expect(mocks.createCompany).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '新公司', seedCategories: false })
+    )
+  })
+
+  it('面板关闭后重新打开：勾选态回到默认（不继承上一次的取消）', async () => {
+    const w = await openCreate()
+    await w.find('.el-dialog .el-checkbox').trigger('click')
+    await flush()
+    expect(w.find('.el-dialog .el-checkbox').attributes('data-checked')).toBe('false')
+
+    // 取消按钮关闭弹窗 → @closed 触发 resetCreate
+    await w.find('.el-dialog').findAll('.el-button').find((b: any) => b.text() === '取消')!.trigger('click')
+    await flush()
+    await w.findAll('button.el-button').find((b: any) => b.text().includes('开通企业'))!.trigger('click')
+    await flush()
+
+    expect(w.find('.el-dialog .el-checkbox').attributes('data-checked')).toBe('true')
   })
 })

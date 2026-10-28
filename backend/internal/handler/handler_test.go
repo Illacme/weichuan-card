@@ -1417,8 +1417,13 @@ func TestMultiTenantIsolation(t *testing.T) {
 	require.NotZero(t, weichuanCatID)
 
 	// ===== 2. 开通企业 2（一并建企业管理员；简称种子公司信息 + 侧边栏品牌名） =====
+	// 显式 seedCategories=false：本用例要验的是**租户隔离**，乙公司一开始就该是空的，
+	// 后面每条断言（「看不到别家分类」「?companyId=2 只看到自己的」）都是拿 0/1 在数。
+	// 让业绩分类模板进来会把这套计数全改成「8 + n」，隔离意图被淹掉。
+	// 模板本身由 TestCreateCompanySeedsCategoryTemplate 专门覆盖（含「必须落在新企业名下」）。
 	_, body = plat.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
 		"name": "测试乙公司", "shortName": "乙公司简称", "adminUsername": "comp2", "adminPassword": "comp2pass",
+		"seedCategories": false,
 	})
 	require.EqualValues(t, 0, body["code"])
 	comp2ID := int64(body["data"].(map[string]interface{})["id"].(float64))

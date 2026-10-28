@@ -9,6 +9,7 @@ import (
 
 	"weichuan/internal/audit"
 	"weichuan/internal/auth"
+	"weichuan/internal/cattemplate"
 	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
@@ -111,6 +112,33 @@ func configuredWXCompanies(db *gorm.DB, ids []int64) map[int64]bool {
 		out[r.CompanyID] = true
 	}
 	return out
+}
+
+// seedCategoryTemplate 给新开通的企业复制一份业绩分类模板（见 internal/cattemplate）。
+//
+// 三个刻意的选择：
+//  1. **icon 留空**：演示数据的分类图标是演示企业上传目录里的文件，干净库（未勾选
+//     演示数据）里根本不存在，照抄 URL 只会得到一排裂图。图标由企业管理员在
+//     「业绩分类」页自行从素材库挑。
+//  2. **is_locked=false**：锁定是给演示租户保设计稿用的（分类不可删除）。客户要按
+//     自己行业改名或删掉用不上的分类，锁死等于逼他们另建一家企业——模板的意义是
+//     「有骨架可以改」，不是「必须用这八类」。
+//  3. **失败只由调用方记日志、不中断事务**：分类缺了页面照样能打开（业绩页空列表），
+//     不值得为它把已经建好的企业整体回滚——与三件套种子一致。
+func seedCategoryTemplate(tx *gorm.DB, companyID int64) error {
+	for _, t := range cattemplate.Default() {
+		cat := model.AchievementCategory{
+			CompanyID: companyID,
+			Name:      t.Name,
+			Sort:      t.Sort,
+		}
+		// 逐条 Create 而不是批量：批量时一条冲突就整批丢失，而这里每条都是独立
+		// 可缺的骨架数据，坏一条不该连累其余七条。
+		if err := tx.Create(&cat).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RegisterCompanies 注册租户（企业）管理接口——仅平台超级管理员可用
@@ -226,6 +254,12 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			LoginCode     string `json:"loginCode"`
 			AdminUsername string `json:"adminUsername"`
 			AdminPassword string `json:"adminPassword"`
+			// SeedCategories 是否复制业绩分类模板（八类骨架）。
+			// 不传（nil）= 复制：跨行业客户拿到的是「可改可删的骨架」，比面对一个
+			// 全空的业绩页更容易上手；确实一家都不要的，传 false 即可。
+			// 用指针而不是 bool，是为了让「没传」和「明确不要」区分开——否则老版本
+			// 客户端（不带该字段）会被当成明确不要，静默少掉分类。
+			SeedCategories *bool `json:"seedCategories"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Name == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -266,6 +300,10 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		//
 		// 种子内容三件套的 error 仍旧不中断：它们只是"开箱即用的空白模板"，
 		// 缺了页面照样能打开（各自都有兜底），不值得为它整体回滚。
+		//
+		// catErr 单独接出来而不是在事务里打日志：事务一旦回滚，那条 WARN 就是假警报
+		// （分类其实没留下，甚至企业也没留下），排查时会被带偏。
+		var catErr error
 		err := db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Create(&comp).Error; err != nil {
 				return err
@@ -275,6 +313,11 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			tx.Create(&model.CompanyInfo{CompanyID: comp.ID, FullName: req.Name, ShortName: strings.TrimSpace(req.ShortName)})
 			tx.Create(&model.CompanyProfile{CompanyID: comp.ID})
 			tx.Create(&model.HomeLayout{CompanyID: comp.ID, Order: `["achievement","service"]`})
+			// 业绩分类模板：零数据版装完后新企业一个分类都没有，企业管理员登录后
+			// 业绩页是空的、小程序业绩 Tab 也渲染不出来——必须先建分类才能录案例。
+			if req.SeedCategories == nil || *req.SeedCategories {
+				catErr = seedCategoryTemplate(tx, comp.ID)
+			}
 			// 试用授权：license_trial_enabled=false 时是 no-op（回到"不限制"的老行为）
 			return license.CreateTrialLicense(tx, comp.ID)
 		})
@@ -282,6 +325,10 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			log.Printf("[COMPANY][ERROR] 开通企业失败（已回滚）：%v", err)
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})
 			return
+		}
+		if catErr != nil {
+			// 提交之后再报：企业已建成，只是分类不全，运营补建即可（业绩页能正常打开）
+			log.Printf("[COMPANY][WARN] 企业 %d 业绩分类模板复制失败（已跳过）：%v", comp.ID, catErr)
 		}
 		if req.AdminUsername != "" {
 			hash, _ := auth.HashPassword(req.AdminPassword)

@@ -2901,6 +2901,10 @@ paths:
       description: |
         简称（shortName）：PC 后台侧边栏品牌名缺省「微传名片」；显式填写的值同时作为
         公司信息简称的初始值，此后两者相互独立。
+        seedCategories：是否复制业绩分类模板（经典业绩 8 类，只带名称与排序）。
+        **不传按 true 处理**——零数据版新企业一个分类都没有，企业管理员登录后业绩页空白、
+        小程序业绩 Tab 也渲染不出来，必须先有分类才能录案例。模板分类 icon 为空、
+        isLocked=false，客户可改名可删；确实一个都不要的显式传 false。
         independent_lock 开启时整体只读，写操作一律 code=403。
       tags: [租户]
       requestBody:
@@ -2915,11 +2919,18 @@ paths:
                   type: string
                 shortName:
                   type: string
+                loginCode:
+                  type: string
+                  description: 登录页白标码（登录页 ?company= 命中后显示该企业简称）。小写字母 / 数字 / 连字符，全局唯一；留空表示不配置
                 adminUsername:
                   type: string
                   description: 与 adminPassword 必须同时填写或同时留空
                 adminPassword:
                   type: string
+                seedCategories:
+                  type: boolean
+                  default: true
+                  description: 是否复制业绩分类模板（8 类骨架）。省略 = 复制；false = 一个都不建
       responses:
         "200":
           description: code=0（data.id / data.name / data.shortName）；code=1 参数错误 / 用户名已存在

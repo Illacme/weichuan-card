@@ -79,3 +79,58 @@ func TestCompanyLoginCode(t *testing.T) {
 	})
 	require.EqualValues(t, 0, body["code"], "清除白标码应成功")
 }
+
+// TestCreateCompanySeedsCategoryTemplate 开通企业时自动复制业绩分类模板。
+//
+// 为什么要有这条：零数据版装完后新企业一个分类都没有，企业管理员登录后业绩页是空的、
+// 小程序业绩 Tab 也渲染不出来。但模板**只能落在新企业名下**——落到别家就是把 A 家的
+// 业务内容写进 B 家，这正是上一批在修的串租户问题。
+func TestCreateCompanySeedsCategoryTemplate(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	loginAdmin(t, c)
+
+	// 1) 不传 seedCategories → 按复制处理（指针 nil 视为「没表态」，不是「明确不要」）
+	_, body := c.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
+		"name": "有分类公司",
+	})
+	require.EqualValues(t, 0, body["code"])
+	withTpl := fmt.Sprint(body["data"].(map[string]interface{})["id"])
+
+	_, body = c.doWithCookie("GET", "/api/admin/categories?companyId="+withTpl, nil)
+	require.EqualValues(t, 0, body["code"])
+	rows := body["data"].([]interface{})
+	require.Len(t, rows, 8, "应复制经典业绩 8 分类")
+
+	var names []string
+	for i, it := range rows {
+		m := it.(map[string]interface{})
+		names = append(names, fmt.Sprint(m["name"]))
+		require.EqualValues(t, withTpl, fmt.Sprint(m["companyId"]), "分类必须落在新企业名下")
+		require.EqualValues(t, i+1, m["sort"], "排序应为 1..8（列表按 sort asc）")
+		// 图标留空：演示图标的文件在干净库里不存在，照抄 URL 只会得到裂图
+		require.Equal(t, "", fmt.Sprint(m["icon"]), "模板分类不应带图标")
+		// 不锁定：客户要按自己行业改名或删掉用不上的分类
+		require.Equal(t, false, m["isLocked"], "模板分类必须可删可改")
+	}
+	require.Equal(t, []string{
+		"居住住宅", "政务办公", "医院、学校", "商业、酒店",
+		"公共交通", "生产制造", "仓储物流", "私人住宅",
+	}, names, "分类名与顺序应与设计稿一致")
+
+	// 2) 显式 seedCategories=false → 一个都不建
+	_, body = c.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
+		"name": "无分类公司", "seedCategories": false,
+	})
+	require.EqualValues(t, 0, body["code"])
+	noTpl := fmt.Sprint(body["data"].(map[string]interface{})["id"])
+
+	_, body = c.doWithCookie("GET", "/api/admin/categories?companyId="+noTpl, nil)
+	require.EqualValues(t, 0, body["code"])
+	require.Len(t, body["data"].([]interface{}), 0, "显式不要时不应建任何分类")
+
+	// 3) 1 号企业（测试引擎预置的存量租户）不该被顺带写入分类
+	_, body = c.doWithCookie("GET", "/api/admin/categories", nil)
+	require.EqualValues(t, 0, body["code"])
+	require.Len(t, body["data"].([]interface{}), 0, "平台超管不带 companyId 时缺省 1 号企业，不应受新企业模板影响")
+}

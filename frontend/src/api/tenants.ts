@@ -62,13 +62,16 @@ export function listCompanies(params: {
 
 // 开通企业：name 必填，shortName 为企业简称（侧边栏品牌名 + 公司信息简称初始值）；
 // loginCode 为登录页白标码（?company=），可选，小写字母/数字/连字符；
-// adminUsername + adminPassword 要么都填（一并建企业管理员），要么都不填
+// adminUsername + adminPassword 要么都填（一并建企业管理员），要么都不填；
+// seedCategories 是否复制业绩分类模板（经典业绩 8 类，只带名称、可改名可删）。
+// 后端用指针区分「没传」和「传 false」——没传按复制处理。
 export function createCompany(payload: {
   name: string
   shortName?: string
   loginCode?: string
   adminUsername?: string
   adminPassword?: string
+  seedCategories?: boolean
 }) {
   return http.post<{ code: number; data?: { id: number; name: string; shortName: string } }>(
     '/admin/companies',

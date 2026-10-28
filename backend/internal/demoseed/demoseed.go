@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"weichuan/internal/auth"
+	"weichuan/internal/cattemplate"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
 )
@@ -131,19 +132,20 @@ func Load(db *gorm.DB, opt Options) (Result, error) {
 	}).Error)
 
 	// ---- 经典业绩 8 分类（与设计稿一致，客户已确认锁定） ----
-	cats := []model.AchievementCategory{
-		{ID: 1, CompanyID: DemoCompanyID, Name: "居住住宅", Icon: assets["cat-1.png"], Sort: 1, IsLocked: true},
-		{ID: 2, CompanyID: DemoCompanyID, Name: "政务办公", Icon: assets["cat-2.png"], Sort: 2, IsLocked: true},
-		{ID: 3, CompanyID: DemoCompanyID, Name: "医院、学校", Icon: assets["cat-3.png"], Sort: 3, IsLocked: true},
-		{ID: 4, CompanyID: DemoCompanyID, Name: "商业、酒店", Icon: assets["cat-4.png"], Sort: 4, IsLocked: true},
-		{ID: 5, CompanyID: DemoCompanyID, Name: "公共交通", Icon: assets["cat-5.png"], Sort: 5, IsLocked: true},
-		{ID: 6, CompanyID: DemoCompanyID, Name: "生产制造", Icon: assets["cat-6.png"], Sort: 6, IsLocked: true},
-		{ID: 7, CompanyID: DemoCompanyID, Name: "仓储物流", Icon: assets["cat-7.png"], Sort: 7, IsLocked: true},
-		{ID: 8, CompanyID: DemoCompanyID, Name: "私人住宅", Icon: assets["cat-8.png"], Sort: 8, IsLocked: true},
-	}
-	for _, c := range cats {
-		c := c
-		add("创建分类 "+c.Name, db.Where("id = ?", c.ID).FirstOrCreate(&c).Error)
+	// 名称与排序取自 cattemplate——新建企业自动复制的是同一份模板，这里只额外补上
+	// 演示专用的图标（cat-N.png）与 is_locked=true（保设计稿，演示租户不许删分类）。
+	// 两处各写一份名单迟早会漂移：某天演示数据叫「医院、学校」、新企业模板叫「医疗」，
+	// 而客户在这两处看到的本该是同一套东西。
+	for i, t := range cattemplate.Default() {
+		cat := model.AchievementCategory{
+			ID:        int64(i + 1),
+			CompanyID: DemoCompanyID,
+			Name:      t.Name,
+			Icon:      assets[fmt.Sprintf("cat-%d.png", t.Sort)],
+			Sort:      t.Sort,
+			IsLocked:  true,
+		}
+		add("创建分类 "+cat.Name, db.Where("id = ?", cat.ID).FirstOrCreate(&cat).Error)
 	}
 
 	// ---- 项目案例：2 个首页精选（设计稿）+ 其余分类各 1 个（点开任意分类都有内容） ----

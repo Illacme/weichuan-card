@@ -133,6 +133,12 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="业绩分类">
+          <el-checkbox v-model="createForm.seedCategories">复制分类模板（经典业绩 8 类）</el-checkbox>
+          <div class="form-hint">
+            不勾则一个分类都没有，企业管理员得先自建分类才能录案例；模板只带名称，可改名可删。
+          </div>
+        </el-form-item>
         <el-divider content-position="left">
           <span class="divider-hint">企业管理员（选填，留空稍后添加）</span>
         </el-divider>
@@ -410,7 +416,16 @@ onMounted(load)
 const createVisible = ref(false)
 const creating = ref(false)
 const createFormRef = ref<FormInstance>()
-const createForm = reactive({ name: '', shortName: '', loginCode: '', adminUsername: '', adminPassword: '' })
+const createForm = reactive({
+  name: '',
+  shortName: '',
+  loginCode: '',
+  adminUsername: '',
+  adminPassword: '',
+  // 默认勾选：新企业业绩页是空的、小程序业绩 Tab 也渲染不出来，得先有分类才能录案例。
+  // 分类骨架（可改名可删），不是别人的业务数据——真正一个都不要的客户取消即可。
+  seedCategories: true,
+})
 
 const createRules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
@@ -427,6 +442,7 @@ function resetCreate() {
   createForm.loginCode = ''
   createForm.adminUsername = ''
   createForm.adminPassword = ''
+  createForm.seedCategories = true
   createFormRef.value?.clearValidate()
 }
 
@@ -442,6 +458,7 @@ async function submitCreate() {
       loginCode: createForm.loginCode.trim() || undefined,
       adminUsername: createForm.adminUsername || undefined,
       adminPassword: createForm.adminPassword || undefined,
+      seedCategories: createForm.seedCategories,
     })
     ElMessage.success('企业已开通')
     createVisible.value = false
@@ -931,6 +948,15 @@ function todayStr(): string {
 .divider-hint {
   font-size: 12px;
   color: #909399;
+}
+/* 勾选项下方的说明：必须放在 el-form-item 里单独一行，否则会跟 checkbox 挤在同一行。
+   width:100% 是必需的——el-form-item__content 是 flex 容器，不给满宽说明就贴着勾选框。 */
+.form-hint {
+  width: 100%;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  margin-top: 2px;
 }
 .edit-tip {
   font-size: 12px;
