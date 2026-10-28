@@ -461,4 +461,44 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"id": a.ID, "username": a.Username}})
 	})
+
+	// 平台超管重置企业管理员密码：生成初始密码返回（与员工重置同语义），
+	// 同时自增安全戳令其所有旧会话失效。仅平台超管可调（plat 中间件保证 company_id=0）。
+	r.POST("/api/admin/companies/:id/admins/:aid/reset-password", plat, func(c *gin.Context) {
+		if writeLocked(c) {
+			return
+		}
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		aid, _ := strconv.ParseInt(c.Param("aid"), 10, 64)
+		var a model.Admin
+		// 按「company_id + id」双约束定位：路径自洽，顺带防止错配企业误改他人账号
+		if db.Where("id = ? AND company_id = ?", aid, id).First(&a).Error != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "管理员不存在"})
+			return
+		}
+		pwd, err := genPassword()
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			return
+		}
+		hash, err := auth.HashPassword(pwd)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码加密失败"})
+			return
+		}
+		// 安全戳自增 → 该账号所有已签发令牌立即失效
+		res := db.Model(&a).Updates(map[string]interface{}{
+			"password_hash": hash, "token_version": a.TokenVersion + 1,
+		})
+		if res.Error != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+			return
+		}
+		// 审计只记「给谁重置了」，绝不记新密码
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionCompanyAdminReset, TargetType: "admin", TargetID: strconv.FormatInt(a.ID, 10),
+			Detail: map[string]any{"username": a.Username, "companyId": id},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "initialPassword": pwd})
+	})
 }

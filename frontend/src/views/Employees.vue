@@ -12,6 +12,7 @@
             style="width: 280px"
           />
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button :icon="Download" :loading="exporting" @click="exportAll">批量导出</el-button>
           <el-button type="primary" :icon="Plus" @click="openCreate">新增员工</el-button>
         </div>
       </div>
@@ -274,7 +275,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { Refresh, Plus, Search } from '@element-plus/icons-vue'
+import { Refresh, Plus, Search, Download } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -285,6 +286,7 @@ import {
   enableEmployee,
   resetPassword,
   exportEmployee,
+  exportEmployees,
 } from '@/api/employees'
 import { getWxacode } from '@/api/wechat'
 import UploadField from '@/components/UploadField.vue'
@@ -304,6 +306,7 @@ const {
   load,
 } = useServerTable((q) => listEmployees(q), { pageSize: 10 })
 const actingId = ref<number | null>(null)
+const exporting = ref(false)
 // 手机端（<768）隐藏次要列，避免表格过宽；平板/桌面保留全部列并横向滚动
 const { isPhone } = useBreakpoint()
 
@@ -472,6 +475,20 @@ async function exportInfo(row: any) {
     /* 拦截器已提示 */
   } finally {
     actingId.value = null
+  }
+}
+
+// 批量导出本租户员工（CSV）：走独立 fetch 通道（后端回 text/csv，非 JSON 信封）。
+// 与列表页同口径——带上当前关键字，导出「当前看到的筛选结果」。
+async function exportAll() {
+  exporting.value = true
+  try {
+    await exportEmployees({ keyword: keyword.value })
+    ElMessage.success('已开始下载员工数据')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 

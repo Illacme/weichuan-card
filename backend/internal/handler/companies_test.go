@@ -134,3 +134,83 @@ func TestCreateCompanySeedsCategoryTemplate(t *testing.T) {
 	require.EqualValues(t, 0, body["code"])
 	require.Len(t, body["data"].([]interface{}), 0, "平台超管不带 companyId 时缺省 1 号企业，不应受新企业模板影响")
 }
+
+// TestPlatformResetCompanyAdminPassword 平台超管重置企业管理员密码。
+//
+// 为什么要有这条：企业管理员自己改密必须提供原密码，忘了我方无从找回（库里只存哈希），
+// 唯一的救济入口就是平台超管代重置。而「重置密码」是个会伤到对方当下的动作——
+// 安全戳自增会把该管理员所有在线会话一并挤下线，所以顺带把「旧密码失效」也钉住，
+// 免得哪天改坏了变成「重置完还能用旧密码进」，那等于重置没生效却没人发现。
+func TestPlatformResetCompanyAdminPassword(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	plat := newTestClient(r, t)
+	adminToken := loginAdmin(t, plat)
+
+	// 开通企业并顺带建管理员
+	_, body := plat.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
+		"name": "重置测试企业", "adminUsername": "entadmin", "adminPassword": "oldpass123",
+	})
+	require.EqualValues(t, 0, body["code"])
+	cid := fmt.Sprint(body["data"].(map[string]interface{})["id"])
+
+	_, body = plat.doWithCookie("GET", "/api/admin/companies/"+cid+"/admins", nil)
+	require.EqualValues(t, 0, body["code"])
+	rows := body["data"].([]interface{})
+	require.Len(t, rows, 1)
+	aid := fmt.Sprint(rows[0].(map[string]interface{})["id"])
+
+	// 重置前：旧密码可登录（确认这条断言的基线成立，不是「本来就登不上」）
+	before := newTestClient(r, t)
+	_, body = before.do("POST", "/api/admin/login", map[string]interface{}{
+		"username": "entadmin", "password": "oldpass123",
+	}, "")
+	require.EqualValues(t, 0, body["code"], "重置前旧密码应能登录")
+
+	// 重置 → 返回新初始密码
+	_, body = plat.doWithCookie("POST", "/api/admin/companies/"+cid+"/admins/"+aid+"/reset-password", nil)
+	require.EqualValues(t, 0, body["code"])
+	newPwd := fmt.Sprint(body["initialPassword"])
+	require.NotEmpty(t, newPwd, "应回传新初始密码")
+	require.NotEqual(t, "oldpass123", newPwd)
+
+	// 新密码可登录
+	after := newTestClient(r, t)
+	_, body = after.do("POST", "/api/admin/login", map[string]interface{}{
+		"username": "entadmin", "password": newPwd,
+	}, "")
+	require.EqualValues(t, 0, body["code"], "重置后新密码应能登录")
+
+	// 旧密码立即失效（安全戳自增令旧令牌作废，这里用「能否再登」来观测）
+	stale := newTestClient(r, t)
+	_, body = stale.do("POST", "/api/admin/login", map[string]interface{}{
+		"username": "entadmin", "password": "oldpass123",
+	}, "")
+	require.EqualValues(t, 1, body["code"], "重置后旧密码不应再能登录")
+
+	// 特权动作必须留痕，但绝不能把新密码写进审计
+	_, body = plat.do("GET", "/api/admin/audit-logs?action=company.admin.reset_password", nil, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	logs := body["data"].([]interface{})
+	require.GreaterOrEqual(t, len(logs), 1, "重置他人密码应记审计")
+	require.NotContains(t, fmt.Sprint(logs[0]), newPwd, "审计不得记录新密码")
+
+	// 不存在的管理员 → 拒绝
+	_, body = plat.doWithCookie("POST", "/api/admin/companies/"+cid+"/admins/999999/reset-password", nil)
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "不存在")
+
+	// 错配企业：乙家的管理员拿甲家的 company id 去重置 → 拒绝。
+	// 路径上 id 和 aid 各自都对，只有组合起来是错的；不做双约束就会改到别人账号上。
+	_, body = plat.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
+		"name": "乙企业", "adminUsername": "entadmin2", "adminPassword": "pass2222",
+	})
+	require.EqualValues(t, 0, body["code"])
+	cid2 := fmt.Sprint(body["data"].(map[string]interface{})["id"])
+
+	_, body = plat.doWithCookie("GET", "/api/admin/companies/"+cid2+"/admins", nil)
+	require.EqualValues(t, 0, body["code"])
+	aid2 := fmt.Sprint(body["data"].([]interface{})[0].(map[string]interface{})["id"])
+
+	_, body = plat.doWithCookie("POST", "/api/admin/companies/"+cid+"/admins/"+aid2+"/reset-password", nil)
+	require.EqualValues(t, 1, body["code"], "错配企业 id 应拒绝，否则会误改别家账号")
+}

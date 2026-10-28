@@ -205,7 +205,35 @@
         <el-table-column label="创建时间" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
+        <!-- 平台超管帮企业管理员重设密码：企业管理员自己改密要原密码，忘了就只能等平台重置 -->
+        <el-table-column label="操作" width="100" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              type="warning"
+              link
+              :disabled="locked"
+              :loading="resettingAdminId === row.id"
+              @click="resetAdmin(row)"
+              >重置密码</el-button
+            >
+          </template>
+        </el-table-column>
       </el-table>
+    </el-dialog>
+
+    <!-- 重置后的初始密码：只出现一次，必须当场转交 -->
+    <el-dialog v-model="pwdVisible" title="密码已重置" width="420px">
+      <div class="pwd-tip">
+        请将下面的初始密码转交给企业管理员 <b>{{ pwdAdmin }}</b>，并提醒其登录后尽快修改。
+      </div>
+      <div class="pwd-box">{{ pwdText }}</div>
+      <div class="pwd-warn">
+        初始密码由服务端生成、随机不可预测，且<b>只在这一次返回里出现</b>——库里只存哈希，谁也读不回来。
+        关闭后若没记下，只能再点一次「重置密码」重来（同样会把对方当前会话挤下线）。
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="pwdVisible = false">我已知悉</el-button>
+      </template>
     </el-dialog>
 
     <!-- 租户小程序凭据（企业独立版小程序：一个企业一个 appid） -->
@@ -384,6 +412,7 @@ import {
   getStorageUsage,
   listCompanies,
   listCompanyAdmins,
+  resetCompanyAdminPassword,
   saveCompanyLicense,
   saveCompanyWXApp,
   saveStorageQuota,
@@ -549,6 +578,12 @@ async function toggleStatus(row: any) {
 const adminsVisible = ref(false)
 const adminsLoading = ref(false)
 const addingAdmin = ref(false)
+const resettingAdminId = ref<number | null>(null)
+// 重置后回显的初始密码：只在本次响应里出现一次，用一个独立弹窗兜住，
+// 既方便超管复制转交，也把「关掉就看不到了」这件事写在当场。
+const pwdVisible = ref(false)
+const pwdText = ref('')
+const pwdAdmin = ref('')
 const currentCompany = ref<CompanyItem | null>(null)
 const admins = ref<any[]>([])
 const newAdmin = reactive({ username: '', password: '' })
@@ -593,6 +628,34 @@ async function submitAddAdmin() {
     // 拦截器已提示（如用户名已存在）
   } finally {
     addingAdmin.value = false
+  }
+}
+
+// 重置企业管理员密码：生成新密码 → 回显给平台超管（线下转交）。
+// 必须二次确认：重置会让该管理员当前所有会话立即失效（后端自增安全戳），
+// 对方正在后台操作会被无声踢下线——这种后果要在点之前说清楚。
+async function resetAdmin(row: any) {
+  if (locked.value) return
+  if (!currentCompany.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定重置企业管理员「${row.username}」的密码？重置后需使用新密码登录，其当前所有会话会立即失效。`,
+      '确认重置密码',
+      { type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  resettingAdminId.value = row.id
+  try {
+    const pwd = await resetCompanyAdminPassword(currentCompany.value.id, row.id)
+    pwdAdmin.value = row.username
+    pwdText.value = pwd || ''
+    pwdVisible.value = true
+  } catch {
+    // 拦截器已提示（如管理员不存在）
+  } finally {
+    resettingAdminId.value = null
   }
 }
 
@@ -968,6 +1031,36 @@ function todayStr(): string {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+/* 初始密码回显：等宽 + 居中放大，为的是「一眼抄对」——8 位随机串里
+   l/1、0/O 这类字形在比例字体下极容易看错，抄错就要再重置一次。
+   user-select:all 让点一下就整串选中，不用小心翼翼拖着选。 */
+.pwd-tip {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+.pwd-box {
+  font-family: monospace;
+  font-size: 20px;
+  letter-spacing: 3px;
+  text-align: center;
+  padding: 14px;
+  background: #f5f7fa;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  color: #409eff;
+  user-select: all;
+}
+.pwd-warn {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.7;
+  margin-top: 10px;
+}
+.pwd-warn b {
+  color: #e6a23c;
 }
 .wx-tip {
   font-size: 12px;

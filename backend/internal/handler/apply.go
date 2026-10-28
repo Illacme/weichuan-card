@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -39,6 +42,21 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		if !companyEnabled(db, req.CompanyID) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "申请目标企业不存在或已停用"})
+			return
+		}
+		// 姓名 + 手机为必填：手机是登录账号，空串会让盲索引撞上空值行、
+		// 且无法作为账号发放初始密码。
+		if req.Name == "" || req.Phone == "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "姓名与手机为必填"})
+			return
+		}
+		// 同一企业手机号唯一（见 phoneInUse 注释）：同一号反复提交开通申请、
+		// 每次都回「已提交」是需求明确禁止的不合理行为。
+		if taken, err := phoneInUse(db, req.CompanyID, req.Phone, 0); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "提交失败"})
+			return
+		} else if taken {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该手机号已申请过，请勿重复提交"})
 			return
 		}
 		// 内容安全：申请里的姓名 / 昵称 / 职位 / 邮箱都是访客自己填的 UGC。
@@ -279,6 +297,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "已处理"})
 			return
 		}
+		// 同一企业手机号唯一：申请通过后要建员工账号，若此时该号已被占用
+		// （别人已建 / 另有待审申请），不能静默建出重复账号。
+		if taken, err := phoneInUse(db, a.CompanyID, a.Phone, a.ID); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建员工账号失败"})
+			return
+		} else if taken {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该手机号已存在，无法重复建号"})
+			return
+		}
 		// 席位上限：审批通过会自动建员工，与「管理员直接新增员工」是同一条
 		// 建号路径，必须同样受授权席位约束。此前只有直接新增那条被卡，
 		// 管理员可以反复通过申请无限建号——席位上限形同虚设，客户超额使用
@@ -440,6 +467,18 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "目标企业不存在或已停用"})
 			return
 		}
+		// 手机为必填（登录账号），且同一企业内唯一（见 phoneInUse 注释）。
+		if req.Phone == "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "手机为必填"})
+			return
+		}
+		if taken, err := phoneInUse(db, cid, req.Phone, 0); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})
+			return
+		} else if taken {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该手机号已存在，请勿重复添加"})
+			return
+		}
 		pwd, err := genPassword()
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
@@ -542,6 +581,48 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		var list []model.Employee
 		total, page := pagedQuery(q, "staff_id asc", &list, page, size)
 		pagedOK(c, list, total, page, size)
+	})
+
+	// 批量导出员工（CSV，按租户隔离）：租户范围内全部员工（可带与列表页一致的
+	// 关键字 / 状态筛选），解密 PII 后落 CSV。BOM + 公式注入防护复用 stats 导出同款。
+	//
+	// 这是「把本租户全部员工 PII 一次性带走」的高风险动作，必须记审计
+	// （同 ActionEmployeeExport 的破例留痕约定，见 audit 包文件头）。
+	r.GET("/api/admin/employees/export", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		q := db.Model(&model.Employee{}).Scopes(scopeCond(c))
+		// 与列表页同口径的关键字 / 状态筛选：导出的就是「当前看到的筛选结果」
+		if kw := strings.TrimSpace(c.Query("keyword")); kw != "" {
+			bidx := pii.BlindIndex(kw)
+			like := likeKeyword(kw)
+			q = q.Where(
+				"name_bidx = ? OR phone_bidx = ? OR phone2_bidx = ? OR nickname_bidx = ? "+
+					"OR title LIKE ? OR landline LIKE ? OR openid LIKE ?",
+				bidx, bidx, bidx, bidx, like, like, like,
+			)
+		}
+		if cond, v := statusCond(c.Query("status"), "enabled", "disabled"); cond != "" {
+			q = q.Where(cond, v)
+		}
+		var list []model.Employee
+		if err := q.Order("staff_id asc").Find(&list).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
+			return
+		}
+		body, err := employeesCSV(list)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "导出失败"})
+			return
+		}
+		// 高风险提取动作：先留痕再下发（写入失败只打日志、不影响本次导出）
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeExportBatch,
+			TargetType: "employee",
+			TargetID:   "batch",
+			Detail:     map[string]any{"count": len(list)},
+		})
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Header("Content-Disposition", employeeExportDisposition())
+		c.Data(http.StatusOK, "text/csv; charset=utf-8", body)
 	})
 
 	// 启用 / 禁用（禁用同时自增安全戳 → 该员工在线会话立即失效；按租户）
@@ -784,6 +865,91 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			},
 		})
 	})
+}
+
+// phoneInUse 判断某手机号在某企业内是否已被占用：
+//   - 已建员工（enabled / disabled 都算，禁用只是停权不代表账号可回收）命中；
+//   - 仍有「待审」开通申请（status=pending）也算——需求明确禁止同一号反复提交申请；
+//     已驳回（rejected）的申请允许重新申请，故不拦；已通过（approved）的申请应已
+//     落成员工，由上面的员工查重兜底。
+//
+// 命中即视为「该手机号在本企业已存在」，调用方应拒绝本次建号 / 申请。
+//
+// excludeApplyID 用于「审批通过」路径：待审申请在审批瞬间仍是 pending 行，若不排除自身
+// 会被自己这条 pending 命中而误拒。提交 / 手动建号路径传 0（无排除）。
+//
+// 实现要点：明文手机是加密存储的，无法等值直查或 LIKE，只能靠 phone_bidx 盲索引
+// 做等值比对（盲索引对同一明文恒定，故可判重）。空号直接返回未占用，避免空串盲
+// 索引撞上别的空值行。
+func phoneInUse(db *gorm.DB, companyID int64, phone string, excludeApplyID int64) (bool, error) {
+	if phone == "" {
+		return false, nil
+	}
+	bidx := pii.BlindIndex(phone)
+	var n int64
+	if err := db.Model(&model.Employee{}).
+		Where("company_id = ? AND phone_bidx = ?", companyID, bidx).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return true, nil
+	}
+	q := db.Model(&model.OpenApply{}).
+		Where("company_id = ? AND phone_bidx = ? AND status = ?", companyID, bidx, "pending")
+	if excludeApplyID > 0 {
+		q = q.Where("id <> ?", excludeApplyID)
+	}
+	if err := q.Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// employeesCSV 把员工列表写成 CSV（BOM + 公式注入防护，与 statsCSV 同款）。
+// 员工经 GORM 查询已触发 AfterFind 解密，字段都是明文；头像 URL 等自由文本
+// 同样过 csvCell 防注入（见 stat.go 的 csvCell 注释：= + - @ 等开头的单元格
+// Excel/WPS 会当公式执行）。
+func employeesCSV(rows []model.Employee) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteString("\xEF\xBB\xBF") // UTF-8 BOM：没有它 Excel 双击打开中文全乱码
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{
+		"编号", "姓名", "职位", "手机", "手机2", "座机", "邮箱", "昵称", "状态", "头像", "创建时间",
+	}); err != nil {
+		return nil, err
+	}
+	for _, e := range rows {
+		rec := []string{
+			strconv.FormatInt(e.StaffID, 10),
+			csvCell(e.Name),
+			csvCell(e.Title),
+			csvCell(e.Phone),
+			csvCell(e.Phone2),
+			csvCell(e.Landline),
+			csvCell(e.Email),
+			csvCell(e.Nickname),
+			e.Status,
+			csvCell(e.Avatar),
+			e.CreatedAt.Format("2006-01-02 15:04:05"),
+		}
+		if err := w.Write(rec); err != nil {
+			return nil, err
+		}
+	}
+	w.Flush()
+	// Write 的错要到 Flush 之后才在 Error() 上现形：不查就等于把
+	// 「导出只剩半行」当成功交付。
+	if err := w.Error(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// employeeExportDisposition 下载文件名（中文走 RFC 5987 filename*，留 ASCII 兜底）。
+func employeeExportDisposition() string {
+	name := "员工数据_全部.csv"
+	return "attachment; filename=\"employees.csv\"; filename*=UTF-8''" + url.QueryEscape(name)
 }
 
 // genPassword 生成 8 位随机密码（字母+数字）。

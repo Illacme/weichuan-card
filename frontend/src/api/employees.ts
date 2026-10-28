@@ -1,4 +1,5 @@
 import http, { toPaged, type Paged, type ApiResp } from './request'
+import { getCompanyScope } from '@/store/companyScope'
 
 export interface EmployeePayload {
   name: string
@@ -63,4 +64,43 @@ export function exportEmployee(id: number) {
     document.body.removeChild(a)
     window.URL.revokeObjectURL(url)
   })
+}
+
+// 批量导出员工（CSV，按当前企业范围）。后端直接返回 text/csv（带 BOM），
+// 不走 JSON 信封——统一 http 封装的响应拦截会按 code 解析失败，故改用 fetch
+// + credentials（同源携带 httpOnly Cookie），拿到 blob 后按 Content-Type 决定下载还是报错。
+// 失败（如超管令牌失效被后端以 JSON 信封回 {code:1,msg}）时取 msg 提示，不静默吞掉。
+// 企业范围与列表页一致：平台超管「在管企业」模式下补 ?companyId=，否则导出全部租户。
+export async function exportEmployees(params: { keyword?: string } = {}): Promise<void> {
+  const base = import.meta.env.VITE_API_BASE || '/api'
+  const qs = new URLSearchParams()
+  const { companyId, active } = getCompanyScope()
+  if (active && companyId) qs.set('companyId', String(companyId))
+  if (params.keyword) qs.set('keyword', params.keyword)
+  const q = qs.toString()
+  const url = `${base}/admin/employees/export${q ? '?' + q : ''}`
+  const resp = await fetch(url, { method: 'GET', credentials: 'include' })
+  const ct = resp.headers.get('Content-Type') || ''
+  if (!resp.ok || !ct.includes('text/csv')) {
+    let msg = '导出失败'
+    try {
+      const j = (await resp.json()) as ApiResp
+      if (j && j.msg) msg = j.msg
+    } catch {
+      /* 非 JSON，用默认文案 */
+    }
+    throw new Error(msg)
+  }
+  const blob = await resp.blob()
+  const durl = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.download = '员工数据_全部.csv'
+  const disp = resp.headers.get('Content-Disposition') || ''
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(disp) || /filename="?([^";]+)"?/i.exec(disp)
+  if (m) a.download = decodeURIComponent(m[1])
+  a.href = durl
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(durl)
 }

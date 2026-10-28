@@ -62,6 +62,9 @@ const (
 	// 虽是只读查询，但「把一个人的全部 PII 打包导出」本身就是高风险动作，
 	// 必须留痕（与审计包「只读不记」的约定在此处特意破例，见文件头说明）。
 	ActionEmployeeExport = "employee.export"
+	// ActionEmployeeExportBatch 后台批量导出本租户全部员工 PII（CSV）。
+	// 只读但「一次性带走全租户 PII」风险更高，沿用 employee.export 的破例留痕约定。
+	ActionEmployeeExportBatch = "employee.export_batch"
 
 	ActionApplyApprove = "apply.approve"
 	ActionApplyReject  = "apply.reject"

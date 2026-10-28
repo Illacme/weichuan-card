@@ -102,6 +102,15 @@ export function createCompanyAdmin(id: number, username: string, password: strin
   return http.post(`/admin/companies/${id}/admins`, { username, password })
 }
 
+// 平台超管重置企业管理员密码 → 服务端生成并返回一次性初始密码。
+// 与员工重置密码同口径：超管拿到后线下转交，且旧会话因安全戳自增立即失效。
+// 后端只存哈希，这个密码只在这一次返回里出现，关掉就再也拿不回来。
+export function resetCompanyAdminPassword(companyId: number, adminId: number) {
+  return http
+    .post(`/admin/companies/${companyId}/admins/${adminId}/reset-password`)
+    .then((r: any) => r.initialPassword as string)
+}
+
 // ===== 租户小程序凭据（平台超管代填）=====
 // 小程序有两种形态：平台模式一个 appid 服务所有企业（用 sys_setting 的全局那份）；
 // 企业独立版每企业一个 appid，共用同一套后端，必须按租户隔离——不隔离的话

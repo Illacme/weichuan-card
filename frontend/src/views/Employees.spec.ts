@@ -27,8 +27,17 @@ const mocks = vi.hoisted(() => ({
   disableEmployee: vi.fn(async () => ({ code: 0 })),
   enableEmployee: vi.fn(async () => ({ code: 0 })),
   resetPassword: vi.fn(async () => 'reset123'),
+  exportEmployees: vi.fn(async () => {}),
 }))
-const { listEmployees, createEmployee, updateEmployee, disableEmployee, enableEmployee, resetPassword } = mocks
+const {
+  listEmployees,
+  createEmployee,
+  updateEmployee,
+  disableEmployee,
+  enableEmployee,
+  resetPassword,
+  exportEmployees,
+} = mocks
 import { getWxacode } from '@/api/wechat'
 
 vi.mock('@/api/employees', () => mocks)
@@ -38,7 +47,7 @@ vi.mock('element-plus', () => ({
   ElMessageBox: { confirm: vi.fn(async () => 'confirm') },
 }))
 // 图标仅作为 prop 值传递（:prefix-icon）或模板渲染（UploadField 的「从素材库选择」），桩成普通对象即可
-vi.mock('@element-plus/icons-vue', () => ({ Refresh: {}, Plus: {}, Search: {}, Picture: {} }))
+vi.mock('@element-plus/icons-vue', () => ({ Refresh: {}, Plus: {}, Search: {}, Download: {}, Picture: {} }))
 
 import { ElMessageBox } from 'element-plus'
 
@@ -395,5 +404,19 @@ describe('Employees', () => {
     )
     await vi.waitFor(() => expect(w.text()).toContain('init123'))
     await vi.waitFor(() => expect(vi.mocked(listEmployees)).toHaveBeenCalledTimes(2))
+  })
+
+  it('批量导出：点击「批量导出」调 exportEmployees（带当前关键字）', async () => {
+    const w = mountEmployees()
+    await flushLoad(w)
+
+    const exportBtn = w
+      .findAll('button.el-button')
+      .find((b) => b.text() === '批量导出')
+    expect(exportBtn).toBeTruthy()
+    await exportBtn!.trigger('click')
+    await vi.waitFor(() => expect(vi.mocked(exportEmployees)).toHaveBeenCalledTimes(1))
+    // 缺省无关键字 → 以空串下发（与列表页同口径，导出「当前看到的筛选结果」）
+    expect(vi.mocked(exportEmployees)).toHaveBeenCalledWith({ keyword: '' })
   })
 })

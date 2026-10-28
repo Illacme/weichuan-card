@@ -14,8 +14,11 @@ const mocks = vi.hoisted(() => ({
   createCompany: vi.fn(async () => ({ code: 0 })),
   updateCompany: vi.fn(async () => ({ code: 0 })),
   setCompanyStatus: vi.fn(async () => ({ code: 0 })),
-  listCompanyAdmins: vi.fn(async () => ({ code: 0, data: [] })),
+  // 显式标注 data 为 any[]：不标会被推成 never[]，之后任何一条用例想 mock 出
+  // 真实管理员列表都会撞 TS2322（"真实数据不能赋给 never"）。
+  listCompanyAdmins: vi.fn(async (): Promise<{ code: number; data: any[] }> => ({ code: 0, data: [] })),
   createCompanyAdmin: vi.fn(async () => ({ code: 0 })),
+  resetCompanyAdminPassword: vi.fn(async () => 'abc12345'),
   getCompanyWXApp: vi.fn(),
   saveCompanyWXApp: vi.fn(async () => ({ code: 0 })),
   // B4 授权 / B3 存储配额：组件 setup 里就 import 了这四个，
@@ -293,6 +296,12 @@ function btnIn(row: any, text: string) {
   return row.findAll('button.el-button').find((b: any) => b.text().includes(text))
 }
 
+/** 按标题定位弹窗。页面上有六七个 el-dialog，直接 find('.el-dialog') 会命中
+ *  当前正好打开的那个以外的东西（或压根命中空的），断言必须锁定到具体那一个。 */
+function dialogByTitle(w: any, kw: string) {
+  return w.findAll('.el-dialog').find((d: any) => d.find('h3').text().includes(kw))
+}
+
 /** 每个用例前重置全部 mock。两个 describe 共用这一份——只重置"自己关心的那几个"
  *  会让另一个 describe 的残留实现漏进来（比如某条用例把套餐改成已过期）。 */
 function resetAll() {
@@ -308,6 +317,13 @@ function resetAll() {
   mocks.saveCompanyLicense.mockImplementation(async () => ({ code: 0 }))
   mocks.saveStorageQuota.mockImplementation(async () => ({ code: 0 }))
   mocks.listCompanies.mockImplementation(async () => paged(companies))
+  // 企业管理员相关：组件 setup 里 import 了这三个，漏 mock 会在点开弹窗时抛 TypeError
+  mocks.listCompanyAdmins.mockReset()
+  mocks.createCompanyAdmin.mockReset()
+  mocks.resetCompanyAdminPassword.mockReset()
+  mocks.listCompanyAdmins.mockImplementation(async () => ({ code: 0, data: [] }))
+  mocks.createCompanyAdmin.mockImplementation(async () => ({ code: 0 }))
+  mocks.resetCompanyAdminPassword.mockImplementation(async () => 'abc12345')
   mocks.getCompanyWXApp.mockImplementation(async () => ({ code: 0, data: { appId: '', configured: false } }))
   mocks.getCompanyLicense.mockImplementation(async () => ({
     code: 0,
@@ -933,5 +949,58 @@ describe('企业管理 · 开通企业复制分类模板', () => {
     await flush()
 
     expect(w.find('.el-dialog .el-checkbox').attributes('data-checked')).toBe('true')
+  })
+})
+
+describe('企业管理 · 平台超管重置企业管理员密码', () => {
+  beforeEach(resetAll)
+
+  // 企业管理员忘了密码时唯一的救济入口就是平台超管代重置（自己改密要原密码，
+  // 库里只存哈希谁也读不回来）。这个动作的代价是**把对方当前会话全踢下线**，
+  // 所以测试重点不是"接口调了没"，而是"确认框弹了没、新密码回显了没"。
+  const admins = [{ id: 11, username: 'entadmin', createdAt: '2026-10-01T10:00:00' }]
+
+  async function openAdminsDialog(w: any) {
+    mocks.listCompanyAdmins.mockImplementation(async () => ({ code: 0, data: admins }))
+    await btnIn(rowOf(w, 1), '管理员').trigger('click')
+    await flush()
+    return dialogByTitle(w, '管理员管理')
+  }
+
+  it('确认后调接口，并回显服务端生成的新初始密码', async () => {
+    mocks.resetCompanyAdminPassword.mockImplementation(async () => 'k7m2p9xq')
+    const w = await setup()
+
+    const dlg = await openAdminsDialog(w)
+    expect(mocks.listCompanyAdmins).toHaveBeenCalledWith(1)
+    expect(dlg.text()).toContain('entadmin')
+
+    await btnIn(rowOf(w, 11), '重置密码').trigger('click')
+    await flush()
+
+    // 会把对方踢下线，点之前必须确认过
+    expect(ElMessageBox.confirm).toHaveBeenCalled()
+    expect(mocks.resetCompanyAdminPassword).toHaveBeenCalledWith(1, 11)
+
+    // 新密码只在这一次响应里出现，必须当场回显——关掉就看不到了
+    const pwdDlg = dialogByTitle(w, '密码已重置')
+    expect(pwdDlg).toBeTruthy()
+    expect(pwdDlg!.text()).toContain('k7m2p9xq')
+    expect(pwdDlg!.text()).toContain('entadmin')
+  })
+
+  it('确认框点取消则不调接口（避免误点把人踢下线）', async () => {
+    const w = await setup()
+    await openAdminsDialog(w)
+
+    // Element Plus 的 confirm 在用户取消时是 reject，捕获后应静默返回
+    vi.mocked(ElMessageBox.confirm).mockImplementationOnce(async () => {
+      throw new Error('cancel')
+    })
+    await btnIn(rowOf(w, 11), '重置密码').trigger('click')
+    await flush()
+
+    expect(mocks.resetCompanyAdminPassword).not.toHaveBeenCalled()
+    expect(dialogByTitle(w, '密码已重置')).toBeUndefined()
   })
 })

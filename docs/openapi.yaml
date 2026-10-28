@@ -1430,6 +1430,39 @@ paths:
                   initialPassword:
                     type: string
 
+  /api/admin/employees/export:
+    get:
+      tags: [超管-员工管理]
+      summary: 批量导出员工数据（CSV）
+      description: |
+        与员工列表**同口径同筛选**（keyword / status），一次导出当前筛选下的全部员工，不分页。
+
+        返回的是 `text/csv` 而非 JSON 信封：带 UTF-8 BOM（Excel 双击不乱码），
+        单元格以 `'` 前缀防公式注入。**PII 是明文导出**，属高风险动作，记审计
+        `employee.export_batch`；前端需用 fetch（带 credentials）而非 axios 拦截器取。
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: keyword
+          in: query
+          required: false
+          description: 与列表一致的模糊匹配
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [enabled, disabled]
+      responses:
+        "200":
+          description: CSV 文件流（attachment）
+          content:
+            text/csv:
+              schema:
+                type: string
+
   /api/admin/employees/{id}:
     put:
       tags: [超管-员工管理]
@@ -3214,6 +3247,38 @@ paths:
       responses:
         "200":
           description: code=0（data.id / data.username）；code=1 企业不存在 / 用户名已存在
+
+  /api/admin/companies/{id}/admins/{aid}/reset-password:
+    post:
+      summary: 平台超管重置企业管理员密码
+      description: |
+        企业管理员自己改密必须提供原密码，忘了我方无从找回（库里只存哈希），
+        唯一的救济入口就是平台超管代重置。
+
+        服务端生成随机初始密码并**只在本次响应里返回一次**（无法回读），由平台超管线下转交。
+        重置同时自增该账号的 token_version，其当前所有会话立即失效——这点必须在操作前告知操作人。
+
+        定位按 `id + company_id` 双约束：路径上两个 id 单独看都对、组合起来错配时，不改任何账号。
+        仅平台超管可调；开启独立版企业锁定（independent_lock）时返回 code=403。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 企业编号
+          schema:
+            type: integer
+            format: int64
+        - name: aid
+          in: path
+          required: true
+          description: 企业管理员编号
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: code=0（initialPassword）；code=1 管理员不存在；code=403 独立版锁定只读
 
   /api/admin/companies/{id}/wechat:
     get:
