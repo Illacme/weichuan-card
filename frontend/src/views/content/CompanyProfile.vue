@@ -48,6 +48,9 @@
             <span class="hint-warn">
               两个硬条件：小程序须为非个人主体；用户微信基础库 ≥ 2.31.1（低版本不认 feed-token，组件报错后会回落成封面图）。
               保存后若小程序只显示封面，多半是 token 不完整或基础库过低。
+              组件报错 <code>channel-video:fail 1416106</code> 即「feed-token 跨主体播放失败」：
+              ① token 必须是在移动端「在小程序中引用该视频」时<b>选中本小程序</b>生成的（该 token 仅对生成时所指定的小程序生效）；
+              ② 存的 token 要完整，正常形如 <code>token/</code> 开头一长串，短于十位多半被截断。
             </span>
             <span v-if="form.videoFeedId.trim()" class="hint-warn">当前已填 feedId，feed-token 不会被使用。</span>
           </div>
