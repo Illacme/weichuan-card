@@ -1,4 +1,5 @@
 import { request } from './request'
+import { getCompanyId } from './tenant'
 
 // 微信身份采集：openid（静默）+ 昵称（需用户授权）。
 // 用于申请开通与员工登录时记录微信身份，供 PC 后台核实申请人/登录者。
@@ -6,9 +7,17 @@ import { request } from './request'
 // 获取微信 openid：wx.login 拿临时 code，后端经 jscode2session 换 openid。
 // openid 在本小程序内稳定，缓存到 storage 避免重复换。
 // 后端未配置 WX 凭据 / 换取失败时返回空串——不影响账号密码登录与申请（降级）。
+//
+// 必须带上当前企业 companyId：本项目支持「企业独立小程序」（每企业可配自己的
+// appid），换 openid 用的是该企业自己的小程序凭据（见后端 wxAppOf(companyID)）。
+// 不带的话后端一律按 company_id=0（平台全局应用）换，企业独立版下换出来的 openid
+// 与申请人实际所用小程序不是一个，后台审核列表里看到的就会是空或错值。
+// 缓存按企业分键：同一台机器切换企业时不会把 A 企业的 openid 串到 B 企业。
 export function getOpenid(): Promise<string> {
   return new Promise((resolve) => {
-    const cached = wx.getStorageSync('wxOpenid')
+    const cid = getCompanyId()
+    const cacheKey = cid > 0 ? 'wxOpenid_' + cid : 'wxOpenid'
+    const cached = wx.getStorageSync(cacheKey)
     if (cached) {
       resolve(cached)
       return
@@ -19,10 +28,10 @@ export function getOpenid(): Promise<string> {
           resolve('')
           return
         }
-        request('POST', '/api/wechat/openid', { code: res.code })
+        request('POST', '/api/wechat/openid', { code: res.code, companyId: cid })
           .then((r: any) => {
             if (r && r.code === 0 && r.openid) {
-              wx.setStorageSync('wxOpenid', r.openid)
+              wx.setStorageSync(cacheKey, r.openid)
               resolve(r.openid)
             } else {
               resolve('') // 未配置凭据等：降级为空
