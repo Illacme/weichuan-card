@@ -88,8 +88,11 @@ Component({
       this.setData({ playTracked: true })
       track('video_play', this.data.staffId || 0)
     },
-    onVideoError() {
+    onVideoError(e?: { detail?: Record<string, unknown> }) {
       const s: any = this.data
+      // feed-token 无效、基础库不支持、视频被删……官方只在 binderror 的 detail 里给原因。
+      // 吞掉它，界面上永远只是「停在封面图」，排查只能靠猜——打出来，体验版开调试即可见。
+      console.warn('[company-video] 视频号组件报错，按兜底规则回落', (e && e.detail) || e || '')
       // upload / url 两档本来就是 MP4，再回落没有意义；只处理视频号主源失败
       if ((s.videoSource || '') !== 'channels') return
       const next = pickMode(

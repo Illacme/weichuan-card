@@ -45,6 +45,10 @@
           <div class="hint">
             <b>跨主体才需要</b>：官方明确 feed-id「仅同主体时生效」，视频号与我们小程序不同主体时必须改用它。
             代价是<b>强制不能自动播放</b>（用户需点一下）。获取入口有 24 小时窗口且只对操作者本人可见，需由我们协助提取。
+            <span class="hint-warn">
+              两个硬条件：小程序须为非个人主体；用户微信基础库 ≥ 2.31.1（低版本不认 feed-token，组件报错后会回落成封面图）。
+              保存后若小程序只显示封面，多半是 token 不完整或基础库过低。
+            </span>
             <span v-if="form.videoFeedId.trim()" class="hint-warn">当前已填 feedId，feed-token 不会被使用。</span>
           </div>
         </el-form-item>
