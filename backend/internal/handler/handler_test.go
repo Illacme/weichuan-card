@@ -130,7 +130,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterApply(r, db, cfg)
 	RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径）
 	RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻）
-	RegisterContent(r, db)
+	RegisterContent(r, db, cfg)
 	RegisterMPEntry(r, db) // 小程序「默认进入」：名片墙 / 指定员工名片
 	RegisterCompanies(r, db)
 	RegisterCompanyLicense(r, db) // 按企业查看/设置授权（B4：试用转正 / 延期 / 改席位）
@@ -159,7 +159,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 }
 
 // setupSQLiteEngine 创建临时 SQLite 库 + AutoMigrate + 本地存储，返回引擎。
-func setupSQLiteEngine(t *testing.T) *gin.Engine {
+func setupSQLiteEngine(t *testing.T, mutate ...func(*config.Config)) *gin.Engine {
 	t.Helper()
 
 	tmpDB, err := os.CreateTemp("", "weichuan-test-*.db")
@@ -186,6 +186,10 @@ func setupSQLiteEngine(t *testing.T) *gin.Engine {
 		JWTKey:        "test-jwt-key",
 		AdminUser:     "admin",
 		AdminPass:     "admin123456",
+	}
+	// 个别用例要改配置（如打开腾讯视频档）：变参传入，其余用例不受影响
+	for _, m := range mutate {
+		m(&cfg)
 	}
 	up := &storage.LocalUploader{
 		Dir:      cfg.UploadDir,
@@ -771,6 +775,9 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/company-profile", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
+		// 视频来源能力：界面据此禁用「腾讯视频」档（默认部署未开启，必须带原因）
+		_, body = c.do("GET", "/api/admin/video-capability", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
 
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"},
@@ -917,8 +924,9 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	// 1) 档位是显式枚举，不在枚举内一律拒绝
 	require.EqualValues(t, 1, put(map[string]interface{}{"videoSource": "bilibili"})["code"])
 
-	// 2) 腾讯视频档未接线：插件必须在 app.json 静态声明，统一声明会让未通过插件授权的
-	//    客户小程序直接报「插件未授权」，故服务端也拦，防前端置灰被绕过
+	// 2) 腾讯视频档默认关闭：插件必须在 app.json 静态声明，未授权会让整个小程序编译失败，
+	//    故由部署方用 MP_TENCENT_VIDEO 显式开启；默认就该拒，防前端置灰被绕过
+	//    （开启后的行为见 TestCompanyProfileVideoSourceTencent）
 	require.EqualValues(t, 1, put(map[string]interface{}{"videoSource": "tencent", "videoVid": "v001"})["code"])
 
 	// 3) 视频号档：channelId 只作留档，真正定位视频的是 feedId；兜底开关独立
@@ -954,6 +962,64 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	// 5) 空串归一为 none：该列后加，老客户端 / 脚本可能不带该字段
 	require.EqualValues(t, 0, put(map[string]interface{}{"videoSource": ""})["code"])
 	require.Equal(t, "none", get()["videoSource"])
+}
+
+// TestCompanyProfileVideoSourceTencent 钉死腾讯视频档的「部署级开关 + vid 必填」语义。
+//
+// 为什么单独一个用例：该档不是「配了就能播」——它依赖小程序侧静态声明插件，
+// 声明了却没授权会让整个小程序编译失败。所以服务端必须能明确区分三件事：
+// ① 未开启 → 拒（默认，存量部署升级后行为不变）；② 开启了但没填 vid → 拒
+// （否则等于存一个永远播不出来的档）；③ 开启且填了 vid → 存得进去。
+func TestCompanyProfileVideoSourceTencent(t *testing.T) {
+	capOf := func(r *gin.Engine, t *testing.T, tok string) map[string]interface{} {
+		_, body := newTestClient(r, t).do("GET", "/api/admin/video-capability", nil, tok)
+		require.EqualValues(t, 0, body["code"])
+		return body["data"].(map[string]interface{})
+	}
+	put := func(r *gin.Engine, t *testing.T, tok string, m map[string]interface{}) map[string]interface{} {
+		_, body := newTestClient(r, t).do("PUT", "/api/admin/company-profile", m, tok)
+		return body
+	}
+
+	// ---- 未开启（默认）----
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	cap1 := capOf(r, t, adminToken)
+	require.EqualValues(t, false, cap1["tencentVideo"])
+	require.NotEmpty(t, cap1["tencentReason"]) // 必须给可执行指引，不能只留一个灰选项
+
+	body := put(r, t, adminToken, map[string]interface{}{"videoSource": "tencent", "videoVid": "n0041aa087e"})
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "MP_TENCENT_VIDEO")
+
+	// ---- 开启后 ----
+	r2 := setupSQLiteEngine(t, func(cfg *config.Config) { cfg.TencentVideo = true })
+	c2 := newTestClient(r2, t)
+	tok2 := loginAdmin(t, c2)
+
+	cap2 := capOf(r2, t, tok2)
+	require.EqualValues(t, true, cap2["tencentVideo"])
+	require.Equal(t, "", cap2["tencentReason"])
+
+	// 开了档却没填 vid：vid 是这一档唯一的取片凭证，空着就是配了个永远播不出来的档
+	body = put(r2, t, tok2, map[string]interface{}{"videoSource": "tencent", "videoVid": "  "})
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "vid")
+
+	body = put(r2, t, tok2, map[string]interface{}{
+		"videoSource": "tencent", "videoVid": " n0041aa087e ",
+		"videoUrl": "https://cdn.example.com/fallback.mp4", "videoFallbackUrl": true,
+	})
+	require.EqualValues(t, 0, body["code"])
+
+	_, gb := c2.do("GET", "/api/admin/company-profile", nil, tok2)
+	require.EqualValues(t, 0, gb["code"])
+	d := gb["data"].(map[string]interface{})
+	require.Equal(t, "tencent", d["videoSource"])
+	// 首尾空白要剥掉：从腾讯视频页面复制 vid 时极易带上换行/空格，原样存库等于配了个坏链
+	require.Equal(t, "n0041aa087e", d["videoVid"])
 }
 
 // TestAPIFlowMySQL 生产契约 parity：连真实 MySQL、应用 migrations/*.sql，再跑同一套断言。

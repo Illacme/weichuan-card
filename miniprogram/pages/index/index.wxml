@@ -54,6 +54,7 @@
           videoSource="{{profile.videoSource}}"
           feedId="{{profile.videoFeedId}}"
           feedToken="{{profile.videoFeedToken}}"
+          vid="{{profile.videoVid}}"
           videoUrl="{{profile.videoUrl}}"
           fallback="{{profile.videoFallbackUrl}}"
           cover="{{profile.cover}}"

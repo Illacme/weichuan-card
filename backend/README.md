@@ -195,6 +195,10 @@ export MP_NODE_BIN="node"            # node 可执行；容器里给绝对路径
 export MP_CI_MODULE_DIR="/opt/mp-ci" # 装过 miniprogram-ci 的目录；留空则试 MP_SOURCE_DIR
 export MP_SOURCE_DIR="/opt/weichuan-miniprogram" # 小程序源码根目录（含 project.config.json）
 export MP_UPLOAD_TIMEOUT_SEC="300"   # 单次上传超时；nginx proxy_read_timeout 须大于它
+# 腾讯视频档开关（默认 false）。该档依赖小程序侧静态声明腾讯视频插件，
+# 声明了却没在 MP 后台授权会让**整个小程序编译失败、连预览都传不上去**，
+# 所以默认关；确认「插件已授权 + app.json 已声明」后才打开，详见下方「腾讯视频档」
+export MP_TENCENT_VIDEO="false"
 
 # 初始超管（首启动若 admin 表为空则自动 seed，上线务必修改为强密码）
 export ADMIN_USER="admin"
@@ -290,6 +294,35 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - 访问：前端在需要展示私有文件时，调用 `POST /api/admin/storage/sign`（员工用 `/api/employee/...`）提交已存 URL 列表，后端按 `BaseURL` 前缀反推对象 key，返回 **30 分钟有效**的限时签名 URL（`SignGetURL`），前端用签名 URL 取图。
 - 本地私有：若 `local` 驱动 + `STORAGE_PUBLIC=false`，文件不再经 `/uploads` 静态公开，改用 `GET /api/storage/file?key=...`（鉴权后流式返回，防目录穿越）。
 - 小程序码已接入私有桶签名通道：`STORAGE_PUBLIC=false` 且存储支持签名时，`/api/wechat/wxacode` 返回 **1 小时有效**的限时签名 URL（每次请求重新签发），二维码内容本身仍按 `WXACODE_TTL_HOURS` 缓存、到期才重新调微信生成；公开桶/本地驱动仍返回公开 URL。
+
+## 腾讯视频档（`MP_TENCENT_VIDEO`）
+
+公司简介的「视频来源」支持五档，`tencent`（腾讯视频插件）是唯一需要**部署侧**放行的一档：
+
+| 档位 | 播放形态 | 存储/流量 | 播放埋点 | 门槛 |
+|---|---|---|---|---|
+| `none` | 封面占位 | — | — | 无 |
+| `channels` | 跨主体点击拉起视频号页；封面带视频号名称与推荐角标 | 微信承担 | **无**（官方 channel-video 只有 binderror） | 非个人主体 + 基础库 ≥ 2.31.1 |
+| `upload` | 原位播放 | 客户对象存储 | 有 | 需配置对象存储（本地磁盘下该档禁用） |
+| `url` | 原位播放 | 客户自备 CDN | 有 | 正式版需把 mp4 域名加入小程序「业务域名」 |
+| `tencent` | 原位播放、无视频号角标 | 腾讯视频承担 | **有**（插件透传 bindplay） | 插件授权 + `app.json` 声明 + `MP_TENCENT_VIDEO=true` |
+
+为什么是部署级开关：腾讯视频插件（provider `wxa75efa648b60994b`）必须在 `app.json` **静态声明**，而声明了却没在 MP 后台「设置 → 第三方服务 → 插件管理」授权的插件，会让**整个小程序编译失败、连预览都传不上去**——不是某个客户视频播不出来，是所有客户的整个小程序发不了版。界面上点一下开关改不了这个事实，所以默认关。
+
+启用三步：
+
+```bash
+# 1. 小程序侧声明插件（改 app.json + company-video/index.json，可 --off 还原）
+node miniprogram/scripts/enable-tencent-video.mjs on
+#   插件版本号以 MP 后台「插件详情」为准，需覆盖时：PLUGIN_VERSION=2.0.5 node ... on
+
+# 2. MP 后台「设置 → 第三方服务 → 插件管理」添加腾讯视频插件并等授权通过（必须人工做）
+
+# 3. 服务端开开关并重启
+export MP_TENCENT_VIDEO="true"
+```
+
+开关关闭时：`GET /api/admin/video-capability` 返回 `tencentVideo:false` 与可执行原因，后台选项置灰；直接 `PUT videoSource=tencent` 也会被服务端拒（前端置灰拦不住接口调用）。开启后 `videoVid` 必填（首尾空白会被剥掉），否则同样拒绝。
 
 ## 开源素材库（内置，随二进制分发）
 

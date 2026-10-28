@@ -20,8 +20,8 @@ export interface CompanyInfo {
 }
 
 // videoSource 五档：none（封面占位）/ channels（视频号）/ upload（云存储上传）/
-// url（外部直链）/ tencent（腾讯视频插件，预留未接线）。
-// videoUrl 由 upload、url 两档共用，并作为 channels 开启 videoFallbackUrl 时的兜底源。
+// url（外部直链）/ tencent（腾讯视频插件，需部署侧开 MP_TENCENT_VIDEO 才可选）。
+// videoUrl 由 upload、url 两档共用，并作为 channels / tencent 开启 videoFallbackUrl 时的兜底源。
 export interface CompanyProfile {
   introText: string
   videoSource: string

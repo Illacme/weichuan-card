@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"weichuan/internal/config"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
 
@@ -16,7 +18,22 @@ import (
 // 公司信息 / 公司简介 / 业绩分类 / 项目案例 / 业务服务 / 首页布局。
 // 多租户：全部按 targetCompanyID 收窄到单一企业——企业管理员固定本企业，
 // 平台超管可用 ?companyId= 指定（缺省 1 号租户朗汇，保持既有行为）。
-func RegisterContent(r *gin.Engine, db *gorm.DB) {
+func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
+	// ===== 视频来源能力探测 =====
+	// 目前只有「腾讯视频」一档需要部署级开关：它依赖小程序侧静态声明插件，
+	// 未授权时整个小程序编译失败（见 config.TencentVideo 注释）。界面据此禁用选项
+	// 并原样展示原因，别让客户配完才在真机上发现播不出来。
+	r.GET("/api/admin/video-capability", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		reason := ""
+		if !cfg.TencentVideo {
+			reason = "腾讯视频档未启用：需先在小程序后台「设置 → 第三方服务 → 插件管理」添加腾讯视频插件并在 app.json 声明，再设环境变量 MP_TENCENT_VIDEO=true 重启服务"
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+			"tencentVideo":  cfg.TencentVideo,
+			"tencentReason": reason,
+		}})
+	})
+
 	// ===== 公司基础信息（固定展示，按租户） =====
 	r.GET("/api/admin/company-info", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
@@ -89,12 +106,20 @@ func RegisterContent(r *gin.Engine, db *gorm.DB) {
 		if req.VideoSource == "" {
 			req.VideoSource = model.VideoSourceNone
 		}
-		// 腾讯视频档未接线：插件必须在 app.json 静态声明，统一声明会让未通过插件授权的
-		// 客户小程序直接报「插件未授权」，故服务端一并拦住，避免前端置灰被绕过。
-		// 部署方确已申请插件并声明后，删掉本段即可启用。
+		// 腾讯视频档：插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
+		// 故由部署方用 MP_TENCENT_VIDEO 显式开启（默认关，见 config.TencentVideo）。
+		// 服务端必须拦——前端只是把选项置灰，直接调接口照样能绕过。
 		if req.VideoSource == model.VideoSourceTencent {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "腾讯视频档未启用：需先在小程序后台添加腾讯视频插件并在 app.json 声明"})
-			return
+			if !cfg.TencentVideo {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "腾讯视频档未启用：需先在小程序后台添加腾讯视频插件并在 app.json 声明，再设环境变量 MP_TENCENT_VIDEO=true 重启服务"})
+				return
+			}
+			// vid 是这一档唯一的取片凭证，空着等于配了个永远播不出来的档
+			if strings.TrimSpace(req.VideoVid) == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "腾讯视频档需要填写 vid"})
+				return
+			}
+			req.VideoVid = strings.TrimSpace(req.VideoVid)
 		}
 		var cp model.CompanyProfile
 		fields := map[string]interface{}{

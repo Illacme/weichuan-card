@@ -159,7 +159,7 @@ func main() {
 	// 漏注册不报编译错、只在点开功能时 404，正是下面 main_test.go 守门测试要钉住的漂移。
 	handler.RegisterStatsExport(r, db)
 	handler.RegisterStatsDetail(r, db)
-	handler.RegisterContent(r, db)
+	handler.RegisterContent(r, db, cfg)
 	handler.RegisterMPEntry(r, db) // 小程序默认入口：GET/PUT /api/admin/mp-entry（裸启动落到名片墙还是某位员工）
 	handler.RegisterCompanies(r, db)
 	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）

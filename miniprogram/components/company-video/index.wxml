@@ -18,9 +18,26 @@
     bind:error="onVideoError"
   />
 
+  <!-- 腾讯视频插件：vid 取片，原位播放，画面不带视频号角标。
+       playerid 需全局唯一（插件用它取 TxvContext 手动控制播放）；use-poster 让加载期
+       显示腾讯视频按 vid 取到的默认海报，避免一块黑底。
+       bindplay 接播放埋点：插件透传了 video 的完整事件，这是视频号档给不了的。 -->
+  <txv-video
+    wx:elif="{{mode === 'txv'}}"
+    vid="{{vid}}"
+    playerid="companyVideo"
+    class="cv-video"
+    object-fit="contain"
+    use-poster="{{true}}"
+    controls="{{true}}"
+    show-center-play-btn="{{true}}"
+    bindplay="onVideoPlay"
+    binderror="onVideoError"
+  />
+
   <!-- 云存储上传 / 外部直链 / 兜底：三者共用同一个 videoUrl，走标准 video 播放。
-       注意：腾讯视频档（vid）未接线——插件必须在 app.json 静态声明，未声明时渲染会直接
-       报「组件未找到」。字段已预留，部署方声明插件后在此加一个 wx:elif 分支即可。
+       注意：txv-video 依赖 app.json 声明插件，未声明时该标签是未注册组件（渲染不出来），
+       所以 tencent 档由部署方显式开启后才可能出现（见 scripts/enable-tencent-video.mjs）。
        bindplay 接播放埋点（video_play）：channel-video 官方无播放事件，只有 video 有。 -->
   <video
     wx:elif="{{mode === 'mp4'}}"

@@ -51,14 +51,22 @@ function instance(opts: any) {
     }
   }
   inst.observers = {}
-  const observerKey = 'videoSource, feedId, feedToken, videoUrl, fallback'
+  const observerKey = 'videoSource, feedId, feedToken, vid, videoUrl, fallback'
   inst.observers[observerKey] = opts.observers[observerKey].bind(inst)
   // 简写：按真机入参顺序触发观察者。先把 properties 写进 data——
   // 真机框架会自动同步（组件的 properties 变化即落到 this.data），
   // 测试里手工补上，否则 onVideoError 读 this.data.videoSource 是 undefined。
-  inst.repick = (source: string, feedId: string, feedToken: string, videoUrl: string, fallback = false) => {
-    inst.setData({ videoSource: source, feedId, feedToken, videoUrl, fallback })
-    inst.observers[observerKey](source, feedId, feedToken, videoUrl, fallback)
+  // vid 放最后：既有用例都用不到它，加在末尾不用改一堆调用点。
+  inst.repick = (
+    source: string,
+    feedId: string,
+    feedToken: string,
+    videoUrl: string,
+    fallback = false,
+    vid = ''
+  ) => {
+    inst.setData({ videoSource: source, feedId, feedToken, vid, videoUrl, fallback })
+    inst.observers[observerKey](source, feedId, feedToken, vid, videoUrl, fallback)
   }
   return inst
 }
@@ -104,6 +112,59 @@ describe('company-video 组件', () => {
     c.repick('none', '', '', '', false)
 
     expect(c.data.mode).toBe('none')
+  })
+
+  // ---- 腾讯视频档（插件 txv-video）----
+  // 这一档是「原位播放 + 画面干净」诉求的正解：不带视频号角标，也不跳视频号页。
+
+  it('tencent 档有 vid：走 txv（插件组件，原位播放）', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('tencent', '', '', '', false, 'n0041aa087e')
+
+    expect(c.data.mode).toBe('txv')
+  })
+
+  it('tencent 档缺 vid：回封面占位（vid 是唯一取片凭证）', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('tencent', '', '', 'https://cdn.test/a.mp4', false, '   ')
+
+    expect(c.data.mode).toBe('none')
+  })
+
+  it('tencent 主源失败且有兜底 url：回落 mp4', async () => {
+    const c = instance(await loadComponent())
+    c.repick('tencent', '', '', 'https://cdn.test/fb.mp4', true, 'n0041aa087e')
+
+    c.onVideoError()
+
+    expect(c.data.mode).toBe('mp4')
+    expect(c.data.failed).toBe(true)
+  })
+
+  it('tencent 主源失败没开兜底：回落封面占位', async () => {
+    const c = instance(await loadComponent())
+    c.repick('tencent', '', '', 'https://cdn.test/fb.mp4', false, 'n0041aa087e')
+
+    c.onVideoError()
+
+    expect(c.data.mode).toBe('none')
+    expect(c.data.failed).toBe(true)
+  })
+
+  // 播放埋点：插件透传了 video 的 bindplay，所以这一档也能记 video_play
+  // （视频号档官方没有播放事件，记不了——这是选档时该知道的差别）
+  it('tencent 档播放也上报 video_play', async () => {
+    const c = instance(await loadComponent())
+    c.setData({ staffId: 7 })
+    c.repick('tencent', '', '', '', false, 'n0041aa087e')
+
+    c.onVideoPlay()
+
+    const tracks = mocks.request.mock.calls.filter((x) => x[1] === '/api/stat/track')
+    expect(tracks).toHaveLength(1)
+    expect(tracks[0][2]).toEqual({ staffId: 7, eventType: 'video_play' })
   })
 
   // 视频号主源失败 + 后台开了兜底 + 真填了 MP4：三条件缺一都不回落

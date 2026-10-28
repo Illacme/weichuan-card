@@ -116,8 +116,10 @@ func NormalizeMpEntryMode(mode string) string {
 //	         非个人主体小程序，且强制 autoplay=false）。两者二选一，feedId 优先。
 //	upload   云存储上传：文件落在已配置的对象存储（OSS/COS/MinIO），直传不经应用服务器
 //	url      外部 MP4 直链：客户自备 URL，流量与视听类目资质由客户自行承担
-//	tencent  腾讯视频插件（AppID wxa75efa648b60994b）：预留档——插件必须在 app.json 静态声明，
-//	         故默认不可选，需客户小程序后台申请通过后再由部署方接线，避免未授权拖垮整个小程序
+//	tencent  腾讯视频插件（provider wxa75efa648b60994b）：小程序端 <txv-video vid>，原位播放、
+//	         画面无视频号角标，且插件自带 bindplay——video_play 埋点也能记上（视频号档记不了）。
+//	         门槛在部署侧：插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
+//	         故由 config.TencentVideo（MP_TENCENT_VIDEO）显式开启，默认关。
 //
 // videoUrl 由 upload / url 两档共用，同时充当 channels / tencent 开启 videoFallbackUrl 时的兜底源。
 type CompanyProfile struct {
@@ -143,7 +145,7 @@ const (
 	VideoSourceChannels = "channels" // 微信视频号（推荐：零存储零流量零资质）
 	VideoSourceUpload   = "upload"   // 云存储上传（对象存储，客户自有账号）
 	VideoSourceURL      = "url"      // 外部 MP4 直链
-	VideoSourceTencent  = "tencent"  // 腾讯视频插件（预留，默认不可选）
+	VideoSourceTencent  = "tencent"  // 腾讯视频插件（需 MP_TENCENT_VIDEO=1 才可选）
 )
 
 // IsValidVideoSource 校验 video_source 取值。空串按 none 处理：

@@ -58,6 +58,21 @@ export function getUploadCapability(): Promise<UploadCapability> {
     .catch(() => CAPABILITY_FALLBACK)
 }
 
+// 视频来源能力：决定「腾讯视频」档能不能选。
+// 该档依赖小程序侧静态声明腾讯视频插件（未授权会让整个小程序编译失败），
+// 所以开关在部署侧（MP_TENCENT_VIDEO），这里只负责把「能不能选 + 为什么」搬给界面。
+export interface VideoCapability {
+  tencentVideo: boolean
+  tencentReason: string
+}
+const VIDEO_CAP_FALLBACK: VideoCapability = { tencentVideo: false, tencentReason: '' }
+export function getVideoCapability(): Promise<VideoCapability> {
+  return http
+    .get('/admin/video-capability')
+    .then((r: any) => ({ ...VIDEO_CAP_FALLBACK, ...(r.data ?? {}) }) as VideoCapability)
+    .catch(() => VIDEO_CAP_FALLBACK)
+}
+
 // ===== 业绩分类 =====
 export function listCategories() {
   return http.get('/admin/categories').then((r: any) => (r.data ?? []) as any[])

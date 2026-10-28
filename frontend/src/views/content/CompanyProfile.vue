@@ -16,7 +16,7 @@
           <el-option label="微信视频号（推荐）" value="channels" />
           <el-option label="云存储上传" value="upload" :disabled="!cap.videoUpload" />
           <el-option label="外部 MP4 直链" value="url" />
-          <el-option label="腾讯视频（需申请插件）" value="tencent" disabled />
+          <el-option label="腾讯视频（插件）" value="tencent" :disabled="!vcap.tencentVideo" />
         </el-select>
         <div v-if="form.videoSource === 'channels'" class="hint hint-good">
           视频存微信服务器、播放走微信 CDN，<b>不产生存储与流量费用</b>，且官方声明该组件无视听资质要求。
@@ -25,6 +25,15 @@
             跨主体（feed-token）点击播放会<b>拉起视频号页面</b>播放，只有同主体（feedId）才能在原位自动播放。
             要求「原位播放、画面干净」请用<b>外部 MP4 直链</b>（任意 https mp4 地址，与存储驱动无关）；
             云存储上传档仅当存储配置为对象存储时可用，本地磁盘存储下会被禁用。
+          </span>
+        </div>
+        <div v-else-if="form.videoSource === 'tencent'" class="hint hint-good">
+          视频由腾讯视频托管并走其 CDN，<b>不占您的存储与流量</b>；在页面内<b>原位播放</b>，
+          封面<b>不带视频号名称与推荐角标</b>，且能记上播放统计（视频号档官方没有播放事件，记不了）。
+          <span class="hint-warn">
+            前置条件（缺一不可）：① 小程序后台「设置 → 第三方服务 → 插件管理」已添加腾讯视频插件；
+            ② 小程序 app.json 已声明该插件；③ 服务端设了 <code>MP_TENCENT_VIDEO=true</code>。
+            少任何一项，这里要么选不了、要么保存被拒。
           </span>
         </div>
         <div v-else-if="form.videoSource === 'upload'" class="hint">
@@ -59,6 +68,23 @@
               ② 存的 token 要完整，正常形如 <code>token/</code> 开头一长串，短于十位多半被截断。
             </span>
             <span v-if="form.videoFeedId.trim()" class="hint-warn">当前已填 feedId，feed-token 不会被使用。</span>
+          </div>
+        </el-form-item>
+      </template>
+
+      <!-- 腾讯视频档：vid 是唯一取片凭证（腾讯视频播放页 URL 末段），插件自带 bindplay
+           所以 video_play 埋点也能记上——这是它相对视频号档的第二个好处 -->
+      <template v-else-if="form.videoSource === 'tencent'">
+        <el-alert v-if="!vcap.tencentVideo" type="warning" :closable="false" show-icon class="cap-alert">
+          <template #title>{{ vcap.tencentReason || '当前部署未启用腾讯视频插件' }}</template>
+        </el-alert>
+        <el-form-item v-if="vcap.tencentVideo" label="视频 vid">
+          <el-input v-model="form.videoVid" placeholder="如 n0041aa087e（腾讯视频播放页地址末段）" />
+          <div class="hint">
+            先把视频上传到<b>腾讯视频</b>并通过审核，取播放页地址里的 vid；未过审的视频播不出来。
+            <span class="hint-warn">
+              免费版插件片头会插广告（插件形态自带，界面无法关闭），介意的话回到「外部 MP4 直链」档。
+            </span>
           </div>
         </el-form-item>
       </template>
@@ -122,7 +148,9 @@ import {
   getCompanyProfile,
   saveCompanyProfile,
   getUploadCapability,
+  getVideoCapability,
   type UploadCapability,
+  type VideoCapability,
 } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 
@@ -149,6 +177,9 @@ const cap = ref<UploadCapability>({
   videoMaxMb: 100,
   reason: '',
 })
+
+// 视频来源能力：决定「腾讯视频」档可选与否（部署级开关，探测失败按不可用处理）。
+const vcap = ref<VideoCapability>({ tencentVideo: false, tencentReason: '' })
 
 // 兜底只对「主源可能失败」的档位开放：视频号（组件报错）、腾讯视频（插件未授权）。
 // upload / url 两档本身就是 MP4，兜底没有意义。
@@ -193,6 +224,15 @@ async function loadCapability() {
   }
 }
 
+async function loadVideoCapability() {
+  try {
+    vcap.value = await getVideoCapability()
+  } catch {
+    // 同上：探测失败按「不可用」处理，并给出可读原因
+    vcap.value = { tencentVideo: false, tencentReason: '视频来源能力探测失败，暂时无法选择腾讯视频' }
+  }
+}
+
 async function save() {
   // 开了兜底却不填地址，等于没兜底——直接拦住，避免存一个永远不生效的开关
   if (needFallback.value && form.videoFallbackUrl && !form.videoUrl.trim()) {
@@ -206,6 +246,11 @@ async function save() {
   }
   if (form.videoSource === 'url' && !form.videoUrl.trim()) {
     ElMessage.warning('请填写 MP4 地址')
+    return
+  }
+  // 腾讯视频档只有 vid 一个凭证，空着就是配了个永远播不出来的档
+  if (form.videoSource === 'tencent' && !form.videoVid.trim()) {
+    ElMessage.warning('腾讯视频档需要填写 vid')
     return
   }
   saving.value = true
@@ -232,6 +277,7 @@ async function save() {
 onMounted(() => {
   load()
   loadCapability()
+  loadVideoCapability()
 })
 </script>
 

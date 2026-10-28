@@ -27,6 +27,11 @@ const mocks = vi.hoisted(() => ({
     videoMaxMb: 200,
     reason: '',
   })),
+  // 腾讯视频档默认不可用（部署未开 MP_TENCENT_VIDEO）：默认就该是「选不了 + 有原因」
+  getVideoCapability: vi.fn(async (): Promise<any> => ({
+    tencentVideo: false,
+    tencentReason: '腾讯视频档未启用：需先添加插件并设 MP_TENCENT_VIDEO=true',
+  })),
 }))
 
 vi.mock('@/api/content', () => mocks)
@@ -120,9 +125,10 @@ async function flush() {
   await nextTick()
 }
 
-async function mountPage(profile?: any, cap?: any) {
+async function mountPage(profile?: any, cap?: any, vcap?: any) {
   if (profile) mocks.getCompanyProfile.mockResolvedValueOnce(profile)
   if (cap) mocks.getUploadCapability.mockResolvedValueOnce(cap)
+  if (vcap) mocks.getVideoCapability.mockResolvedValueOnce(vcap)
   const w = mount(CompanyProfile, mountOpts)
   await flush()
   return w
@@ -154,11 +160,15 @@ describe('content/CompanyProfile', () => {
     ;(ElMessage.warning as any).mockClear()
   })
 
+  const VCAP_ON = { tencentVideo: true, tencentReason: '' }
+  const VID_PLACEHOLDER = '如 n0041aa087e（腾讯视频播放页地址末段）'
+
   it('挂载即拉取简介与存储能力', async () => {
     const w = await mountPage()
 
     expect(mocks.getCompanyProfile).toHaveBeenCalledTimes(1)
     expect(mocks.getUploadCapability).toHaveBeenCalledTimes(1)
+    expect(mocks.getVideoCapability).toHaveBeenCalledTimes(1)
     expect(byPlaceholder(w, '首页简介区文字').element.value).toBe('朗汇机电成立于 2003 年')
   })
 
@@ -211,15 +221,22 @@ describe('content/CompanyProfile', () => {
     expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').exists()).toBe(true)
   })
 
-  // 兜底只对「主源可能播不出来」的档位有意义：MP4 档不需要兜底
-  it('兜底开关只在视频号档出现', async () => {
+  // 兜底只对「主源可能播不出来」的档位有意义：视频号（组件可能报错）与腾讯视频
+  // （插件可能未授权 / vid 未过审）；MP4 两档本身就是 MP4，不需要兜底
+  it('兜底开关只在视频号 / 腾讯视频档出现', async () => {
     const w = await mountPage()
     expect(w.find('.el-checkbox').exists()).toBe(false)
 
     await pickSource(w, 'channels')
     expect(w.find('.el-checkbox').exists()).toBe(true)
 
+    await pickSource(w, 'tencent')
+    expect(w.find('.el-checkbox').exists()).toBe(true)
+
     await pickSource(w, 'upload')
+    expect(w.find('.el-checkbox').exists()).toBe(false)
+
+    await pickSource(w, 'url')
     expect(w.find('.el-checkbox').exists()).toBe(false)
   })
 
@@ -347,6 +364,56 @@ describe('content/CompanyProfile', () => {
 
   // 存储能力探测失败不能把整页拖垮，也不能把 rejection 漏成 Uncaught (in promise)：
   // 页面降级为「不可用」并给出可读原因，其余字段照常可编辑
+  // ---- 腾讯视频档（部署级开关）----
+
+  // 未启用时必须「选不了 + 说清为什么」：只置灰不给原因，客户会以为是产品 bug
+  it('部署未启用腾讯视频：选项禁用且给出原因', async () => {
+    const w = await mountPage()
+
+    const opt = w.findAll('option').find((o: any) => o.text().includes('腾讯视频'))
+    expect(opt!.attributes('disabled')).toBeDefined()
+
+    await pickSource(w, 'tencent')
+    expect(w.find('.el-alert').text()).toContain('MP_TENCENT_VIDEO')
+    // 注意不能用 byPlaceholder：它找不到就抛错，断言「不存在」得自己扫一遍
+    expect(
+      w.findAll('.el-input').some((i: any) => i.attributes('placeholder') === VID_PLACEHOLDER)
+    ).toBe(false)
+  })
+
+  it('部署已启用：显示 vid 输入框', async () => {
+    const w = await mountPage(undefined, undefined, VCAP_ON)
+    await pickSource(w, 'tencent')
+
+    expect(byPlaceholder(w, VID_PLACEHOLDER).exists()).toBe(true)
+    expect(w.find('.el-alert').exists()).toBe(false)
+  })
+
+  it('腾讯视频档没填 vid：拦下且不提交', async () => {
+    const w = await mountPage(undefined, undefined, VCAP_ON)
+    await pickSource(w, 'tencent')
+
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('腾讯视频档需要填写 vid')
+    expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+  })
+
+  it('腾讯视频档填了 vid：提交 videoVid', async () => {
+    const w = await mountPage(undefined, undefined, VCAP_ON)
+    await pickSource(w, 'tencent')
+    await byPlaceholder(w, VID_PLACEHOLDER).setValue('n0041aa087e')
+    await flush()
+
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ videoSource: 'tencent', videoVid: 'n0041aa087e' })
+    )
+  })
+
   it('能力探测失败：页面仍可用，且上传档给出可读原因', async () => {
     mocks.getUploadCapability.mockRejectedValueOnce(new Error('500'))
     const w = await mountPage()

@@ -73,6 +73,17 @@ type Config struct {
 	MetricsEnabled  bool          // 是否开放 GET /metrics（Prometheus 文本格式；默认关，避免公网暴露流量规模）
 	WxacodeTTLHours int           // 小程序码缓存有效期（小时）
 	WxacodeTTL      time.Duration
+	// TencentVideo 是否开放「腾讯视频」视频来源档（MP_TENCENT_VIDEO，默认关）。
+	//
+	// 为什么是部署级开关而不是界面开关：该档依赖腾讯视频小程序插件
+	// （provider wxa75efa648b60994b），而插件必须在 app.json 里**静态声明**——
+	// 声明了却没在 MP 后台「设置 → 第三方服务 → 插件管理」授权的插件，会让整个
+	// 小程序在编译期就失败，连预览都传不上去。这不是「某个客户视频播不出来」，
+	// 是「所有客户的整个小程序发不了版」。界面上点一下开关改不了这个事实，
+	// 所以只能由部署方确认「插件已授权 + app.json 已声明」后显式打开。
+	//
+	// 默认关还兼一层：存量私有部署升级后行为不变（升级不得突变存量）。
+	TencentVideo bool
 	// AutoMigrate 启动时自动补齐未应用的数据库迁移（仅 MySQL；SQLite 走 AutoMigrate 建表）。
 	// 默认开——「升级后忘了跑迁移」是本项目升级事故的主要形态，而迁移幂等、
 	// 每次启动都只做增量。要完全自己掌控（如纳入发布流水线单独一步）设 AUTO_MIGRATE=0。
@@ -184,6 +195,7 @@ func Load() Config {
 		MetricsEnabled:     parseBool(getEnv("METRICS_ENABLED", "false")),
 		WxacodeTTLHours:    ttlHours,
 		WxacodeTTL:         time.Duration(ttlHours) * time.Hour,
+		TencentVideo:       parseBool(getEnv("MP_TENCENT_VIDEO", "false")),
 		AutoMigrate:        parseBool(getEnv("AUTO_MIGRATE", "true")),
 		// 默认 6 小时：refresh token 最长 30 天，黑名单行要到那时才「过期」，
 		// 故清理频率无需高，只要保证长期运行的表不会无限增长即可（启动还会跑一次）

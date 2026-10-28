@@ -1901,6 +1901,36 @@ paths:
         "200":
           description: code=0 成功；code=1 参数错误
 
+  /api/admin/video-capability:
+    get:
+      tags: [超管-内容管理]
+      summary: 视频来源能力探测
+      description: >-
+        返回「腾讯视频」档在当前部署下可选与否（服务端 MP_TENCENT_VIDEO）。
+        该档依赖小程序侧静态声明腾讯视频插件，未授权会让整个小程序编译失败，
+        故是部署级开关而非界面开关；不可选时 tencentReason 给出可执行的开启步骤。
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: code=0 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      tencentVideo:
+                        type: boolean
+                        description: 腾讯视频档是否可选
+                      tencentReason:
+                        type: string
+                        description: 不可选时的原因（可选时为空串）
+
   /api/admin/categories:
     get:
       parameters:
@@ -4276,7 +4306,9 @@ components:
             channels 微信视频号（存储与流量由微信承担，官方声明该组件无视听资质要求）；
             upload 云存储上传（对象存储直传，不经应用服务器）；
             url 外部 MP4 直链（流量与资质由客户承担）；
-            tencent 腾讯视频插件（预留，服务端暂拒：插件须在 app.json 静态声明）
+            tencent 腾讯视频插件（txv-video vid：原位播放、无视频号角标、能记播放埋点；
+            门槛在部署侧——插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
+            故服务端仅在 MP_TENCENT_VIDEO=true 时接受，且 videoVid 必填）
         videoChannelId:
           type: string
           description: 视频号 ID，sph 开头（留档用；定位具体视频靠 videoFeedId）

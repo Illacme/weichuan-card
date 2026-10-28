@@ -60,7 +60,7 @@ miniprogram/
 | service/detail | GET /api/services/:id + POST /api/stat/track(service_view / share，targetId=服务ID) |
 | employee/login → edit | POST /api/employee/login, GET /api/employee/me, PUT /api/employee/me, POST /api/employee/upload(头像) |
 | action-bar | wx.makePhoneCall + POST /api/stat/track(call/save) |
-| company-video | POST /api/stat/track(video_play，组件级去重) |
+| company-video | POST /api/stat/track(video_play，组件级去重)（mp4 与 txv 两档；视频号档官方无播放事件，记不了） |
 | poster | GET /api/card, GET /api/wechat/wxacode?staffId=&from=poster + POST /api/stat/track(share：发送给好友 / 右上角转发；poster_save：保存成功后) |
 | employee/stat | GET /api/employee/me/stat（八类计数 + 按天趋势 + 案例/服务 TOP3 + 来源分布） |
 
@@ -75,7 +75,7 @@ miniprogram/
   | visit | 首页 onShow | 0 |
   | call / save | 底部操作栏点击 | 0 |
   | project_view / service_view | 案例 / 服务详情页加载成功 | 对象 ID（后端强制校验存在 + 同租户） |
-  | video_play | company-video 的 `<video>` bindplay | 0 |
+  | video_play | company-video 的 `<video>` / `<txv-video>` 的 bindplay | 0 |
   | share | 各页 onShareAppMessage；海报页「发送给好友」 | 0（名片）或对象 ID |
   | poster_save | 海报保存成功回调 | 0 |
 
@@ -115,6 +115,30 @@ miniprogram/
 - PC 后台「小程序设置 → 名片首页样式」可设置首页背景图（支持从内置素材库「背景」分类直接选用 750×1334 竖幅素材），并可调节遮罩浓度 0~100。后端经 `GET /api/home-layout` 在**响应根级**下发 `bgImage` / `bgMask`（与 `order` 同级）。
 - 首页 `pages/index` 收到非空 `bgImage` 时：铺一层全屏背景（`mode="aspectFill"`），其上叠 `bgMask/100` 透明度的黑色蒙层，白色内容卡片浮于其上形成层次；`bgImage` 为空即保持默认灰底布局，不渲染背景层。
 - 背景层与蒙层用 `position: fixed` + 负 `z-index` 铺在最底层，内容按常规流绘制天然在其上方，不会互相遮挡；有背景时顶栏改为半透明白、板块卡片加圆角阴影（`.has-bg`）。
+
+## 腾讯视频档（`company-video` 的 txv 分支）
+
+`company-video` 按后端 `videoSource` 选档：`channels` → `<channel-video>`（feedId / feed-token）、
+`upload` / `url` → `<video>`、`tencent` → 腾讯视频插件的 `<txv-video vid>`、`none` → 封面占位。
+主源 `binderror` 且后台开了 `videoFallbackUrl` 并填了 MP4 时，回落 `<video>`；没开兜底则回落封面占位。
+
+`tencent` 档依赖腾讯视频小程序插件（provider `wxa75efa648b60994b`），而插件必须**静态声明**：
+
+> 声明了却没在 MP 后台授权的插件会让**整个小程序编译失败、连预览都传不上去**。
+> 所以默认不带插件，要用的部署方显式打开；不用的部署方升级后行为不变。
+
+```bash
+node miniprogram/scripts/enable-tencent-video.mjs on    # 写 app.json + company-video/index.json
+node miniprogram/scripts/enable-tencent-video.mjs off   # 还原
+node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
+```
+
+脚本只改这两处静态声明，另外两件事必须人工做：① MP 后台「设置 → 第三方服务 → 插件管理」
+添加腾讯视频插件并等授权通过；② 后端设 `MP_TENCENT_VIDEO=true` 并重启（否则后台该档不可选）。
+插件版本号以 MP 后台「插件详情」为准，需覆盖时用 `PLUGIN_VERSION=2.0.5 ... on`。
+
+已知形态（插件自带，界面改不了）：免费版片头有广告；`txv-video` 的 `z-index` 为 11，
+自定义浮层要压在它上面时记得抬高。
 
 ## 小程序码 + 海报生成
 - **海报页对访客是「只读预览」**（2026-10-28 起）：`canEdit` = 登录 && 页面 `staffId` 就是我自己
