@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import type { Router } from 'vue-router'
+import type { Router, RouteLocation } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 
 export const routes = [
@@ -12,7 +12,13 @@ export const routes = [
   {
     path: '/',
     component: () => import('@/layout/AdminLayout.vue'),
-    redirect: '/apply/open',
+    // 保留白标码：/?company=xxx 命中后仍能以 /login?company=xxx 呈现该企业品牌。
+    // 根路径必须先落 /apply/open（未登录再由守卫踢到 /login）；若 redirect 写成字符串，
+    // query 会在这一跳被丢掉，白标链接一分享就"变回总品牌"。
+    redirect: (to: RouteLocation) => ({
+      path: '/apply/open',
+      query: typeof to.query.company === 'string' ? { company: to.query.company } : {},
+    }),
     children: [
       {
         path: 'apply/open',
@@ -139,7 +145,14 @@ export const routes = [
       },
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: '/apply/open' },
+  {
+    path: '/:pathMatch(.*)*',
+    // 未知路径同样保留白标码，避免分享链接拼错一段就丢掉品牌。
+    redirect: (to: RouteLocation) => ({
+      path: '/apply/open',
+      query: typeof to.query.company === 'string' ? { company: to.query.company } : {},
+    }),
+  },
 ]
 
 export const router = createRouter({
@@ -155,7 +168,10 @@ export function registerGuards(r: Router) {
   r.beforeEach((to) => {
     const auth = useAuthStore()
     if (!to.meta.public && !auth.loggedIn) {
-      return { path: '/login' }
+      // 保留白标码（?company=xxx）：用户从任意入口（根路径 / 未知路径 / 受保护页）进来，
+      // 落到登录页时品牌仍应属于该企业；否则白标链接刷新一次就退回总品牌。
+      const company = typeof to.query.company === 'string' ? to.query.company : undefined
+      return { path: '/login', query: company ? { company } : {} }
     }
     if (to.path === '/login' && auth.loggedIn) {
       return { path: '/' }

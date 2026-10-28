@@ -69,6 +69,21 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     expect(routerReplace).toHaveBeenCalledWith('/login')
   })
 
+  it('code=401 且当前页带白标码：跳登录时保留 company（品牌不丢）', async () => {
+    localStorage.setItem('admin_loggedin', '1')
+    vi.spyOn(http, 'post').mockResolvedValue({ code: 1 } as any)
+    const routerMod = (await import('@/router')).default as any
+    const prev = routerMod.currentRoute.value
+    routerMod.currentRoute.value = { path: '/apply/open', query: { company: 'langhui' } }
+    try {
+      const p = respFulfilled()({ data: { code: 401, msg: 'x' }, config: {} })
+      await expect(p).rejects.toThrow()
+      expect(routerReplace).toHaveBeenCalledWith({ path: '/login', query: { company: 'langhui' } })
+    } finally {
+      routerMod.currentRoute.value = prev
+    }
+  })
+
   it('code=401 且刷新成功：静默重试原请求并返回其结果，不跳登录', async () => {
     // 刷新成功：服务端轮换下发新 Cookie，返回 code:0
     vi.spyOn(http, 'post').mockResolvedValue({ code: 0 } as any)

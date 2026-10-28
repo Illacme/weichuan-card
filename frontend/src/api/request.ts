@@ -161,7 +161,14 @@ http.interceptors.response.use(
       // 而此刻用户刚刚还在用，说「未登录」只会让人怀疑系统坏了。
       ElMessage.error('登录已失效，请重新登录')
       if (router.currentRoute.value.path !== '/login') {
-        router.replace('/login')
+        // 保留白标码：会话过期被打回登录页时，登录页品牌仍应是当前企业的，
+        // 否则客户会以为被踢到了别家后台（与路由守卫的白标透传保持一致）。
+        const company = router.currentRoute.value.query?.company
+        if (typeof company === 'string' && company) {
+          router.replace({ path: '/login', query: { company } })
+        } else {
+          router.replace('/login')
+        }
       }
       return Promise.reject(new Error(data.msg || '未登录'))
     }

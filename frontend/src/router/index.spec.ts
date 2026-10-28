@@ -111,6 +111,55 @@ describe('路由守卫', () => {
   })
 })
 
+// 白标码透传：?company=xxx 是「登录页白标」（只改品牌，不切租户）。
+// 运营分享的可能是「根路径+白标码」，也可能在任意链接后拼白标码；无论从哪个入口
+// 进到 /login 都必须保留它，否则刷新/跳转一次品牌就退回总品牌（客户会以为进错后台）。
+describe('白标码 ?company= 透传', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+
+  it('未登录访问根路径 ?company= → 落到登录页且保留 company', async () => {
+    setSession({ loggedIn: false })
+    const r = makeRouter()
+    await r.push('/?company=langhui')
+    expect(r.currentRoute.value.path).toBe('/login')
+    expect(r.currentRoute.value.query.company).toBe('langhui')
+  })
+
+  it('未登录访问受保护页 ?company= → 登录页保留 company', async () => {
+    setSession({ loggedIn: false })
+    const r = makeRouter()
+    await r.push('/employees?company=langhui')
+    expect(r.currentRoute.value.path).toBe('/login')
+    expect(r.currentRoute.value.query.company).toBe('langhui')
+  })
+
+  it('未知路径 ?company= → 登录页保留 company（兜底路由也不丢）', async () => {
+    setSession({ loggedIn: false })
+    const r = makeRouter()
+    await r.push('/no/such/page?company=langhui')
+    expect(r.currentRoute.value.path).toBe('/login')
+    expect(r.currentRoute.value.query.company).toBe('langhui')
+  })
+
+  it('直接访问登录页 ?company= → 原样放行', async () => {
+    setSession({ loggedIn: false })
+    const r = makeRouter()
+    await r.push('/login?company=langhui')
+    expect(r.currentRoute.value.path).toBe('/login')
+    expect(r.currentRoute.value.query.company).toBe('langhui')
+  })
+
+  it('已登录访问根路径 ?company= → 进默认业务页（company 不影响门禁）', async () => {
+    setSession({ loggedIn: true, isPlatform: true })
+    const r = makeRouter()
+    await r.push('/?company=langhui')
+    expect(r.currentRoute.value.path).toBe('/apply/open')
+  })
+})
+
 // 路由表本身也要守：新增平台级页面时忘了标 platformOnly，
 // 企业管理员就会在侧边栏看到并点进去（前端放行、后端才拦，体验割裂）。
 describe('路由表 meta', () => {
