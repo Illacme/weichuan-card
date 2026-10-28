@@ -13,17 +13,21 @@
     <button class="picker-btn" size="mini" bindtap="chooseImage">上传头像</button>
   </view>
   <!-- 微信昵称：用官方「头像昵称填写能力」的原生输入框（type="nickname"），
-       聚焦时由微信调起真实昵称自动填充（与上方头像的 chooseAvatar 同一套能力）。
+       聚焦后**键盘上方**会出现「微信昵称」，点一下即填入（不是弹授权窗）。
        旧做法是「授权获取」按钮调 wx.getUserProfile —— 该接口已于 2022-10-25
        被平台收回，此后一律返回占位值「微信用户」，永远拿不到真昵称，
-       点了等于白点。这里改用原生输入框，昵称也变成可手填的普通字段。 -->
+       点了等于白点。这里改用原生输入框，昵称也变成可手填的普通字段。
+       注意：它是唯一不会自己弹隐私授权窗的组件，未取得授权时会静默降级成
+       普通输入框（errno 104），所以聚焦时由 onNicknameFocus 先补授权再重聚焦。 -->
   <view class="form-item">
     <text class="label">微信昵称</text>
     <input
       data-field="nickname"
       type="nickname"
+      focus="{{nicknameFocus}}"
       value="{{form.nickname}}"
       bindinput="onInput"
+      bindfocus="onNicknameFocus"
       placeholder="选填，点此可填入微信昵称"
     />
   </view>

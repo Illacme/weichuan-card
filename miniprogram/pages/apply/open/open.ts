@@ -1,6 +1,6 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
 import { getOpenid } from '../../../utils/wechat'
-import { ensurePrivacy } from '../../../utils/privacy'
+import { ensurePrivacy, needConsent } from '../../../utils/privacy'
 
 // 访客自助提交开通申请（POST /api/apply/open）。
 // 头像：默认读取用户微信头像（按钮 open-type=chooseAvatar 会直接调起微信头像选择器，
@@ -14,8 +14,10 @@ import { ensurePrivacy } from '../../../utils/privacy'
 //      必须有用户主动勾选的同意项，未勾选不得提交（见 form.agreed 与 onSubmit）。
 //   2. 平台级隐私授权：chooseMedia 是微信隐私接口，
 //      调用前须取得用户对隐私政策的同意（见 utils/privacy.ts 的 ensurePrivacy）。
-//      头像的 chooseAvatar 与昵称的 type="nickname" 由微信自己兜授权弹窗，
-//      与既有 chooseAvatar 的处理一致，代码里不额外拦。
+//      头像的 chooseAvatar 属于官方列明的「无需主动调用也会自己弹授权窗」的
+//      例外（另两个例外是剪切板读/写），所以代码里不拦；
+//      但**昵称的 type="nickname" 恰恰相反**——见 onNicknameFocus 的说明，
+//      它必须自己先拿到授权，否则静默降级成普通输入框。
 Page({
   data: {
     form: { name: '', phone: '', phone2: '', title: '', landline: '', email: '', avatar: '', nickname: '' },
@@ -32,6 +34,10 @@ Page({
     agreed: false,
     // 微信隐私授权弹窗是否显示（由 ensurePrivacy 控制）
     privacyVisible: false,
+    // 昵称输入框的聚焦态：需要「授权后重新聚焦」时才由代码驱动，见 onNicknameFocus
+    nicknameFocus: false,
+    // 昵称是否已处理过授权：只处理首次聚焦，避免每次点进来都重弹一次窗
+    nicknameChecked: false,
   },
   onLoad() {
     this.loadCompany()
@@ -68,6 +74,35 @@ Page({
     const form = this.data.form as any
     form[field] = e.detail.value
     this.setData({ form })
+  },
+  // 昵称聚焦：先补隐私授权，再重新聚焦。
+  //
+  // 为什么必须有这一段：<input type="nickname"> 是**唯一不会自己弹授权**的隐私
+  // 组件。用户还没同意隐私政策时，它聚焦后既不触发 onNeedPrivacyAuthorization、
+  // 也不弹官方授权窗，而是**静默降级成 input type="text"**——键盘上方不会
+  // 出现「微信昵称」，页面不报错、不失败，用户只看到「填了没反应」。
+  // 真机控制台会留一句 errno 104（degrade as input component when privacy
+  // permission is unauthorized），界面上完全看不出来。
+  //
+  // 微信官方给的答案是二选一：等别的隐私接口（如 chooseAvatar）先拿到授权，
+  // 或自己写授权弹窗。我们本来就有自绘弹窗（privacy-consent + open-type=
+  // agreePrivacyAuthorization），所以走后者——聚焦时先补一次授权，
+  // 同意后重新聚焦，让组件在授权态下重新初始化。
+  async onNicknameFocus() {
+    if (this.data.nicknameChecked) return
+    // 已经同意过：直接放行，不做下面那次「失焦再聚焦」（否则会白闪一次键盘）
+    if (!(await needConsent())) {
+      this.setData({ nicknameChecked: true })
+      return
+    }
+    if (!(await ensurePrivacy(this))) {
+      wx.showToast({ title: '需同意隐私政策才能填入微信昵称', icon: 'none' })
+      return
+    }
+    this.setData({ nicknameChecked: true, nicknameFocus: false })
+    // 隔开一轮再置回 true：同一轮里 false→true 不会真的触发失焦，
+    // 组件也就不会重新走一遍昵称初始化
+    setTimeout(() => this.setData({ nicknameFocus: true }), 30)
   },
   // 「使用微信头像」：open-type=chooseAvatar 回调拿到本地临时文件，直接上传
   onChooseAvatar(e: any) {

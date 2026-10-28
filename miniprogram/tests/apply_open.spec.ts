@@ -8,6 +8,10 @@ import { installPageCapture, capturedPage, makeInstance, installWx, flush } from
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
+  // 隐私：默认「已同意」（与 harness 的 wx 桩一致——它没有 getPrivacySetting），
+  // 需要走「未同意」分支的用例各自 mockResolvedValueOnce(true) 覆盖。
+  ensurePrivacy: vi.fn(async (..._args: any[]): Promise<boolean> => true),
+  needConsent: vi.fn(async (..._args: any[]): Promise<boolean> => false),
 }))
 
 vi.mock('../utils/request', () => ({
@@ -19,6 +23,10 @@ vi.mock('../utils/request', () => ({
 vi.mock('../utils/wechat', () => ({
   getOpenid: vi.fn(async () => 'openid-x'),
 }))
+vi.mock('../utils/privacy', () => ({
+  ensurePrivacy: mocks.ensurePrivacy,
+  needConsent: mocks.needConsent,
+}))
 
 let wxStub: any
 
@@ -27,6 +35,10 @@ beforeEach(() => {
   installPageCapture()
   wxStub = installWx().wx
   mocks.request.mockClear()
+  mocks.ensurePrivacy.mockReset()
+  mocks.ensurePrivacy.mockResolvedValue(true)
+  mocks.needConsent.mockReset()
+  mocks.needConsent.mockResolvedValue(false)
 })
 
 async function page(company: any = { code: 0, data: { name: '朗汇机电有限公司', shortName: '朗汇机电' } }) {
@@ -214,6 +226,58 @@ describe('apply/open 页', () => {
     // 真正的回归信号是「又挂回旧的授权按钮」；注释里提到 API 名是允许的，
     // 所以这里查绑定而不是查字符串 getUserProfile
     expect(body).not.toMatch(/authorizeNickname/)
+  })
+
+  // ---- 昵称的隐私授权（errno 104 静默降级）----
+  //
+  // 这是本页最容易「悄悄坏掉」的一处：<input type="nickname"> 是唯一不会自己
+  // 弹隐私授权窗的组件，未取得授权时它**静默降级成普通输入框**——不报错、不失败，
+  // 用户只看到「填了没反应」，界面上完全看不出是授权没拿到。所以聚焦时由页面
+  // 自己先补一次授权，这段逻辑必须有测试钉住。
+
+  it('昵称聚焦：已同意过隐私 → 直接放行（不弹窗、不重新聚焦）', async () => {
+    const p = await page()
+
+    await p.onNicknameFocus()
+
+    expect(mocks.ensurePrivacy).not.toHaveBeenCalled()
+    expect(p.data.nicknameChecked).toBe(true)
+    // 不驱动 focus，避免键盘白闪一次
+    expect(p.data.nicknameFocus).toBe(false)
+    expect(lastToast()).toBe('')
+  })
+
+  it('昵称聚焦：未同意隐私 → 先补授权，同意后重新聚焦', async () => {
+    const p = await page()
+    mocks.needConsent.mockResolvedValueOnce(true)
+
+    await p.onNicknameFocus()
+
+    expect(mocks.ensurePrivacy).toHaveBeenCalled()
+    expect(p.data.nicknameChecked).toBe(true)
+    expect(p.data.nicknameFocus).toBe(false) // 先失焦
+    // 再等一轮宏任务：组件要在授权态下重新初始化才会拉起键盘上方的微信昵称
+    await new Promise((r) => setTimeout(r, 60))
+    expect(p.data.nicknameFocus).toBe(true)
+  })
+
+  it('昵称聚焦：用户不同意 → 提示且不标记，下次聚焦还能重试', async () => {
+    const p = await page()
+    mocks.needConsent.mockResolvedValueOnce(true)
+    mocks.ensurePrivacy.mockResolvedValueOnce(false)
+
+    await p.onNicknameFocus()
+
+    expect(lastToast()).toBe('需同意隐私政策才能填入微信昵称')
+    // 不置 checked：用户改主意后再点一次还能走一遍授权
+    expect(p.data.nicknameChecked).toBe(false)
+  })
+
+  it('源码守门：昵称输入框挂了 bindfocus（漏了就静默降级为普通输入框）', () => {
+    const HERE = dirname(fileURLToPath(import.meta.url))
+    const wxml = readFileSync(join(HERE, '..', 'pages/apply/open/open.wxml'), 'utf8')
+    const body = wxml.replace(/<!--[\s\S]*?-->/g, '')
+    expect(body).toMatch(/bindfocus="onNicknameFocus"/)
   })
 
   // ---- 提交 ----
