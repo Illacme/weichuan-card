@@ -93,6 +93,29 @@ server {
 > 上面两行不用改。**切勿 `set_real_ip_from 0.0.0.0/0`**——那等于让客户端自己决定
 > 他是谁，限流又回到可以随便换桶的状态。
 
+### 排障：刷新或直接访问 `/login`、`/companies` 等页面返回 nginx 404
+
+**现象**：登录后站内跳转一切正常；但「刷新页面」或在地址栏直接输入某个路由（如 `/login`、`/companies`、`/login?company=xxx`）就得到 nginx 的 `404 Not Found`。
+
+**原因**：Vue 用 history 路由，这些路径在服务端并没有对应文件。线上宝塔站点**漏了 SPA 兜底** `location / { try_files $uri $uri/ /index.html; }`——站内跳转是浏览器端路由（不发 HTTP 请求），所以看不出问题；刷新/直连才会真正向 nginx 要 `/login` 这个文件，找不到就是 404。用 `curl` 一眼可辨：
+
+```bash
+curl -sI https://<域名>/ | head -1          # 200  → root/index 正常
+curl -sI https://<域名>/login | head -1     # 404  → 缺兜底（本条就是）
+```
+
+若 `/` 也是 404，则先查 `root` 是否指向 `dist`（里面必须有 `index.html`）、以及 `index index.html;` 是否生效。
+
+**修复**：在宝塔「网站 → 站点 → 配置文件」的 `server { }` 内，把下面这段放在 `/api/`、`/uploads/`、`= /healthz` 三条 location **之后**：
+
+```nginx
+location / { try_files $uri $uri/ /index.html; }
+```
+
+保存后 `nginx -t && nginx -s reload`（或面板「重载配置」）。前面若有 Cloudflare/其它 CDN：这类 HTML 响应通常是 `cf-cache-status: DYNAMIC`（不缓存），改完即时生效；若曾缓存过 404，清一下对应 URL 缓存即可。
+
+> 顺序不能反：`= /healthz` 必须**精确匹配且单列**，否则会被 `try_files` 兜成 `index.html` 恒返回 200——后端进程已死、数据库连不上，这个探针照样绿，监控静默失效（见上方注释）。
+
 后端常驻，二选一：
 
 ```bash
