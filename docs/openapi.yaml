@@ -247,6 +247,42 @@ paths:
                         description: 是否已安排自重启（Linux 用 syscall.Exec；Windows 为 false，需人工重启）
                       message:
                         type: string
+                      demo:
+                        type: object
+                        description: |
+                          演示数据写入结果，仅在 `loadDemoData=true` 时返回。
+                          **口令只在此出现一次**（库里存的是哈希），页面必须让运维当场抄走。
+                        properties:
+                          companyId:
+                            type: integer
+                            format: int64
+                            description: 演示数据所属企业（恒为 1：小程序公开接口的缺省租户）
+                          assetCount:
+                            type: integer
+                            description: 落盘的内嵌素材数量（27 个占位图）
+                          accounts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                where:
+                                  type: string
+                                  description: 登录入口（PC 后台 / 小程序）
+                                user:
+                                  type: string
+                                pass:
+                                  type: string
+                                  description: 本次随机生成的口令；账号已存在时不会出现该条目
+                                role:
+                                  type: string
+                      warnings:
+                        type: array
+                        description: |
+                          不影响安装成功、但运维需要知道的偏差（演示数据写不全、存储驱动非 local
+                          导致演示素材未落盘等）。刻意不升级为 code=1：此时库与管理员已就绪，
+                          报错重试会被「新鲜库守卫」挡住，把运维卡死在半路。
+                        items:
+                          type: string
 
   # ───────────────────────── 公开内容 ─────────────────────────
   /api/card:
@@ -4665,3 +4701,11 @@ components:
         cookieSecure:
           type: boolean
           description: true 时写入 COOKIE_SECURE=true（站点已启用 https）
+        loadDemoData:
+          type: boolean
+          default: false
+          description: |
+            是否装载演示企业数据（朗汇机电整套样板：企业信息 + 8 个业绩分类 +
+            10 个项目案例 + 4 项服务 + 配套图片素材 + 2 个演示账号）。
+            **默认 false，商用版装完就是零业务数据**：由平台超管先在「企业管理」
+            新建企业，再逐步录入内容。仅供 /api/setup/install 使用（/test 忽略该字段）。

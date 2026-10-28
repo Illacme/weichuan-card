@@ -80,3 +80,58 @@ func TestMigrationsDirNoneExist(t *testing.T) {
 		t.Fatal("空目录不应判定为有 .sql")
 	}
 }
+
+// TestMigrationsCarryNoBusinessData 守卫：迁移文件只放表结构，不放业务数据。
+//
+// 商用版的默认状态必须是**零业务数据**。历史上踩过两次：0001 硬插 7 条业绩分类、
+// 0011 硬插「朗汇机电」企业——装完就带着别人的东西，客户以为是自己的。
+// 演示数据统一归 internal/demoseed（安装向导勾选后才写），行业分类模板归
+// 「新建企业时复制」，两者都不属于表结构。
+//
+// 两条实现细节，都是踩过的坑：
+//   - 必须先剥掉 -- 注释再匹配：这些文件里现在正写着「原先是 INSERT ...」的说明，
+//     不剥注释就会被自己的注释命中，真回退反而不红；
+//   - 只认 INSERT：建表 / ALTER / 索引是表结构，允许。
+func TestMigrationsCarryNoBusinessData(t *testing.T) {
+	dir, err := migrationsDir()
+	if err != nil {
+		t.Fatalf("定位 migrations 目录失败：%v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("读取 %s 失败：%v", dir, err)
+	}
+	scanned := 0
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".sql" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", e.Name(), err)
+		}
+		scanned++
+		if strings.Contains(strings.ToUpper(stripSQLComments(string(raw))), "INSERT INTO") {
+			t.Errorf("%s 含 INSERT 语句：迁移只放表结构，业务种子数据归 internal/demoseed"+
+				"（零数据是商用版的默认状态）", e.Name())
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("没有扫描到任何 .sql 迁移文件——目录解析失效？")
+	}
+}
+
+// stripSQLComments 去掉 SQL 里的 -- 行注释，返回可安全做关键字匹配的文本。
+// 只处理行注释：migrations 里没有 /* */ 块注释与含分号的字符串字面量
+//（与 apply.go 的切分约定一致）。
+func stripSQLComments(sql string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(sql, "\n") {
+		if i := strings.Index(line, "--"); i >= 0 {
+			line = line[:i]
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}

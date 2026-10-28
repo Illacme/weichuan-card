@@ -1,7 +1,10 @@
 // devserver 是一个仅用于本地联调 / 演示的开发态后端：
 //   - 用 SQLite（纯 Go，免 cgo）替代 MySQL，无需任何外部依赖即可 `go run` 起来；
 //   - 复用与生产完全一致的路由装配（handler.New + 全部 Register*），保证联调即验证生产契约；
-//   - 首次启动自动 seed 演示数据（超管 / 公司信息 / 7 分类 / 1 精选项目 / 1 服务 / 首页布局 / 1 演示员工）。
+//   - 首次启动自动 seed 演示数据（超管 / 企业 / 企业信息与简介 / 8 分类 / 10 案例 /
+//     4 项服务 / 首页布局 / 1 演示员工 / 1 企业管理员 + 27 张占位素材）。
+//     种子实现在 internal/demoseed——与安装向导「加载演示企业数据」是同一份代码，
+//     联调看到的内容与客户勾选演示后看到的一模一样。
 //
 // 生产部署仍走 cmd/server（MySQL + docker-compose），本文件不参与生产构建路径。
 //
@@ -17,8 +20,6 @@ package main
 
 import (
 	"context"
-	"embed"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -26,13 +27,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"weichuan/internal/auth"
 	"weichuan/internal/config"
+	"weichuan/internal/demoseed"
 	"weichuan/internal/handler"
 	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
-	"weichuan/internal/pii"
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
@@ -40,12 +40,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
-
-// seedAssetFS 内嵌设计还原用的蓝色主题 PNG 占位素材（由 gen_seed_assets.py 生成）。
-// 这些仅用于本地联调/演示占位；正式上线请在 PC 后台上传真实图片替换。
-//
-//go:embed seedassets/*.png seedassets/*.jpg
-var seedAssetFS embed.FS
 
 // devModels devserver 的建表清单，直接取 model 包的权威清单（新增模型只改那里一处）。
 // sys_setting 表由 setting.Init 自行 AutoMigrate，不在此列。
@@ -135,7 +129,17 @@ func main() {
 	log.Printf("dev server listening on :%s (storage=local, 上传返回相对路径 /uploads/<name>，由各端按源拼绝对)", port)
 	handler.SeedAdmin(db, cfg)
 
-	seedDemoData(db, cfg)
+	// 演示数据：与安装向导「加载演示企业数据」用的是同一个包（internal/demoseed），
+	// 保证联调看到的内容与客户装完勾选演示后看到的一模一样。
+	// 口令在此写死：联调要反复登录，随机口令只会让每次重启都得翻日志。
+	if _, err := demoseed.Load(db, demoseed.Options{
+		UploadDir:            cfg.UploadDir,
+		EmployeePassword:     "weichuan123",
+		CompanyAdminPassword: "langhui123",
+	}); err != nil {
+		// 演示数据不完整不该拦住联调（缺几张图也能看主流程），但必须留痕
+		log.Printf("[DEMOSEED][WARN] 演示数据未完全写入：%v", err)
+	}
 
 	r := handler.New(db)
 	// 与生产一致的可观测性中间件（请求 ID + 访问日志）
@@ -220,163 +224,4 @@ func uploadBaseURL(port string) string {
 		return strings.TrimRight(v, "/")
 	}
 	return "http://127.0.0.1:" + port + "/uploads"
-}
-
-// seedDemoData 注入一套可联调的演示数据（仅开发态；生产由 migrations SQL + PC 后台录入）。
-// 数据内容与小程序 V1.3 设计稿一致：廊坊市朗汇机电设备有限公司 / 员工高立新 / 7 分类 / 2 精选项目 / 4 业务服务。
-// 图片素材（LOGO/头像/分类图标/项目封面/服务图标等）由 writeSeedAssets 写入上传目录，
-// 并以 cfg.UploadBaseURL 为基址回写，保证本机与真机（配 DEV_UPLOAD_BASE_URL）都能取到图。
-func seedDemoData(db *gorm.DB, cfg config.Config) {
-	assets := writeSeedAssets(cfg.UploadDir)
-
-	// 1 号租户：朗汇机电（存量演示数据全部归属；多租户第一期的小程序缺省也落这里）
-	db.Where("id = ?", 1).FirstOrCreate(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled", LoginCode: "langhui"})
-	// FirstOrCreate 命中存量行时不会更新其它列，故白标码需显式补写（幂等，反复启动安全）
-	db.Model(&model.Company{}).Where("id = ?", 1).Update("login_code", "langhui")
-
-	// 公司信息 / 简介（company_id=1）
-	db.Where("company_id = ?", 1).FirstOrCreate(&model.CompanyInfo{
-		CompanyID: 1, FullName: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Address: "廊坊市广阳区紫金城商住楼1-2-1911",
-		Tel: "0316-8023950", Logo: assets["logo.png"],
-	})
-	db.Where("company_id = ?", 1).FirstOrCreate(&model.CompanyProfile{
-		// 视频号档（跨主体）：用 feed-token；feed-id 留空 → 组件走 channels-token 分支
-		// （强制 autoplay=false，用户点一下再播）。
-		CompanyID: 1, IntroText: "成立于 2015 年 11 月，专注于电梯销售、安装、维修保养与改造服务，为住宅、政务中心、医疗、商业、公共交通、生产制造与仓储物流等多场景提供机电一体化解决方案。",
-		VideoSource:    model.VideoSourceChannels,
-		VideoFeedToken: "AThgKivzk",
-		Cover:          assets["cover-company.jpg"],
-	})
-
-	// 经典业绩 8 分类（与设计稿一致，客户已确认锁定；原「生产制造、仓储物流」按设计稿拆为两个分类）
-	cats := []model.AchievementCategory{
-		{ID: 1, CompanyID: 1, Name: "居住住宅", Icon: assets["cat-1.png"], Sort: 1, IsLocked: true},
-		{ID: 2, CompanyID: 1, Name: "政务办公", Icon: assets["cat-2.png"], Sort: 2, IsLocked: true},
-		{ID: 3, CompanyID: 1, Name: "医院、学校", Icon: assets["cat-3.png"], Sort: 3, IsLocked: true},
-		{ID: 4, CompanyID: 1, Name: "商业、酒店", Icon: assets["cat-4.png"], Sort: 4, IsLocked: true},
-		{ID: 5, CompanyID: 1, Name: "公共交通", Icon: assets["cat-5.png"], Sort: 5, IsLocked: true},
-		{ID: 6, CompanyID: 1, Name: "生产制造", Icon: assets["cat-6.png"], Sort: 6, IsLocked: true},
-		{ID: 7, CompanyID: 1, Name: "仓储物流", Icon: assets["cat-7.png"], Sort: 7, IsLocked: true},
-		{ID: 8, CompanyID: 1, Name: "私人住宅", Icon: assets["cat-8.png"], Sort: 8, IsLocked: true},
-	}
-	for _, c := range cats {
-		db.Where("id = ?", c.ID).FirstOrCreate(&c)
-	}
-
-	// 项目案例：2 个首页精选（设计稿）+ 其余分类各 1 个（让客户验收时点开任意分类都有内容）
-	projects := []model.ProjectCase{
-		{ID: 101, CompanyID: 1, CategoryID: 1, Name: "大兴临空服务中心", Summary: "临空经济区地标机电总包",
-			Detail: "<p>大兴临空服务中心项目涵盖多栋客货梯与自动扶梯的供货、安装与维保，满足高客流交通枢纽的可靠运行需求。</p>",
-			Cover:  assets["cover-daxing.jpg"], Album: `["` + assets["album-1.png"] + `","` + assets["album-2.png"] + `"]`,
-			IsHomeFeatured: true, Enabled: true, Sort: 1},
-		{ID: 102, CompanyID: 1, CategoryID: 3, Name: "某医院电梯项目", Summary: "医疗楼宇专用电梯解决方案",
-			Detail: "<p>某医院电梯项目提供医疗专用电梯的定制、安装与运维，兼顾洁净、安静与应急响应。</p>",
-			Cover:  assets["cover-hospital.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: true, Enabled: true, Sort: 2},
-		{ID: 103, CompanyID: 1, CategoryID: 1, Name: "某高层住宅电梯项目", Summary: "住宅客梯批量交付",
-			Detail: "<p>为高层住宅提供客梯的批量供货与安装，统一调度的群控方案提升高峰运力。</p>",
-			Cover:  assets["cover-p1b.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 2},
-		{ID: 104, CompanyID: 1, CategoryID: 2, Name: "市民服务中心电梯工程", Summary: "政务大厅无机房客梯",
-			Detail: "<p>市民服务中心采用无机房客梯，节省机房空间，满足政务服务大厅的无障碍通行需求。</p>",
-			Cover:  assets["cover-p2.jpg"], Album: `["` + assets["album-2.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-		{ID: 105, CompanyID: 1, CategoryID: 3, Name: "某学校电梯项目", Summary: "校园电梯安全改造",
-			Detail: "<p>针对校园既有电梯的安全改造，升级制动与监控，保障师生乘梯安全。</p>",
-			Cover:  assets["cover-p3b.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 3},
-		{ID: 106, CompanyID: 1, CategoryID: 4, Name: "商业综合体扶梯项目", Summary: "商场自动扶梯群控",
-			Detail: "<p>商业综合体部署自动扶梯群控系统，结合客流分析优化运行节奏，节能高效。</p>",
-			Cover:  assets["cover-p4.jpg"], Album: `["` + assets["album-2.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-		{ID: 107, CompanyID: 1, CategoryID: 5, Name: "地铁站点电梯项目", Summary: "轨道交通垂直交通",
-			Detail: "<p>地铁站点垂直交通方案，重载电梯与扶梯满足大客流高频率运行。</p>",
-			Cover:  assets["cover-p5.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-		{ID: 108, CompanyID: 1, CategoryID: 7, Name: "智能仓储货梯项目", Summary: "物流仓储货梯定制",
-			Detail: "<p>为智能仓储定制货梯，对接 AGV 与 WMS，实现物料垂直转运自动化。</p>",
-			Cover:  assets["cover-p6.jpg"], Album: `["` + assets["album-2.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-		{ID: 110, CompanyID: 1, CategoryID: 6, Name: "某生产制造货梯项目", Summary: "工厂车间货梯定制",
-			Detail: "<p>为生产制造车间定制载重货梯，耐粉尘、抗震动，保障产线物料垂直运输稳定可靠。</p>",
-			Cover:  assets["cover-p8.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-		{ID: 109, CompanyID: 1, CategoryID: 8, Name: "别墅家用电梯项目", Summary: "私人住宅别墅电梯",
-			Detail: "<p>私人别墅家用电梯，定制轿厢与静音驱动，兼顾美观与乘坐舒适。</p>",
-			Cover:  assets["cover-p7.jpg"], Album: `["` + assets["album-1.png"] + `"]`,
-			IsHomeFeatured: false, Enabled: true, Sort: 1},
-	}
-	for _, p := range projects {
-		db.Where("id = ?", p.ID).FirstOrCreate(&p)
-	}
-
-	// 4 个业务服务（设计稿示例：电梯销售/安装/维修保养/改造）
-	svcs := []model.BizService{
-		{ID: 1, CompanyID: 1, Title: "电梯销售", Icon: assets["svc-1.png"], Content: "<p>全系列电梯设备销售与选型咨询，匹配不同楼宇场景需求。</p>", Sort: 1},
-		{ID: 2, CompanyID: 1, Title: "电梯安装", Icon: assets["svc-2.png"], Content: "<p>专业安装团队，标准化施工与验收交付，保障工期与质量。</p>", Sort: 2},
-		{ID: 3, CompanyID: 1, Title: "电梯维保", Icon: assets["svc-3.png"], Content: "<p>7x24 应急响应与按需定制的保养计划，延长设备寿命。</p>", Sort: 3},
-		{ID: 4, CompanyID: 1, Title: "电梯改造", Icon: assets["svc-4.png"], Content: "<p>旧梯升级改造，提升安全性、乘运体验与能效表现。</p>", Sort: 4},
-	}
-	for _, s := range svcs {
-		db.Where("id = ?", s.ID).FirstOrCreate(&s)
-	}
-
-	// 首页布局（company_id=1）
-	db.Where("company_id = ?", 1).FirstOrCreate(&model.HomeLayout{CompanyID: 1, Order: `["achievement","service"]`})
-
-	// 1 个演示员工（设计稿员工：高立新 / 业务经理；手机号登录用）
-	var cnt int64
-	db.Model(&model.Employee{}).Where("phone_bidx = ?", pii.BlindIndex("13832603521")).Count(&cnt)
-	if cnt == 0 {
-		hash, _ := auth.HashPassword("weichuan123")
-		emp := model.Employee{
-			CompanyID: 1,
-			// Phone2（第二个手机号，选填）默认不播种：演示名片只展示主号，需副号时编辑填写
-			Name: "高立新", Title: "业务经理", Phone: "13832603521", Phone2: "",
-			Landline: "0316-8023950",
-			Email:    "13832603521@163.com",
-			Avatar:   assets["avatar-gaolixin.png"], PasswordHash: hash, Status: "enabled",
-		}
-		db.Create(&emp)
-		var got model.Employee
-		db.Where("phone_bidx = ?", pii.BlindIndex("13832603521")).First(&got)
-		fmt.Printf("演示员工 staffId=%d\n", got.StaffID)
-	}
-
-	// 1 个演示企业管理员（朗汇 company_id=1）：用于以「企业管理员」角色在 PC 后台联调，
-	// 区别于平台超管（只看本企业数据）。独立账号（用户名+密码），与员工(Employee)体系互不通用
-	// ——员工走小程序、企业管理员走 PC 后台，两套登录端点/令牌形态都不同。
-	var compAdminCnt int64
-	db.Model(&model.Admin{}).Where("username = ?", "langhui").Count(&compAdminCnt)
-	if compAdminCnt == 0 {
-		hash, _ := auth.HashPassword("langhui123")
-		db.Create(&model.Admin{CompanyID: 1, Username: "langhui", PasswordHash: hash})
-	}
-}
-
-// writeSeedAssets 把内嵌的 PNG 占位素材写入上传目录，并返回「文件名→相对 URL」映射。
-// 每次启动都重写（上传目录为临时目录，重启即清空），保证素材始终可用。
-// 返回相对 /uploads/<name>（与各端按源拼绝对的统一约定一致）。
-func writeSeedAssets(uploadDir string) map[string]string {
-	urls := map[string]string{}
-	entries, err := seedAssetFS.ReadDir("seedassets")
-	if err != nil {
-		log.Printf("读取内嵌素材失败: %v", err)
-		return urls
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		data, err := seedAssetFS.ReadFile("seedassets/" + e.Name())
-		if err != nil {
-			continue
-		}
-		if err := os.WriteFile(filepath.Join(uploadDir, e.Name()), data, 0644); err != nil {
-			log.Printf("写入素材 %s 失败: %v", e.Name(), err)
-			continue
-		}
-		urls[e.Name()] = "/uploads/" + e.Name()
-	}
-	return urls
 }

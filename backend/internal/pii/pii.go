@@ -46,17 +46,24 @@ func init() { loadKeys() }
 
 // loadKeys 读取环境变量中的密钥（缺失则回落内置 dev 密钥）并派生盲索引子密钥。
 func loadKeys() {
+	// 失败原因已写进 keyErr，由 KeyError() / 启动自检负责呈现，这里不再抛出
+	_ = applyKey(strings.TrimSpace(os.Getenv(KeyEnvVar)))
+}
+
+// applyKey 按键值装载主密钥并派生子密钥。v 为空表示「回落到内置 dev 密钥」。
+// 校验失败时只写 keyErr、不派生（与历史行为一致：坏密钥下 Encrypt/Decrypt 必须显式报错）。
+func applyKey(v string) error {
 	keyErr = nil
 	placeholder = false
-	if v := strings.TrimSpace(os.Getenv(KeyEnvVar)); v != "" {
+	if v != "" {
 		b, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
 			keyErr = fmt.Errorf("%s 不是合法 base64：%w", KeyEnvVar, err)
-			return
+			return keyErr
 		}
 		if len(b) != 32 {
 			keyErr = fmt.Errorf("%s 必须解码为 32 字节（AES-256），当前 %d 字节", KeyEnvVar, len(b))
-			return
+			return keyErr
 		}
 		copy(encKey[:], b)
 	} else {
@@ -69,7 +76,18 @@ func loadKeys() {
 	h.Write(encKey[:])
 	h.Write([]byte("|blind-index"))
 	copy(idxKey[:], h.Sum(nil))
+	return nil
 }
+
+// SetKey 用给定密钥（base64，32 字节）**在内存中**替换当前密钥，不触碰环境变量。
+//
+// 专供安装向导：安装的最后一步才写配置文件，但演示员工的手机号盲索引必须用
+// 「即将写进配置文件的那把真密钥」来算——用内置 dev 密钥算出来的盲索引，重启后
+// 再也查不到这个员工（登录报账号不存在），而报错信息与密钥毫无关联。
+//
+// 不走 os.Setenv 过渡是刻意的：env 有「已设置」语义，安装中途失败重试时
+// config.Resolved 会看到这把临时密钥，从而跳过签发、漏写进配置文件。
+func SetKey(b64 string) error { return applyKey(strings.TrimSpace(b64)) }
 
 // UsingPlaceholderKey 报告当前是否在用内置 dev 密钥。生产启动自检应据此拒绝
 // （与 license.IsPlaceholderPublicKey 同一思路：带占位密钥上线 = 加密形同虚设）。

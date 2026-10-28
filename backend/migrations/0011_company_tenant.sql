@@ -15,9 +15,17 @@ CREATE TABLE IF NOT EXISTS company (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 朗汇机电 = 1 号租户（存量数据的所有者）
-INSERT INTO company (id, name, status) VALUES
-  (1, '廊坊市朗汇机电设备有限公司', 'enabled');
+-- 这里**刻意不再预置朗汇机电**（原先是 INSERT company (1, ...)）。
+--
+-- 商用版装完必须是一家企业都没有：由平台超管先「新建企业」，再逐步录入信息、
+-- 员工与内容，小程序才立得起来。预置一家真实客户的企业名与白标码，
+-- 等于把演示数据当成了产品初始状态。
+--
+-- 需要样板数据时走安装向导的「加载演示企业数据」勾选，数据由 internal/demoseed
+-- 写入（同样落 1 号企业，因为 defaultCompanyID = 1 是小程序公开接口的缺省租户）。
+--
+-- 下方 ALTER 的 DEFAULT 1 保留：它是「存量行回填」的写法，空库执行时无行可填，
+-- 不影响零数据。已上线的库不受影响（迁移按文件名记账，不会重放本文件）。
 
 ALTER TABLE company_infos    ADD COLUMN company_id BIGINT NOT NULL DEFAULT 1;
 ALTER TABLE company_profiles ADD COLUMN company_id BIGINT NOT NULL DEFAULT 1;

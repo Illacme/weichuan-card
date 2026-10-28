@@ -335,17 +335,31 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
    SQLite 形态下直接选 SQLite，库文件落在 `/app/data`（`data_data` 卷持久化）；
 2. **填管理员账号**：用户名 + 口令（≥8 位，两次一致）。JWT 密钥留空由服务端随机生成；  
    勾选「Cookie 强制 HTTPS」后才写 `COOKIE_SECURE=true`；
-3. **测试连接 → 开始安装**：连通性通过后确认一次即执行。
+3. **初始数据（默认不装任何数据）**：不勾选 = 装完是一个**干净的空系统**——没有企业、  
+   没有业绩分类、没有员工，由平台超管登录后先在「企业管理」新建企业，再逐步录入内容。  
+   勾选「装载演示企业数据」则写入一整套朗汇机电样板（企业信息 + 8 个业绩分类 +  
+   10 个项目案例 + 4 项服务 + 27 张配套占位图），并额外生成 2 个演示登录账号；  
+   **口令只在安装完成页显示一次**（库里存哈希），离开页面就找不回来了。  
+   演示数据与本地开发环境（`go run ./cmd/devserver`）用的是同一个包 `internal/demoseed`；
+4. **测试连接 → 开始安装**：连通性通过后确认一次即执行。
 
 安装动作（服务端一次做完，任何一步失败都不会留下半配置）：
 
-| 步骤   | MySQL                                                                          | SQLite         |
-| ---- | ------------------------------------------------------------------------------ | -------------- |
-| 建库   | 勾选「自动创建」时 `CREATE DATABASE IF NOT EXISTS`（utf8mb4）                             | 目录自动创建         |
-| 建表   | 空库按模型 `AutoMigrate`；compose 已跑过迁移时只补缺失的表/列，不删不改                                | 同（与路径 D 同一套代码） |
-| 初始数据 | `sys_setting` 缺省值 + 初始超管（bcrypt 哈希）                                            | 同              |
-| 落配置  | 写入 `CONFIG_FILE`（compose 里是 `/app/data/runtime.env`），权限 0600、临时文件 + rename 原子写 | 同              |
-| 生效   | `syscall.Exec` 原地自重启（Linux）；Windows / 手动托管时提示人工重启                              | 同              |
+| 步骤     | MySQL                                                                          | SQLite         |
+| ------ | ------------------------------------------------------------------------------ | -------------- |
+| 建库     | 勾选「自动创建」时 `CREATE DATABASE IF NOT EXISTS`（utf8mb4）                             | 目录自动创建         |
+| 建表     | 按 `migrations/*.sql` 顺序应用（幂等：Duplicate column/already exists 忽略）              | 按模型 `AutoMigrate` |
+| 初始数据   | `sys_setting` 缺省值 + 初始超管（bcrypt 哈希）+ 签发 `PII_ENC_KEY`；演示数据仅在勾选时写入                 | 同              |
+| 落配置    | 写入 `CONFIG_FILE`（compose 里是 `/app/data/runtime.env`），权限 0600、临时文件 + rename 原子写 | 同              |
+| 生效     | `syscall.Exec` 原地自重启（Linux）；Windows / 手动托管时提示人工重启                              | 同              |
+
+> **`PII_ENC_KEY` 为什么排在「写演示数据」之前**：员工的手机号盲索引是用当时的密钥算的，
+> 先写数据后换钥 = 这条记录再也查不到（小程序登录报「账号不存在」），且报错与密钥毫无关联。
+> 顺序不可调换，`install_test.go` 的 `TestInstallWithDemoData` 钉住了它。
+
+> **迁移里没有业务种子数据**（`migrations/0001` 曾硬插 7 条业绩分类、`0011` 曾硬插朗汇企业，
+> 都已摘除）。守卫用例 `TestMigrationsCarryNoBusinessData` 会拦住任何 `INSERT` 回退。
+> 已上线的库不受影响：迁移按文件名记账（`schema_migrations`），不会重放。
 
 装完页面自动轮询 `/api/setup/status`，一旦 `configured=true` 就倒计时跳转登录页。
 

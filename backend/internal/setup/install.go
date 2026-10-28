@@ -15,6 +15,7 @@ import (
 
 	"weichuan/internal/config"
 	"weichuan/internal/dbopen"
+	"weichuan/internal/demoseed"
 	"weichuan/internal/handler"
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
@@ -53,6 +54,13 @@ type InstallReq struct {
 	JWTKey     string `json:"jwtKey"` // 留空 = 服务端随机生成
 
 	CookieSecure bool `json:"cookieSecure"`
+
+	// LoadDemoData 是否装载演示企业数据（朗汇机电整套样板内容 + 素材）。
+	//
+	// 默认 false ——**商用版装完必须是零业务数据**：一条业绩分类、一个员工都不预置，
+	// 由平台超管自己建企业、录内容。勾选则写入与本地开发环境完全同源的演示数据
+	// （internal/demoseed），便于先看到成品再换成自己的内容。
+	LoadDemoData bool `json:"loadDemoData"`
 }
 
 // TestResult 连接测试结果。WillCreate 表示「库不存在但勾了自动建库」——
@@ -73,6 +81,11 @@ type InstallResult struct {
 	ConfigFile string `json:"configFile"`
 	Restarted  bool   `json:"restarted"`
 	Message    string `json:"message"`
+	// Demo 演示数据写入结果（仅在勾选「加载演示企业数据」时非 nil）。
+	// 账号口令只在这里出现一次——页面必须让运维当场抄走，库里存的是哈希。
+	Demo *demoseed.Result `json:"demo,omitempty"`
+	// Warnings 不影响安装成功、但运维需要知道的偏差（演示数据不完整等）。
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 var (
@@ -228,6 +241,52 @@ func Install(req InstallReq) (InstallResult, error) {
 		return InstallResult{}, errors.New("创建初始管理员账号失败，请查看服务端日志后重试")
 	}
 
+	// PII 加密密钥必须在**写入任何 PII 数据之前**定下来。
+	//
+	// 原先是到写配置文件时才签发，勾选演示数据后就出错了：演示员工的手机号盲索引
+	// 是「用当时内存里的密钥」算出来的，若那时还是内置 dev 密钥，重启换上真密钥后
+	// 这条员工再也查不到（小程序登录报账号不存在），而报错和密钥毫无关联。
+	// 密钥没有 re-key 机制，所以顺序只能是「先定钥、再写数据、最后落盘」。
+	piiVal := config.Resolved(pii.KeyEnvVar)
+	generatedPII := false
+	if piiVal == "" {
+		if piiVal = piiKey(); piiVal == "" {
+			return InstallResult{}, errors.New("生成 PII 加密密钥失败（随机源不可用），请手动设置 PII_ENC_KEY 后重试")
+		}
+		generatedPII = true
+	}
+	if err := pii.SetKey(piiVal); err != nil {
+		return InstallResult{}, fmt.Errorf("装载 PII 加密密钥失败：%v", err)
+	}
+
+	// 可选的演示企业数据（默认不装：商用版装完就是一张白纸）
+	var (
+		demo     *demoseed.Result
+		warnings []string
+	)
+	if req.LoadDemoData {
+		cfg := config.Load()
+		upDir := ""
+		if cfg.StorageDriver == "local" {
+			upDir = cfg.UploadDir
+		}
+		r, derr := demoseed.Load(db, demoseed.Options{UploadDir: upDir, Quiet: true})
+		demo = &r
+		if derr != nil {
+			// 演示数据是「额外赠品」，写不全不该让整个安装失败——此时数据库和管理员
+			// 都已就绪，报错重试反而会被新鲜库守卫挡住，把运维卡死在半路。
+			log.Printf("[SETUP][WARN] 演示数据写入不完整：%v", derr)
+			warnings = append(warnings,
+				"演示数据未完全写入，可登录后台补齐或手工录入。原因："+derr.Error())
+		}
+		if upDir == "" {
+			log.Printf("[SETUP][WARN] 存储驱动为 %q，演示素材未落盘（图片会取不到）", cfg.StorageDriver)
+			warnings = append(warnings,
+				"当前存储驱动不是 local，演示图片未写入本地目录；请在后台上传真实素材替换。")
+		}
+		log.Printf("[SETUP] 已装载演示企业数据：企业 #%d，素材 %d 个", r.CompanyID, r.AssetCount)
+	}
+
 	// 写配置文件（最后一步：数据库全部就绪后才落盘，失败也不会留下半配置）
 	path := config.ConfigFilePath()
 	kv := map[string]string{
@@ -244,17 +303,11 @@ func Install(req InstallReq) (InstallResult, error) {
 	// （没有 re-key 机制）；而漏设的表现只是「加密形同虚设」，没人会察觉。
 	// 随机生成即可——这把钥匙不需要人记住，也不需要跨机器共用。
 	// 已存在则不动：重装场景下覆盖它会让存量密文变成天书。
-	generatedPII := false
-	if config.Resolved(pii.KeyEnvVar) == "" {
-		k := piiKey()
-		if k == "" {
-			return InstallResult{}, errors.New("生成 PII 加密密钥失败（随机源不可用），请手动设置 PII_ENC_KEY 后重试")
-		}
-		kv[pii.KeyEnvVar] = k
-		generatedPII = true
+	if generatedPII {
+		kv[pii.KeyEnvVar] = piiVal
 	}
 	if err := config.WriteFileValues(path, kv); err != nil {
-		return InstallResult{Driver: drv, ConfigFile: path}, fmt.Errorf(
+		return InstallResult{Driver: drv, ConfigFile: path, Demo: demo, Warnings: warnings}, fmt.Errorf(
 			"数据库已初始化，但写入配置文件失败：%v。请手动创建 %s 并填入连接信息后重启服务", err, path)
 	}
 
@@ -262,14 +315,20 @@ func Install(req InstallReq) (InstallResult, error) {
 	if generatedPII {
 		log.Printf("[SETUP] 已生成 PII 加密密钥写入 %s（务必随配置文件一同备份：换钥后旧数据无法解密）", path)
 	}
-	log.Printf("[SETUP] 安装完成：driver=%s config=%s admin_user=%q", drv, path, adminUser)
+	log.Printf("[SETUP] 安装完成：driver=%s config=%s admin_user=%q demo=%v", drv, path, adminUser, req.LoadDemoData)
+	msg := "安装完成，服务正在重启，即将进入登录页…"
+	if demo != nil {
+		msg = "安装完成，已装载演示企业数据。服务正在重启，即将进入登录页…"
+	}
 	return InstallResult{
 		OK:         true,
 		Driver:     drv,
 		DSN:        maskDSN(dsn),
 		ConfigFile: path,
 		Restarted:  restartAvailable,
-		Message:    "安装完成，服务正在重启，即将进入登录页…",
+		Message:    msg,
+		Demo:       demo,
+		Warnings:   warnings,
 	}, nil
 }
 

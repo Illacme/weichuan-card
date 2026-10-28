@@ -443,6 +443,11 @@ const pageTpl = `<!doctype html>
   .psteps li.run i { border-color:#409eff; border-top-color:transparent; animation:spin .8s linear infinite; }
   .psteps li.fail i { background:#f56c6c; border-color:#f56c6c; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .acc { list-style:none; margin:8px 0 0; padding:0; font-size:13px; line-height:1.6; }
+  .acc li { padding:6px 0; border-bottom:1px dashed #f0f2f5; color:#303133; }
+  .acc b { display:inline-block; min-width:64px; color:#606266; font-weight:500; }
+  .acc i { color:#909399; font-style:normal; margin-left:8px; }
+  .tip.warn { color:#e6a23c; }
   .note { margin:20px 0 0; font-size:12px; color:#909399; line-height:1.8; }
   @media (max-width: 640px) {
     .wrap { margin-top:20px; }
@@ -510,6 +515,13 @@ const pageTpl = `<!doctype html>
       <p class="tip">平台超管账号。登录后可在后台右上角「修改密码」随时更换。</p>
     </div>
 
+    <div class="block">
+      <h2>初始数据</h2>
+      <p class="tip" style="margin-top:0">默认<b>不装载任何业务数据</b>：装完是一个干净的空系统，随后由平台超管在「企业管理」里新建企业，再逐步录入信息、员工与内容。</p>
+      <div class="chk"><input type="checkbox" id="f-loadDemoData"><span>同时装载演示企业数据（朗汇机电样板：企业信息、8 个业绩分类、10 个项目案例、4 项服务及配套图片素材）</span></div>
+      <p class="tip">用于先看到成品效果，内容可在后台逐条修改或删除。装载后会额外生成两个演示登录账号，口令在安装完成后一次性显示。</p>
+    </div>
+
     <details class="block details">
       <summary>高级选项</summary>
       <div class="grid">
@@ -528,6 +540,7 @@ const pageTpl = `<!doctype html>
     <div id="confirm-bar" class="confirm" hidden>
       <p>确认按以下配置安装？目标数据库将被初始化，管理员账号按上面填写的内容创建。此操作只需一次。</p>
       <p class="dsn"><code id="confirm-dsn"></code></p>
+      <p id="confirm-demo"></p>
       <div class="actions">
         <button type="button" class="btn ghost" id="btn-cancel">取消</button>
         <button type="button" class="btn danger" id="btn-confirm">确认安装</button>
@@ -543,6 +556,7 @@ const pageTpl = `<!doctype html>
       <li data-p="3"><i></i><span>完成，进入登录页</span></li>
     </ul>
     <p class="tip" id="progress-tip"></p>
+    <div id="demo-box" hidden></div>
     <div class="actions"><button type="button" class="btn ghost" id="btn-recheck" hidden>重新检测</button></div>
   </section>
 
@@ -598,7 +612,8 @@ const pageTpl = `<!doctype html>
       adminPass: raw('f-adminPass'),
       adminPass2: raw('f-adminPass2'),
       jwtKey: val('f-jwtKey'),
-      cookieSecure: chk('f-cookieSecure')
+      cookieSecure: chk('f-cookieSecure'),
+      loadDemoData: chk('f-loadDemoData')
     };
     if (state.engine === 'mysql') {
       p.dbHost = val('f-dbHost');
@@ -692,6 +707,9 @@ const pageTpl = `<!doctype html>
       return;
     }
     $('confirm-dsn').textContent = previewText();
+    $('confirm-demo').textContent = chk('f-loadDemoData')
+      ? '初始数据：将同时装载演示企业数据（朗汇机电样板内容 + 图片素材），装完后可在后台修改或删除。'
+      : '初始数据：不装载任何业务数据，装完是干净的空系统，需要先在后台新建企业并录入内容。';
     $('confirm-bar').hidden = false;
   });
 
@@ -715,6 +733,7 @@ const pageTpl = `<!doctype html>
     $('progress-area').hidden = false;
     setStep(3);
     pstep(1, 'done');
+    showDemo(res);
     if (res.restarted) {
       pstep(2, 'run');
       poll();
@@ -723,6 +742,49 @@ const pageTpl = `<!doctype html>
       $('progress-tip').textContent = '服务未能自动重启，请手动重启服务后点击下方按钮重新检测。';
       $('btn-recheck').hidden = false;
     }
+  }
+
+  // showDemo 展示演示数据结果：账号口令 + 不影响成功的偏差提示。
+  // 全程用 textContent 组装而不是拼 innerHTML——warning 里可能带数据库错误原文，
+  // 拼字符串会把「库里的错误文本」变成「页面上的 HTML」。
+  function showDemo(res) {
+    var box = $('demo-box');
+    var demo = res.demo || null;
+    var warnings = res.warnings || [];
+    var accounts = (demo && demo.accounts) || [];
+    if (accounts.length === 0 && warnings.length === 0) return;
+
+    if (accounts.length > 0) {
+      var title = document.createElement('p');
+      title.className = 'tip';
+      title.style.color = '#303133';
+      title.textContent = '演示登录账号（口令在库里只存哈希，离开本页后无法再次查看，请现在抄走）：';
+      box.appendChild(title);
+
+      var ul = document.createElement('ul');
+      ul.className = 'acc';
+      for (var i = 0; i < accounts.length; i++) {
+        var a = accounts[i];
+        var li = document.createElement('li');
+        var where = document.createElement('b');
+        where.textContent = a.where || '';
+        li.appendChild(where);
+        li.appendChild(document.createTextNode((a.user || '') + ' / ' + (a.pass || '') + ' '));
+        var role = document.createElement('i');
+        role.textContent = a.role || '';
+        li.appendChild(role);
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+    }
+
+    for (var j = 0; j < warnings.length; j++) {
+      var w = document.createElement('p');
+      w.className = 'tip warn';
+      w.textContent = warnings[j];
+      box.appendChild(w);
+    }
+    box.hidden = false;
   }
 
   function poll() {

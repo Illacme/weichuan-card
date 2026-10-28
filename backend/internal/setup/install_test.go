@@ -10,8 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
+
+	"weichuan/internal/auth"
 	"weichuan/internal/config"
 	"weichuan/internal/dbopen"
+	"weichuan/internal/demoseed"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
 )
@@ -567,4 +571,175 @@ func splitMySQLDSN(dsn string) (user, pass, host, port, name string, err error) 
 // jsonUnmarshal 包一层，避免每个用例都 import encoding/json。
 func jsonUnmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
+}
+
+// installDemoCase 准备一套「SQLite + 独立上传目录」的安装环境并执行安装。
+// UPLOAD_DIR 必须指到临时目录：演示素材是真实 PNG，默认会写进进程工作目录下的
+// ./uploads，跑一次测试就往仓库里塞 27 个占位图。
+func installDemoCase(t *testing.T, loadDemo bool) (InstallResult, string, string) {
+	t.Helper()
+	resetInstallState(t)
+	_, dbPath := sqliteEnv(t)
+	upDir := t.TempDir()
+	t.Setenv("UPLOAD_DIR", upDir)
+
+	res, err := Install(InstallReq{
+		Engine:       "sqlite",
+		SQLitePath:   dbPath,
+		AdminUser:    "admin",
+		AdminPass:    "installer-pass-123",
+		AdminPass2:   "installer-pass-123",
+		LoadDemoData: loadDemo,
+	})
+	if err != nil {
+		t.Fatalf("安装失败：%v", err)
+	}
+	return res, dbPath, upDir
+}
+
+// tableCount 统计某张表的行数（用 Table 走原始表名，避免模型钩子/软删除干扰）。
+func tableCount(t *testing.T, db *gorm.DB, table string) int64 {
+	t.Helper()
+	var n int64
+	if err := db.Table(table).Count(&n).Error; err != nil {
+		t.Fatalf("统计 %s 失败：%v", table, err)
+	}
+	return n
+}
+
+// 商用版默认必须是**零业务数据**：装完只有平台超管一个账号，企业、分类、案例、
+// 服务、员工、企业信息全部为空，由运维自己建企业、录内容。
+//
+// 这条用例挡的是两次真实回退：migrations/0001 曾硬插 7 条业绩分类、
+// migrations/0011 曾硬插「朗汇机电」企业——两个文件都已摘除，回归即红。
+func TestInstallLeavesNoBusinessData(t *testing.T) {
+	res, dbPath, upDir := installDemoCase(t, false)
+
+	if res.Demo != nil {
+		t.Fatalf("未勾选演示数据时不应返回演示结果：%+v", res.Demo)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("未勾选演示数据不应有告警：%v", res.Warnings)
+	}
+
+	db, _, err := dbopen.Open("sqlite://" + dbPath)
+	if err != nil {
+		t.Fatalf("打开装好的库失败：%v", err)
+	}
+	defer closeDB(db)
+
+	for _, table := range []string{
+		"company", "company_infos", "company_profiles", "achievement_categories",
+		"project_cases", "biz_services", "home_layouts", "employees",
+	} {
+		if n := tableCount(t, db, table); n != 0 {
+			t.Errorf("零数据安装后 %s 应为空，实际 %d 行", table, n)
+		}
+	}
+
+	// 平台超管仍要有，且必须是 company_id = 0（否则登录后看不到「企业管理」入口）
+	var admins []model.Admin
+	if err := db.Find(&admins).Error; err != nil {
+		t.Fatalf("查询管理员失败：%v", err)
+	}
+	if len(admins) != 1 {
+		t.Fatalf("应只有 1 个平台超管，实际 %d 个", len(admins))
+	}
+	if admins[0].CompanyID != 0 {
+		t.Fatalf("平台超管 company_id 必须为 0，实际 %d", admins[0].CompanyID)
+	}
+
+	// 素材一个都不该落盘（27 个 PNG 是演示数据的一部分）
+	entries, err := os.ReadDir(upDir)
+	if err != nil {
+		t.Fatalf("读取上传目录失败：%v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("零数据安装不应写入任何素材，实际 %d 个文件", len(entries))
+	}
+}
+
+// 勾选演示数据：整套样板内容 + 素材落盘 + 两个随机口令的演示账号，
+// 并且账号口令**真的能登录**（回显口令和库里哈希必须是一对）。
+func TestInstallWithDemoData(t *testing.T) {
+	res, dbPath, upDir := installDemoCase(t, true)
+
+	if res.Demo == nil {
+		t.Fatal("勾选演示数据后应返回 Demo 结果")
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("正常安装不应有告警：%v", res.Warnings)
+	}
+	if len(res.Demo.Accounts) != 2 {
+		t.Fatalf("应有 2 个演示账号，实际 %+v", res.Demo.Accounts)
+	}
+	for _, a := range res.Demo.Accounts {
+		if a.Pass == "" {
+			t.Errorf("演示账号 %s 没回显口令，运维将无法登录", a.User)
+		}
+	}
+
+	db, _, err := dbopen.Open("sqlite://" + dbPath)
+	if err != nil {
+		t.Fatalf("打开装好的库失败：%v", err)
+	}
+	defer closeDB(db)
+
+	want := map[string]int64{
+		"company": 1, "company_infos": 1, "company_profiles": 1,
+		"achievement_categories": 8, "project_cases": 10, "biz_services": 4,
+		"home_layouts": 1, "employees": 1, "admins": 2,
+	}
+	for table, n := range want {
+		if got := tableCount(t, db, table); got != n {
+			t.Errorf("%s 应有 %d 行，实际 %d 行", table, n, got)
+		}
+	}
+
+	entries, err := os.ReadDir(upDir)
+	if err != nil {
+		t.Fatalf("读取上传目录失败：%v", err)
+	}
+	if len(entries) != res.Demo.AssetCount || len(entries) == 0 {
+		t.Fatalf("素材应全部落盘：目录 %d 个文件，结果报告 %d", len(entries), res.Demo.AssetCount)
+	}
+
+	// ---- 最贵的一条守卫：盲索引必须用「最终写进配置文件的那把密钥」算 ----
+	// 若安装时先写演示员工、后签发 PII_ENC_KEY（历史顺序），下面这次查询会 0 行：
+	// 线上表现是小程序登录报「账号不存在」，而错误信息与密钥毫无关联。
+	pii.Reload() // 环境变量未设 → 回落内置 dev 密钥，模拟「重启后还没同步配置文件」
+	if err := pii.SetKey(config.Resolved(pii.KeyEnvVar)); err != nil {
+		t.Fatalf("按配置文件里的密钥装载失败：%v", err)
+	}
+	var emp model.Employee
+	if err := db.Where("phone_bidx = ?", pii.BlindIndex(demoseed.DemoEmployeePhone)).First(&emp).Error; err != nil {
+		t.Fatalf("用配置文件里的 PII 密钥查不到演示员工（安装顺序写反了？）：%v", err)
+	}
+	var empPass string
+	for _, a := range res.Demo.Accounts {
+		if a.User == demoseed.DemoEmployeePhone {
+			empPass = a.Pass
+		}
+	}
+	if !auth.CheckPassword(emp.PasswordHash, empPass) {
+		t.Fatal("回显的员工口令与库里哈希不匹配，运维拿着口令登不进去")
+	}
+
+	// 企业管理员同理（另一套账号体系，走 admins 表）
+	var adm model.Admin
+	if err := db.Where("username = ?", demoseed.DemoAdminUser).First(&adm).Error; err != nil {
+		t.Fatalf("读不到演示企业管理员：%v", err)
+	}
+	if adm.CompanyID != demoseed.DemoCompanyID {
+		t.Fatalf("企业管理员应归属 1 号企业，实际 %d", adm.CompanyID)
+	}
+	var admPass string
+	for _, a := range res.Demo.Accounts {
+		if a.User == demoseed.DemoAdminUser {
+			admPass = a.Pass
+		}
+	}
+	if !auth.CheckPassword(adm.PasswordHash, admPass) {
+		t.Fatal("回显的企业管理员口令与库里哈希不匹配")
+	}
 }
