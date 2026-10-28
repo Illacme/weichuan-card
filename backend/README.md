@@ -399,7 +399,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
 | GET  | /api/home-layout?companyId= | 首页板块顺序（根级 `order`）+ 首页背景（根级 `bgImage` / `bgMask`；`bgImage` 为空串即不设背景） |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
-| GET  | /api/team?companyId= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `total`。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网 |
+| GET  | /api/team?companyId= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `total` + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证） |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
 
 ### 写 + 审核流（员工 / 管理员，账号密码，JWT）
@@ -453,6 +453,8 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | DELETE | /api/admin/services/:id | 删除业务服务 |
 | GET  | /api/admin/home-layout?companyId= | 首页布局：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100） |
 | PUT  | /api/admin/home-layout | 更新板块顺序 + 背景（`bgImage`/`bgMask` 用指针语义：未提供=保持原值，传空串=清除背景；`bgMask` 服务端钳制 0~100） |
+| GET  | /api/admin/mp-entry?companyId= | 小程序**裸启动默认入口**：`mode`（配置原值）+ `effectiveMode`（生效值）+ 指定员工姓名/职位/状态/`staffMissing` |
+| PUT  | /api/admin/mp-entry | 设置默认入口：`{mode:'wall'\|'staff', staffId}`。`mode=staff` 时 `staffId` 必填且须为**本企业启用中**员工（跨租户 / 不存在 / 已停用一律 code=1）；`mode=wall` 时 `staffId` 归零（必须显式传 0）。非法 mode 直接拒绝，不静默兜底 |
 | POST | /api/admin/upload | 文件上传（图片/mp4），返回可访问 URL（填回封面/相册/头像/LOGO） |
 | POST | /api/employee/upload | 员工上传头像（员工鉴权），返回可访问 URL |
 | GET  | /api/admin/upload/presign | 直传预签名：返回 `putUrl`（直接 PUT 到对象存储）+ 最终 `url`（仅 minio/oss；local 返回 code=1 由前端回退普通上传） |

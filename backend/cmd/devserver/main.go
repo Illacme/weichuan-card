@@ -160,6 +160,7 @@ func main() {
 	handler.RegisterStatsExport(r, db)
 	handler.RegisterStatsDetail(r, db)
 	handler.RegisterContent(r, db)
+	handler.RegisterMPEntry(r, db) // 小程序默认入口：GET/PUT /api/admin/mp-entry（裸启动落到名片墙还是某位员工）
 	handler.RegisterCompanies(r, db)
 	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额

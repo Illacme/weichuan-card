@@ -49,6 +49,24 @@ Page({
         return
       }
       const comp = r.company || {}
+      // 企业在后台配了「默认进入指定员工的名片」（一张名片打天下的用法）→ 直接改道，
+      // 不渲染名片墙。后端已经把「指定员工是否还有效」校验过并回落成 wall，
+      // 所以这里放心按 mode 走。
+      //
+      // 用 reLaunch 而不是 redirectTo：名片墙是 entryPagePath，栈里只有它自己；
+      // reLaunch 清栈重建，访客按返回键直接退出小程序，而不是退回一张他从没看过的墙。
+      const entry = r.entry || {}
+      const entryStaff = Number(entry.staffId) || 0
+      if (entry.mode === 'staff' && entryStaff > 0) {
+        const cid = Number(comp.id) || this.data.companyId
+        wx.reLaunch({
+          url:
+            '/pages/index/index?staffId=' +
+            entryStaff +
+            (cid > 0 ? '&companyId=' + cid : ''),
+        })
+        return
+      }
       const list = (r.data || []).map((e: any) => ({
         staffId: e.staffId,
         name: e.name || '未命名',

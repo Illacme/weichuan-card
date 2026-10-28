@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AssetPicker: typeof import('./components/AssetPicker.vue')['default']
     ChangePasswordDialog: typeof import('./components/ChangePasswordDialog.vue')['default']
+    CompanyPicker: typeof import('./components/CompanyPicker.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']

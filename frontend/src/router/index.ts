@@ -84,6 +84,15 @@ export const routes = [
         meta: { title: '首页布局', group: '企业内容' },
       },
       {
+        // 小程序入口：裸启动（扫体验版二维码 / 直接打开）落到名片墙还是某个员工的名片。
+        // 放在「企业内容」组而不是「系统设置」：后者是 platformOnly，而这一项
+        // 本来就该由企业管理员自己决定（他才知道自家是「全员名片」还是「一张名片打天下」）。
+        path: 'content/mp-entry',
+        name: 'mp-entry',
+        component: () => import('@/views/content/MpEntry.vue'),
+        meta: { title: '小程序入口', group: '企业内容' },
+      },
+      {
         // 企业管理（多租户）：仅平台超级管理员可见可访问
         path: 'companies',
         name: 'companies',

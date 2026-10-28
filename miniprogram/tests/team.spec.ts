@@ -53,6 +53,7 @@ async function page(query: any = {}) {
 const teamResp = (extra: any = {}) => ({
   code: 0,
   company: { id: 7, fullName: '廊坊市朗汇机电设备有限公司', shortName: '朗汇机电', logo: '/uploads/logo.png' },
+  entry: { mode: 'wall', staffId: 0 },
   data: [
     { staffId: 11, name: '高立新', title: '销售经理', avatar: '/uploads/a1.png' },
     { staffId: 12, name: '张三', title: '', avatar: '' },
@@ -129,6 +130,35 @@ describe('名片墙 · 状态与数据', () => {
     mocks.request.mockResolvedValueOnce(teamResp())
     await p.load()
     expect(p.data.error).toBe(false)
+    expect(p.data.list).toHaveLength(2)
+  })
+})
+
+describe('名片墙 · 企业配置的默认入口', () => {
+  it('entry.mode=staff：直接改道到该员工名片，不渲染名片墙', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 11 } }))
+    const p = await page()
+
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({
+      url: '/pages/index/index?staffId=11&companyId=7',
+    })
+    // 关键：不能先把名片墙画出来再跳——那样访客会看到宫格闪一下
+    expect(p.data.list).toEqual([])
+  })
+
+  it('entry.mode=staff 但 staffId 为 0：按名片墙处理（后端已回落，端上再兜一层）', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 0 } }))
+    const p = await page()
+
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(p.data.list).toHaveLength(2)
+  })
+
+  it('entry.mode=wall：正常渲染名片墙', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
     expect(p.data.list).toHaveLength(2)
   })
 })

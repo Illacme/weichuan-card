@@ -530,6 +530,27 @@ paths:
                         type: string
                       logo:
                         type: string
+                  entry:
+                    type: object
+                    description: |
+                      该企业配置的「裸启动默认入口」（迁移 0034）。`mode=staff` 时端上会把访客
+                      直接改道到该员工的名片，不再渲染名片墙。
+
+                      这里是**生效值**：指定员工被停用或删除时服务端已回落 `wall`，
+                      因此不会出现「`mode=staff` 但员工不可用」的组合——管理端看到的是
+                      配置原值（另一个接口），两者不一致本身就是要提示给管理员的信息。
+
+                      本接口**不走 CDN 缓存**：入口设置改完，管理员会立刻扫码验证，
+                      缓存 60 秒会被当成「没保存成功」。
+                    properties:
+                      mode:
+                        type: string
+                        enum: [wall, staff]
+                        description: wall=名片墙；staff=指定员工的名片
+                      staffId:
+                        type: integer
+                        format: int64
+                        description: mode=wall 时为 0
                   data:
                     type: array
                     items:
@@ -2233,6 +2254,69 @@ paths:
       responses:
         "200":
           description: code=0 成功；code=1 参数错误
+
+  /api/admin/mp-entry:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
+      tags: [超管-内容管理]
+      summary: 小程序默认入口（配置原值 + 生效值）
+      description: |
+        裸启动（扫微信「体验版二维码」/ 在微信里直接打开）时访客先看到什么：
+        `wall`=企业名片墙，`staff`=指定员工的名片。
+
+        只影响裸启动。员工自己的小程序码（`scene=staffId=`）与转发的名片卡片
+        （`?staffId=`）永远进对应员工的名片，与本设置无关。
+
+        同时返回 `mode`（管理员设的）与 `effectiveMode`（访客实际看到的）：
+        指定员工被停用/删除时服务端回落 `wall`，两者不一致正是要提示管理员的信号。
+        回落**不改配置原值**——员工重新启用后设置自动恢复生效。
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: code=0 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/MpEntry"
+    put:
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
+      tags: [超管-内容管理]
+      summary: 设置小程序默认入口
+      description: |
+        - `mode=wall` 时 `staffId` 忽略并归零（**必须提交 `staffId:0`**，前端切回名片墙时显式传 0）。
+        - `mode=staff` 时 `staffId` 必填，且必须是**本企业**的员工；跨租户员工与不存在
+          的员工一律 `code=1`（否则能把别家销售挂到自己小程序首页）。
+        - 目标员工必须 `status=enabled`：入口指向停用员工，访客点进去只会看到
+          「该员工名片已停用」，等于首页直接报废。
+        - 非法 `mode` 直接拒绝，不做静默兜底（静默兜底会让前端写错值时表现为「保存成功但没变」）。
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [wall, staff]
+                staffId:
+                  type: integer
+                  format: int64
+                  description: mode=staff 时必填；mode=wall 时传 0
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误 / 员工不属于本企业 / 员工已停用
 
   # ───────────────────────── 存储 ─────────────────────────
   /api/admin/upload:
@@ -4119,6 +4203,39 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    MpEntry:
+      type: object
+      description: 小程序默认入口设置（`GET /api/admin/mp-entry`）
+      properties:
+        mode:
+          type: string
+          enum: [wall, staff]
+          description: 配置原值——管理员设的
+        staffId:
+          type: integer
+          format: int64
+          description: mode=staff 时指定的员工；0 表示未指定
+        effectiveMode:
+          type: string
+          enum: [wall, staff]
+          description: |
+            生效值——访客实际看到的。与 `mode` 不一致说明指定员工已停用/被删除，
+            服务端回落到了名片墙；界面必须把这件事说出来。
+        staffName:
+          type: string
+          description: 指定员工的姓名（明文；员工 PII 列由服务端解密）
+        staffTitle:
+          type: string
+        staffAvatar:
+          type: string
+        staffStatus:
+          type: string
+          enum: ["", enabled, disabled]
+          description: 空串=未指定员工
+        staffMissing:
+          type: boolean
+          description: 指定员工记录已不存在（被删除），与「停用」分开提示
 
     CompanyInfo:
       type: object

@@ -59,6 +59,8 @@ export const ACTION_LABELS: Record<string, string> = {
   // 商业动作：授权与配额直接决定客户能不能继续用、能占多少存储
   'company.license': '修改企业授权',
   'company.storage_quota': '设置企业存储配额',
+  // 小程序默认入口决定所有访客第一眼看到谁（全员 / 某个员工）
+  'mp_entry.update': '修改小程序入口',
   'mp_release.create': '登记小程序版本',
   'mp_release.upload': '后台上传小程序代码',
   'mp_release.submit_audit': '提交小程序审核',

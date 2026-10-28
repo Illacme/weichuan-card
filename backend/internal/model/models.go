@@ -74,6 +74,35 @@ type CompanyInfo struct {
 	Address   string `gorm:"column:address" json:"address"`
 	Tel       string `gorm:"column:tel" json:"tel"`
 	Logo      string `gorm:"column:logo" json:"logo"`
+
+	// ---- 小程序「默认进入」（0034）：裸启动落到名片墙还是某个员工的名片 ----
+	//
+	// 裸启动 = 扫微信「体验版二维码」/ 直接打开小程序，微信不带任何参数，
+	// 端上拿不到 staffId，只能由服务端告诉它该去哪个页面。
+	//
+	// 缺省 wall（名片墙）：存量企业升级后行为必须不变——否则所有租户会突然
+	// 跳到某个员工（还可能是已停用的那个）。
+	MpEntryMode    string `gorm:"column:mp_entry_mode;default:wall" json:"mpEntryMode"`
+	MpEntryStaffID int64  `gorm:"column:mp_entry_staff_id;default:0" json:"mpEntryStaffId"`
+}
+
+// 小程序裸启动落地页的两种取值（company_info.mp_entry_mode）。
+const (
+	// MpEntryWall 名片墙：先看「这家公司有谁」，点谁看谁（缺省）
+	MpEntryWall = "wall"
+	// MpEntryStaff 直接进指定员工的名片（「一张名片打天下」的用法）
+	MpEntryStaff = "staff"
+)
+
+// NormalizeMpEntryMode 归一 mp_entry_mode：空串（历史行）一律按 wall。
+//
+// 不做「未知值报错」而是回落：这一列只影响落地页，遇到脏数据时把访客
+// 送到名片墙（总能打开）比让他看到错误页合理。
+func NormalizeMpEntryMode(mode string) string {
+	if mode == MpEntryStaff {
+		return MpEntryStaff
+	}
+	return MpEntryWall
 }
 
 // CompanyProfile 公司简介 + 视频（按租户隔离，company_id 唯一）

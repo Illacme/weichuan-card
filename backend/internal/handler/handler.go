@@ -116,14 +116,22 @@ func New(db *gorm.DB) *gin.Engine {
 		// 端上拿 0 去拼「点某人」的 companyId 就会把访客带到别家。
 		var ci model.CompanyInfo
 		db.First(&ci, "company_id = ?", cid)
-		cdnCache(c, 60)
+		// 落地页策略（谁来决定裸启动去哪个页面）：企业可以在后台选「名片墙」或
+		// 「直接进某个员工的名片」，见 handler/mp_entry.go。端上拿到 entry 后若为
+		// staff 就 reLaunch 到该员工名片，不再渲染这一页。
+		//
+		// **这里刻意不设 Cache-Control**：其它公开内容接口都挂了 cdnCache(c, 60)，
+		// 但这一条是路由决策——管理员改完设置立刻扫码验证，若被缓存 60 秒，
+		// 他会以为设置没生效，然后反复改、反复验，越查越乱。
+		entryMode, entryStaffID := resolveMPEntry(db, cid)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0,
 			"company": gin.H{
 				"id": cid, "fullName": ci.FullName,
 				"shortName": ci.ShortName, "logo": ci.Logo,
 			},
-			"data": data, "total": total,
+			"entry": gin.H{"mode": entryMode, "staffId": entryStaffID},
+			"data":  data, "total": total,
 		})
 	})
 

@@ -307,6 +307,7 @@ func main() {
 	handler.RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径，按租户隔离）
 	handler.RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻：逐条事件 + 筛选 + 分页）
 	handler.RegisterContent(r, db)     // 企业内容管理（公司信息/简介/分类/项目/服务/布局，按租户隔离）
+	handler.RegisterMPEntry(r, db)     // 小程序「默认进入」：名片墙 / 指定员工名片（企业管理员可改）
 	handler.RegisterCompanies(r, db)
 	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额（GET /api/admin/storage + PUT quota）

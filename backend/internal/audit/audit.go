@@ -46,6 +46,10 @@ const (
 	// ActionCompanyStorageQuota 改某企业的存储配额（MB）。
 	// 与授权同理：调大是让客户继续上传，调小可能立刻让上传失败，属计费/限流动作。
 	ActionCompanyStorageQuota = "company.storage_quota"
+	// ActionMPEntry 改某企业「小程序默认进入」（名片墙 / 指定员工名片）。
+	// 这一项决定**所有访客**扫进来第一眼看到谁：从名片墙改成指定员工，
+	// 等于把公司的门面从「全员」换成「一个人」，客户发现时通常已经很晚了。
+	ActionMPEntry = "mp_entry.update"
 
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"

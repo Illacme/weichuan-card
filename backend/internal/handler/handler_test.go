@@ -131,6 +131,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径）
 	RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻）
 	RegisterContent(r, db)
+	RegisterMPEntry(r, db) // 小程序「默认进入」：名片墙 / 指定员工名片
 	RegisterCompanies(r, db)
 	RegisterCompanyLicense(r, db) // 按企业查看/设置授权（B4：试用转正 / 延期 / 改席位）
 	RegisterStorageQuota(r, db)   // 按租户存储用量与配额（B3）
