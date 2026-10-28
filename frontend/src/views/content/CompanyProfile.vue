@@ -20,6 +20,11 @@
         </el-select>
         <div v-if="form.videoSource === 'channels'" class="hint hint-good">
           视频存微信服务器、播放走微信 CDN，<b>不产生存储与流量费用</b>，且官方声明该组件无视听资质要求。
+          <span class="hint-warn">
+            形态说明（微信组件固定行为，均无开关可改）：封面自带<b>视频号名称与推荐角标</b>，无法隐藏；
+            跨主体（feed-token）点击播放会<b>拉起视频号页面</b>播放，只有同主体（feedId）才能在原位自动播放。
+            要求「原位播放、画面干净」请改用云存储上传或外部 MP4 直链。
+          </span>
         </div>
         <div v-else-if="form.videoSource === 'upload'" class="hint">
           文件上传到已配置的对象存储（OSS / COS / MinIO），<b>直传不经应用服务器</b>，费用记在您自己的云账号上。
