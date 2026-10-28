@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   // 腾讯视频档默认不可用（部署未开 MP_TENCENT_VIDEO）：默认就该是「选不了 + 有原因」
   getVideoCapability: vi.fn(async (): Promise<any> => ({
     tencentVideo: false,
-    tencentReason: '腾讯视频档未启用：需先添加插件并设 MP_TENCENT_VIDEO=true',
+    tencentReason: '腾讯视频档未启用：请在「系统设置 → 功能开关」开启「腾讯视频档」',
   })),
 }))
 
@@ -374,7 +374,7 @@ describe('content/CompanyProfile', () => {
     expect(opt!.attributes('disabled')).toBeDefined()
 
     await pickSource(w, 'tencent')
-    expect(w.find('.el-alert').text()).toContain('MP_TENCENT_VIDEO')
+    expect(w.find('.el-alert').text()).toContain('系统设置')
     // 注意不能用 byPlaceholder：它找不到就抛错，断言「不存在」得自己扫一遍
     expect(
       w.findAll('.el-input').some((i: any) => i.attributes('placeholder') === VID_PLACEHOLDER)

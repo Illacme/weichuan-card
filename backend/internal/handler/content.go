@@ -9,6 +9,7 @@ import (
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,18 +19,39 @@ import (
 // 公司信息 / 公司简介 / 业绩分类 / 项目案例 / 业务服务 / 首页布局。
 // 多租户：全部按 targetCompanyID 收窄到单一企业——企业管理员固定本企业，
 // 平台超管可用 ?companyId= 指定（缺省 1 号租户朗汇，保持既有行为）。
+// tencentVideoEnabled 腾讯视频档是否可选：系统设置优先，未设置（空串）回退部署
+// 环境变量 MP_TENCENT_VIDEO——与 metrics_enabled 同一套路（见 setting registry）。
+//
+// 保留环境变量这一路：自动化部署 / 安装向导可以在无人值守时把默认形态一次设好；
+// 界面一旦显式设过就以界面为准，运维不用为了开一个功能去登服务器改配置再重启。
+func tencentVideoEnabled(cfg config.Config) bool {
+	return setting.GetBool("video_tencent_enabled", cfg.TencentVideo)
+}
+
+// tencentDisabledReason 腾讯视频档不可选时给界面看的理由。区分「界面显式关掉」与
+// 「从未设置过」：前者再说「去系统设置打开」就够了，后者还要补一条部署侧的改法，
+// 否则只看界面的运维不知道还能从环境变量那里设默认值。
+func tencentDisabledReason(cfg config.Config) string {
+	raw := strings.TrimSpace(setting.GetString("video_tencent_enabled", ""))
+	if raw != "" {
+		return "腾讯视频档已在「系统设置 → 功能开关」关闭，开启后本档才可选"
+	}
+	return "腾讯视频档未启用：请在「系统设置 → 功能开关」开启「腾讯视频档」，或在部署环境设环境变量 MP_TENCENT_VIDEO=true（还需先在小程序后台添加并授权腾讯视频插件、在 app.json 声明）"
+}
+
 func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	// ===== 视频来源能力探测 =====
-	// 目前只有「腾讯视频」一档需要部署级开关：它依赖小程序侧静态声明插件，
-	// 未授权时整个小程序编译失败（见 config.TencentVideo 注释）。界面据此禁用选项
-	// 并原样展示原因，别让客户配完才在真机上发现播不出来。
+	// 目前只有「腾讯视频」一档需要开关：它依赖小程序侧静态声明插件，未授权时整个
+	// 小程序编译失败（见 config.TencentVideo 与 setting registry 的说明）。界面据此
+	// 禁用选项并原样展示原因，别让客户配完才在真机上发现播不出来。
 	r.GET("/api/admin/video-capability", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		on := tencentVideoEnabled(cfg)
 		reason := ""
-		if !cfg.TencentVideo {
-			reason = "腾讯视频档未启用：需先在小程序后台「设置 → 第三方服务 → 插件管理」添加腾讯视频插件并在 app.json 声明，再设环境变量 MP_TENCENT_VIDEO=true 重启服务"
+		if !on {
+			reason = tencentDisabledReason(cfg)
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
-			"tencentVideo":  cfg.TencentVideo,
+			"tencentVideo":  on,
 			"tencentReason": reason,
 		}})
 	})
@@ -107,11 +129,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			req.VideoSource = model.VideoSourceNone
 		}
 		// 腾讯视频档：插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
-		// 故由部署方用 MP_TENCENT_VIDEO 显式开启（默认关，见 config.TencentVideo）。
+		// 故默认关闭、由运维在系统设置（或部署环境变量 MP_TENCENT_VIDEO）显式开启。
 		// 服务端必须拦——前端只是把选项置灰，直接调接口照样能绕过。
 		if req.VideoSource == model.VideoSourceTencent {
-			if !cfg.TencentVideo {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "腾讯视频档未启用：需先在小程序后台添加腾讯视频插件并在 app.json 声明，再设环境变量 MP_TENCENT_VIDEO=true 重启服务"})
+			if !tencentVideoEnabled(cfg) {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "腾讯视频档未启用：请先在「系统设置 → 功能开关」开启「腾讯视频档」"})
 				return
 			}
 			// vid 是这一档唯一的取片凭证，空着等于配了个永远播不出来的档

@@ -1906,9 +1906,9 @@ paths:
       tags: [超管-内容管理]
       summary: 视频来源能力探测
       description: >-
-        返回「腾讯视频」档在当前部署下可选与否（服务端 MP_TENCENT_VIDEO）。
-        该档依赖小程序侧静态声明腾讯视频插件，未授权会让整个小程序编译失败，
-        故是部署级开关而非界面开关；不可选时 tencentReason 给出可执行的开启步骤。
+        返回「腾讯视频」档当前是否可选。开关在「系统设置 → 功能开关」（key
+        video_tencent_enabled，即时生效）；界面从未设置过时回退部署环境变量
+        MP_TENCENT_VIDEO。不可选时 tencentReason 给出可执行的开启步骤。
       security:
         - cookieAuth: []
       responses:
@@ -4307,8 +4307,8 @@ components:
             upload 云存储上传（对象存储直传，不经应用服务器）；
             url 外部 MP4 直链（流量与资质由客户承担）；
             tencent 腾讯视频插件（txv-video vid：原位播放、无视频号角标、能记播放埋点；
-            门槛在部署侧——插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
-            故服务端仅在 MP_TENCENT_VIDEO=true 时接受，且 videoVid 必填）
+            默认不可选，需先在系统设置「功能开关」开启「腾讯视频档」——该档依赖小程序
+            侧静态声明插件，未授权会让整个小程序编译失败。开启后 videoVid 必填）
         videoChannelId:
           type: string
           description: 视频号 ID，sph 开头（留档用；定位具体视频靠 videoFeedId）

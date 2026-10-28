@@ -133,9 +133,11 @@ node miniprogram/scripts/enable-tencent-video.mjs off   # 还原
 node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
 ```
 
-脚本只改这两处静态声明，另外两件事必须人工做：① MP 后台「设置 → 第三方服务 → 插件管理」
-添加腾讯视频插件并等授权通过；② 后端设 `MP_TENCENT_VIDEO=true` 并重启（否则后台该档不可选）。
-插件版本号以 MP 后台「插件详情」为准，需覆盖时用 `PLUGIN_VERSION=2.0.5 ... on`。
+脚本只改这两处静态声明，另外两件事：① MP 后台「设置 → 第三方服务 → 插件管理」
+添加腾讯视频插件并等授权通过（只能人工做）；② 后台「系统设置 → 功能开关」打开
+「腾讯视频档」（即时生效，不用重启；也可在部署环境设 `MP_TENCENT_VIDEO=true` 作为
+界面未设置时的回落值）。插件版本号以 MP 后台「插件详情」为准，需覆盖时用
+`PLUGIN_VERSION=2.0.5 ... on`。
 
 已知形态（插件自带，界面改不了）：免费版片头有广告；`txv-video` 的 `z-index` 为 11，
 自定义浮层要压在它上面时记得抬高。

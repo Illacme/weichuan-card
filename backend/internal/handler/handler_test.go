@@ -964,62 +964,76 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	require.Equal(t, "none", get()["videoSource"])
 }
 
-// TestCompanyProfileVideoSourceTencent 钉死腾讯视频档的「部署级开关 + vid 必填」语义。
+// TestCompanyProfileVideoSourceTencent 钉死腾讯视频档的「系统设置开关 + vid 必填」语义。
 //
 // 为什么单独一个用例：该档不是「配了就能播」——它依赖小程序侧静态声明插件，
-// 声明了却没授权会让整个小程序编译失败。所以服务端必须能明确区分三件事：
-// ① 未开启 → 拒（默认，存量部署升级后行为不变）；② 开启了但没填 vid → 拒
-// （否则等于存一个永远播不出来的档）；③ 开启且填了 vid → 存得进去。
+// 声明了却没授权会让整个小程序编译失败，所以默认关、由运维在系统设置里显式打开。
+// 重点不是「开关能存」而是「开关真的接到了校验上」：一度有配置项存得进去却不生效
+// （死配置项），界面上看着开了，保存仍被拒或仍放行，排查只能靠猜。
 func TestCompanyProfileVideoSourceTencent(t *testing.T) {
-	capOf := func(r *gin.Engine, t *testing.T, tok string) map[string]interface{} {
+	capOf := func(r *gin.Engine, tok string) map[string]interface{} {
 		_, body := newTestClient(r, t).do("GET", "/api/admin/video-capability", nil, tok)
 		require.EqualValues(t, 0, body["code"])
 		return body["data"].(map[string]interface{})
 	}
-	put := func(r *gin.Engine, t *testing.T, tok string, m map[string]interface{}) map[string]interface{} {
+	putProfile := func(r *gin.Engine, tok string, m map[string]interface{}) map[string]interface{} {
 		_, body := newTestClient(r, t).do("PUT", "/api/admin/company-profile", m, tok)
 		return body
 	}
+	putSetting := func(r *gin.Engine, tok, v string) {
+		_, body := newTestClient(r, t).do("PUT", "/api/admin/settings", map[string]string{"video_tencent_enabled": v}, tok)
+		require.EqualValues(t, 0, body["code"], "设置项应可保存（registry 里必须有 video_tencent_enabled）")
+	}
 
-	// ---- 未开启（默认）----
+	// ---- 默认关闭（界面未设、部署环境变量也未开）----
 	r := setupSQLiteEngine(t)
-	c := newTestClient(r, t)
-	adminToken := loginAdmin(t, c)
+	tok := loginAdmin(t, newTestClient(r, t))
 
-	cap1 := capOf(r, t, adminToken)
+	cap1 := capOf(r, tok)
 	require.EqualValues(t, false, cap1["tencentVideo"])
 	require.NotEmpty(t, cap1["tencentReason"]) // 必须给可执行指引，不能只留一个灰选项
 
-	body := put(r, t, adminToken, map[string]interface{}{"videoSource": "tencent", "videoVid": "n0041aa087e"})
+	body := putProfile(r, tok, map[string]interface{}{"videoSource": "tencent", "videoVid": "n0041aa087e"})
 	require.EqualValues(t, 1, body["code"])
-	require.Contains(t, body["msg"], "MP_TENCENT_VIDEO")
+	require.Contains(t, body["msg"], "系统设置")
 
-	// ---- 开启后 ----
-	r2 := setupSQLiteEngine(t, func(cfg *config.Config) { cfg.TencentVideo = true })
-	c2 := newTestClient(r2, t)
-	tok2 := loginAdmin(t, c2)
-
-	cap2 := capOf(r2, t, tok2)
+	// ---- 在系统设置里开启：即时生效，不需要重启 ----
+	putSetting(r, tok, "true")
+	cap2 := capOf(r, tok)
 	require.EqualValues(t, true, cap2["tencentVideo"])
 	require.Equal(t, "", cap2["tencentReason"])
 
 	// 开了档却没填 vid：vid 是这一档唯一的取片凭证，空着就是配了个永远播不出来的档
-	body = put(r2, t, tok2, map[string]interface{}{"videoSource": "tencent", "videoVid": "  "})
+	body = putProfile(r, tok, map[string]interface{}{"videoSource": "tencent", "videoVid": "  "})
 	require.EqualValues(t, 1, body["code"])
 	require.Contains(t, body["msg"], "vid")
 
-	body = put(r2, t, tok2, map[string]interface{}{
+	body = putProfile(r, tok, map[string]interface{}{
 		"videoSource": "tencent", "videoVid": " n0041aa087e ",
 		"videoUrl": "https://cdn.example.com/fallback.mp4", "videoFallbackUrl": true,
 	})
 	require.EqualValues(t, 0, body["code"])
 
-	_, gb := c2.do("GET", "/api/admin/company-profile", nil, tok2)
+	_, gb := newTestClient(r, t).do("GET", "/api/admin/company-profile", nil, tok)
 	require.EqualValues(t, 0, gb["code"])
 	d := gb["data"].(map[string]interface{})
 	require.Equal(t, "tencent", d["videoSource"])
 	// 首尾空白要剥掉：从腾讯视频页面复制 vid 时极易带上换行/空格，原样存库等于配了个坏链
 	require.Equal(t, "n0041aa087e", d["videoVid"])
+
+	// ---- 部署环境变量已开的机器上，界面显式关掉必须以界面为准 ----
+	// （否则运维在界面关了却仍放行，界面就成了摆设）
+	r2 := setupSQLiteEngine(t, func(c *config.Config) { c.TencentVideo = true })
+	tok2 := loginAdmin(t, newTestClient(r2, t))
+	require.EqualValues(t, true, capOf(r2, tok2)["tencentVideo"], "未设置时应回退环境变量 MP_TENCENT_VIDEO")
+
+	putSetting(r2, tok2, "false")
+	cap3 := capOf(r2, tok2)
+	require.EqualValues(t, false, cap3["tencentVideo"])
+	require.Contains(t, cap3["tencentReason"], "系统设置") // 显式关掉与「从未设置」的措辞要能区分
+	require.EqualValues(t, 1, putProfile(r2, tok2, map[string]interface{}{
+		"videoSource": "tencent", "videoVid": "n0041aa087e",
+	})["code"])
 }
 
 // TestAPIFlowMySQL 生产契约 parity：连真实 MySQL、应用 migrations/*.sql，再跑同一套断言。
