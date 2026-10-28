@@ -129,3 +129,63 @@ describe('request 响应拦截：鉴权契约（httpOnly Cookie 流）', () => {
     await expect(p).rejects.toThrow('参数错误')
   })
 })
+
+// 网络层错误（HTTP 非 2xx）。
+//
+// 背景：业务失败走的是 HTTP 200 + 信封里的 code，但有一类错误走的是真 HTTP 状态码
+// ——典型就是安装向导的同源检查（403）。2026-10-28 线上：反代没透传 Host，
+// 「测试连接」返回 403，后端响应体里已经写了「反代没透传 Host，加
+// proxy_set_header Host $host」，但拦截器把这个 body 整个丢掉，界面只显示 axios 的
+// "Request failed with status code 403"，运维完全无从下手。
+describe('request 响应拦截：HTTP 非 2xx 时的错误文案', () => {
+  beforeEach(() => {
+    elMessage.error.mockClear()
+    vi.restoreAllMocks()
+  })
+
+  /** 取出已注册的响应拦截 rejected（axios 把 handlers 存成 [fulfilled, rejected]） */
+  function respRejected() {
+    return (http.interceptors.response as any).handlers[0].rejected
+  }
+
+  /** 造一个 axios 风格的错误：有 response.data 信封 */
+  function httpError(status: number, data: any, config: any = {}) {
+    return { isAxiosError: true, message: `Request failed with status code ${status}`, response: { status, data }, config }
+  }
+
+  it('HTTP 403 带后端 msg：抛出的错误就是后端那句话，不再出现 axios 英文', async () => {
+    const backendMsg =
+      '跨源请求被拒绝：浏览器来源 card.example.com，后端收到的 Host 是 127.0.0.1:8080'
+    const err = await respRejected()(httpError(403, { code: 403, msg: backendMsg })).catch(
+      (e: any) => e
+    )
+
+    expect(err.message).toBe(backendMsg)
+    expect(err.message).not.toMatch(/status code/)
+    // 状态码与原始 response 不能丢：调用方可能按 HTTP 状态分支
+    expect(err.status).toBe(403)
+    expect(err.code).toBe(403)
+    expect(err.response.status).toBe(403)
+    // 非 __silent 时也要弹出来（这条以前弹的是「网络异常」，等于什么也没说）
+    expect(elMessage.error).toHaveBeenCalledWith(backendMsg)
+  })
+
+  it('HTTP 非 2xx 但 __silent：不弹 toast，但错误文案仍然后端优先', async () => {
+    const backendMsg = '数据库连接失败：Access denied for user'
+    const err = await respRejected()(
+      httpError(500, { code: 1, msg: backendMsg }, { __silent: true })
+    ).catch((e: any) => e)
+
+    expect(err.message).toBe(backendMsg)
+    expect(elMessage.error).not.toHaveBeenCalled()
+  })
+
+  it('响应体不是信封（如 nginx 的 HTML 错误页）：不崩，回落「网络异常」', async () => {
+    const raw = httpError(502, '<html><body>502 Bad Gateway</body></html>')
+    const err = await respRejected()(raw).catch((e: any) => e)
+
+    // 拿不到 msg 就原样抛出 axios 错误，至少保留 status / response 供排障
+    expect(err).toBe(raw)
+    expect(elMessage.error).toHaveBeenCalledWith('网络异常，请稍后重试')
+  })
+})

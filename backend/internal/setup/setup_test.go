@@ -341,6 +341,88 @@ func TestWriteEndpointsRequireSameOrigin(t *testing.T) {
 	}
 }
 
+// 反代改写 Host 是「安装向导第一步就 403」的最常见原因：nginx 的
+// proxy_set_header 默认值是 $proxy_host，面板类工具（宝塔等）没显式写
+// `proxy_set_header Host $host;` 时，后端收到的就是 127.0.0.1:8080，
+// 与浏览器 Origin 里的域名必然不等，于是第一次「测试连接」就跨源。
+//
+// 钉住四件事：透传了 X-Forwarded-Host 就放行、多级反代的逗号链取最左、
+// 什么都没透传时 403 **且错误里能看出 Host 变成了什么**（否则运维只看到
+// 一句 "Request failed with status code 403"，无从下手）、
+// 以及 Host 已是公网域名时不采信 X-Forwarded-Host（不给伪造留口子）。
+func TestSameOriginBehindReverseProxy(t *testing.T) {
+	noConfigFile(t)
+	t.Setenv("DB_DSN", "")
+	r := Engine()
+
+	post := func(host, origin, xfh string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/setup/test", strings.NewReader("{}"))
+		req.Host = host
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if xfh != "" {
+			req.Header.Set("X-Forwarded-Host", xfh)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	// 1) 反代把 Host 改写成上游地址、但透传了 X-Forwarded-Host → 放行。
+	//    放行后会走到参数校验，返回 400 而不是 403。
+	if w := post("127.0.0.1:8080", "https://card.example.com", "card.example.com"); w.Code == http.StatusForbidden {
+		t.Fatalf("反代透传 X-Forwarded-Host 时应放行，实际 403：%s", w.Body.String())
+	}
+
+	// 2) 多级反代：X-Forwarded-Host 是逗号链，取最左的原始 Host
+	if w := post("127.0.0.1:8080", "https://card.example.com", "card.example.com, inner.proxy:8080"); w.Code == http.StatusForbidden {
+		t.Fatalf("X-Forwarded-Host 为逗号链时应取最左值，实际 403：%s", w.Body.String())
+	}
+
+	// 3) 什么都没透传 → 403，且响应必须带着「后端收到的 Host」与改法
+	w := post("127.0.0.1:8080", "https://card.example.com", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("反代未透传 Host 时应 403，实际 %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"127.0.0.1:8080", "card.example.com", "proxy_set_header Host $host"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("403 响应应包含 %q 以便自助排查，实际：%s", want, body)
+		}
+	}
+
+	// 4) Host 已是公网域名 → 不采信 X-Forwarded-Host。
+	//    否则任何能直连后端的人都能靠伪造这个头把跨源请求洗成同源，
+	//    同源检查（CSRF 防护）就形同虚设。
+	if w := post("card.example.com", "https://evil.example", "evil.example"); w.Code != http.StatusForbidden {
+		t.Fatalf("公网 Host 下伪造 X-Forwarded-Host 不应绕过同源检查，实际 %d", w.Code)
+	}
+}
+
+// internalHost 决定「要不要采信 X-Forwarded-Host」，判错任何一边都有代价：
+// 判太严 → 反代部署永远 403；判太松 → 公网域名也去看客户端可写的头。
+func TestInternalHost(t *testing.T) {
+	cases := map[string]bool{
+		"127.0.0.1:8080":   true,
+		"localhost:3000":   true,
+		"[::1]:8080":       true,
+		"10.0.0.5":         true,
+		"192.168.1.10:80":  true,
+		"172.16.0.1:3306":  true,
+		"card.example.com": false,
+		// 公网域名带端口同样不采信（这里曾想把端口剥掉再判，结果会误放行）
+		"card.example.com:8443": false,
+		"8.8.8.8:80":            false,
+		"":                      false,
+	}
+	for in, want := range cases {
+		if got := internalHost(in); got != want {
+			t.Errorf("internalHost(%q) = %v，期望 %v", in, got, want)
+		}
+	}
+}
+
 // 引导模式不提供业务写接口：安装向导是唯一的写入口，且自带护栏。
 func TestSetupModeHasNoBusinessWriteEndpoints(t *testing.T) {
 	noConfigFile(t)

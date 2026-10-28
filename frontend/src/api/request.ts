@@ -144,9 +144,28 @@ http.interceptors.response.use(
     return data as unknown as AxiosResponse
   },
   (error) => {
+    // HTTP 非 2xx（403 / 500 / 404…）时后端同样回 { code, msg } 信封，必须把 msg
+    // 透出来。丢掉它，用户只会看到 axios 的英文原文
+    // （"Request failed with status code 403"）——安装向导第一步 403 就是这么被
+    // 糊住的：后端已经说清「反代没透传 Host，加 proxy_set_header Host $host」，
+    // 界面却在说天书，运维只能干瞪眼。
+    const body = error && error.response ? error.response.data : null
+    const backendMsg =
+      body && typeof body === 'object' && typeof (body as ApiResp).msg === 'string'
+        ? (body as ApiResp).msg
+        : ''
     // __silent 同样放过网络层失败（同上：调用方自行降级）
     const cfg = (error && (error as any).config) as any
-    if (!cfg || !cfg.__silent) ElMessage.error('网络异常，请稍后重试')
+    if (!cfg || !cfg.__silent) ElMessage.error(backendMsg || '网络异常，请稍后重试')
+    if (backendMsg) {
+      // 用后端那句话替换 axios 的英文，并把状态码/原始 response 挂回去 ——
+      // 调用方若需要按 HTTP 状态分支（如 401 跳登录），信息一点没少。
+      const e = new Error(backendMsg) as any
+      e.code = (body as ApiResp).code
+      e.status = error.response.status
+      e.response = error.response
+      return Promise.reject(e)
+    }
     return Promise.reject(error)
   }
 )

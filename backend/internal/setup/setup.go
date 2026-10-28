@@ -24,6 +24,7 @@ package setup
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -272,28 +273,87 @@ func handleInstall(c *gin.Context) {
 //   - 跨站 CSRF：运维浏览器里的恶意页面往 /api/setup/install 发 POST；
 //   - DNS rebinding：恶意页面把域名绑到受害者 IP，浏览器请求会带上受害者 Host。
 //
-// 判据是 Origin / Referer 与请求 Host 的宿主是否一致（不比对 scheme：https
+// 判据是 Origin / Referer 与「浏览器真正访问的 Host」是否一致（不比对 scheme：https
 // 终止在反代时 Origin 是 https、到后端是 http，比对 scheme 会误杀正常部署）。
 // 两个头都没有的请求（curl / 脚本 / 服务端调用）放行：安装窗口只存在于
 // 「首次配置前」且一次性，不放行只会挡住运维自动化，挡不住任何攻击。
 func sameOrigin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		host := c.Request.Host
-		if o := c.GetHeader("Origin"); o != "" {
-			if !sameHost(o, host) {
-				c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "跨源请求被拒绝"})
-				c.Abort()
-				return
-			}
-		} else if ref := c.GetHeader("Referer"); ref != "" {
-			if !sameHost(ref, host) {
-				c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "跨源请求被拒绝"})
-				c.Abort()
-				return
-			}
+		host := effectiveHost(c)
+		src := c.GetHeader("Origin")
+		if src == "" {
+			src = c.GetHeader("Referer")
+		}
+		if src != "" && !sameHost(src, host) {
+			// 拒绝时必须把「实际收到了什么」回给调用方。2026-10-28 线上事故：
+			// 宝塔站点的反代没写 proxy_set_header Host，nginx 默认把它改成上游地址
+			// 127.0.0.1:8080，安装向导第一步「测试连接」就 403；而当时只回一句
+			// 「跨源请求被拒绝」，前端又只显示
+			// "Request failed with status code 403"，运维完全无从下手。
+			c.JSON(http.StatusForbidden, gin.H{
+				"code": 403,
+				"msg": "跨源请求被拒绝：浏览器来源 " + hostOf(src) + "，后端收到的 Host 是 " + host +
+					"（反代没透传 Host 时会这样：在反代 /api 的 location 里加 proxy_set_header Host $host; 再重载 nginx；用 CDN / 负载均衡时让对方带上 X-Forwarded-Host）",
+				"origin": hostOf(src),
+				"host":   host,
+			})
+			c.Abort()
+			return
 		}
 		c.Next()
 	}
+}
+
+// effectiveHost 取浏览器真正访问的 Host（仅用于同源比较）。
+//
+// **反代会把 Host 变成上游地址**：nginx 的 proxy_set_header 默认值是 $proxy_host，
+// 面板类工具（宝塔等）若没显式写 `proxy_set_header Host $host;`，后端收到的就是
+// 127.0.0.1:8080，与浏览器 Origin 里的域名必然对不上，安装向导直接判成跨源。
+// 所以先看反代注入的 X-Forwarded-Host。
+//
+// 只有 Host 本身是回环/私有地址时才采信它：Host 已是公网域名说明能直接比对，
+// 不必再引入一个客户端可写的头（不给伪造多留一条路）。
+func effectiveHost(c *gin.Context) string {
+	host := c.Request.Host
+	if !internalHost(host) {
+		return host
+	}
+	// X-Forwarded-Host 可能是逗号分隔的链（多级反代），取最左的原始 Host
+	if xfh := c.GetHeader("X-Forwarded-Host"); xfh != "" {
+		if first := strings.TrimSpace(strings.Split(xfh, ",")[0]); first != "" {
+			return first
+		}
+	}
+	return host
+}
+
+// internalHost 判断 host（可带端口）是否指向本机或内网。
+// 用途见 effectiveHost：区分「反代改写了 Host」与「浏览器真的就访问这个域名」。
+func internalHost(host string) bool {
+	h := host
+	if strings.HasPrefix(h, "[") { // IPv6 字面量：[::1]:8080
+		if i := strings.Index(h, "]"); i > 0 {
+			h = h[1:i]
+		}
+	} else if i := strings.LastIndex(h, ":"); i > 0 {
+		h = h[:i]
+	}
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()
+}
+
+// hostOf 取 URL 的宿主。只用于错误信息（判定仍走 sameHost）。
+func hostOf(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return raw
 }
 
 // sameHost 取 URL 的宿主与请求 Host 比较（都转小写；端口不同即不同源）。
