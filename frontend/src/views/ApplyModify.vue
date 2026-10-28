@@ -84,7 +84,6 @@
 </template>
 
 <script setup lang="ts">
-const { isPhone } = useBreakpoint()
 import { ElMessage } from 'element-plus'
 import { ref, onMounted, watch } from 'vue'
 import { Refresh, Right, Search } from '@element-plus/icons-vue'
@@ -112,6 +111,8 @@ const { rows, keyword, currentPage, size, total, loading, load } = useServerTabl
 // 不再为「显示旧值」拉全量员工表——分页改造后全量拉取等于把省下的传输又吃回去。
 const employeesMap = ref<Record<number, any>>({})
 const actingId = ref<number | null>(null)
+// 手机端（<768）隐藏员工ID与提交时间两列：窄屏上这两列挤掉的是变更摘要
+const { isPhone } = useBreakpoint()
 
 const rejectVisible = ref(false)
 const rejectReason = ref('')
