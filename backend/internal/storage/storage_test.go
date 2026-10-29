@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"math/rand"
 	"mime/multipart"
 	"net/http/httptest"
 	"testing"
@@ -112,8 +113,62 @@ func tinyImage() *image.RGBA {
 	return img
 }
 
+// photoLike 造一张"照片感"图像：低频色块 + 高频噪声，压缩率接近真实照片。
+//
+// 反例（千万别改回）：纯色 / 2x2 / 棋盘格这类高度规则的图，原尺寸下压缩率极高，
+// 缩放或重编码后反而**更大**。用它们当素材会让"缩略图必须小于原图"这类守门
+// 变成随机结论，也会把回填的"生成"路径静默掩盖成"原样存"。
+func photoLike(w, h int, seed int64) *image.RGBA {
+	rng := rand.New(rand.NewSource(seed))
+	const g = 16 // 低频网格分辨率
+	grid := make([][3]float64, (g+1)*(g+1))
+	for i := range grid {
+		grid[i] = [3]float64{rng.Float64(), rng.Float64(), rng.Float64()}
+	}
+	at := func(gx, gy int) [3]float64 { return grid[gy*(g+1)+gx] }
+	clamp := func(v float64) uint8 {
+		if v < 0 {
+			v = 0
+		}
+		if v > 1 {
+			v = 1
+		}
+		return uint8(v * 255)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		fy := float64(y) * g / float64(h)
+		gy := int(fy)
+		if gy >= g {
+			gy = g - 1
+		}
+		ty := fy - float64(gy)
+		for x := 0; x < w; x++ {
+			fx := float64(x) * g / float64(w)
+			gx := int(fx)
+			if gx >= g {
+				gx = g - 1
+			}
+			tx := fx - float64(gx)
+			c00, c10 := at(gx, gy), at(gx+1, gy)
+			c01, c11 := at(gx, gy+1), at(gx+1, gy+1)
+			var px [3]float64
+			for k := 0; k < 3; k++ {
+				top := c00[k] + (c10[k]-c00[k])*tx
+				bot := c01[k] + (c11[k]-c01[k])*tx
+				px[k] = top + (bot-top)*ty + (rng.Float64()-0.5)*0.15 // 高频噪声
+			}
+			img.Set(x, y, color.RGBA{R: clamp(px[0]), G: clamp(px[1]), B: clamp(px[2]), A: 255})
+		}
+	}
+	return img
+}
+
 // realPNG / realJPG 用标准库编码出一段真实可解码的图片字节，供 Save 路径的
 // 「上传即剥离」集成测试使用（避免用假文件头骗过 checkFile 却骗不过 ProcessImage 解码）。
+//
+// realJPG 用 photoLike 而非 tinyImage：它会被 Save 路径消费，而 Save 现在会顺带
+// 生成缩略图——2x2 的图重编码后可能反而更大，断言「缩略图更小」就成了掷骰子。
 func realPNG() []byte {
 	var b bytes.Buffer
 	_ = png.Encode(&b, tinyImage())
@@ -122,7 +177,7 @@ func realPNG() []byte {
 
 func realJPG() []byte {
 	var b bytes.Buffer
-	_ = jpeg.Encode(&b, tinyImage(), &jpeg.Options{Quality: 90})
+	_ = jpeg.Encode(&b, photoLike(900, 700, 20261028), &jpeg.Options{Quality: 90})
 	return b.Bytes()
 }
 

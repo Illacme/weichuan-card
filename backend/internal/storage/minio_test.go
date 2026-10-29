@@ -22,7 +22,11 @@ type fakeS3 struct {
 	gotPath   string
 	gotQuery  map[string]string
 	gotBody   []byte
-	hits      int
+	// paths/bodies 按请求顺序记录：Save 现在会 PUT 两次（原图 + 缩略图），
+	// 只留最后一次会让「返回 URL 对不对」这类断言悄悄指向缩略图。
+	paths  []string
+	bodies [][]byte
+	hits   int
 }
 
 func (f *fakeS3) server(t *testing.T) *httptest.Server {
@@ -31,12 +35,14 @@ func (f *fakeS3) server(t *testing.T) *httptest.Server {
 		f.hits++
 		f.gotMethod = r.Method
 		f.gotPath = r.URL.Path
+		f.paths = append(f.paths, r.URL.Path)
 		f.gotQuery = map[string]string{}
 		for k := range r.URL.Query() {
 			f.gotQuery[k] = r.URL.Query().Get(k)
 		}
 		body, _ := io.ReadAll(r.Body)
 		f.gotBody = body
+		f.bodies = append(f.bodies, body)
 		w.Header().Set("ETag", `"9b71f8f1c1f0a3d4e5f6a7b8c9d0e1f2"`)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -74,13 +80,20 @@ func TestMinioSave(t *testing.T) {
 	url, err := up.Save(fh)
 	require.NoError(t, err)
 
-	require.Equal(t, 1, fake.hits, "Save 应真正发起一次 PUT")
+	// 图片上传会 PUT 两次：原图 + <name>_thumb.<ext> 缩略图（E4）。
+	require.Equal(t, 2, fake.hits, "Save 应 PUT 原图并附带一张缩略图")
 	require.Equal(t, "PUT", fake.gotMethod)
-	require.True(t, strings.HasPrefix(fake.gotPath, "/weichuan/"), "对象路径应为 /<bucket>/<name>，实际 %s", fake.gotPath)
-	require.True(t, strings.HasSuffix(fake.gotPath, ".jpg"))
-	require.Equal(t, "http://cdn.example.com"+strings.TrimPrefix(fake.gotPath, "/weichuan"), url, "返回 BaseURL + 对象名")
-	// 经 ProcessImage 重新编码后，落到 MinIO 的字节必须已剥离 EXIF/GPS 标记
-	require.NotContains(t, string(fake.gotBody), "Exif\x00\x00", "上传到 MinIO 的应是剥离后的字节，而非带 EXIF 的原图")
+	require.Len(t, fake.paths, 2)
+	mainObj, thumbObj := fake.paths[0], fake.paths[1]
+	require.True(t, strings.HasPrefix(mainObj, "/weichuan/"), "对象路径应为 /<bucket>/<name>，实际 %s", mainObj)
+	require.True(t, strings.HasSuffix(mainObj, ".jpg"))
+	require.Equal(t, strings.TrimSuffix(mainObj, ".jpg")+"_thumb.jpg", thumbObj,
+		"缩略图对象名必须是原对象名末位扩展名前插 _thumb——端上按此规则派生，错一个字符就是 404")
+	require.Equal(t, "http://cdn.example.com"+strings.TrimPrefix(mainObj, "/weichuan"), url, "返回 BaseURL + 原图对象名（不是缩略图）")
+	// 经 ProcessUpload 重新编码后，落到 MinIO 的原图字节必须已剥离 EXIF/GPS 标记
+	require.NotContains(t, string(fake.bodies[0]), "Exif\x00\x00", "上传到 MinIO 的应是剥离后的字节，而非带 EXIF 的原图")
+	// 缩略图必须比原图小，否则「用缩略图省流量」就是反效果
+	require.Less(t, len(fake.bodies[1]), len(fake.bodies[0]), "缩略图字节数应小于原图")
 }
 
 func TestMinioSaveRejectsBadExtBeforeHTTP(t *testing.T) {

@@ -69,6 +69,27 @@ func ProcessUpload(ext string, data []byte) (full, thumb []byte, err error) {
 	}
 }
 
+// Thumbnail 只生成缩略图（不重编码原图），供「存量图回填」复用。
+// 与 ProcessUpload 的 thumb 同源同参数（ThumbMaxEdge / thumbJPEGQuality），
+// 保证回填出来的缩略图与新上传时生成的完全一致。
+//
+// 与上传路径的 fail-open 语义不同：这里失败必须返回 nil + error。回填是离线批处理，
+// 若把「解码失败的图」的原字节当成缩略图写出去，等于用原图冒充缩略图（体积不变、
+// 白占一份存储），还会让列表页自以为拿到了缩略图。调用方据此跳过并记 WARN。
+func Thumbnail(ext string, data []byte) ([]byte, error) {
+	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
+	switch ext {
+	case "jpg", "jpeg", "png":
+		img, err := decodeImage(ext, data)
+		if err != nil {
+			return nil, err
+		}
+		return encodeImage(ext, resizeContain(img, ThumbMaxEdge), thumbJPEGQuality)
+	default:
+		return nil, errUnsupportedImage{ext}
+	}
+}
+
 // processResize 解码 →（必要时缩放）→ 重编码。maxEdge≤0 表示不缩放（仅脱敏重编码）。
 // fail-open：解码或编码失败一律返回原字节 + nil error，绝不阻断上传。
 func processResize(ext string, data []byte, maxEdge, quality int) ([]byte, error) {
@@ -176,7 +197,11 @@ func toNRGBA(c color.Color) color.NRGBA {
 // bilinear 四角双线性插值（xf/yf 为 [0,1) 内的权重）。
 func bilinear(c00, c10, c01, c11 color.NRGBA, xf, yf float64) color.NRGBA {
 	lerp := func(v0, v1 uint8, t float64) uint8 {
-		return uint8(float64(v0) + float64(v1-v0)*t)
+		// 必须先各自转 float 再相减。直接写 float64(v1-v0) 是 uint8 相减：
+		// v1<v0 时按 256 回绕（如 100-200 → 156），插值结果变成噪声像素——
+		// 后果是重编码后的图**更花、还更大**（噪声不可压缩，实测同尺寸同质量下
+		// 输出体积膨胀 2.3 倍），且肉眼可见噪点。缩放路径务必避免 uint8 中间运算。
+		return uint8(float64(v0) + (float64(v1)-float64(v0))*t)
 	}
 	rTop, gTop, bTop, aTop := lerp(c00.R, c10.R, xf), lerp(c00.G, c10.G, xf), lerp(c00.B, c10.B, xf), lerp(c00.A, c10.A, xf)
 	rBot, gBot, bBot, aBot := lerp(c01.R, c11.R, xf), lerp(c01.G, c11.G, xf), lerp(c01.B, c11.B, xf), lerp(c01.A, c11.A, xf)
