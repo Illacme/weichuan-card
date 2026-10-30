@@ -46,10 +46,15 @@ server {
     index index.html;
     client_max_body_size 50m;
 
-    # 必须单列一条：不能让它落到下面的 SPA 兜底。try_files 会把 /healthz
+    # 必须单列一条：不能让它落到下面的 SPA 兜底。try_files 会把 /healthz/ready
     # 回退成 index.html 并返回 200，于是后端已死、数据库连不上，这个地址照样 200——
     # alert_check 的 R1/R4、preflight 第 10 节、LB 探针全部永远绿，最该报的故障不报。
-    location = /healthz {
+    #
+    # 用 `^~ /healthz`（结尾不带 /）一条覆盖 /healthz、/healthz/、/healthz/live、
+    # /healthz/ready 四个路径。写成 `^~ /healthz/` 会触发 nginx 的目录语义
+    # （auto_redirect 把 /healthz 301 到 /healthz/），与后端 RedirectTrailingSlash
+    # 互踢成死循环；proxy_pass 也必须不带路径，否则前缀替换会改写上游 URI。
+    location ^~ /healthz {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_connect_timeout 3s;
@@ -106,7 +111,7 @@ curl -sI https://<域名>/login | head -1     # 404  → 缺兜底（本条就�
 
 若 `/` 也是 404，则先查 `root` 是否指向 `dist`（里面必须有 `index.html`）、以及 `index index.html;` 是否生效。
 
-**修复**：在宝塔「网站 → 站点 → 配置文件」的 `server { }` 内，把下面这段放在 `/api/`、`/uploads/`、`= /healthz` 三条 location **之后**：
+**修复**：在宝塔「网站 → 站点 → 配置文件」的 `server { }` 内，把下面这段放在 `/api/`、`/uploads/`、`^~ /healthz` 三条 location **之后**：
 
 ```nginx
 location / { try_files $uri $uri/ /index.html; }
@@ -114,7 +119,7 @@ location / { try_files $uri $uri/ /index.html; }
 
 保存后 `nginx -t && nginx -s reload`（或面板「重载配置」）。前面若有 Cloudflare/其它 CDN：这类 HTML 响应通常是 `cf-cache-status: DYNAMIC`（不缓存），改完即时生效；若曾缓存过 404，清一下对应 URL 缓存即可。
 
-> 顺序不能反：`= /healthz` 必须**精确匹配且单列**，否则会被 `try_files` 兜成 `index.html` 恒返回 200——后端进程已死、数据库连不上，这个探针照样绿，监控静默失效（见上方注释）。
+> 顺序不能反：`^~ /healthz` 必须**单列且结尾不带斜杠**，否则会被 `try_files` 兜成 `index.html` 恒返回 200——后端进程已死、数据库连不上，这个探针照样绿，监控静默失效（见上方注释）。
 
 后端常驻，二选一：
 
@@ -405,7 +410,7 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
 
 ## 3. 首次验证清单（按顺序过一遍）
 
-- [ ] `curl http://127.0.0.1:8090/healthz` → `{"status":"ok"}`（8090 是后端直连调试端口；  
+- [ ] `curl http://127.0.0.1:8090/healthz/ready` → `{"status":"ok","db":"up"}`（8090 是后端直连调试端口；  
   安装模式下这里返回 503 + `"db":"unknown"` 是**正常**的，装完才会变 200）
 - [ ] `docker compose logs backend | grep SECURITY` **无输出**（有输出说明密钥还是默认值，回第 1 步）
 - [ ] 浏览器开 `http://<服务器IP>:8080`：未配置时先出安装页（§2.1），装完落到登录页；  
@@ -414,6 +419,33 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
 - [ ] 表结构齐全（MySQL 形态）：`docker exec -i weichuan-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" weichuan -e "show tables;"` —— 应包含 `revoked_sessions`（0005）等全部迁移产物（复数表名：`employees`/`admins`/`company_infos`…）；SQLite 形态可跳过此项（`AutoMigrate` 自动建表，库在 `data_data` 卷里）
 - [ ] `docker compose logs backend | grep MIGRATE`：期望是「已应用 N 个迁移」或「数据库已是最新」，**不能**出现 `[MIGRATE][FATAL]`（详见 §4）
 - [ ] 迁移记账表已建立（MySQL 形态）：`SELECT COUNT(*) FROM schema_migrations;` 与 `backend/migrations/*.sql` 数量一致
+- [ ] **传输优化生效**（宝塔部署必查，Docker 部署的 `frontend/nginx.conf` 自带）：
+  ```bash
+  # 静态资源必须带长缓存 + gzip；拿任一 /assets/ 下的 js 实测
+  curl -sI -H 'Accept-Encoding: gzip' https://<域名>/assets/<任一hash文件名>.js \
+    | grep -iE 'content-encoding|cache-control'
+  # 期望：Content-Encoding: gzip 且 Cache-Control: public, max-age=31536000, immutable
+  curl -sI https://<域名>/index.html | grep -i cache-control   # 期望 no-cache
+  # 安全头：宝塔默认配置里一个都没有，必须确认这四行都在
+  curl -sI https://<域名>/index.html | grep -iE 'x-content-type-options|x-frame-options|referrer-policy|x-robots-tag'
+  ```
+  安全头的**可粘贴片段**在 `deploy/baota/security-headers.snippet.conf`（每个带 `add_header` 的
+  location 都要重复声明整组，一处都别漏，尤其 `location = /index.html` 与 `location ~* ^/assets/`
+  ——nginx 的 `add_header` 继承陷阱：location 里只要有一个 `add_header`，server 级的整组都不再继承）。
+  **判断 gzip 是否生效只能看实测的 `content-encoding`，不能看站点配置文件**：宝塔的 gzip
+  是面板 `性能调整 → gzip` 的全局开关（写进 `nginx.conf` 的 `http` 块），站点配置文件里
+  本来就搜不到，据此断言「没开 gzip」是错的。若 HEAD 请求没返回 `content-encoding`
+  （部分 CDN 对 HEAD 不压缩），改用 `curl -sS -o /dev/null -D- --compressed <url>` 复测。
+  缺长缓存则每次刷新几十个资源都要回源校验——这是「感觉整体很慢」最常见的原因。
+- [ ] **全站不可索引**（后台被搜索引擎收录 = 白送一份后台结构图）：
+  ```bash
+  curl -s https://<域名>/robots.txt | head -3      # 期望 User-agent: * / Disallow: /
+  curl -sI https://<域名>/index.html | grep -i x-robots-tag
+  # 期望 X-Robots-Tag: noindex, nofollow, noarchive
+  curl -s https://<域名>/robots.txt -o /dev/null -w '%{content_type}\n'   # 期望 text/plain
+  ```
+  `robots.txt` 之前返回的是 `index.html`（`200 text/html`）——那是 SPA 兜底把不存在的路径
+  也兜成了壳，`content_type` 是唯一的判据。三道防线与「以后要开官网时怎么放行」见 §5.5。
 - [ ] 上传一张图片（公司信息/封面），确认返回 URL 可访问（`uploads_data` 卷已挂载）
 - [ ] **零数据核对**：没勾「装载演示企业数据」时，后台「企业管理」应为空、企业内容页**看不到任何分类/案例/服务**。
   接着做一遍「从零起步」：企业管理 → 新建企业（可一并填企业管理员账号）→ 顶栏**选择该企业** →
@@ -459,6 +491,71 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
   （手机号不在其中，公开接口不能给）。
 - 企业信息还没填时名片墙标题回落「微传名片」；企业被停用则显示「该企业暂不可用」。
   三种状态（加载失败 / 企业不可用 / 公司还没人）文案是分开的，看到哪一种就查哪一类问题。
+
+### 3.2 日常发版：前端 dist 怎么传（用脚本，别手拖）
+
+手拖 dist 有个隐蔽的坑：**顺序**。Vite 产物是 `index.html` + 一堆带 hash 的 `assets/`。
+如果先把 `index.html` 拖上去，用户会在那几秒里拿到新壳、却找不到还没传完的新资源，
+浏览器直接 404 → **白屏**。反过来做（先 assets 后 index.html）任何时刻都是可用组合。
+
+这个顺序靠人记不住，用脚本：
+
+```bash
+# 先看要做什么（不动服务器）
+./scripts/deploy_frontend.sh -n
+
+# 真发（默认会先校验产物自洽性 → 传 assets → 换壳 → 自检）
+# 默认目标已固化在脚本里（DEFAULT_DEPLOY_HOST=root@123.56.154.49），直接跑即可
+./scripts/deploy_frontend.sh
+
+# 连构建一起（等价于 npm run build && 上面那条）
+./scripts/deploy_frontend.sh --build
+```
+
+脚本做了五件手拖做不到的事：
+
+1. **产物自洽性校验**：`index.html` 引用的每个 `/assets/...` 在本地必须存在。
+   抓的是「改了代码忘了重新 build 就发版」——壳引用了已被删掉的旧 hash，发上去就是白屏。
+   不通过直接退出码 1，一个字节都不传。
+2. **目标目录自检**：先看远端 `DEPLOY_PATH` 在不在、里面有没有 `index.html`，
+   并把「线上当前壳」和「本地待发壳」两个 hash 并排打出来。路径写错时脚本会在别处
+   悄悄建一棵新树、传满 2.6MB，而 nginx 永远不会读它——**这个事故 dry-run 看不出来**
+   （dry-run 不碰服务器），只能靠这一步提前拦。目录不存在时会要求输入 `yes` 确认。
+3. **先 assets 后 index.html**（见上）。
+4. **不带 `--delete`**：旧 assets 故意留着。除了保证切换窗口安全，也是启用
+   §5.3「HTML 边缘缓存」的前提——边缘可能还在发几十秒前的旧壳，旧壳引用的旧 hash
+   必须还在。要清理用 `--prune=7`（默认只列出、要输入 `yes` 才删）。
+5. **发完自检**：带随机串拉一次线上首页，比对 hash 是否换过来了；再把首页引用的每个
+   资源 HEAD 一遍，任何一个不是 200 就报错退出。这两步覆盖了「传错目录」和「白屏」。
+
+> **增量上传**：rsync 用 `-rltz`，未改动的文件按「大小 + mtime」跳过。
+> 实测同一个产物第二次发版传输 0 个文件，只有真正变化的 chunk 才上传。
+> 注意别把 `-t` 去掉——不带它目标端 mtime 每次都是新的，2.6MB 会全量重传。
+
+> **远端没装 rsync 会自动降级 tar**：宝塔用的 CentOS 最小镜像常常不带 rsync，
+> 手跑 rsync 会得到 `bash: rsync: command not found` 或 `rsync error: unexpected end of file`。
+> 脚本会先探测，没有就改用 `tar | ssh` 流式传输（全量约 2.6MB，两三秒的事），
+> 不需要你先上服务器装任何东西。想恢复增量：`yum install -y rsync`（Debian/Ubuntu 用
+> `apt install -y rsync`），装一次就够。也可以 `DEPLOY_TRANSFER=tar|rsync` 强制指定。
+> 注意 tar 分支解包时带了 `--no-same-owner`：以 root 解包时 GNU tar 默认会照搬包里的
+> uid（macOS 是 501），在服务器上会变成一个不存在的属主。
+
+> **别被 tar 的 xattr 警告吓到**：macOS 的 bsdtar 会把文件扩展属性写进 pax 头，
+> 远端 GNU tar 解包时每个文件打一行
+> `tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'`
+> ——70 个文件就是 70 行，把真正的错误淹掉。脚本会自动加 `--no-xattrs`（先探测，
+> GNU tar 没这个选项就不加），打包体积也小 3.7KB。**看到这个警告说明脚本版本旧了。**
+
+> **macOS 的 rsync 是 openrsync**（macOS 15+），不支持 `--chmod` / `--chown`。
+> 脚本只用两边都支持的最小参数集，权限靠 `umask 022` 保证（目录 755 / 文件 644，nginx 能读）。
+> 需要指定属主就 `brew install rsync` 后用 `DEPLOY_CHOWN=www:www`。
+
+> **密码只输一次**：脚本用 ssh 连接复用（`ControlMaster` + `ControlPersist`），
+> 探测 / 上传 / 清理 / 自检共用一条连接。彻底免密就 `ssh-copy-id root@<服务器IP>`。
+
+其它可用环境变量见 `./scripts/deploy_frontend.sh -h`（`DEPLOY_PORT` / `DEPLOY_PATH` /
+`DEPLOY_URL` / `DIST_DIR`）。没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守
+「先 assets 后 index.html」**。
 
 
 ## 4. 数据库迁移（升级时）
@@ -583,6 +680,485 @@ weichuan.ziyuanxingqiu.cn {
 
 > 也可用云厂商 SLB/ALB 或自建 nginx 终结 TLS，效果等价；`COOKIE_SECURE=true` 同样必须。
 
+### 5.1 前面挂了 Cloudflare / CDN：SSL 模式必须选 Full (strict)
+
+浏览器地址栏是 `https://` **不代表**回源那一段也是加密的——那由 CDN 的「SSL/TLS 加密模式」决定，
+和源站有没有证书是两件事：
+
+| 模式 | CDN → 源站 | 结论 |
+|---|---|---|
+| Off | 明文 HTTP | 不可用 |
+| **Flexible** | **明文 HTTP** | **最危险**：用户到 CF 是 HTTPS，CF 到源站却是明文，登录口令、Cookie、令牌全在公网裸奔。而且源站若强制跳 HTTPS，会与 CF 形成 301 死循环 |
+| Full | HTTPS，但不校验证书 | 加密有了，挡不住中间人（自签证书也放行） |
+| **Full (strict)** | **HTTPS + 校验证书** | **生产唯一正确选择** |
+
+**切 Full (strict) 的前提是源站有 HTTPS，且证书是 Cloudflare 认的**——不需要公网 CA，但必须二选一：
+
+1. **Let's Encrypt**（宝塔面板一键申请，默认就是）——CF 信任，但 90 天要续期。
+   注意：域名走 CF 代理时，HTTP-01 挑战要经过 CF 回源，若开了「Always Use HTTPS」把 80 强制跳转，
+   续期可能失败 → 证书过期 → CF 报 **526**。
+2. **Cloudflare Origin CA**（推荐）——CF 面板 → **SSL/TLS → Origin Server → Origin Certificates → Create Certificate**
+   （直达：`https://dash.cloudflare.com/?to=/:account/:zone/ssl-tls/origin`）。
+   有效期在创建时选，**最长 15 年**；**Free 计划即可用、不额外收费**；只被 Cloudflare 信任。
+   宝塔安装：网站 → 设置 → SSL →「其他证书」→ 分别粘贴 PEM 证书与私钥（不要用 Let's Encrypt 那个标签页）。
+   不存在续期问题。代价是这份证书不能拿给浏览器直连用（也不需要，用户永远走 CF）。
+
+   > **两个已知限制**（官方文档明说）：
+   > - 账号成员**没有 API Access 权限时创建会报错**（`This zone is either not part of your account…`），
+   >   要用主账号或有 API Access 权限的成员操作；
+   > - Cloudflare **不会**为 Origin CA 证书发送到期提醒，再长的有效期也要自己记一笔。
+   >
+   > 另外：一旦**暂停 Cloudflare** 或在子域上**关掉代理**，浏览器直连源站会报证书不受信任
+   > ——它只加密 CF → 源站这一段。
+
+切换前在服务器上先自检源站 HTTPS 是否真的可用：
+
+```bash
+curl -sSI -k https://127.0.0.1/ -H 'Host: <域名>' | head -1
+echo | openssl s_client -connect 127.0.0.1:443 -servername <域名> 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+- `issuer` 是 Let's Encrypt / DigiCert 等公网 CA，或 Cloudflare Origin SSL → 可以切 strict；
+- `issuer` 是自签（`subject` 与 `issuer` 相同）→ 只能选 **Full**，否则必报 526；
+- `notAfter` 已过期 → 先续期再切。
+
+切换后确认回源确实走了 443（CF 默认就是，改过非标端口的要核对），并且 **CF 到源站这段已经加密**：
+此前 Flexible 下源站返回的 301 `Location` 是 `http://...`，切成 Full (strict) 后应变成 `https://...`——
+这是判断「回源是否真的上了 TLS」最快的一个观测点。
+
+> 源站防火墙只需放行 Cloudflare 网段访问 443；不要为了省事对全网开放 8080（后端端口），
+> 见 `deploy/baota/nginx-site.conf` 顶部的防火墙说明。
+>
+> **宝塔这条路径的实际配置在 `deploy/baota/nginx-site.live.conf`**——那是 2026-10-29 从
+> 服务器取回、逐行核对后的最终版（含 SSL 段、PHP include、伪静态 include 这些宝塔生成的部分），
+> 可以直接整体替换。`nginx-site.conf` 是带长注释的通用参考版，别拿它整段覆盖实际配置。
+
+**顺带把 HSTS 打开**：CF 面板 → **SSL/TLS → Edge Certificates → HTTP Strict Transport Security**。
+开了之后 CF 会给**所有**响应补 `strict-transport-security`，浏览器在有效期内不会再用
+`http://` 访问这个域名（连第一次的明文请求都省了，也就没有降级攻击的窗口）。
+前提是「Always Use HTTPS」已经是开的——两者在同一个页面，顺手一起开。
+
+四个开关怎么设（**照抄这一列，别照抄网上的「一键最强」**）：
+
+| 项 | 设成 | 理由 |
+|---|---|---|
+| 启用 HSTS | **开** | 证书是 CF Universal SSL（`CN=ziyuanxingqiu.cn`，自动续期），Always Use HTTPS 已开 |
+| 最长期限 `max-age` | **6 个月**，观察一周无异常再升 **1 年** | 见下方「为什么不一上来就 1 年」 |
+| 应用于子域 `includeSubDomains` | **关** | 见下方「zone 级的坑」 |
+| 预加载 `preload` | **关** | 单向门：提交后要撤销得等浏览器版本更新（几个月到几年），且要求 `includeSubDomains` 常开 |
+| 无嗅探标头 `nosniff` | **关** | nginx 里已经加了（见 `deploy/baota/nginx-site.conf`），CF 再加一遍会出现两个同值头，无害但脏。二选一，保留 nginx 那份 |
+
+> **zone 级的坑**：CF 的 HSTS 是按 **zone** 配的，不是按 hostname。本项目
+> `weichuan.ziyuanxingqiu.cn` **不是独立 zone**（`dig NS weichuan.ziyuanxingqiu.cn` 为空，
+> 与父域共用一套 Cloudflare NS），所以这个开关作用于 `ziyuanxingqiu.cn` 整个 zone。
+> 一旦勾上 `includeSubDomains`，**所有** `*.ziyuanxingqiu.cn` 都会被钉死在 https——
+> 任何灰云（DNS only）记录，比如只跑 http 的测试机、面板、邮件服务，会立刻不可访问，
+> 而且浏览器不会给"继续访问"的按钮。用不到就别开，要开先把这个 zone 的 DNS 记录全查一遍。
+
+> **为什么不一上来就 1 年**：`max-age` 是浏览器单方面执行的，**服务端没有任何办法提前撤销**——
+> 只能改小，且只对**新访问**生效，已经记住旧值的客户端仍按旧值走。所以配错一次，
+> 用户可能被锁住整个有效期。先 6 个月跑一周，确认微信内置浏览器、小程序 webview、
+> 后台上传取图、`/healthz` 探活都正常，再升到 1 年。
+
+> **真实踩过的坑（2026-10-29）**：开启 HSTS 时，这个 zone 的 apex `ziyuanxingqiu.cn`
+> 还是 **526**（CF 不信任该 hostname 的回源证书），而 zone 里另外两个子域
+> `ylb` / `km` 也各有自己的站点。**HSTS 是按 zone 生效的，zone 里任何一个对外 hostname
+> 没理顺，都会在开了之后被一起钉死。** 所以开之前先把整个 zone 过一遍：
+>
+> ```bash
+> # 把 zone 里所有对外 hostname 都打一遍，任何一个不是 2xx/3xx 就先修
+> for h in ziyuanxingqiu.cn weichuan.ziyuanxingqiu.cn ylb.ziyuanxingqiu.cn km.ziyuanxingqiu.cn; do
+>   printf '%-32s ' "$h"; curl -s --noproxy '*' -o /dev/null -m 10 -w '%{http_code}\n' "https://$h/"
+> done
+> ```
+>
+> 另一个更隐蔽的点：老站点常用**协议相对地址**（`//cdn.xxx.com/x.css`）。页面从 http
+> 变成 https 之后，这些 `//` 全部改走 https——第三方 CDN 若不支持 https，整页样式和脚本
+> 直接消失，而**错误只在浏览器控制台可见，curl 查不出来**。切 https 前要把页面里所有
+> `//` 开头的外部引用逐个试一遍。
+
+```bash
+curl -sI https://<域名>/ | grep -i strict-transport-security   # 期望 max-age=15552000 或 31536000
+```
+
+> 注意：这个头是 **CF 加的**，不是 nginx 加的，所以查源站配置永远查不到它；
+> 反过来，如果 CF 上没开、nginx 也没写，线上就一个都没有——别靠"印象里配过"判断。
+> 另外它**只对走 CF 代理（橙云）的流量下发**，但浏览器一旦记住，**以后就算把 CF 关掉
+> 改成灰云，仍然会强制 https**——所以源站必须长期保有公网可信证书。
+
+### 5.2 静态资源长缓存：Cloudflare Cache Rule
+
+CF 对 `.js/.css` 这类扩展名会**自动**缓存，但默认 TTL 只有 **4 小时**；源站没发
+`Cache-Control` 时它还会自己补一个 `max-age=14400`。后果是每 4 小时，第一个访客
+要为每个资源付一次跨境回源。而构建产物文件名带内容 hash，本来可以永久缓存。
+
+**Cloudflare → Caching → Cache Rules → Create rule**（也可用模板「自定义缓存」）：
+
+| 项 | 值 |
+|---|---|
+| 规则名称 | `静态资源长缓存`（别留模板默认名，排查时要靠它认） |
+| 匹配 | 字段 **URI 路径** + 通配符 + `/assets/*` |
+| 缓存资格 | 符合缓存条件 |
+| 边缘 TTL | **忽略缓存控制标头，使用此 TTL** → 1 年 |
+| 浏览器 TTL | **替代源服务器，使用此 TTL** → 1 年 |
+| 其余可选设置 | **全部留空**（缓存密钥 / Vary / Origin 范围请求 / 过期内容 / ETag / 错误页） |
+
+表达式预览应为：
+
+```
+(http.request.uri.path wildcard r"/assets/*")
+```
+
+> ⚠️ **别用「URI 完整」（`http.request.full_uri`）**。该字段含 scheme + 主机名 + 查询串，
+> 而 `wildcard` 运算符要求**整个字段值全值匹配**（不是子串匹配），写 `r"/assets/*"`
+> 会一条都匹配不到。面板输入框下的示例 `https://*.example.com/files/*` 就是在提示这一点。
+> 若确实要用完整 URI，须写成 `*://<域名>/assets/*`——但换域名就得改规则，不如用 URI 路径。
+
+**边缘 TTL 与浏览器 TTL 都要设**，只设一个效果打对折：前者管 CF 节点多久回源一次，
+后者管用户浏览器多久来问一次。
+
+**生效验证**（创建后先清一次 `/assets/*` 缓存，否则已缓存的副本仍按旧 TTL 走）：
+
+```bash
+curl -sI https://<域名>/assets/<任一hash文件>.js | grep -iE 'cache-control|age|cf-cache-status'
+# 期望 cache-control: max-age=31536000；隔几分钟再打，age 应从 0 递增
+```
+
+> 发版后文件名全变，即新 URL，**不需要清缓存**。`index.html` 不在规则范围内——
+> 但正因如此，**它必须靠 nginx 的 `Cache-Control: no-cache` 兜住**：CF 不缓存 HTML，
+> 浏览器却可能按 `Last-Modified` 做启发式缓存（典型为文件年龄的 10%），
+> 发版后部分用户会拿到旧壳去加载已被删除的旧资源。
+
+> ⚠️ **验证时要分清 MISS 与 HIT**：设了「边缘/浏览器 TTL = 1 年」之后，CF 会**重写**
+> 缓存命中响应的 `Cache-Control`——只留下 `max-age=31536000`，`public` 和 `immutable`
+> 都被去掉。所以看到 HIT 上少了 `immutable` 并不代表 nginx 配错了，
+> 判断 nginx 是否生效要看**回源那一次**：`curl -sI "...js?cb=$RANDOM"`
+> 强制 MISS，期望完整的 `public, max-age=31536000, immutable`。
+
+### 5.2.5 uploads 长缓存：让源站的 immutable 真的透传到浏览器
+
+源站 nginx（见 `deploy/baota/nginx-site.live.conf` 的 `/uploads/` 段）已经给「非 wxacode 的上传」发了
+`Cache-Control: public, max-age=31536000, immutable`，给 `^~ /uploads/wxacode/` 发了 `no-cache`
+（小程序码是**原地覆盖**重写，不能缓存）。
+
+**但 Cloudflare 的 Browser Cache TTL 默认 4 小时（`max-age=14400`）会覆盖源站的 Cache-Control**——
+浏览器实际只缓存 4 小时，4 小时后每个资源的第一个访客都要跨境回源一次。
+要让 1 年 + immutable 真的落到浏览器，二选一：
+
+| 方案 | 操作 | 适用 |
+|---|---|---|
+| **A. 全局 Respect Existing（推荐）** | CF → **Caching → Configuration → Browser Cache TTL** 改成 **Respect Existing Headers** | 想一次解决 `/assets/`、`/uploads/`、HTML 全部尊重源站头 |
+| **B. 按路径 Cache Rule** | 新建 Cache Rule 匹配 `/uploads/*`，Edge TTL = Ignore + 1 年、Browser TTL = Respect Existing（或 1 年） | 只想动 uploads，不动全局 TTL |
+
+#### A 推荐：全局 Respect Existing Headers
+
+CF → Caching → Configuration → **Browser Cache TTL** → 选 **Respect Existing Headers**。
+
+为什么安全：本站点所有来源的 `Cache-Control` 都是**显式**的——`/assets/` 是 immutable 1 年、
+`/index.html` 是 no-cache、`/uploads/wxacode/` 是 no-cache、`/uploads/` 其余是 immutable 1 年。
+改成 Respect Existing 之后 CF 一律原样透传：HTML 仍 no-cache（不发版不缓存）、
+wxacode 仍 no-cache（重生成即生效）、其余按 1 年 + immutable 缓存。
+**连 §5.2 的 `/assets/` 也一并受益**，不用再单独建 Cache Rule。
+
+> 副作用：之前 §5.2 那条 `/assets/*` 的 Cache Rule 可以保留也可以删——两种 TTL 现在都设成 1 年，
+> 结果一致；保留无害，删掉少一处维护点。
+
+#### B 替代：只给 `/uploads/*` 建 Cache Rule（注意 wxacode 例外）
+
+若不想动全局 Browser Cache TTL，可只给 uploads 建 Cache Rule：
+
+| 项 | 值 |
+|---|---|
+| 规则名称 | `uploads 长缓存` |
+| 匹配 | URI 路径 通配符 `/uploads/*`（**不要**写成 `http.request.full_uri` 的 `https://.../uploads/*`，否则换域名要改） |
+| 边缘 TTL | 忽略缓存控制标头，使用此 TTL → 1 年 |
+| 浏览器 TTL | **Respect Existing Headers**（让源站的 immutable / no-cache 各自生效） |
+| 其余 | 留空 |
+
+⚠️ **wxacode 例外**：上面的通配 `/uploads/*` 同时命中 `/uploads/wxacode/<staffID>.jpg`，
+而 wxacode 在源站是 `no-cache`（小程序码原地覆盖，必须每次回源）。如果这里把 Browser TTL 设成
+「1 年」而非「Respect Existing」，wxacode 会被强行缓存一年——重生成小程序码后用户拿到旧码。两种规避：
+
+- **浏览器 TTL 选「Respect Existing Headers」**（推荐）：源站 no-cache 透传，wxacode 不缓存，其余 immutable 1 年；
+- 或再加一条**更高优先级**的 Cache Rule：`/uploads/wxacode/*` → Browser TTL = Respect Existing / no-cache，排在 uploads 那条之前。
+
+表达式预览：
+```
+(http.request.uri.path wildcard r"/uploads/*")
+```
+
+#### 验证
+
+改完后先清一次 `/uploads/*` 缓存（已缓存副本仍按旧 TTL 走）。然后强制 MISS 看源站头：
+
+```bash
+# 强制回源（?cb 让 CF 不命中），期望完整 immutable
+curl -sI "https://<域名>/uploads/<任一随机名文件>?cb=$RANDOM" \
+  | grep -iE 'cache-control|cf-cache-status'
+# 期望：cache-control: public, max-age=31536000, immutable；cf-cache-status: MISS
+
+# wxacode 必须 no-cache（重生成即生效）
+curl -sI "https://<域名>/uploads/wxacode/<staffID>.jpg?cb=$RANDOM" \
+  | grep -i cache-control
+# 期望：cache-control: no-cache
+```
+
+> 与 §5.2 同理：设了长 TTL 之后，CF 命中（HIT）响应会把 `Cache-Control` 重写为只剩
+> `max-age=31536000`，`public` 和 `immutable` 被去掉——这是 CF 行为，**不代表 nginx 配错**；
+> 判断 nginx 是否生效要看上面那个**强制 MISS** 的回源响应。
+
+### 5.3 首屏 TTFB：HTML 不缓存 = 每次全页加载都跨境回源
+
+实测（Cloudflare 境外节点 → 国内源站，5 次）：
+
+```
+/          TTFB 0.96s / 1.05s / 1.15s / 1.19s / 1.63s   ← 中位约 1.1s
+index.html 717 字节
+```
+
+717 字节要 1.1 秒，说明时间全花在**跨境回源**上，跟体积无关。`cf-cache-status: DYNAMIC`
+每次都出现——CF 默认不缓存 HTML，所以每一次「首次进入 / F5 / 从微信深链打开」都要
+等一个完整的中国—海外往返。
+
+**影响面要说清**：SPA 内部跳转不重新加载 HTML，所以这只影响首屏那一次。登录后
+在后台点来点去不会重复付这个成本。真正被拖慢的是「点开链接的第一下」。
+
+想压下去只有一条路——让 CF 也缓存 HTML：
+
+| 项 | 值 |
+|---|---|
+| 规则名称 | `HTML 边缘短缓存` |
+| 匹配 | 字段 **URI 路径** + 等于 + `/` ；再加一条 **或** 等于 `/index.html` |
+| 缓存资格 | 符合缓存条件 |
+| 边缘 TTL | 忽略缓存控制标头，使用此 TTL → **60 秒**（不要设长） |
+| 浏览器 TTL | **留空**（源站已发 `no-cache`，浏览器侧必须保持每次校验） |
+
+> ⚠️ **前置条件：发版上传 `dist` 时不要清空 `assets/` 目录。** 边缘可能还在发
+> 60 秒内的旧壳，旧壳引用的是旧 hash 文件名——文件被删掉，用户看到的就是白屏。
+> Vite 产物文件名带内容 hash，新旧共存不会冲突，占几百 KB 而已。
+> 做不到这点就别开这条规则：宁可每次多等 1 秒，也不要白屏。
+
+**代价**：发版后最长 60 秒内，新访客可能拿到旧壳。因为旧资源还在，旧壳能正常工作，
+只是看到的不是最新版——对 SPA 来说这是常规取舍。要「发版即时生效」，就保持现状。
+
+验证：`curl -sI https://<域名>/ | grep -iE 'cf-cache-status|age'`，第二次起应为
+`HIT` 且 `age` 递增；TTFB 应从 ~1.1s 降到 0.2–0.3s。
+
+### 5.4 真实客户端 IP：`real_ip` + `TrustedProxies` 是一条链，缺一环就整条断
+
+访客 IP 要传到业务代码，中间有四跳，**任何一跳断掉，`c.ClientIP()` 拿到的是边缘节点 IP**：
+
+```
+浏览器 → Cloudflare → nginx（源站） → Go 后端
+         CF-Connecting-IP    real_ip 改写     TrustedProxies 采信
+```
+
+| 跳 | 配置位置 | 不配的后果 |
+|---|---|---|
+| ① CF 注入 `CF-Connecting-IP` | CF 默认行为，无需配置 | — |
+| ② nginx 采信它 | `set_real_ip_from <CF 网段>` + `real_ip_header CF-Connecting-IP` | `$remote_addr` 是 CF 边缘 IP（几十个地址之一） |
+| ③ nginx 覆盖着传给后端 | `proxy_set_header X-Forwarded-For $remote_addr;` | **追加**（`$proxy_add_x_forwarded_for`）会让客户端自带的伪造 XFF 留在左侧 |
+| ④ 后端只信 ③ 的来源 | `TRUSTED_PROXIES`（缺省回环 + RFC1918） | gin 缺省信任一切，直接取 XFF **最左**一项 = 完全由客户端决定 |
+
+②的网段写在 `deploy/baota/nginx-site.live.conf` 的 `=== 真实客户端 IP ===` 段里（22 段，
+IPv4 15 + IPv6 7），网段会变，定期核对 <https://www.cloudflare.com/ips-v4>。
+
+**为什么 ③ 必须是「覆盖」而不是「追加」**：`$proxy_add_x_forwarded_for` 的语义是
+`$http_x_forwarded_for + ", " + $remote_addr`。客户端随手带一个
+`X-Forwarded-For: 1.2.3.4`，后端按「从右往左跳过可信代理、取第一个不可信」的规则算出来
+的仍然是 1.2.3.4——伪造成功，**登录限流按伪造 IP 分桶，等于可以无限爆破**。
+
+#### 怎么验证 ②③④ 都生效
+
+在**服务器上**执行（本地回环请求，不经过 CF）：
+
+```bash
+# ②：确认 nginx 编译进了 realip 模块（宝塔默认有）
+nginx -V 2>&1 | tr ' ' '\n' | grep realip
+
+# ②：确认实际生效的配置里有网段（-T 打印 include 展开后的完整配置）
+nginx -T 2>/dev/null | grep -c set_real_ip_from     # 期望 22
+nginx -T 2>/dev/null | grep real_ip_header          # 期望 CF-Connecting-IP
+
+# ③：抓一次真实请求，看后端收到的 XFF 有几个值
+tail -f /www/wwwlogs/weichuan.ziyuanxingqiu.cn.log   # 第一列就是改写后的 $remote_addr
+```
+
+> ⚠️ **不能从外部用「伪造 `CF-Connecting-IP` 直连源站」来验证 ②**——`real_ip` 只采信
+> 来自 CF 网段的来源，你直连时源 IP 不在网段里，nginx 会（正确地）忽略你伪造的头。
+> 看到「伪造无效」说明防伪造生效了，**不代表 `real_ip` 没配**。这两件事必须分开确认。
+>
+> 判别 ② 是否配置，最可靠的是**读配置**（上面的 `nginx -T`），其次是看访问日志第一列
+> 是否出现真实访客 IP（而不是 `172.71.x.x` / `162.158.x.x` 这类 CF 段地址）。
+
+#### 后端侧：不需要改代码，但要知道缺省值
+
+`backend/internal/config/config.go` 的 `DefaultTrustedProxies` 是「回环 + 三类私有网段」，
+同机 nginx（`127.0.0.1`）落在里面，所以**默认就能正确工作**。三种情形要显式覆盖：
+
+| 场景 | `TRUSTED_PROXIES` |
+|---|---|
+| nginx 与后端同机（本仓库默认） | 不设，用缺省值 |
+| 后端在另一台内网机器 / 云 LB 后面 | 加上那台的 IP 或 CIDR，如 `10.0.0.5/32` |
+| 后端直接对公网（前面没有反代） | `none` —— 完全不读转发头 |
+
+设错的两种表现都要能认出来：
+
+- **收得比实际松**（含 `0.0.0.0/0`）：启动日志出现 `You trusted all proxies, this is NOT safe`，
+  限流可被伪造头绕过；
+- **收得比实际紧**（例如 `none` 但前面确有 nginx）：全站访客被算成同一个 IP、共用一个桶，
+  **一个人就能把整站登录限流打满**。表现是「我没试几次就提示登录过于频繁」。
+
+## 5.5 全站不可索引：后台不能被搜索引擎收录
+
+管理后台（`/login`、`/employees`、`/apply/*`、平台管理…）**没有一个页面应该进索引**：
+它们全部需要登录，被收录了就是死链；更糟的是搜索结果里会暴露后台的路径结构
+（`/api/admin/companies` 这类名字直接告诉别人哪里有接口）。
+
+三道防线，**三道都要**，因为各自的失效场景不同：
+
+| 防线 | 位置 | 挡住什么 | 失效场景 |
+|---|---|---|---|
+| ① `robots.txt` | `frontend/public/robots.txt` → 构建进 `dist/robots.txt` | 守规矩的爬虫根本不进来 | 外链、聊天软件预览、恶意爬虫**不看** robots.txt |
+| ② `X-Robots-Tag` 响应头 | `nginx-site.live.conf`（server 级 + 每个带 `add_header` 的 location） | 已经抓到页面的爬虫不索引 | 某个 location 有 `add_header` 却漏了这一行 → 该路径整组失效 |
+| ③ `<meta name="robots">` | `frontend/index.html` | 上面两层都失效时的兜底 | 只对 HTML 生效，且需要爬虫执行到 `<head>` |
+
+### 为什么 robots.txt 不能只写在 nginx 里
+
+写成 `location = /robots.txt { return 200 "Disallow: /"; }` 也能用，但**内容就脱离了版本控制**，
+下次换服务器/换人接手就丢了。放在 `frontend/public/` 里跟着构建产物走，发版即生效，无需碰服务器。
+
+要注意的坑：**`robots.txt` 不存在时不会 404，而是被 SPA 兜底成 `index.html`**（`200 text/html`）。
+所以「访问 robots.txt 有内容」不代表它是对的，必须看 `content_type`：
+
+```bash
+curl -s https://<域名>/robots.txt -o /dev/null -w '%{content_type}\n'   # 必须 text/plain
+curl -s https://<域名>/robots.txt | grep -c 'Disallow: /'                # 必须 ≥ 1
+```
+
+### `X-Robots-Tag` 为什么要在 5 个地方写
+
+又是 `add_header` 的整组继承：`/assets/`、`/index.html`、`/uploads/`、`/uploads/wxacode/`
+这四个 location 各自有 `add_header`（缓存头），server 级那组对它们**完全失效**。
+漏一个的表现很隐蔽 —— 页面照样打不开索引？不，只有那一条路径能被索引，而它恰好是
+`/index.html`，也就是**所有 SPA 深链**（`/console/companies` 等）的响应。
+
+不变量是「任何响应都带这 4 个头」，`~/nginx-check/verify.sh` 的第 10 节逐路径断言它。
+反向验证做过：删掉 `location = /index.html` 里的那一行，`/`、`/index.html`、
+`/console/companies` **三条同时变红** —— 这也顺带证明了 `try_files ... /index.html`
+是内部重定向，会重新走 location 匹配、继承 `= /index.html` 那组的头。
+
+### 已经被收录了怎么办
+
+`Disallow: /` 只能阻止**再次抓取**，不会把已有条目从索引里删掉（Google 拿不到页面内容，
+会保留一条「无摘要」的旧记录）。真发生了要走 Google Search Console 的
+「移除网址」工具，或用 `410` 响应明确告知已删除。上线前就配好这三道防线，就不用处理这些。
+
+### 以后要开官网 / 公开名片页时
+
+必须**同时**做三件事，少一件新站就永远进不了搜索：
+
+1. `frontend/public/robots.txt` 里把那个路径从 `Disallow: /` 放出来（改成只 disallow 后台路径）；
+2. 给公开页单独一个 server 块或 location，**不要**继承 `X-Robots-Tag`（或在那个 location 里
+   显式 `add_header X-Robots-Tag "all"`）；
+3. `index.html` 的 `<meta name="robots">` 必须去掉 —— 现在它是全站写死的 `noindex`，
+   **同一个壳服务两个用途时这条最先出问题**。公开页建议独立入口（独立 `index.html`）。
+
+## 5.6 源站仅允许 Cloudflare 回源（堵住「直连源站绕过 WAF」）
+
+**痛点**：源站 443 对全网开放，任何人 `curl -k https://<源站IP>/ -H 'Host: <域名>'` 都能拿 200，
+Cloudflare 的 WAF / 限流 / Bot 管理 / 缓存全部被绕过，等于没上 CDN。
+
+### ⚠️ 不能用 nginx 的 `allow/deny`
+
+本站开了 `real_ip`（`set_real_ip_from` + `real_ip_header CF-Connecting-IP`），它会把
+`$remote_addr` **改写成真实访客 IP**。而 nginx 的 `allow/deny` 匹配的就是 `$remote_addr` ——
+于是「来自 CF 的请求」被改写成了访客 IP，反而落进 `deny` 被拒。开了 real_ip 再用
+`allow <CF网段>; deny all;` 会把**正常走 CF 的流量也挡掉**。
+
+### 正确做法：`geo` + `$realip_remote_addr`
+
+`$realip_remote_addr` 是 TCP 对端**原始** IP（CF 边缘，不受 real_ip 改写影响）。用它做判定：
+
+```nginx
+# http 级（server 块外面；本文件被 Baota 在 http{} 内 include，写在 server 之前即可）
+geo $realip_remote_addr $is_cf {
+    default          0;
+    127.0.0.1        1;          # 本机自检
+    ::1              1;
+    173.245.48.0/20  1;          # 以下同 real_ip 段的 22 个 CF 网段
+    ...
+}
+
+server {
+    # 放在 80→443 跳转之前：非 CF 的 HTTP 直连也直接拒
+    if ($is_cf = 0) { return 403; }
+    ...
+}
+```
+
+- 走 CF：对端是 CF 边缘 IP → `$is_cf=1` → 放行；
+- 直连源站：对端是攻击者真实 IP（不在 CF 网段）→ `$is_cf=0` → 403。
+- CF 网段会变，与 `real_ip` 段保持一致，定期核对 `https://www.cloudflare.com/ips-v4|v6`。
+- 回滚：把 `if ($is_cf = 0)` 那 3 行注释掉，`nginx -s reload`，不会把自己锁在外面。
+
+### 验证（直连源站，绕开 CF）
+
+```bash
+# 你的机器不在 CF 网段，期望 403
+curl -sk --resolve weichuan.ziyuanxingqiu.cn:443:<源站IP> \
+  https://weichuan.ziyuanxingqiu.cn/ -o /dev/null -w '%{http_code}'   # 期望 403
+# 走 CF 正常访问应仍是 200
+curl -s  https://weichuan.ziyuanxingqiu.cn/ -o /dev/null -w '%{http_code}'   # 期望 200
+```
+
+### 更彻底：在防火墙上做（可选）
+
+nginx 层拦截时端口仍「开着」（TLS 握手能完成，只是被 403）。要连握手都不给，用 firewalld
+ipset 只允许 CF 网段到 443（流量根本到不了 nginx）。注意 firewalld 的 drop/reject 规则
+**优先级高于 accept**，不能「先全放行 443 再加一条拒绝」，要用 ipset + rich-rule 整体替换。
+回滚：`firewall-cmd --permanent --add-port=443/tcp && firewall-cmd --reload`。
+
+## 5.7 SPA 兜底 404（未匹配路径不再误返 200）
+
+**问题**：原来 `location / { try_files $uri $uri/ /index.html; }` 把所有未匹配路径都兜底成 `index.html` + 200，
+导致 ① 扫描器扫 `/auth.json`、`.credentials`、`backup.env` 等敏感路径时看到 200（误报「找到文件」）
+② 缺失的 `/assets/*.js` 返回 HTML 触发 MIME 错 ③ 日志被污染。
+
+**修复**（`deploy/baota/nginx-site.live.conf` 的 SPA 段，已脱离宝塔「伪静态」面板 include）：
+```nginx
+location / {
+    try_files $uri $uri/ @spa;
+}
+location @spa {
+    if ($http_accept ~* "text/html") { rewrite ^ /index.html last; }  # 浏览器导航 → 回落壳
+    return 404;                                                        # 其余 → 真 404
+}
+```
+效果：浏览器导航深链（`/login`、`/console/companies`，`Accept: text/html`）仍是 200 + SPA 壳；
+非 HTML 请求（`/auth.json`、`.env`、扫描器、缺失静态资源）一律 404。深链刷新不受影响。
+
+### 验证（必须用服务器 localhost，别从本机直连公网 IP）
+
+⚠️ **不能在你的笔记本上 `curl 公网IP/路径` 验证**：本站开了 geo（`if ($is_cf=0) return 403`），
+你本机不是 CF 网段，会在 HTTP 最前面被 403 挡掉，**根本走不到 SPA 逻辑**，只能证明 geo 生效。
+正确做法：SSH 进服务器，用 `127.0.0.1`（已在 geo 白名单 → 不被挡）测：
+
+```bash
+# 非 HTML 请求 → 期望 404（旧版会返 200 壳子，这是修复的标志）
+curl -sk https://127.0.0.1/auth.json -H 'Host: weichuan.ziyuanxingqiu.cn' -o /dev/null -w '%{http_code}'   # 期望 404
+
+# 浏览器导航深链（Accept: text/html）→ 期望 200 + SPA 壳
+curl -sk -H 'Accept: text/html' https://127.0.0.1/console/companies -H 'Host: weichuan.ziyuanxingqiu.cn' \
+  -o /dev/null -w '%{http_code}'   # 期望 200
+```
+两个结果符合预期即修复生效。本地桩装置（`~/nginx-check/` 的 `gen_site.py`+`verify.sh`）另有 75 项行为断言覆盖此修复。
+
+⚠️ 部署时顺手把宝塔「伪静态」设为「无」：本配置已删掉面板伪静态的 `include`，若面板伪静态仍是
+Vue/React 模板，日后在面板改其它设置（如 SSL）时可能自动重新插入 `location /` → 与 `@spa` 段冲突 →
+nginx 启动失败。设为「无」即可永久避免。
+
 ## 6. MySQL parity 验证（上线前必做，约 10 分钟）
 
 项目测试默认跑 SQLite，而生产是 MySQL——**本仓库有真实前科**：`ON CONFLICT DO NOTHING` 在 SQLite 测试全绿，但 MySQL 不支持该语法（生产登出会 500）。上线前必须用真实 MySQL 把 parity 跑绿：
@@ -609,14 +1185,14 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 
 # 每分钟告警检查（healthz 本地探活 / 5xx / 备份新鲜度 / 外部拨测，webhook 换成实际机器人地址）
 * * * * * cd /path/to/repo && ALERT_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx" \
-  HEALTH_URL=http://127.0.0.1:8080/healthz \
-  EXTERNAL_URL=https://你的域名/healthz \
+  HEALTH_URL=http://127.0.0.1:8080/healthz/ready \
+  EXTERNAL_URL=https://你的域名/healthz/ready \
   LOG_FILE="$(docker inspect -f '{{.LogPath}}' weichuan-backend)" \
   BACKUP_DIR=/path/to/repo/backups \
   scripts/alert_check.sh >> /var/log/weichuan-alert.log 2>&1
 ```
 
-`EXTERNAL_URL` 是**外部拨测**（R4）：从对外域名访问 `/healthz`，覆盖本地探活看不到的
+`EXTERNAL_URL` 是**外部拨测**（R4）：从对外域名访问 `/healthz/ready`，覆盖本地探活看不到的
 那一半故障——域名没解析、443 没放行、证书过期、反代 upstream 挂了。同时校验响应耗时
 （`EXTERNAL_MAX_MS`，默认 2000ms）与证书剩余有效期（`CERT_MIN_DAYS`，默认 14 天）。
 不填该项则 R4 跳过（已用 UptimeRobot 之类外部拨测服务的部署可以不填，避免重复）。
@@ -707,7 +1283,7 @@ scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # 脚本化
 2. 解压到临时文件（管道中断会留下半个库，所以不直接流式导入）。
 3. 覆盖：SQLite 走一次性容器挂载 `/app/data` 卷完成「删旧 WAL → 写库 → 停/起容器」；
    MySQL 走 `mysql < dump`（`mysqldump` 自带 `DROP TABLE IF EXISTS`，导入即替换）。
-4. 校验：SQLite 用 `server dbcheck` 验 `integrity_check` 与表数，并等 `/healthz` 回 2xx；
+4. 校验：SQLite 用 `server dbcheck` 验 `integrity_check` 与表数，并等 `/healthz/ready` 回 2xx；
    MySQL 验表数与 `schema_migrations` 版本。
 
 **SQLite 必须删 `-wal` / `-shm`**：库文件被替换后，旧 WAL 里还是上一个库的页，

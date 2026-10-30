@@ -45,7 +45,7 @@ chk "小程序码 no-cache（会原地覆盖）" "$h" "cache-control: no-cache"
 chk "小程序码 有 nosniff" "$h" "x-content-type-options: nosniff"
 chk "小程序码 打到后端" "$(curl -sk "${NOPROXY[@]}" $R "$B/uploads/wxacode/12.jpg")" '"stub":"backend"'
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
-chk "随机名上传可长缓存" "$h" "cache-control: public, max-age=604800"
+chk "随机名上传 immutable 长缓存" "$h" "cache-control: public, max-age=31536000, immutable"
 chk "随机名上传 有 nosniff" "$h" "x-content-type-options: nosniff"
 chk "随机名上传 有 X-Frame-Options" "$h" "x-frame-options: SAMEORIGIN"
 # 普通前缀（非 ^~）才能让敏感文件正则先生效
