@@ -1,6 +1,7 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
 import { ensurePrivacy } from '../../../utils/privacy'
 import { onImgFail } from '../../../utils/thumb'
+import { loadAuditTemplate, requestAuditSubscribe } from '../../../utils/subscribe'
 
 Page({
   data: {
@@ -21,6 +22,9 @@ Page({
   },
   onLoad() {
     this.loadMe()
+    // 预取「审核结果通知」模板 ID：点击提交时要在同步栈里调
+    // wx.requestSubscribeMessage，来不及现取（详见 utils/subscribe.ts）
+    loadAuditTemplate()
   },
   async loadMe() {
     const r = await request('GET', '/api/employee/me')
@@ -111,6 +115,10 @@ Page({
     })
   },
   async onSubmit() {
+    // 订阅「审核结果通知」：审核在 PC 后台做，员工当时不在小程序里，
+    // 不订阅就永远不知道自己通过没通过。必须在第一个 await 之前调
+    //（微信要求由用户手势同步触发）；不同意也不影响提交。
+    requestAuditSubscribe()
     const r = await request('PUT', '/api/employee/me', this.data.form)
     if (r.code === 0) {
       // 本地立即置位：后端此时只落待审申请，再次进入本页时由 loadMe 回读同样为 true

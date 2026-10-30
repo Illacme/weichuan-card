@@ -83,6 +83,10 @@ export function installWx(overrides: WxStub = {}) {
     // 剪贴板：setClipboardData 属微信隐私接口，复制类用例会用到
     setClipboardData: vi.fn((o: any) => o && o.success && o.success({})),
     getClipboardData: vi.fn((o: any) => o && o.success && o.success({ data: '' })),
+    // 订阅消息授权：申请页 / 编辑页提交前会调。
+    // 默认按「用户同意」应答——用例大多只关心「提交流程没被拦住」，
+    // 需要验证拒绝分支的自行覆写成 opt.fail({ errMsg: 'requestSubscribeMessage:fail' })。
+    requestSubscribeMessage: vi.fn((o: any) => o && o.success && o.success({})),
     request: vi.fn(),
     getSystemInfoSync: () => ({ statusBarHeight: 44, pixelRatio: 2 }),
     ...overrides,

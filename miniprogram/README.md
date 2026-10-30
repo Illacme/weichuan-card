@@ -17,6 +17,7 @@ miniprogram/
 │   ├── contact.ts      # 保存名片到通讯录（员工名片区 / 底部栏共用）
 │   ├── team.ts         # 名片墙数据层：分页参数 / 结果整形 / 跨页去重合并（落地页与全部页共用）
 │   ├── thumb.ts        # 图片兜底：thumbnailURL 派生 _thumb；onThumbError 退回原图；onImgFail 记失败 URL 换占位
+│   ├── subscribe.ts    # 审核结果订阅消息：预取模板 ID（loadAuditTemplate）+ 同步请求授权（requestAuditSubscribe）
 │   └── track.ts        # 埋点上报：8 类事件统一入口（白名单就近丢弃，失败静默）
 ├── components/         # 8 个可复用组件（均开启 addGlobalClass）
 │   ├── employee-card / company-video / achievement-grid
@@ -81,8 +82,9 @@ miniprogram/
 | project/list | GET /api/projects?categoryId= |
 | project/detail | GET /api/projects/:id + POST /api/stat/track(project_view / share，targetId=案例ID) |
 | service/detail | GET /api/services/:id + POST /api/stat/track(service_view / share，targetId=服务ID) |
-| employee/login → edit | POST /api/employee/login（手机号密码）、**POST /api/employee/login/wechat（微信一键登录）**、GET /api/employee/me、PUT /api/employee/me、POST /api/employee/upload(头像) |
+| employee/login → edit | POST /api/employee/login（手机号密码）、**POST /api/employee/login/wechat（微信一键登录）**、GET /api/employee/me、PUT /api/employee/me、POST /api/employee/upload(头像)、GET /api/subscribe/config（订阅模板 ID） |
 | employee/me | GET /api/employee/me（含根级 `wechatBound`）、**POST /api/employee/wechat/bind（绑定微信）**、PUT 密码、POST /api/employee/me/cancel |
+| apply/open | POST /api/apply/open、POST /api/apply/open/avatar、GET /api/company、GET /api/subscribe/config（订阅模板 ID） |
 | action-bar | wx.makePhoneCall + POST /api/stat/track(call/save) |
 | company-video | POST /api/stat/track(video_play，组件级去重)（mp4 与 txv 两档；视频号档官方无播放事件，记不了） |
 | poster | GET /api/card, GET /api/wechat/wxacode?staffId=&from=poster + POST /api/stat/track(share：发送给好友 / 右上角转发；poster_save：保存成功后) |
@@ -176,6 +178,39 @@ miniprogram/
 - **同一企业内一个微信只能绑一个账号**：否则两人共用一个微信号时，谁点一键登录都进到先绑的那个人。
 
 用例见 `tests/login_wechat.spec.ts`（15 例），后端见 `login_wechat_test.go`（4 组）。
+
+## 订阅消息（审核结果通知，2026-10-31）
+
+审核在 PC 后台做，而员工/申请人提交完就关掉小程序了——没有这条通知，他永远不知道
+自己通过没通过，管理员还得另外用微信或电话告诉他初始密码。
+
+**只做「审核结果」，不做「名片被访问」**：微信一次性订阅是「用户同意一次只能发一条」，
+长期订阅又只对政务/医疗等类目开放。名片访问是高频事件，用户同意一次只收到第一条、
+之后再也不响，比没有更糟。所以刻意不做。
+
+接线分两步，顺序不能颠倒：
+
+| 时机 | 动作 |
+|---|---|
+| 页面 `onLoad` | `loadAuditTemplate()` 预取模板 ID（GET `/api/subscribe/config`，模块级缓存） |
+| 点击提交 | `requestAuditSubscribe()` **同步**调用（在第一个 `await` 之前） |
+
+三个必须记住的点：
+
+- **`wx.requestSubscribeMessage` 必须在用户手势的同步栈里调**。`await` 之后再调会被微信
+  拒绝，现象是「点了提交但从没弹过授权窗」，代码看起来完全正常。
+  这就是为什么要把「预取模板 ID」和「请求授权」拆成两步。
+- **用户拒绝订阅不影响提交**。通知是可选增强，不能拿它要挟主流程；`accept` / `reject` /
+  `ban` 三种回调都不做任何处理。
+- **模板 ID 必须来自后端，不能写死在端上**。企业独立版各家小程序各有各的模板；
+  写死会让「平台能发、独立版发不出去」只在某个客户的真机上暴露。
+  未配置时后端回空串，端上据此跳过授权、不弹空窗（空 `tmplIds` 微信直接 fail，
+  用户看到的是「点了没反应」）。
+
+接入位置：`pages/apply/open`（开通申请）、`pages/employee/edit`（名片修改）。
+
+用例见 `tests/subscribe.spec.ts`（9 例，含「先订阅后提交」的顺序断言），后端见
+`subscribe_test.go`（11 例）与 `internal/wechat/subscribe_test.go`（8 例）。
 
 ## 员工头像上传
 - 员工修改页 `pages/employee/edit` 的头像由「URL 文本输入」改为「选图上传」：用 `wx.chooseMedia` 选图，经 `wx.uploadFile` 调后端 `POST /api/employee/upload`（员工鉴权，复用同一 storage.Uploader），返回 URL 写回 `form.avatar`，再随 `PUT /api/employee/me` 提交审核。与 PC 端 `UploadField` 调用 `/api/admin/upload` 同一思路、同一存储层，仅鉴权角色不同。
@@ -621,6 +656,7 @@ URL，错位只会让标记失效（多画一次图），不会把别的图误�
 - `tests/team_all.spec.ts`：**查看全部同事**（名片墙第二层）——滚动加载第 2 页并追加、**防重入**（请求在途时连滚只发一次）、后端 `hasMore=false` 时不再请求、**按 staffId 去重**（翻页期间增删员工会让同一人出现在相邻两页）、越界页码用后端回传值、**续页失败保留已加载列表**（只在底部标可重试，不能整页清空）、点重试能续上、带关键字进页面直接按关键字查、换关键字清空旧列表、下拉刷新成败都收指示器。
 - `tests/login_wechat.spec.ts`（15 例）：**微信一键登录**——成功时带 `code` + `companyId` 换令牌并存 `refreshToken`、未绑定（code=3）弹 modal 说清「先密码登录 → 我的页绑定」且不跳转不存令牌、`wx.login` 拿不到 code 时不发请求、其它业务失败用后端文案、网络异常不卡 loading、连点只发一次；**手机号密码**断网时 `submitting` 也要落下来（原来没 catch，按钮会永远转圈）；**绑定微信**——`wechatBound` 落到 data、未登录归位 false、未绑定能绑、已绑定不发请求只说明怎么换、绑定失败用 modal 说全原因、在途连点只发一次。
 - `tests/img_fallback.spec.ts`：**图片失败兜底**——扫全部 `.wxml` 断言每个 `<image>` 都挂了 `binderror`、且带 `data-fail` 或 `data-arr`（漏写会安静地留一块白）；`onImgFail` 的单图 / 图集 / `idx=0` / 缺参数 / 字段还不是数组五种形态；`onThumbError` 的「缩略图挂了改回原图」与「已在原图上不再 setData」（后者防的是 binderror 无限循环）。
+- `tests/subscribe.spec.ts`（9 例）：**审核结果订阅消息**——模板 ID 预取后缓存不重复请求、未配置时不弹窗、`tmplIds` 传数组、预取失败**不缓存空串**（缓存了会让整个会话都收不到通知且用户无从察觉）、用户拒绝不抛错不重试；**页面接线**：申请页「先请求订阅、再发提交请求」的顺序断言（顺序反了微信直接拒授权）、拒绝订阅提交照样发出、后端没配模板时既不弹窗也不拦提交、编辑页同样在提交前订阅。
 - `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、以及**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**。
 
 ```bash

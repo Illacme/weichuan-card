@@ -2,6 +2,7 @@ import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
 import { getOpenid } from '../../../utils/wechat'
 import { ensurePrivacy, needConsent } from '../../../utils/privacy'
 import { onImgFail } from '../../../utils/thumb'
+import { loadAuditTemplate, requestAuditSubscribe } from '../../../utils/subscribe'
 
 // 访客自助提交开通申请（POST /api/apply/open）。
 // 头像：默认读取用户微信头像（按钮 open-type=chooseAvatar 会直接调起微信头像选择器，
@@ -46,6 +47,9 @@ Page({
   },
   onLoad() {
     this.loadCompany()
+    // 预取「审核结果通知」模板 ID：提交时要在同步栈里调
+    // wx.requestSubscribeMessage，来不及现取（详见 utils/subscribe.ts）
+    loadAuditTemplate()
   },
   // 「+ 备用手机号」/「×」：展开或收起第二个手机号输入框。
   // 收起时顺手清空已填内容——否则用户会以为「没显示就是没提交」，留下暗数据
@@ -190,6 +194,10 @@ Page({
       return
     }
     this.setData({ saving: true })
+    // 订阅「审核结果通知」：审批在 PC 后台做，访客提交后基本不会再开着小程序，
+    // 不订阅就永远等不到结果。必须放在第一个 await 之前——微信要求
+    // requestSubscribeMessage 由用户手势同步触发；不同意也不影响提交。
+    requestAuditSubscribe()
     // openid 静默采集（wx.login 换取，无需弹窗）；昵称已由表单里的原生输入框
     // 填写/自动填充，提交时不再触发任何授权弹窗（避免提交瞬间盲弹）。
     const openid = await getOpenid()

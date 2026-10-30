@@ -445,6 +445,9 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
     // 消息推送：图片内容安全的结论靠它推回来（不配则图片不送检）
     'wx_msg_token',
     'wx_msg_aeskey',
+    // 订阅消息：审核结果通知（唯一能主动触达用户的通道）
+    'wx_tmpl_audit',
+    'wx_tmpl_audit_fields',
   ],
   mpupload: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'],
 }
@@ -469,6 +472,9 @@ const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
     // 消息推送只服务图片内容安全：图片检测是异步的，结论靠推送回来。
     // 单独一区，避免和「小程序码」混在一起被当成可选项跳过。
     { label: '消息推送（图片内容安全）', keys: ['wx_msg_token', 'wx_msg_aeskey'] },
+    // 订阅消息是唯一能主动触达用户的通道：员工提交申请后就关掉小程序了，
+    // 审批结果只能靠它送达。留空 = 不发送（审批照常成功），所以是可选项。
+    { label: '订阅消息（审核结果通知）', keys: ['wx_tmpl_audit', 'wx_tmpl_audit_fields'] },
   ],
   mpupload: [
     { label: '上传环境（仅后台直接传代码时需要）', keys: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'] },
@@ -1007,11 +1013,14 @@ const WIZARD_STEPS: WizardStep[] = [
       'wxacode_rate_limit_per_min',
       'wx_msg_token',
       'wx_msg_aeskey',
+      'wx_tmpl_audit',
+      'wx_tmpl_audit_fields',
     ],
     groups: [
       { label: '小程序凭据', keys: ['wx_appid', 'wx_appsecret'] },
       { label: '小程序码', keys: ['wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'] },
       { label: '消息推送（图片内容安全）', keys: ['wx_msg_token', 'wx_msg_aeskey'] },
+      { label: '订阅消息（审核结果通知）', keys: ['wx_tmpl_audit', 'wx_tmpl_audit_fields'] },
     ],
   },
   {

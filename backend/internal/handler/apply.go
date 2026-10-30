@@ -344,6 +344,19 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "员工已创建，但申请状态更新失败，请刷新确认"})
 			return
 		}
+		// 审核结果通知：申请人提交申请时就同意了订阅，此刻发一条。
+		//
+		// 备注刻意**不写初始密码**：订阅消息会进微信服务通知，内容可能直接显示在
+		// 锁屏上，把密码塞进去等于公开。而且他根本不需要密码——申请时 openid 已写进
+		// 员工记录，点开小程序就能「微信一键登录」。
+		dispatch(notifyAudit(db, cfg, auditNotice{
+			CompanyID: a.CompanyID,
+			OpenID:    a.OpenID,
+			Subject:   "名片开通申请",
+			Approved:  true,
+			Remark:    "点开小程序即可微信一键登录",
+			Page:      "pages/employee/login/login",
+		}))
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
 
@@ -356,11 +369,29 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 驳回理由可选：绑定失败（空 body / 非 JSON）按「没有理由」处理，
 		// 不因此拒绝这次操作——强制要求理由只会逼管理员随手填一串无意义字符。
 		_ = c.ShouldBindJSON(&body)
-		q := db.Model(&model.OpenApply{}).Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c))
-		if q.Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason}).RowsAffected == 0 {
+		// 先查出这一行（拿 openid 发通知），再用「status=pending」做原子更新。
+		// 两步不能合并成一次 Updates：Updates 不回传行数据，事后按 id 再查一次
+		// 又会读到已被并发改过的状态——两个管理员同时点驳回时，第二次会拿错数据。
+		var a model.OpenApply
+		if err := db.Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c)).
+			First(&a).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
 			return
 		}
+		res := db.Model(&model.OpenApply{}).Where("id = ? AND status = ?", id, "pending").
+			Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason})
+		if res.RowsAffected == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
+			return
+		}
+		dispatch(notifyAudit(db, cfg, auditNotice{
+			CompanyID: a.CompanyID,
+			OpenID:    a.OpenID,
+			Subject:   "名片开通申请",
+			Approved:  false,
+			Remark:    rejectRemark(body.Reason),
+			Page:      "pages/employee/login/login",
+		}))
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -436,6 +467,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		a.Status = "approved"
 		db.Save(&a)
+		// 员工已绑定微信才有 openid；没绑的话 notifyAudit 会静默跳过
+		dispatch(notifyAudit(db, cfg, auditNotice{
+			CompanyID: e.CompanyID,
+			OpenID:    e.OpenID,
+			Subject:   "名片资料修改",
+			Approved:  true,
+			Remark:    "新资料已生效",
+			Page:      "pages/employee/me/me",
+		}))
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -447,10 +487,30 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		// 同开通申请：理由可选，绑定失败按「没有理由」处理（见上面那条注释）
 		_ = c.ShouldBindJSON(&body)
-		q := db.Model(&model.CardModifyApply{}).Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c))
-		if q.Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason}).RowsAffected == 0 {
+		var a model.CardModifyApply
+		if err := db.Where("id = ? AND status = ?", id, "pending").Scopes(scopeCond(c)).
+			First(&a).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
 			return
+		}
+		res := db.Model(&model.CardModifyApply{}).Where("id = ? AND status = ?", id, "pending").
+			Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason})
+		if res.RowsAffected == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
+			return
+		}
+		// 申请行只有 staff_id，接收者的 openid 在员工记录上。查不到员工（已被删）
+		// 就没有可送达的通道，跳过通知即可——驳回本身已经成功。
+		var e model.Employee
+		if db.First(&e, "staff_id = ?", a.StaffID).Error == nil {
+			dispatch(notifyAudit(db, cfg, auditNotice{
+				CompanyID: e.CompanyID,
+				OpenID:    e.OpenID,
+				Subject:   "名片资料修改",
+				Approved:  false,
+				Remark:    rejectRemark(body.Reason),
+				Page:      "pages/employee/me/me",
+			}))
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})

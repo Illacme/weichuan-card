@@ -128,8 +128,9 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	r := New(db)
 	RegisterAuth(r, db, cfg)
 	RegisterApply(r, db, cfg)
-	RegisterStatsExport(r, db) // 统计 CSV 导出（与 /api/admin/stats 同口径）
-	RegisterStatsDetail(r, db) // 埋点明细列表（聚合的下钻）
+	RegisterSubscribe(r, db, cfg) // 订阅消息：模板 ID 下发（审核结果通知）
+	RegisterStatsExport(r, db)    // 统计 CSV 导出（与 /api/admin/stats 同口径）
+	RegisterStatsDetail(r, db)    // 埋点明细列表（聚合的下钻）
 	RegisterContent(r, db, cfg)
 	RegisterMPEntry(r, db) // 小程序「默认进入」：名片墙 / 指定员工名片
 	RegisterCompanies(r, db)

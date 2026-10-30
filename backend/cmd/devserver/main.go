@@ -154,6 +154,7 @@ func main() {
 	r.GET("/metrics", metrics.Handler())
 	handler.RegisterAuth(r, db, cfg)
 	handler.RegisterApply(r, db, cfg)
+	handler.RegisterSubscribe(r, db, cfg) // 订阅消息：GET /api/subscribe/config（审核结果通知的模板 ID）
 	// 统计的两个「后加」端点：CSV 导出 + 埋点明细（/api/admin/stats 汇总本身在
 	// RegisterApply 里，故统计页能开，但明细抽屉与导出会 404——2026-10-24 实测抓到）。
 	// 漏注册不报编译错、只在点开功能时 404，正是下面 main_test.go 守门测试要钉住的漂移。
