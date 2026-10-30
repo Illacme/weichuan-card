@@ -300,7 +300,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 设置 Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: 构建后端镜像
         uses: docker/build-push-action@v6
