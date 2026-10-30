@@ -1439,32 +1439,112 @@ func newSeedDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// TestHealthzOK 正常 DB 下 /healthz 应返回 200 且声明 db=up。
-// 这是 docker-compose backend healthcheck 与 alert_check.sh R1 的依赖：
-// 仅当 DB 可达才认为就绪，DB 故障时编排/告警才能识别"进程在但不可用"。
-func TestHealthzOK(t *testing.T) {
+// TestHealthzRootOK 根路径是纯索引页：恒 200、列出子端点，不做健康判断。
+// 保留它不是为兼容，是为「发现」——人手 curl 时一眼看到该用哪个子端点；
+// 同时给 Nginx 的 auto_redirect 一个 200 的落点（否则 301 会打回后端形成循环）。
+func TestHealthzRootOK(t *testing.T) {
 	db := newSeedDB(t)
 	r := New(db)
 	code, body := newTestClient(r, t).do("GET", "/healthz", nil, "")
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, "ok", body["status"])
+	require.Equal(t, true, body["configured"])
+	require.Nil(t, body["db"], "索引页不查 DB，不应有 db 字段")
+	eps, ok := body["endpoints"].(map[string]interface{})
+	require.True(t, ok, "根路径应列出子端点")
+	require.Equal(t, "/healthz/live", eps["live"])
+	require.Equal(t, "/healthz/ready", eps["ready"])
+}
+
+// TestHealthzRootIgnoresDB 索引页在 DB 挂掉时仍返回 200——这是刻意的设计，不是缺陷。
+//
+// 反过来说：**绝不能拿 /healthz 做告警**，DB 挂了它照样绿，监控会静默失效。
+// 告警与编排一律打 /healthz/ready。这条测试的作用就是把「恒 200」这个约定钉死，
+// 将来有人「顺手」给索引页加一句 SELECT 1 时，它会立刻红。
+func TestHealthzRootIgnoresDB(t *testing.T) {
+	db := closedDB(t)
+	r := New(db)
+	code, body := newTestClient(r, t).do("GET", "/healthz", nil, "")
+	require.Equal(t, http.StatusOK, code, "索引页不查 DB，DB 挂了也应 200")
+	require.Equal(t, "ok", body["status"])
+	require.Nil(t, body["db"])
+}
+
+// TestHealthzReadyOK 就绪探针：DB 可达时 200 且声明 db=up。
+// docker-compose 的 backend healthcheck 与 alert_check.sh 的 R1 都依赖它。
+func TestHealthzReadyOK(t *testing.T) {
+	db := newSeedDB(t)
+	r := New(db)
+	code, body := newTestClient(r, t).do("GET", "/healthz/ready", nil, "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "ok", body["status"])
 	require.Equal(t, "up", body["db"])
 }
 
-// TestHealthzDBDown DB 不可达时 /healthz 应返回 503 且声明 db=down，
-// 而不是伪装成健康的 200（旧实现的问题：DB 挂了仍返回 200）。
-func TestHealthzDBDown(t *testing.T) {
+// closedDB 返回一个底层连接已关闭的库，使后续 Exec 必然失败。
+func closedDB(t *testing.T) *gorm.DB {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close()) // 关闭底层连接，使后续 Exec 失败
+	require.NoError(t, sqlDB.Close())
+	return db
+}
 
+// TestHealthzReadyDBDown DB 不可达时就绪探针必须返回 503 且声明 db=down，
+// 而不是伪装成健康的 200——否则负载均衡会把流量继续打给一个查不了库的实例。
+func TestHealthzReadyDBDown(t *testing.T) {
+	db := closedDB(t)
 	r := New(db)
-	code, body := newTestClient(r, t).do("GET", "/healthz", nil, "")
+	code, body := newTestClient(r, t).do("GET", "/healthz/ready", nil, "")
 	require.Equal(t, http.StatusServiceUnavailable, code)
 	require.Equal(t, "degraded", body["status"])
 	require.Equal(t, "down", body["db"])
+}
+
+// TestHealthzLiveIgnoresDB 存活探针绝不查 DB。
+//
+// 这是本次拆分的目的：DB 故障时进程本身是健康的，liveness 若也报错，
+// 编排会不停重启容器——而重启对「数据库连不上」毫无帮助，只会让服务反复
+// 起停、日志被冲掉、排障更难。K8s 官方文档明确要求 liveness 不检查外部依赖。
+func TestHealthzLiveIgnoresDB(t *testing.T) {
+	db := closedDB(t)
+	r := New(db)
+	code, body := newTestClient(r, t).do("GET", "/healthz/live", nil, "")
+	require.Equal(t, http.StatusOK, code, "DB 挂了 liveness 仍须 200")
+	require.Equal(t, "ok", body["status"])
+	require.Nil(t, body["db"], "liveness 不应报告任何依赖状态")
+}
+
+// TestHealthzTrailingSlashAndHead 探活端点必须对尾斜杠和 HEAD 都返回 200，
+// 不能 301。这是线上 ERR_TOO_MANY_REDIRECTS 的回归测试：
+// 只注册 /healthz 时，上游收到 /healthz/ 会 301 回 /healthz；若反代又把
+// /healthz 改写成 /healthz/（宝塔目标URL 末尾多一个 /），两边互相踢皮球，
+// 浏览器在 20 次后放弃。所有组合都必须是终态 200，不能有跳转。
+//
+// 子端点（/healthz/live、/healthz/ready）在 Nginx 侧天然免疫该循环——它们比
+// 反代前缀 /healthz/ 长，不是「父路径」，不会触发 auto_redirect。这里一并断言，
+// 避免将来有人把它们改成只注册 GET 或只注册一个形态。
+func TestHealthzTrailingSlashAndHead(t *testing.T) {
+	db := newSeedDB(t)
+	r := New(db)
+	cli := newTestClient(r, t)
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/healthz"},
+		{"GET", "/healthz/"},
+		{"HEAD", "/healthz"},
+		{"HEAD", "/healthz/"},
+		{"GET", "/healthz/live"},
+		{"HEAD", "/healthz/live"},
+		{"GET", "/healthz/ready"},
+		{"HEAD", "/healthz/ready"},
+	} {
+		code, _ := cli.do(tc.method, tc.path, nil, "")
+		require.Equal(t, http.StatusOK, code,
+			"%s %s 必须直接返回 200；若为 301 说明该组合没注册，反代改写路径时会与 Gin 的 RedirectTrailingSlash 形成死循环", tc.method, tc.path)
+	}
 }
 
 // ===== 多租户第一期：数据隔离 + 两级后台 =====

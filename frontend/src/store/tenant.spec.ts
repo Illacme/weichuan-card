@@ -98,6 +98,32 @@ describe('useTenantStore 当前企业', () => {
     expect(s.companies.map((c) => c.id)).toEqual([1, 2])
   })
 
+  // AdminLayout 的 onMounted 里有两处 ensureLoaded（/api/admin/me 回来后一处、
+  // 紧随其后的兜底一处），两次落在同一帧。此时 loaded 还是 false，
+  // 只看 loaded 就会发出两个完全相同的请求——刷新一次后台白跑一次往返。
+  it('并发调用 ensureLoaded 只发一次请求（刷新后台不重复拉）', async () => {
+    const s = useTenantStore()
+    s.syncIdentity(true, 0)
+
+    await Promise.all([s.ensureLoaded(), s.ensureLoaded()])
+
+    expect(mocks.listCompanies).toHaveBeenCalledTimes(1)
+    expect(s.companies).toHaveLength(2)
+  })
+
+  it('拉取失败后记下 error，供选择器判断「是没拉到」而不是「真的没有」', async () => {
+    mocks.listCompanies.mockRejectedValueOnce(new Error('network'))
+    const s = useTenantStore()
+    s.syncIdentity(true, 0)
+    await s.ensureLoaded()
+
+    expect(s.error).toBe(true)
+    // 失败后允许重试：force=true 必须能绕过 inflight/loaded 的判断
+    await s.ensureLoaded(true)
+    expect(s.error).toBe(false)
+    expect(s.companies).toHaveLength(2)
+  })
+
   it('接口失败：保留已有候选，不把列表清空', async () => {
     const s = useTenantStore()
     s.syncIdentity(true, 0)

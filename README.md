@@ -236,7 +236,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 
 当前版本**已知边界**（需基建/流程配合，尚未在本仓库落地）：
 - 小程序码 / access_token 等内存缓存在多实例下不共享，水平扩展需引入 Redis。
-- **最小告警已落地**：`scripts/alert_check.sh`（healthz 本地探活 / 5xx / 备份新鲜度 / **外部拨测**（含证书临期），零依赖，crontab 每分钟运行，详见《部署与联调》「最小告警配置」）；待运维侧按需扩展的是完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）与 PITR（binlog 时间点恢复）；生产需 HTTPS 与反向代理。
+- **最小告警已落地**：`scripts/alert_check.sh`（healthz 就绪探活 `GET /healthz/ready` / 5xx / 备份新鲜度 / **外部拨测**（含证书临期），零依赖，crontab 每分钟运行，详见《部署与联调》「最小告警配置」）；健康检查已按**存活**（`/healthz/live`，只确认进程、不碰依赖）/ **就绪**（`/healthz/ready`，`SELECT 1` 探 DB）分离，避免 DB 抖动被误判为进程死亡而触发重启风暴，根路径 `/healthz` 只做索引页（恒 200、不判健康）；待运维侧按需扩展的是完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）与 PITR（binlog 时间点恢复）；生产需 HTTPS 与反向代理。
 - **数据库迁移自动补齐**：MySQL 部署在启动时按 `schema_migrations` 记账表应用未执行的迁移（幂等、只做增量、多副本用 `GET_LOCK` 串行化）；也可 `AUTO_MIGRATE=0` + `server migrate` 拆成流水线里的一步，详见 `docs/deploy-runbook.md` §4。
 - 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；其余管理端列表已服务端分页（见上）。
 

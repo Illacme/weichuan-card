@@ -20,7 +20,7 @@
 #
 # 配置（环境变量）：
 #   PREFLIGHT_STRICT       =1 时存在 WARN 也返回退出码 1（默认 0）
-#   PREFLIGHT_HEALTH_URL   服务探活地址，默认 http://127.0.0.1:8080/healthz
+#   PREFLIGHT_HEALTH_URL   服务探活地址，默认 http://127.0.0.1:8080/healthz/ready
 #   PUBLIC_BASE_URL        对外访问基址（https://域名）；用于第 10 节的外部可达性与
 #                          证书有效期检查。未设时回退小程序种子基址 / https 的 UPLOAD_BASE_URL
 #   CERT_MIN_DAYS          证书剩余有效期告警阈值（天），默认 14
@@ -296,7 +296,7 @@ fi
 
 # ── 8. 服务探活（可选：服务已运行时才判）──
 sec "8. 服务探活"
-url="${PREFLIGHT_HEALTH_URL:-http://127.0.0.1:8080/healthz}"
+url="${PREFLIGHT_HEALTH_URL:-http://127.0.0.1:8080/healthz/ready}"
 if command -v curl >/dev/null 2>&1; then
   body="$(curl -fsS -m 5 "$url" 2>/dev/null)" || body=""
   if [ -z "$body" ]; then
@@ -394,25 +394,25 @@ else
       if command -v curl >/dev/null 2>&1; then
         # 同时取 Content-Type：只看状态码会被 SPA 兜底骗过去（200 + index.html）。
         # 探针地址的响应必须是后端给的 JSON，「200 但内容是网页」等于没探。
-        meta="$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{content_type}' "$pub/healthz" 2>/dev/null)" || meta=""
+        meta="$(curl -sS -o /dev/null -m 10 -w '%{http_code} %{content_type}' "$pub/healthz/ready" 2>/dev/null)" || meta=""
         code="${meta%% *}"
         ctype="${meta#* }"
         case "$code" in
           200)
             case "$ctype" in
               application/json*)
-                pass "外部访问 $pub/healthz 返回 200（JSON，确认是后端应答）"
+                pass "外部访问 $pub/healthz/ready 返回 200（JSON，确认是后端应答）"
                 ;;
               text/html*|'')
-                fail "外部访问 $pub/healthz 返回 200 但内容是 HTML：反代把探针地址兜底成了单页应用首页，后端是否存活完全看不出来。alert_check 的 R1/R4、preflight 本项、以及 LB/k8s 的 HTTP 探针都会永远绿——最该报警的「后端挂了」恰恰不会报警。反代需为 /healthz 单独透传后端（见 frontend/nginx.conf）"
+                fail "外部访问 $pub/healthz/ready 返回 200 但内容是 HTML：反代把探针地址兜底成了单页应用首页，后端是否存活完全看不出来。alert_check 的 R1/R4、preflight 本项、以及 LB/k8s 的 HTTP 探针都会永远绿——最该报警的「后端挂了」恰恰不会报警。反代需为 /healthz 单独透传后端（见 frontend/nginx.conf）"
                 ;;
               *)
-                warn "外部访问 $pub/healthz 返回 200，但 Content-Type 是 ${ctype}：请确认这是后端应答而不是反代的兜底页"
+                warn "外部访问 $pub/healthz/ready 返回 200，但 Content-Type 是 ${ctype}：请确认这是后端应答而不是反代的兜底页"
                 ;;
             esac
             ;;
-          "")  fail "外部访问 $pub/healthz 无响应（域名未解析 / 防火墙未放行 / 反代未起）：小程序与后台的全部请求都会挂" ;;
-          *)   fail "外部访问 $pub/healthz 返回 HTTP ${code}：网关或后端有问题（排除：反代 upstream、后端 /healthz、域名解析）" ;;
+          "")  fail "外部访问 $pub/healthz/ready 无响应（域名未解析 / 防火墙未放行 / 反代未起）：小程序与后台的全部请求都会挂" ;;
+          *)   fail "外部访问 $pub/healthz/ready 返回 HTTP ${code}：网关或后端有问题（排除：反代 upstream、后端 /healthz/ready、域名解析）" ;;
         esac
       else
         skip "无 curl，跳过外部可达性检查"

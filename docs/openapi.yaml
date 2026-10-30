@@ -71,13 +71,85 @@ paths:
   /healthz:
     get:
       tags: [系统]
-      summary: 健康检查（就绪探针：探活数据库）
+      summary: 健康检查索引页（恒 200，不做健康判断）
       description: |
-        先 `SELECT 1` 探活数据库：正常 `200 {status:"ok",db:"up"}`；
+        **纯索引页**，列出可用的探针端点，**不做任何健康判断、恒返回 200**。
+
+        ⚠️ 这不是探针，**不要拿它做告警**——数据库挂了它照样 200，监控会静默失效。
+        存活看 `/healthz/live`，就绪看 `/healthz/ready`，告警与编排一律打这两个。
+
+        保留根路径不是为了向后兼容（产品尚未商用发布，无历史包袱），是两个实际用途：
+
+        1. **发现**：人手 `curl` 或运维排障时先打根路径，一眼看到该用哪个子端点，
+           不必翻文档；
+        2. **兜底**：Nginx 对「以 `/` 结尾的 location」有内建 `auto_redirect`，会把
+           `/healthz` 301 到 `/healthz/`。这里必须有个返回 200 的处理器接住，否则
+           后端按 `RedirectTrailingSlash` 再 301 回 `/healthz`，两边互踢成死循环
+           （线上真实报过 `ERR_TOO_MANY_REDIRECTS`）。
+
+        带尾斜杠的 `/healthz/` 注册同一处理器，原因即上述第 2 点。
+      responses:
+        "200":
+          description: 索引页（无论数据库是否可达）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  configured:
+                    type: boolean
+                    description: 是否已完成安装配置；安装模式下为 false，但状态码仍是 200
+                    example: true
+                  endpoints:
+                    type: object
+                    description: 可用探针端点
+                    properties:
+                      live:
+                        type: string
+                        example: /healthz/live
+                      ready:
+                        type: string
+                        example: /healthz/ready
+
+  /healthz/live:
+    get:
+      tags: [系统]
+      summary: 存活探针（只确认进程活着，不查任何依赖）
+      description: |
+        进程能响应 HTTP 即返回 200，**不查数据库、不查磁盘、不查任何外部依赖**。
+
+        与 `/healthz/ready` 的分工：liveness 失败意味着「进程该被重启」，
+        readiness 失败只意味着「暂时别给它流量」。DB 故障时重启进程毫无帮助，
+        只会形成重启风暴——K8s 官方文档明确要求 liveness 不检查外部依赖。
+
+        因此本端点也**不能**用于告警：DB 断开时它照样 200。
+      responses:
+        "200":
+          description: 进程存活
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /healthz/ready:
+    get:
+      tags: [系统]
+      summary: 就绪探针（探活数据库）
+      description: |
+        `SELECT 1` 探活数据库：正常 `200 {status:"ok",db:"up"}`；
         DB 不可达 `503 {status:"degraded",db:"down",error:"..."}`；
         首次部署尚未配置（`DB_DSN` 未提供）时 `503 {status:"unconfigured",db:"unknown"}`。
-        docker-compose 的 backend healthcheck 与最小告警 R1 依赖本端点，
-        因此 DB 故障时能识别"进程在但不可用"，而非误判为健康。
+
+        **监控与编排应使用本端点**：docker-compose 的 backend healthcheck、
+        `scripts/alert_check.sh` 的 R1/R4、`scripts/preflight.sh` 的外部可达性都探它。
+        用 `/healthz/live` 做告警会漏掉「进程在但 DB 连不上」这一整类故障。
         注意「未配置」也是一种不可用，必须如实 503——容器编排另按
         `/api/setup/status` 的 `configured=false` 把安装阶段视为"进程健康"。
       responses:
@@ -95,7 +167,7 @@ paths:
                     type: string
                     example: up
         "503":
-          description: 未就绪（DB 不可达）
+          description: 未就绪（DB 不可达 / 尚未完成安装）
           content:
             application/json:
               schema:
@@ -649,7 +721,7 @@ paths:
                   type: string
       responses:
         "200":
-          description: code=0 成功；code=1 账号不存在 / 密码错误；code=2 账号已停用
+          description: code=0 成功；code=1 手机号或密码错误（账号不存在与密码错误**刻意不区分**，防账号枚举）；code=2 账号已停用 / 所属企业已停用（仅在密码正确后返回）
           content:
             application/json:
               schema:
@@ -687,7 +759,7 @@ paths:
                   type: string
       responses:
         "200":
-          description: code=0 成功；code=1 账号不存在 / 密码错误
+          description: code=0 成功；code=1 用户名或密码错误（账号不存在与密码错误**刻意不区分**，防账号枚举）；code=2 所属企业已停用（仅在密码正确后返回）
           headers:
             Set-Cookie:
               description: access_token / refresh_token（HttpOnly）

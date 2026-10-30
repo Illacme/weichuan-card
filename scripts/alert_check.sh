@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
 # 最小告警检查（零第三方依赖，四条规则，配 crontab 每分钟运行）：
-#   R1 healthz    ：本地探活 GET /healthz，非 2xx / 超时即告警
+#   R1 healthz    ：本地探活 GET /healthz/ready，非 2xx / 超时即告警。
+#                   用 ready 而不是 live：R1 要抓的是「进程在但不可用」（DB 断开、
+#                   实例宕机），live 只确认进程活着，查不出这类故障。
+#                   也别用裸 /healthz：它只是索引页，恒 200 不判健康，DB 挂了照样
+#                   绿，用它告警等于没告警；而且反代若把 location 写成带尾斜杠的
+#                   形态，裸路径还会被 301 到 /healthz/，多一跳并可能在配置变化时
+#                   踩进 301 循环。
 #   R2 5xx        ：访问日志新增 [ACCESS-5XX] 行即告警（附请求 ID 便于排查）
 #   R3 备份新鲜度 ：backups/ 最新备份文件年龄超阈值即告警
 #                   （认 *.sql.gz 与 *.db.gz 两种产物；backup.sh 失败时不落新文件，
@@ -16,13 +22,13 @@
 # 用法：
 #   scripts/alert_check.sh
 #   ALERT_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx \
-#     HEALTH_URL=http://127.0.0.1:8080/healthz \
-#     EXTERNAL_URL=https://card.example.com/healthz \
+#     HEALTH_URL=http://127.0.0.1:8080/healthz/ready \
+#     EXTERNAL_URL=https://card.example.com/healthz/ready \
 #     LOG_FILE=/var/log/weichuan/access.log \
 #     BACKUP_DIR=./backups scripts/alert_check.sh
 #
 # 配置（环境变量，均有默认值）：
-#   HEALTH_URL       默认 http://127.0.0.1:8080/healthz
+#   HEALTH_URL       默认 http://127.0.0.1:8080/healthz/ready（就绪探针，查 DB）
 #   LOG_FILE         后端访问日志文件（AccessLog 的 stderr 收集处），
 #                    默认 /var/log/weichuan/access.log
 #   BACKUP_DIR       备份目录（与 backup.sh 的 BACKUP_DIR 一致），默认 ./backups
@@ -31,7 +37,7 @@
 #   ALERT_WEBHOOK    机器人 webhook（企业微信 / 钉钉，msgtype=text 同格式；
 #                    飞书格式不同需自行调整 -d 负载）；未配置时告警打到 stderr
 #   ALERT_COOLDOWN   同一规则两次告警的最小间隔（秒），默认 1800（防轰炸）
-#   EXTERNAL_URL     外部拨测地址（对外 https 基址 + /healthz），默认空=跳过 R4
+#   EXTERNAL_URL     外部拨测地址（对外 https 基址 + /healthz/ready），默认空=跳过 R4
 #   EXTERNAL_MAX_MS  外部拨测耗时阈值（毫秒），默认 2000
 #   CERT_MIN_DAYS    证书剩余有效期告警阈值（天），默认 14
 #
@@ -41,7 +47,7 @@
 # ─────────────────────────────────────────────────────────────
 set -uo pipefail
 
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/healthz}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/healthz/ready}"
 LOG_FILE="${LOG_FILE:-/var/log/weichuan/access.log}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 BACKUP_MAX_HOURS="${BACKUP_MAX_HOURS:-26}"
@@ -84,12 +90,14 @@ send_alert() {
   fi
 }
 
-# ── R1: healthz 探活 ──
+# ── R1: healthz 就绪探活 ──
+# 打的是 /healthz/ready（查 DB），不是 /healthz/live——后者在 DB 断开时仍返回 200，
+# 用它做告警会漏掉「进程在但不可用」这一整类故障，而那正是 R1 存在的意义。
 check_healthz() {
   if curl -fsS -m 10 -o /dev/null "$HEALTH_URL" 2>/dev/null; then
     return 0
   fi
-  send_alert healthz "GET $HEALTH_URL 探活失败（进程退出 / 端口不通 / 反代故障）"
+  send_alert healthz "GET $HEALTH_URL 就绪探活失败（进程退出 / DB 不可达 / 端口不通 / 反代故障）"
 }
 
 # ── R2: 访问日志新增 [ACCESS-5XX] 行 ──
@@ -152,7 +160,7 @@ check_backup() {
 # 未配 EXTERNAL_URL 时跳过（很多部署用 UptimeRobot 之类的外部服务代劳，不重复造）。
 check_external() {
   if [ -z "$EXTERNAL_URL" ]; then
-    echo "[alert_check] 未设置 EXTERNAL_URL，跳过 R4（建议填对外 https 地址 + /healthz）" >&2
+    echo "[alert_check] 未设置 EXTERNAL_URL，跳过 R4（建议填对外 https 地址 + /healthz/ready）" >&2
     return 0
   fi
   local out code ms

@@ -211,7 +211,7 @@ go run ./cmd/server
 
 ## 首次部署：不配环境变量也能装（安装向导）
 `DB_DSN` 完全没提供时，`cmd/server` 不会 Fatal，而是进入「未配置模式」：
-不加载业务，只提供 `/setup` 安装页（`/healthz` 如实返回 503）。打开页面填数据库与管理员，
+不加载业务，只提供 `/setup` 安装页（`/healthz/ready` 如实返回 503，`/healthz` 索引页仍 200 但 `configured=false`）。打开页面填数据库与管理员，
 保存即完成「建库 → 建表 → seed 系统设置与初始超管 → 写配置文件 → 自重启」。
 配置写进 `CONFIG_FILE`（默认 `./data/runtime.env`，权限 0600、原子写），
 优先级仍是 **环境变量 > 配置文件 > 内置缺省**，所以老部署给过环境变量的行为完全不变。
@@ -660,7 +660,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   **多副本**：进程内的桶是每副本一份，实际阈值会翻倍，故 `RegisterAuth` 通过 `WithCounter(dbRateCounter)` 把计数落到 `rate_limit_hits` 表——同一 (key, 窗口) 在所有副本上是同一行，阈值与副本数无关。存储故障时中间件自动降级到进程内计数（不会把登录接口打挂，也不会让限流消失）。`backend/internal/middleware/ratelimit_test.go` 覆盖计数、隔离、阈值热更新、非法阈值回落、过期桶回收、窗口内桶不被误删、共享计数生效与降级；`internal/handler/ratelimit_shared_test.go` 用两个 engine 共用一个库验证「总阈值仍是 10 次」。
 - **启动安全门槛（拒绝启动）**：`config.InsecureGates()` 命中「`JWT_KEY` 仍是缺省值 `change-me` 或长度 < 16」「`ADMIN_PASS` 仍是内置缺省口令」时，`cmd/server/main.go` 打印 `[SECURITY][FATAL]` 并 `log.Fatal` **拒绝启动**——这两个默认值连同演示账号写进了公开文档，属已知凭据，带它们上线等于把后台开放给所有人。自愈方式是改一个环境变量重启（不会像 `db_dsn` / `cookie_*` 那样把「改回来的入口」一起弄丢）；本地联调加 `ALLOW_INSECURE=1` 放行。测试见 `internal/config/config_test.go`。
 - **启动自检告警（只提示不拦）**：`config.InsecureWarnings()` 对「超管口令长度不足 8 位」打印 `[SECURITY]` 告警。与上面的门槛分工：口令是给人记的，强弱交给运维判断，不卡启动。
-- **健康检查（就绪探针）**：`GET /healthz` 先 `SELECT 1` 探活数据库——正常 `200 {status:"ok",db:"up"}`，DB 不可达 `503 {status:"degraded",db:"down",error:"..."}`；`docker-compose.yml` 已据此为 backend 配置 `healthcheck`（安装模式下 503 会二次确认 `/api/setup/status` 为 `configured=false`，按健康放行，避免装到一半被反复重启）。详见《运维与部署》。
+- **健康检查（存活 / 就绪分离）**：`GET /healthz/live` 只确认进程活着（不查任何依赖，DB 挂了仍 200）；`GET /healthz/ready` 先 `SELECT 1` 探活数据库——正常 `200 {status:"ok",db:"up"}`，DB 不可达 `503 {status:"degraded",db:"down",error:"..."}`；`GET /healthz`（含尾斜杠形态）是**索引页**——列出子端点、**恒 200**、不做任何健康判断。**监控与编排用 ready**：live 在 DB 断开时仍 200，用它告警会漏掉「进程在但不可用」；根路径索引页同理，更不能用于告警。`docker-compose.yml` 已据此为 backend 配置 `healthcheck`（探 `/healthz/ready`，安装模式下 503 会二次确认 `/api/setup/status` 为 `configured=false`，按健康放行，避免装到一半被反复重启）。详见《运维与部署》。
 - **软删除**：`ProjectCase` / `BizService` / `AchievementCategory` 已接入 GORM `DeletedAt`，删除改为置空 `deleted_at`，列表接口默认不返回已删除记录；MySQL 侧迁移见 `migrations/0003_soft_delete.sql`。
 - **JWT 双令牌 + 即时吊销**：`auth.IssueTokens` 同时签发 access（15 分钟）与 refresh（30 天）；`POST /api/refresh` 用 refresh 换发新 access。`Employee` / `Admin` 含 `token_version`（安全戳，迁移 `migrations/0004_token_version.sql`），改密 / 管理员重置密码 / 禁用启用时自增，`middleware.AuthMiddleware` 校验令牌内 `vid` 与当前版本一致，**旧令牌立即失效**（账号级吊销，无需黑名单表）。覆盖测试见 `TestTokenRefresh` 与「超管改密与令牌吊销」。
 - **PC 管理后台 httpOnly Cookie 鉴权**：`/api/admin/login` 将 access/refresh 写入 `HttpOnly; SameSite=Lax` 的 Cookie（`access_token` / `refresh_token`，见 `handler/cookie.go`），响应体不再回传令牌；`AuthMiddleware` 支持「Authorization 头 或 `access_token` Cookie」两种来源（小程序走 Bearer，PC 走 Cookie）；`POST /api/logout` 清除 Cookie。`COOKIE_SECURE`（生产 HTTPS 置 true）/ `COOKIE_DOMAIN`（跨子域才设）可配。覆盖测试见 `TestCookieAuth`。
@@ -802,14 +802,24 @@ CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
 
 > 本节把 `scripts/backup.sh` / `scripts/alert_check.sh` / 日志落盘 / `docker-compose.yml` 的 `healthcheck` 串成可操作的运维手册。安全加固相关的能力（上传嗅探、限流、JWT 双令牌、会话黑名单、可观测三件套等）见《安全加固》。
 
-### 1. 健康检查（就绪探针）
-`GET /healthz` 现为**就绪探针**：先 `SELECT 1` 探活数据库。
-- DB 正常：`200 {status:"ok", db:"up"}`
-- DB 不可达：`503 {status:"degraded", db:"down", error:"..."}`
+### 1. 健康检查（存活 / 就绪分离）
+后端提供三个端点，路径集合与安装模式（`internal/setup`）完全一致：
 
-> **为什么不是无条件 200**：旧实现只做存活探测，DB 故障时仍返回 200，导致 `docker-compose.yml` 的 backend `healthcheck`（依赖本端点）与 `scripts/alert_check.sh` 的 R1 探活**误判为可用**——实际所有 `/api` 已 5xx。改为 DB 不可达返回 503 后，backend 的 `healthcheck`（安装模式例外，见下）与探活告警才能识别"进程在但不可用"。
+| 端点 | 语义 | DB 可达 | DB 不可达 |
+|---|---|---|---|
+| `GET /healthz/live` | 存活：进程能响应即 200，不碰任何依赖 | `200 {status:"ok"}` | `200 {status:"ok"}`（照旧） |
+| `GET /healthz/ready` | 就绪：`SELECT 1` 探 DB | `200 {status:"ok",db:"up"}` | `503 {status:"degraded",db:"down",error:"..."}` |
+| `GET /healthz[/]` | 索引页：列出上面两个端点，**恒 200**，不做健康判断 | `200 {status:"ok",configured:true,endpoints:{...}}` | `200`（照旧，不查 DB） |
 
-`docker-compose.yml` 已为 backend 配置 `healthcheck`（每 15s 探 `/healthz`，连续 5 次失败标记不健康；安装模式下 `/healthz` 如实返回 503，此时会再看一眼 `/api/setup/status`，`configured=false` 按健康放行——否则首次部署装到一半就被反复重启）。frontend 只 `depends_on: backend`（**不等 healthy**：安装模式下 backend 的 `/healthz` 就是 503，而安装页正是由本前端提供的，等 healthy 会永远等不到）；backend 也**不依赖** mysql 的 healthy（连不连库由安装向导在「装」的那一步决定，硬绑会让纯 SQLite 部署永远起不来）。
+> **为什么要拆**：此前只有一个 `/healthz`，既当存活探针又查 DB。若被 K8s `livenessProbe` 使用，DB 抖动一次就判定进程死亡 → 重启 → 新进程起来 DB 仍不可用 → 再判死，形成重启风暴。K8s 官方文档明确要求 liveness 不检查外部依赖。拆开后 **liveness 只看进程，readiness 才看 DB**：DB 故障时进程不重启，只是被负载均衡摘出流量，等 DB 恢复自动放回。
+>
+> **监控与编排一律用 `ready`，不要用 `live`**：`live` 在 DB 断开时仍返回 200，用它告警会漏掉「进程在但不可用」这一整类故障——而那正是探活存在的意义。
+>
+> **根路径 `/healthz` 不是探针，别拿它告警**：它只列端点、不查任何东西，DB 挂了照样 200。`TestHealthzRootIgnoresDB` 把这条约定钉死了——将来有人「顺手」给索引页加一句 `SELECT 1`，测试立刻红。
+
+> **为什么根路径同时注册 `/healthz` 和 `/healthz/`**：Nginx 把「以 `/` 结尾的 location」当目录建模，请求 `/healthz` 会被内建 `auto_redirect` 301 到 `/healthz/`；若后端没注册 `/healthz/`，它又按 `RedirectTrailingSlash` 301 回 `/healthz`，两边互踢成死循环（线上真实报过 `ERR_TOO_MANY_REDIRECTS`）。两个都注册后是终态 200，循环断开。子端点（`/live`、`/ready`）的路径比反代前缀 `/healthz/` 长，不是「父路径」，天然不触发该行为——这也是推荐监控改用子端点的原因。
+
+`docker-compose.yml` 已为 backend 配置 `healthcheck`（每 15s 探 `/healthz/ready`，连续 5 次失败标记不健康；安装模式下 ready 如实返回 503，此时会再看一眼 `/api/setup/status`，`configured=false` 按健康放行——否则首次部署装到一半就被反复重启）。frontend 只 `depends_on: backend`（**不等 healthy**：安装模式下 backend 的 ready 就是 503，而安装页正是由本前端提供的，等 healthy 会永远等不到）；backend 也**不依赖** mysql 的 healthy（连不连库由安装向导在「装」的那一步决定，硬绑会让纯 SQLite 部署永远起不来）。
 
 ### 2. 访问日志落盘（告警 R2 的前置条件，极易踩坑）
 `middleware.AccessLog` 使用 Go 标准 `log` 包，输出到 **stderr**（每行含方法/路径/状态/耗时/IP；5xx 以 `[ACCESS-5XX]` 前缀标出）。`scripts/alert_check.sh` 的 **R2 规则读取日志文件**（`LOG_FILE`，默认 `/var/log/weichuan/access.log`）扫描新增 `[ACCESS-5XX]` 行。
@@ -842,15 +852,15 @@ CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
 
 ### 4. 最小告警（零依赖）
 `scripts/alert_check.sh` 四条规则，配 crontab **每分钟**运行：
-- **R1 healthz**：`GET /healthz` 非 2xx/超时即告警（依赖第 1 节的真实探针，DB 宕机也能捕获）
+- **R1 healthz**：`GET /healthz/ready` 非 2xx/超时即告警（依赖第 1 节的就绪探针，DB 宕机也能捕获）
 - **R2 5xx**：扫描日志文件新增 `[ACCESS-5XX]`（依赖第 2 节的日志落盘）
 - **R3 备份新鲜度**：`backups/` 最新备份超 `BACKUP_MAX_HOURS`(默认 26h) 即告警（backup.sh 失败时无新文件，本规则兜底）
-- **R4 外部拨测**：从对外地址（`EXTERNAL_URL`）访问 `/healthz`——R1 是本机视角，看不出
+- **R4 外部拨测**：从对外地址（`EXTERNAL_URL`）访问 `/healthz/ready`——R1 是本机视角，看不出
   域名没解析 / 443 未放行 / 反代 upstream 挂了 / 证书过期这类「本机全绿、用户全挂」的故障。
   同时校验响应耗时（`EXTERNAL_MAX_MS`，默认 2000ms）与证书剩余有效期（`CERT_MIN_DAYS`，默认 14 天）
 ```bash
 # 每分钟检查（crontab）
-* * * * * cd /path/to/repo && EXTERNAL_URL=https://你的域名/healthz scripts/alert_check.sh
+* * * * * cd /path/to/repo && EXTERNAL_URL=https://你的域名/healthz/ready scripts/alert_check.sh
 ```
 配置（环境变量，均有默认值）：`HEALTH_URL` / `LOG_FILE` / `BACKUP_DIR` / `BACKUP_MAX_HOURS` / `STATE_DIR` / `ALERT_WEBHOOK`(企业微信/钉钉机器人，未配置则打到 stderr) / `ALERT_COOLDOWN`(默认 1800s 防轰炸) / `EXTERNAL_URL`(默认空=R4 跳过) / `EXTERNAL_MAX_MS` / `CERT_MIN_DAYS`。本脚本不替代 Prometheus/Alertmanager，是"无监控基建也能跑"的最小闭环；R4 仍是**单点**视角，区域性故障要靠多地拨测服务。
 

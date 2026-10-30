@@ -90,10 +90,20 @@
         -->
         <div v-if="needPickCompany" class="pick-empty">
           <el-icon class="pick-icon"><OfficeBuilding /></el-icon>
-          <p class="pick-title">{{ noCompany ? '还没有创建任何企业' : '请先选择要管理的企业' }}</p>
-          <!-- 一家企业都没有时，「选择企业」弹窗里是空列表——点开等于走进死路。
-               这时唯一的出路是先去创建企业，文案与按钮都换成那一件事。 -->
-          <p v-if="noCompany" class="pick-desc">
+          <p class="pick-title">
+            {{ loadFailed ? '企业列表加载失败' : noCompany ? '还没有创建任何企业' : '请先选择要管理的企业' }}
+          </p>
+          <!-- 三档互斥，各自的出路不同：
+               失败 → 重试（「有没有企业」还不知道，不能下结论）；
+               确实没有 → 去建企业（选择器里是空列表，点开等于走进死路）；
+               有企业没选 → 打开选择器。 -->
+          <p v-if="loadFailed" class="pick-desc">
+            没能取到企业列表（网络或服务异常）。这不代表系统里没有企业，稍后重试即可；
+            也可以直接到
+            <b>企业管理</b>
+            查看。
+          </p>
+          <p v-else-if="noCompany" class="pick-desc">
             系统里还没有企业，所以这里没有可选的对象。先到
             <b>企业管理</b>
             创建一家企业（可同时给企业管理员开账号），再回来配置内容与小程序。
@@ -104,8 +114,8 @@
             <b>右上角选择企业</b>
             ，再查看或编辑。
           </p>
-          <el-button type="primary" @click="noCompany ? router.push('/companies') : (pickerOpen = true)">
-            {{ noCompany ? '去创建企业' : '选择企业' }}
+          <el-button type="primary" @click="onPickPrimary">
+            {{ loadFailed ? '重试' : noCompany ? '去创建企业' : '选择企业' }}
           </el-button>
         </div>
         <router-view v-else v-slot="{ Component }">
@@ -208,9 +218,41 @@ const needPickCompany = computed(
 
 // 一家企业都没有（新装且没勾「装载演示数据」的典型状态）。与 needPick 分开：
 // needPick 是「有多家可选但还没选」，这里是「根本没得选」，处理方式完全不同。
+//
+// ⚠️ 必须同时要求 loaded && !loading && !error：这是「确定的事实」才能下的结论。
+// 之前只写了 `!loading && companies.length === 0`，于是刷新页面时第一帧
+// （请求还没发出，loading 还是 false、companies 还是空的）就被判定成
+// 「一家企业都没有」，先闪一下「还没有创建任何企业」，等请求回来才改口成
+// 「请先选择要管理的企业」——用户看到的就是这个前后矛盾。
+// 空数组既可能是「确实没有」，也可能是「还没查」，二者必须靠 loaded 区分。
 const noCompany = computed(
-  () => auth.isPlatform && !tenant.loading && tenant.companies.length === 0
+  () =>
+    auth.isPlatform &&
+    tenant.loaded &&
+    !tenant.loading &&
+    !tenant.error &&
+    tenant.companies.length === 0
 )
+
+// 拉取失败且一条候选都没有：这时「有没有企业」是未知的，既不能说「还没有创建」，
+// 也不该把人送进一个空的选择器。单独一档，给「重试」。
+// 注意必须带 companies.length === 0：失败时 store 会保留上一次的候选，
+// 手里有可用列表就不该把整个页面变成错误态。
+const loadFailed = computed(
+  () => auth.isPlatform && tenant.error && tenant.companies.length === 0
+)
+
+function onPickPrimary() {
+  if (loadFailed.value) {
+    tenant.ensureLoaded(true).catch(() => {})
+    return
+  }
+  if (noCompany.value) {
+    router.push('/companies')
+    return
+  }
+  pickerOpen.value = true
+}
 
 function onPicked() {
   pickerOpen.value = false

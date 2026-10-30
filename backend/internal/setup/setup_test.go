@@ -255,8 +255,9 @@ func TestStatusEndpointJSONShape(t *testing.T) {
 	}
 }
 
-// 引导模式：根路径跳到 /setup；/healthz 必须 503（进程在但业务不可用，
-// 不能报 200 让编排误判为健康）
+// 引导模式：根路径跳到 /setup；/healthz 是纯索引页恒 200（标注 configured=false），
+// 真正表达「进程在但业务不可用」的是 /healthz/ready —— 它必须 503，否则编排的
+// depends_on/service_healthy 与外部探活都会误判为「装完了、能接流量」。
 func TestSetupModeRoutes(t *testing.T) {
 	noConfigFile(t)
 	t.Setenv("DB_DSN", "")
@@ -277,10 +278,32 @@ func TestSetupModeRoutes(t *testing.T) {
 		t.Fatal("安装页应保留手动配置入口（老 .env 用户的退路）")
 	}
 
+	// 索引页：状态码恒 200，但必须如实标注「还没配置」，否则人手 curl 会以为装好了。
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("索引页恒 200（不做健康判断），实际 %d", w.Code)
+	}
+	var idx map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &idx); err != nil {
+		t.Fatalf("/healthz 应返回 JSON，实际 %q", w.Body.String())
+	}
+	if idx["configured"] != false {
+		t.Fatalf("未配置时 /healthz 应标注 configured=false，实际 %v", idx["configured"])
+	}
+
+	// 就绪探针：配置都没有，业务不可用，必须如实 503。
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz/ready", nil))
 	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("未配置时 /healthz 应 503，实际 %d", w.Code)
+		t.Fatalf("未配置时 /healthz/ready 应 503，实际 %d", w.Code)
+	}
+
+	// 存活探针：进程确实活着，安装阶段报错会让编排反复重启、打断安装。
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz/live", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("未配置时 /healthz/live 应 200，实际 %d", w.Code)
 	}
 }
 

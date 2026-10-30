@@ -20,7 +20,7 @@
 | 小程序种子基址 `DEFAULT_BASE_URL` | 小程序源码常量（`miniprogram/utils/config.ts`，**默认为空**） | 是线上 https 域名；**不能**留空，也**不能**是 `127.0.0.1` / `localhost` / **私有网段**（192.168./10./172.16-31.） | ✅ 上述四类（空值 / 回环 / 私有网段 / 明文 http）都判 FAIL（本机联调可 `PREFLIGHT_ALLOW_PRIVATE=1` 放行） |
 | 小程序品牌名 | `app.json` 全局标题 = 产品名；企业名运行时按租户设置 | 不得出现任何**具体客户名**（一套代码多租户，写死客户名等于给别人看别家公司名） | ✅ `miniprogram/tests/brand.spec.ts` 扫全目录守门 |
 | `COOKIE_SECURE` | 环境变量 / `runtime.env`（只读项，只能改环境） | 生产 HTTPS 下为 `true` | ✅ |
-| **探针地址必须直通后端**（`/healthz`） | 反代配置：给 `/healthz` 单独一条透传规则 | `curl 域名/healthz` 返回 **JSON**（不是 HTML）。返回 HTML 说明被单页应用的兜底规则接走了，此时后端已死也照样 200 | ✅ 第 8 / 10 节都验 `Content-Type`，返回 HTML 判 FAIL |
+| **探针地址必须直通后端**（`/healthz`） | 反代配置：给 `/healthz` 单独一条透传规则（`location ^~ /healthz`，**结尾不带斜杠**） | `curl 域名/healthz/ready` 返回 **JSON**（不是 HTML）。返回 HTML 说明被单页应用的兜底规则接走了，此时后端已死也照样 200 | ✅ 第 8 / 10 节都验 `Content-Type`，返回 HTML 判 FAIL |
 | **可信反代** `TRUSTED_PROXIES` | 环境变量（默认已是「回环 + 三类私有网段」） | 登录 / refresh / 小程序码的限流是按 `ClientIP()` 分桶的；若它取到了客户端自带的 `X-Forwarded-For`，**换个伪造头就换一个桶，限流等于不存在**（已实测可绕过）。反代不在私有网段（如公网 LB）时必须显式配 | ❌ 需人工确认；启动日志出现 `You trusted all proxies` 即配置有误 |
 | **小程序备案（工信部，2024 起强制）** | 微信公众平台 → 小程序管理 → 备案（与域名 ICP 备案相互独立） | 备案状态「已通过」且备案号已公示在小程序关于页；**只备域名、未备小程序时提审最后一步直接驳回、无法上线** | ❌ 纯流程项，无自动化检查；需人工确认备案号（见 runbook §0 前置条件） |
 

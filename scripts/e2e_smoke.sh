@@ -151,19 +151,19 @@ api POST /api/setup/install "{
   \"jwtKey\": \"\"
 }" > /dev/null
 expect_code 0 "安装完成"
-info "安装后服务会自重启，等待 /healthz 就绪"
+info "安装后服务会自重启，等待 /healthz/ready 就绪"
 for i in $(seq 1 60); do
-  code="$(curl -s --noproxy '*' -o "$WORK/health.json" -w '%{http_code}' "$BASE/healthz" || true)"
+  code="$(curl -s --noproxy '*' -o "$WORK/health.json" -w '%{http_code}' "$BASE/healthz/ready" || true)"
   [ "$code" = "200" ] && break
   sleep 1
 done
 if [ "${code:-}" != "200" ]; then
-  echo "  [FAIL] 安装后 /healthz 未就绪：" >&2
+  echo "  [FAIL] 安装后 /healthz/ready 未就绪：" >&2
   cat "$WORK/health.json" 2>/dev/null >&2
   tail -20 "$WORK/server.log" >&2 || true
   exit 1
 fi
-pass "自重启后 /healthz = 200（配置已写回 $WORK/runtime.env）"
+pass "自重启后 /healthz/ready = 200（配置已写回 $WORK/runtime.env）"
 
 # ── 3. 登录 ──
 step "3. 后台登录"

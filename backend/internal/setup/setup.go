@@ -210,16 +210,47 @@ func Register(r *gin.Engine) {
 		api.POST("/install", handleInstall)
 	}
 	RegisterStatus(r)
+	// 根路径：纯索引，恒 200。安装模式下额外标注 configured=false 与安装提示，
+	// 但不改状态码——索引页不做健康判断，让状态码承载健康语义会让
+	// 「打根路径看服务起没起来」这种用法产生误判。
+	healthzIndex := func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "ok",
+			"configured": false,
+			"hint":       "DB_DSN 未提供，服务处于初始配置模式；请访问 /setup 完成安装",
+			"endpoints":  gin.H{"live": "/healthz/live", "ready": "/healthz/ready"},
+		})
+	}
 	// 就绪探针：配置都没给，业务不可用，必须如实返回 503。
-	// 与主流程 /healthz 同口径——「进程在但不可用」不能报 200，
+	// 与主流程 /healthz/ready 同口径——「进程在但不可用」不能报 200，
 	// 否则编排的 depends_on/service_healthy 与外部探活都会误判。
-	r.GET("/healthz", func(c *gin.Context) {
+	healthzReady := func(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "unconfigured",
 			"db":     "unknown",
 			"hint":   "DB_DSN 未提供，服务处于初始配置模式；请访问 /setup 完成安装",
 		})
-	})
+	}
+	// 存活探针：进程确实活着，与「有没有配置好」无关。
+	// 安装阶段若连它都报错，编排会重启容器、把安装页反复打断。
+	healthzLive := func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+	// 路径集合必须与主流程 handler.New 完全一致（四个路径 × GET/HEAD）：
+	// 探活地址是部署时写死的，不能因为「装没装完」而变成 404——那会让
+	// docker-compose healthcheck 的 fallback 分支以外的地方全部误判。
+	for _, rt := range []struct {
+		path string
+		h    gin.HandlerFunc
+	}{
+		{"/healthz", healthzIndex},
+		{"/healthz/", healthzIndex},
+		{"/healthz/live", healthzLive},
+		{"/healthz/ready", healthzReady},
+	} {
+		r.GET(rt.path, rt.h)
+		r.HEAD(rt.path, rt.h)
+	}
 }
 
 // RegisterStatus 只挂状态查询接口。正常模式也会挂它：前端据此判断是否显示引导，

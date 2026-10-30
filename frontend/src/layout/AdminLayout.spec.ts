@@ -42,6 +42,7 @@ const tenant = {
   companies: [] as any[],
   loading: false,
   loaded: false,
+  error: false,
   syncIdentity: vi.fn(),
   ensureLoaded: vi.fn(async () => {}),
   setCurrent: vi.fn(),
@@ -238,6 +239,8 @@ describe('layout/AdminLayout', () => {
     tenant.currentName = ''
     tenant.needPick = false
     tenant.companies = []
+    tenant.loaded = false
+    tenant.error = false
     tenant.syncIdentity.mockClear()
     tenant.ensureLoaded.mockClear()
     tenant.setCurrent.mockClear()
@@ -458,6 +461,8 @@ describe('layout/AdminLayout 企业作用域', () => {
     tenant.currentName = ''
     tenant.needPick = false
     tenant.companies = []
+    tenant.loaded = false
+    tenant.error = false
     tenant.syncIdentity.mockClear()
     tenant.ensureLoaded.mockClear()
     tenant.setCurrent.mockClear()
@@ -494,21 +499,61 @@ describe('layout/AdminLayout 企业作用域', () => {
     expect(router.currentRoute.value.path).toBe('/companies')
   })
 
-  it('企业列表加载失败（拿不到企业）：空态改成「还没有创建任何企业」，按钮去建企业', async () => {
+  // 线上现象：刷新后台，先闪一下「还没有创建任何企业」，再变成「请先选择要管理的企业」。
+  // 成因是把「还没查」当成了「确实没有」——首帧 companies 是空数组、loading 还是 false，
+  // 旧判断 `!loading && length===0` 立刻成立。空数组必须靠 loaded 区分「没查」和「没有」。
+  it('首帧（还没开始拉列表）：显示「请先选择」，绝不谎称没有企业', async () => {
     auth.isPlatform = true
     tenant.needPick = true
     tenant.companies = []
+    tenant.loaded = false // 关键：列表还没查过
+    tenant.loading = false
+    const { w } = await mountLayout('/content/projects')
+
+    expect(w.text()).toContain('请先选择要管理的企业')
+    expect(w.text()).not.toContain('还没有创建任何企业')
+    // 按钮也必须是「选择企业」而不是「去创建企业」，否则会把人带到一个空的选择器
+    const btn = w.findAll('.el-button').find((b: any) => b.text() === '选择企业')
+    expect(btn).toBeDefined()
+  })
+
+  // 反向：确实查过、没失败、一条都没有 —— 这时才敢说「还没有创建任何企业」
+  it('确认一家企业都没有：显示「还没有创建任何企业」，按钮去建企业', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    tenant.companies = []
+    tenant.loaded = true
+    tenant.error = false
+    const { w } = await mountLayout('/content/projects')
+
+    expect(w.text()).toContain('还没有创建任何企业')
+    const btn = w.findAll('.el-button').find((b: any) => b.text() === '去创建企业')
+    expect(btn).toBeDefined()
+  })
+
+  // 拉取失败 ≠ 没有企业。旧实现把两者混为一谈，会把一家有十家客户企业的平台
+  // 管理员送去「创建企业」。现在单列一档：说清是没取到，给「重试」。
+  it('企业列表加载失败：空态说「加载失败」并给重试，不谎称没有企业', async () => {
+    auth.isPlatform = true
+    tenant.needPick = true
+    tenant.companies = []
+    tenant.loaded = true
+    tenant.error = true
     // 列表拉取失败时不自动跳转（不知道到底有没有企业），停在空态但给对出口
     tenant.ensureLoaded.mockRejectedValueOnce(new Error('网络异常'))
     const { w, router } = await mountLayout('/content/projects')
     await flushPromises()
 
-    expect(w.text()).toContain('还没有创建任何企业')
-    const btn = w.findAll('.el-button').find((b: any) => b.text() === '去创建企业')
+    expect(w.text()).toContain('企业列表加载失败')
+    expect(w.text()).not.toContain('还没有创建任何企业')
+    expect(router.currentRoute.value.path).toBe('/content/projects')
+
+    const btn = w.findAll('.el-button').find((b: any) => b.text() === '重试')
     expect(btn).toBeDefined()
     await btn!.trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/companies')
+    // 重试要真的重新发请求（force=true），否则按「已加载过」直接返回，按钮等于摆设
+    expect(tenant.ensureLoaded).toHaveBeenCalledWith(true)
   })
 
   it('平台超管未选企业：审核 / 统计 / 员工页同样挡住', async () => {

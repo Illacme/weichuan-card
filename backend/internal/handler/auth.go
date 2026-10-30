@@ -78,16 +78,9 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		var e model.Employee
 		// 手机号已静态加密：按盲索引等值查找（库里看不到明文，但仍能精确命中）。
 		if err := db.First(&e, "phone_bidx = ?", pii.BlindIndex(req.Phone)).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "账号不存在"})
-			return
-		}
-		if e.Status == "disabled" {
-			c.JSON(http.StatusOK, gin.H{"code": 2, "msg": "账号已停用"})
-			return
-		}
-		// 租户校验：企业停用后其员工一并不能登录
-		if !companyEnabled(db, e.CompanyID) {
-			c.JSON(http.StatusOK, gin.H{"code": 2, "msg": "所属企业已停用"})
+			// 账号不存在也烧掉一次等价的 bcrypt 时间，否则响应快慢本身就泄露了「这个手机号是不是员工」。
+			auth.CheckPasswordDummy(req.Password)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "手机号或密码错误"})
 			return
 		}
 		if !auth.CheckPassword(e.PasswordHash, req.Password) {
@@ -96,7 +89,19 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				Action: audit.ActionLoginFail, TargetType: "employee", TargetID: req.Phone,
 				Result: audit.ResultFail, ActorName: e.Name,
 			})
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码错误"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "手机号或密码错误"})
+			return
+		}
+		// 账号状态放在**密码校验通过之后**才披露。
+		// 放前面的话，「账号已停用」这条回复本身就等于确认了该手机号是员工账号，
+		// 上面统一文案就白做了。密码对了再告诉用户为什么登不上，体验与安全都不吃亏。
+		if e.Status == "disabled" {
+			c.JSON(http.StatusOK, gin.H{"code": 2, "msg": "账号已停用"})
+			return
+		}
+		// 租户校验：企业停用后其员工一并不能登录
+		if !companyEnabled(db, e.CompanyID) {
+			c.JSON(http.StatusOK, gin.H{"code": 2, "msg": "所属企业已停用"})
 			return
 		}
 		// 记录本次登录的微信身份，供后台核实；逐字段判空，空值不覆盖已有值
@@ -138,12 +143,15 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		var a model.Admin
 		if err := db.First(&a, "username = ?", req.Username).Error; err != nil {
+			// 同上：不存在的账号也要烧掉一次 bcrypt 时间，否则「快 = 不存在」就是枚举接口。
+			auth.CheckPasswordDummy(req.Password)
 			audit.Record(db, c, audit.Entry{
 				Action: audit.ActionLoginFail, TargetType: "admin", TargetID: req.Username,
 				Result: audit.ResultFail, ActorName: req.Username,
+				// 审计日志里保留真实原因（只有后台可见），对外只给统一文案
 				Detail: map[string]any{"reason": "账号不存在"},
 			})
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "账号不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误"})
 			return
 		}
 		if !auth.CheckPassword(a.PasswordHash, req.Password) {
@@ -152,7 +160,7 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				Result: audit.ResultFail, ActorName: req.Username,
 				Detail: map[string]any{"reason": "密码错误"},
 			})
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码错误"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误"})
 			return
 		}
 		// 租户校验：企业管理员所属企业停用后不能登录（平台超管 company_id=0 不受限）

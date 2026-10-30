@@ -20,6 +20,17 @@ const LS_KEY = 'admin_scope_company_id'
 /** 后端 maxPageSize = 100：一次尽量拉全，超出的靠关键字远程搜索。 */
 const PAGE_SIZE = 100
 
+/**
+ * 进行中的企业列表请求（非响应式，放模块级）。
+ *
+ * 为什么需要它：AdminLayout 的 onMounted 里有两处 ensureLoaded ——
+ * 一处是 /api/admin/me 回来后（身份确认是平台超管时），紧跟着一处是兜底预取。
+ * 前者没有 await，两次调用落在同一帧里，此时 loaded 还是 false，
+ * 只看 loaded 就会发出**两个完全相同**的请求。刷新一次后台白跑一次往返，
+ * 而且两个响应的到达顺序不确定，先到的先写 state，纯属浪费。
+ */
+let inflight: Promise<void> | null = null
+
 export const useTenantStore = defineStore('tenant', {
   state: () => ({
     /** 候选企业（平台超管才有值；关键字搜索时被替换为搜索结果） */
@@ -28,6 +39,13 @@ export const useTenantStore = defineStore('tenant', {
     total: 0,
     loading: false,
     loaded: false,
+    /**
+     * 上一次拉取是否失败。
+     * 单独一个字段是必要的：`loaded` 在 catch 里也会置 true（表示「拉过了，别再自动拉」），
+     * 光看它分不清「拉到了 0 家」和「拉失败了」——前者该显示「没有匹配的企业」，
+     * 后者该允许重试。选择器靠它决定展开时要不要重新请求。
+     */
+    error: false,
     keyword: '',
     /** 当前管理的企业 id；0 = 未选择 */
     currentId: Number(localStorage.getItem(LS_KEY) || 0) || 0,
@@ -66,6 +84,7 @@ export const useTenantStore = defineStore('tenant', {
         this.currentId = ownCompanyId
         this.companies = []
         this.loaded = false
+        this.error = false
       }
       setCompanyScope(this.currentId, isPlatform)
     },
@@ -77,14 +96,26 @@ export const useTenantStore = defineStore('tenant', {
     async ensureLoaded(force = false) {
       if (!this.isPlatform) return
       if (this.loaded && !force) return
-      await this.fetch(this.keyword)
+      // 复用进行中的请求而不是再发一个：调用方拿到的都是同一个 promise，
+      // 各自的 .then 仍然在数据到位后执行（AdminLayout 靠它判断要不要跳 /companies）。
+      if (inflight && !force) return inflight
+      const run = this.fetch(this.keyword)
+      inflight = run
+      void run.finally(() => {
+        if (inflight === run) inflight = null
+      })
+      return run
     },
 
     /** 关键字远程搜索（下拉里输入时调用）；空关键字回到全量列表 */
     async search(keyword: string) {
       if (!this.isPlatform) return
-      this.keyword = keyword.trim()
-      await this.fetch(this.keyword)
+      const kw = keyword.trim()
+      // 同一关键字的请求已在飞就不再发一次。展开下拉（remote-method('') 的副作用）
+      // 与 ensureLoaded 会在同一帧撞在一起，不去重就是一次多余请求 + 一次空态闪烁。
+      if (this.loading && kw === this.keyword) return
+      this.keyword = kw
+      await this.fetch(kw)
     },
 
     async fetch(keyword: string) {
@@ -94,14 +125,18 @@ export const useTenantStore = defineStore('tenant', {
         this.companies = paged.list
         this.total = paged.total
         this.loaded = true
+        this.error = false
         // 选中的企业已不存在（被删 / 换了数据库 / 关键字搜索把结果过滤掉了）：
         // 关键字搜索时不做校正，否则一输入就被清空。
         if (!keyword && this.currentId > 0 && !this.companies.some((c) => c.id === this.currentId)) {
           this.setCurrent(0)
         }
       } catch {
-        // 拉取失败不清空已有候选：顶栏选择器宁可显示旧列表，也不要突然变空让人以为企业没了
+        // 拉取失败不清空已有候选：顶栏选择器宁可显示旧列表，也不要突然变空让人以为企业没了。
+        // loaded 仍置 true（避免每次展开都自动重打接口），但要记下 error，
+        // 让选择器知道「这不是真的没有企业，是没拉到」，从而允许重试。
         this.loaded = true
+        this.error = true
       } finally {
         this.loading = false
       }
@@ -120,7 +155,10 @@ export const useTenantStore = defineStore('tenant', {
       this.companies = []
       this.total = 0
       this.loaded = false
+      this.error = false
       this.keyword = ''
+      // 登出后不该让下一个人复用上一个会话的请求结果
+      inflight = null
       this.isPlatform = false
       this.ownCompanyId = 0
       this.currentId = 0

@@ -33,7 +33,7 @@ DB_NAME="${DB_NAME:-weichuan}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 # SQLite 库在容器内的路径（安装向导写 DB_DSN 时的默认值，见 internal/setup）
 SQLITE_INNER_PATH="${SQLITE_INNER_PATH:-/app/data/weichuan.db}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/healthz}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/healthz/ready}"
 
 BACKUP_FILE=""
 ASSUME_YES=0

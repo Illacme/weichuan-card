@@ -168,12 +168,14 @@ services:
       # 生产环境若不需要直连调试，把这两行整个删掉更干净。
       - "127.0.0.1:8090:8080"
     healthcheck:
-      # 依赖 /healthz 端点（见 handler.New），但「未配置模式」要例外：
-      # 安装向导页期间 /healthz 如实返回 503（业务确实不可用），可进程是健康的——
-      # 若也判 unhealthy，编排会反复重启、装到一半被打断。故 503 时再确认一次
-      # /api/setup/status 是否 configured=false，是则按健康放行；
+      # 依赖 /healthz/ready（就绪探针，查 DB；见 handler.New）。
+      # 不用 /healthz/live：live 只确认进程活着，DB 断开时仍返回 200，
+      # 编排会以为容器健康而继续把流量打给它。容器健康检查要看的是「能不能干活」。
+      # 但「未配置模式」要例外：安装向导页期间 ready 如实返回 503（业务确实不可用），
+      # 可进程是健康的——若也判 unhealthy，编排会反复重启、装到一半被打断。
+      # 故 503 时再确认一次 /api/setup/status 是否 configured=false，是则按健康放行；
       # 已配置却 503（数据库连不上）仍然判失败，这也是监控要看的信号。
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz >/dev/null 2>&1 && exit 0; wget -q -O - http://127.0.0.1:8080/api/setup/status | grep -q 'configured\":false'"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1 && exit 0; wget -q -O - http://127.0.0.1:8080/api/setup/status | grep -q 'configured\":false'"]
       interval: 15s
       timeout: 5s
       retries: 5

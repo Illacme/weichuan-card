@@ -29,7 +29,15 @@
       <span v-if="c.status === 'disabled'" class="opt-tag">已停用</span>
     </el-option>
     <template #empty>
-      <div class="opt-empty">{{ tenant.loaded ? '没有匹配的企业' : '加载中…' }}</div>
+      <!--
+        必须先判 loading。Element Plus 在 loading 为真时会把选项容器 v-show 掉、
+        改渲染本插槽（select2.mjs 里 `v-show="options.size > 0 && !loading"` 与
+        `v-if="loading || filteredOptionsCount === 0"` 是成对的一对分支）。
+        只判 loaded 的话，请求在飞的那一小会儿会谎称「没有匹配的企业」。
+      -->
+      <div class="opt-empty">
+        {{ tenant.loading || !tenant.loaded ? '加载中…' : tenant.error ? '加载失败，重新打开可重试' : '没有匹配的企业' }}
+      </div>
     </template>
   </el-select>
 </template>
@@ -49,11 +57,27 @@ const placeholder = computed(() => props.placeholder || '选择要管理的企�
 
 // 远程搜索防抖：每敲一个字就打一次接口，企业一多就是自造压力。
 // 250ms 是「输入停顿」与「响应及时」的折中（与表格关键字筛选同一量级）。
+//
+// 但 remote-method 不只在输入时被调用——**展开下拉也会**：
+// Element Plus 里 `watch(() => expanded.value, v => v && handleQueryChange(inputValue))`
+// （useSelect.mjs），展开时拿输入框当前内容（通常是空串）再走一遍 remoteMethod。
+// 这跟用户输入无关，只是「打开」的副作用。此时全量候选一般已在手，再打一次接口
+// 纯属浪费，而且会闪：请求期间 el-select 把选项容器隐藏、改渲染 empty 插槽，
+// 于是先闪一下「没有匹配的企业」再变回列表。
+//
+// 三个条件缺一不可：
+//   !q              —— 只有空关键字才可能是「展开副作用」，真输入一律不跳过；
+//   !tenant.keyword —— 上一次按关键字搜过时 companies 只剩搜索结果，
+//                      清空输入必须重新拉全量，不能跳过；
+//   !tenant.error   —— 上次拉取失败时必须允许重试，否则会永久卡在空态
+//                      （loaded 在 catch 里也会置 true，光看它判断不出来）。
 let timer: ReturnType<typeof setTimeout> | null = null
 function onSearch(kw: string) {
+  const q = kw.trim()
+  if (!q && !tenant.keyword && !tenant.error && (tenant.loaded || tenant.loading)) return
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
-    tenant.search(kw).catch(() => {
+    tenant.search(q).catch(() => {
       // search 内部已兜底（保留旧候选），这里只是不让未处理的 rejection 冒到控制台
     })
   }, 250)

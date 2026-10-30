@@ -14,6 +14,10 @@ import (
 
 // licenseExpiryAllowlist 过期只读降级时仍放行的路径前缀：
 // 登录 / 刷新 / 安装向导 / 探针 / 指标 / 前端报错——保证管理员仍能登录看到只读状态、运维仍能探活。
+//
+// "/healthz" 是前缀匹配，一条覆盖 /healthz、/healthz/、/healthz/live、/healthz/ready。
+// 新增健康检查子端点时不必再往这里加，但若改了根路径名（如挪到 /api/healthz），
+// 必须同步——漏改的话授权一过期，探活就会收到 {code:2}，监控误报「服务已死」。
 var licenseExpiryAllowlist = []string{
 	"/api/auth", "/api/login", "/api/refresh",
 	"/setup", "/healthz", "/metrics", "/api/client-error",

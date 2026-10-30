@@ -23,13 +23,39 @@ func New(db *gorm.DB) *gin.Engine {
 	// 过期降级只读、新建员工超席位拒建。未解析授权时全部放行，等价于现状。
 	r.Use(EnforceLicense(db))
 
-	// 健康检查（就绪探针）：容器编排 / 负载均衡探活用。
-	// 注意：这里必须探 DB 连通性，而不是无条件返回 200。若只做存活探测，
-	// DB 故障（连接断开 / 实例宕机）时 /healthz 仍为 200，docker-compose 的
-	// backend healthcheck（依赖本端点）与 alert_check.sh 的 R1 探活都会误判为
-	// "可用"，实际所有 /api 请求已 5xx。改为 DB 不可达时返回 503，让编排的
-	// depends_on/service_healthy 与外部探活告警能识别"进程在但不可用"。
-	r.GET("/healthz", func(c *gin.Context) {
+	// 健康检查：按「存活 / 就绪」分离，根路径只做索引页。
+	//
+	//   GET /healthz/live   存活探针：进程能响应就 200，不碰任何外部依赖
+	//   GET /healthz/ready  就绪探针：SELECT 1 探 DB，不可达返回 503
+	//   GET /healthz[/]     索引页：列出上面两个端点，恒 200，不做健康判断
+	//
+	// 为什么要拆（这不只是「更规范」，是线上事故的直接产物）：
+	//
+	//  1) 语义混用会引发重启风暴。此前只有一个 /healthz，既当存活探针又查 DB。
+	//     若被 K8s liveness 使用，DB 抖动一次就判定进程死亡 → 重启 → 新进程起来
+	//     DB 仍不可用 → 再判死 → 循环。K8s 官方文档明确要求 liveness 不检查
+	//     外部依赖。拆开后：liveness 只看进程，readiness 才看 DB。
+	//
+	//  2) 根路径必须同时注册带斜杠与不带斜杠两种形态，否则会与 Nginx 形成
+	//     301 死循环。Nginx 把「以 / 结尾的 location」当目录建模，请求 /healthz
+	//     会被内建的 auto_redirect 301 到 /healthz/；若 Gin 没注册 /healthz/，
+	//     它又按 RedirectTrailingSlash 301 回 /healthz —— 两边互踢，直到浏览器
+	//     放弃并报 ERR_TOO_MANY_REDIRECTS。线上真实发生过。
+	//
+	//  3) 子端点（/healthz/live、/healthz/ready）天然免疫上面这个循环：它们的
+	//     路径比 Nginx 的反代前缀 /healthz/ 长，不是「父路径」，不触发
+	//     auto_redirect。这也是推荐监控改用子端点的原因。
+	//
+	// HEAD 必须单独注册：Gin 不会用 GET 的处理器兜住 HEAD，不注册就 404，
+	// 而多数监控探针用 HEAD。
+	healthzLive := func(c *gin.Context) {
+		// 存活探针：只确认进程能响应 HTTP。不查 DB、不查磁盘、不查任何依赖——
+		// 依赖故障时重启进程没有任何帮助，只会放大故障。
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+	healthzReady := func(c *gin.Context) {
+		// 就绪探针：DB 不可达即 503，让负载均衡把本实例摘出去，等 DB 恢复再放回。
+		// 进程本身是健康的，所以这里不涉及重启，只是暂时不接流量。
 		if err := db.Exec("SELECT 1").Error; err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status": "degraded",
@@ -39,7 +65,40 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "db": "up"})
-	})
+	}
+	healthzRoot := func(c *gin.Context) {
+		// 纯索引页：只列出可用端点，不做任何健康判断，**恒返回 200**。
+		//
+		// ⚠️ 这不是探针，不要拿它做告警——DB 挂了它照样 200。
+		//    存活看 /healthz/live，就绪看 /healthz/ready。
+		//
+		// 保留根路径不是为了兼容，是两个实际用途：
+		//  1) 发现：人手 curl 或运维排查时先打根路径，一眼看到该用哪个子端点，
+		//     不用翻文档；
+		//  2) 兜底：Nginx 对「以 / 结尾的 location」有内建 auto_redirect，会把
+		//     /healthz 301 到 /healthz/。这里必须有个 200 的处理器接住，
+		//     否则与 Gin 的 RedirectTrailingSlash 互踢成死循环。
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "ok",
+			"configured": true,
+			"endpoints": gin.H{
+				"live":  "/healthz/live",
+				"ready": "/healthz/ready",
+			},
+		})
+	}
+	for _, rt := range []struct {
+		path string
+		h    gin.HandlerFunc
+	}{
+		{"/healthz", healthzRoot},
+		{"/healthz/", healthzRoot},
+		{"/healthz/live", healthzLive},
+		{"/healthz/ready", healthzReady},
+	} {
+		r.GET(rt.path, rt.h)
+		r.HEAD(rt.path, rt.h)
+	}
 
 	// 聚合名片（员工 + 企业 + 简介）
 	r.GET("/api/card", func(c *gin.Context) {

@@ -36,11 +36,14 @@ license-private.key
 # 一律不入库：本机 `go build ./cmd/devserver` 会把二进制落在 cmd 目录**同级**，
 # backend/devserver 就是这么被误提交的（40MB Mach-O，每次编译都是新 blob，
 # 别人还跑不了）。要发版请走 CI 产物或交叉编译后单独分发。
+# cmd/ 下每个子命令都会这样，所以每加一个 cmd 子命令，这里要同步加一行。
 *.exe
 backend/cmd/server/server
 backend/cmd/devserver/devserver
 backend/devserver
 backend/server
+backend/thumbbackfill
+backend/license
 # 交叉编译出来的任何平台二进制
 /server-linux-amd64
 /server-linux-arm64

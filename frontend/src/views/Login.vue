@@ -84,7 +84,7 @@ async function onSubmit() {
     const redirect = (route.query.redirect as string) || '/apply/open'
     router.replace(redirect)
   } catch {
-    // 拦截器已提示（账号不存在 / 密码错误 / 企业已停用）
+    // 拦截器已提示（用户名或密码错误 / 所属企业已停用）
   } finally {
     loading.value = false
   }

@@ -54,6 +54,8 @@ export const ACTION_LABELS: Record<string, string> = {
   // PIPL 权利入口：注销是不可逆的（员工与其申请单/统计一并删除），导出个人信息本身也是敏感动作
   'employee.cancel': '员工本人注销账号',
   'employee.export': '导出员工个人信息',
+  // 批量导出：一次拉走整批员工信息，敏感度高于单个导出，审计里要能一眼分辨
+  'employee.export_batch': '批量导出员工信息',
   'apply.approve': '通过申请',
   'apply.reject': '驳回申请',
   // 商业动作：授权与配额直接决定客户能不能继续用、能占多少存储
