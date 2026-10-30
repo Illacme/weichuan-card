@@ -15,6 +15,7 @@ miniprogram/
 │   ├── wechat.ts       # 微信身份：wx.login 换 openid / getUserProfile 授权昵称
 │   ├── privacy.ts      # 微信隐私授权：查 getPrivacySetting / 需否判定 / 等待与结算 / ensurePrivacy(page)
 │   ├── contact.ts      # 保存名片到通讯录（员工名片区 / 底部栏共用）
+│   ├── team.ts         # 名片墙数据层：分页参数 / 结果整形 / 跨页去重合并（落地页与全部页共用）
 │   └── track.ts        # 埋点上报：8 类事件统一入口（白名单就近丢弃，失败静默）
 ├── components/         # 8 个可复用组件（均开启 addGlobalClass）
 │   ├── employee-card / company-video / achievement-grid
@@ -22,7 +23,8 @@ miniprogram/
 │   ├── rich-video      # 视频号渲染控件：有 feedId 用 <channel-video feed-id>，否则回退 finder-user-name
 │   └── privacy-consent # 微信隐私授权弹窗（同意按钮用 open-type="agreePrivacyAuthorization"）
 ├── pages/
-│   ├── team/           # 名片墙（**裸启动落地页**：公司抬头 + 全员宫格，点谁看谁；企业把默认入口配成「指定员工」时这里只做一次 reLaunch 改道）
+│   ├── team/           # 名片墙（**裸启动落地页**）：公司抬头 + 搜索 + 首屏一页 60 + 「查看全部 N 位同事」；企业把默认入口配成「指定员工」时这里只做一次 reLaunch 改道
+│   ├── team/all/       # 查看全部同事：搜索 + 滚动加载（onReachBottom 续页）；样式 @import 落地页的 wxss，不复制一份
 │   ├── index/          # 名片首页（自定义顶栏含「我的」入口 + 员工卡 + 公司简介卡片 + 业绩 + 服务；底部 tabBar 已移除）
 │   ├── project/list/   # 项目列表（按分类）
 │   ├── project/detail/ # 项目详情（富文本+视频号拆分+相册）
@@ -72,6 +74,8 @@ miniprogram/
 ## 与后端接口对应
 | 页面 | 接口 |
 |---|---|
+| team | GET /api/team?page=&size=60&keyword=（首屏一页；`hasMore` 时显示「查看全部」） |
+| team/all | GET /api/team?page=N&size=60&keyword=（滚动续页，同一接口） |
 | index | GET /api/card, /api/achievements, /api/services, /api/home-layout, POST /api/stat/track(visit / share) |
 | project/list | GET /api/projects?categoryId= |
 | project/detail | GET /api/projects/:id + POST /api/stat/track(project_view / share，targetId=案例ID) |
@@ -478,9 +482,42 @@ python3 miniprogram/tests/audit_class_collision.py
 ### 排查「预览里凭空多出的线 / 边距」的方法
 截图肉眼判断不可靠，直接用像素扫描定位：取截图逐行找**连续横向线段**，输出其起止 x、宽度占比与主色——据此即可反查是哪个元素、什么颜色、多宽（例：曾据此定位到 `#f0f0f0`、宽 50% 的线来自全局 `.cell` 的 `border-bottom`，而非组件代码）。
 
+## 名片墙分页与搜索（2026-10-30）
+
+改之前：`GET /api/team` 一次拉全员，后端上限 300。企业超过 300 人时访客只能看到前 300 位，
+而且**没有任何入口看到剩下的人**——页面底部只有一句「仅显示前 300 位」。
+500 人以上的企业等于不能用，这是产品上的硬伤，不是性能优化。
+
+现在拆成两层：
+
+| 页面 | 职责 |
+|---|---|
+| `pages/team/team` | 公司抬头 + 搜索框 + **首屏一页 60** + 「查看全部 N 位同事」（`hasMore` 时出现） |
+| `pages/team/all` | 搜索框（吸顶）+ 宫格 + `onReachBottom` 续页 + 底部「加载中 / 重试 / 已经到底了」 |
+
+四条约定：
+
+- **`hasMore` 以后端为准**，不要用 `total - list.length` 推：搜索时 `total` 是匹配总数、`data` 是当前页，
+  两者相减得到的是「还没加载的匹配数」，语义不同。后端回包里有 `hasMore` 就直接用。
+- **首屏只拉 60**：大企业不必等 300 条 JSON 解析完才出画面。要看全部就进 `pages/team/all`。
+- **输入不发请求**：`keyword`（输入框的值）与 `activeKeyword`（已提交给接口的值）分开存，
+  只有按键盘「搜索」键 / 清空时才 `setData({ activeKeyword })` 并重查。否则每敲一个字打一次接口，
+  既费流量又会让宫格不停闪烁。
+- **续页三件套**：防重入（`loadingMore` 锁，惯性滚动会连触发 `onReachBottom`）、
+  按 `staffId` 去重（翻页期间管理员增删员工会让同一人出现在相邻两页）、
+  失败不清空（续页失败只标 `moreError` 在底部给重试，已经看到的人不能消失）。
+
+搜索走的是**后端内存过滤**，不是 SQL：姓名是 PII 密文列（`model.Employee.NameEnc`），
+SQL 层只有盲索引能做等值匹配、做不了 `LIKE '张%'`，而名片墙的搜索必须支持「张」这种前缀。
+所以带关键字时后端把该企业全员解密后过滤再分页（上限 5000 人，见
+`repository.MaxTeamSearchScan`）。不要"优化"回 SQL LIKE——那样搜不到任何前缀。
+
+样式：`pages/team/all.wxss` 用 `@import "./team.wxss"` 复用落地页的宫格样式，
+不复制一份（复制出来的两份迟早会漂移）。
+
 ## 下拉刷新
 
-8 个内容页支持下拉重拉（页面 JSON 开 `enablePullDownRefresh` + TS 实现 `onPullDownRefresh`）：名片墙、名片首页、项目列表、项目详情、服务详情、我的、数据统计、个人信息。
+9 个内容页支持下拉重拉（页面 JSON 开 `enablePullDownRefresh` + TS 实现 `onPullDownRefresh`）：名片墙、查看全部同事、名片首页、项目列表、项目详情、服务详情、我的、数据统计、个人信息。
 
 三条约定：
 
@@ -501,7 +538,8 @@ python3 miniprogram/tests/audit_class_collision.py
 - `tests/tenant.spec.ts`：多租户解析——平台模式扫码 scene / 分享 query 绑定并粘滞、无来源缺省 0、非法值拦截、`resetCompanyBinding` 清绑定；企业独立版恒返回锁定值且拒绝一切外部绑定（scene / query / Storage 残留）。
 - `tests/poster.spec.ts`（82 例）：海报页——`staffId` / 扫码 **scene** 解析（含混参与无参归 0）、头像与小程序码转绝对 URL、**保存成功才计 `poster_save`**（失败不计）、**分享图片计 `share` + 低版本降级 + 取消不计**、**取数 / 取不到 canvas / 导出失败三态与重试（重试先清旧图）**；**海报背景**：默认款选择、清单接口失败退化白底、切换背景记住选择并重画、切回「原样」（存哨兵 `none`）、上次选择沿用与已下架回落、背景图加载失败兜底；**自定义背景**：上传成功加入列表并选中、上传返回非 JSON 提示失败、未登录拦在相册前、删除背景（含删掉当前选中项要回落默认款）、自定义背景叠渐变蒙层而内置素材不叠；**小程序码缺失**：`qrError` 置位并透出后端原因、无码时画占位框且不印「长按识别名片」、`retryQr` 成功后可恢复；**工具条**：默认落在背景、白名单外的 key 被忽略；**版式**：模板切换重画与白名单、元素显隐反转、**姓名关掉后职位升为标题行**、位移到边界即停（不再有骗人的数字）、头像三档、**二维码四档大小（0 是自动且不能被当成「没选」、**内容多时档位照样生效不被压回小码**、内容少时「大」就是 140 且底边钉住往上长）**、PUT 同步（含原始 file 路径不被重复拼 baseUrl）、未登录只存本地；**自定义文案**：输入时只重画不导出、失焦才落库并导出、画在电话下方且带 accent、清空后这一行消失；**拖动**：位移跟随手指、拖动中不导出松手才导出、**拖到画布边缘字也不被裁掉**、**可拖范围远大于原来的 ±16（按包围盒算）**、**反向拖动无死区**、**拖二维码只挪码不动信息区**、码拖不出画布、2px 死区、**内容与码各自复位（复位一个不会顺手挪另一个）**、**码的按钮微调不动内容区**、加载中不响应；**码的上下界对称**（能贴到底边、贴底时提示不画、向上仍能顶到上沿）、**元素开关**（座机邮箱默认关、打开才出现、关码后 `size=0` 且位移区间归零）、**八套模板都能排出画布内且码不小于扫码下限**、**大字/画报带主色分隔线**、**九项全开时内容仍在画布内、自动档缩到最小可用尺寸**；**纯函数**：`normalizeLayout` / `normalizeCustomText`（压平空白 / 剔控制字符 / 按码点截断）/ `resolveBgId` 三态 / `nearestAvatarSize` / `nearestQrSize`（等距取较小档）/ `shiftRange`，以及 `computeGeometry` 的坐标断言（内置素材从 150 起、自定义从 24 起、内容越多二维码越小且不重叠、配色 auto 跟随背景、内容与码各自独立位移、提示文字跟着码走）。选它是因为 scene 解析与分享 API 差异只在真机上暴露，本地开发永远复现不了。
 - `tests/track.spec.ts`：埋点入口的 targetId / staffId / 白名单 / 失败静默，以及 `source` 场景推导（含 `from=poster` 的 URL 解码）。
-- `tests/team.spec.ts`：**名片墙**（裸启动落地页）——四种状态分开（有内容 / 公司没人 / 企业不可用 / 网络失败且能重试）、无头像用姓名首字占位、人数超上限时 `truncated` 置位、点某人跳名片页**必须带 `companyId`**（不传会落到平台缺省的 1 号企业，点进去是别家公司的人）、接口回传的 `companyId` 优先于 query、企业信息为空时标题回落品牌名、转发落点回到名片墙、企业默认入口为 `staff` 时**改道该员工名片且不渲染宫格**。
+- `tests/team.spec.ts`：**名片墙**（裸启动落地页）——四种状态分开（有内容 / 公司没人 / 企业不可用 / 网络失败且能重试）、无头像用姓名首字占位、点某人跳名片页**必须带 `companyId`**（不传会落到平台缺省的 1 号企业，点进去是别家公司的人）、接口回传的 `companyId` 优先于 query、企业信息为空时标题回落品牌名、转发落点回到名片墙、企业默认入口为 `staff` 时**改道该员工名片且不渲染宫格**；**分页与搜索**（2026-10-30）：首屏只拉一页 60、`hasMore` 以后端为准、输入时不发请求、确认搜索才带 `keyword` 从第一页重查、关键字没变不重复请求、清空恢复全员、搜索态下不改道、进「查看全部」带 `companyId` 与 encode 过的关键字。
+- `tests/team_all.spec.ts`：**查看全部同事**（名片墙第二层）——滚动加载第 2 页并追加、**防重入**（请求在途时连滚只发一次）、后端 `hasMore=false` 时不再请求、**按 staffId 去重**（翻页期间增删员工会让同一人出现在相邻两页）、越界页码用后端回传值、**续页失败保留已加载列表**（只在底部标可重试，不能整页清空）、点重试能续上、带关键字进页面直接按关键字查、换关键字清空旧列表、下拉刷新成败都收指示器。
 - `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、以及**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**。
 
 ```bash

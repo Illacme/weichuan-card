@@ -432,7 +432,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
 | GET  | /api/home-layout?companyId= | 首页板块顺序（根级 `order`）+ 首页背景（根级 `bgImage` / `bgMask`；`bgImage` 为空串即不设背景） |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
-| GET  | /api/team?companyId= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `total` + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证） |
+| GET  | /api/team?companyId=&page=&size=&keyword= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证）。**分页与搜索**：`size` 缺省 300（与改造前一致，老端不带参数行为不变）、上限 300，新端固定传 60；`keyword` 同时匹配姓名与职位。回包 `{code, company, entry, data, total, page, size, hasMore, keyword}`，`total` 是**匹配总数**、`hasMore` 由服务端算（端上别用 `total - data.length` 推）。姓名是 PII 密文列、SQL 做不了 `LIKE '张%'`，带关键字时走「全员解密 → Go 侧过滤 → 切片」（`repository.MaxTeamSearchScan` 上限 5000 人），**不要优化回 SQL LIKE** |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
 
 ### 写 + 审核流（员工 / 管理员，账号密码，JWT）

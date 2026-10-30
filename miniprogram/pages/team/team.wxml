@@ -1,13 +1,29 @@
 <!-- 名片墙：小程序裸启动（扫体验版二维码 / 直接打开）时的落地页。
      访客在这里先看到「这家公司有谁」，点某人进名片。
-     三种状态必须分开画，混在一起会让访客误以为系统坏了：
-       loading / error（网络）/ unavailable（企业不存在或停用）/ empty（公司还没人） -->
+     五种状态必须分开画，混在一起会让访客误以为系统坏了：
+       loading / error（网络）/ unavailable（企业不存在或停用）/ empty（公司还没人）/ 搜不到 -->
 <view class="team-hero">
   <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo}}" />
   <view class="team-name">{{title}}</view>
   <view class="team-sub" wx:if="{{!loading && !error && !unavailable && total > 0}}">
-    共 {{total}} 位同事，点击查看名片
+    <block wx:if="{{activeKeyword}}">找到 {{total}} 位匹配的同事</block>
+    <block wx:else>共 {{total}} 位同事，点击查看名片</block>
   </view>
+</view>
+
+<!-- 搜索框：只在企业可用时出现。输入不发请求，按「搜索」键才查——
+     每敲一个字打一次接口既费流量，也会让宫格不停闪烁。 -->
+<view class="team-search" wx:if="{{!unavailable}}">
+  <input
+    class="team-search-input"
+    value="{{keyword}}"
+    placeholder="搜索姓名或职位"
+    placeholder-class="team-search-ph"
+    confirm-type="search"
+    bindinput="onKeywordInput"
+    bindconfirm="onSearch"
+  />
+  <view class="team-search-clear" wx:if="{{keyword}}" catchtap="onClearSearch">✕</view>
 </view>
 
 <view wx:if="{{loading}}" class="loading">加载中…</view>
@@ -41,14 +57,23 @@
     </view>
   </view>
 
+  <!-- 搜不到：与「公司还没人」必须分开说，否则访客以为这家公司是空壳 -->
+  <view class="team-empty" wx:elif="{{activeKeyword}}">
+    <view class="team-empty-title">没有找到「{{activeKeyword}}」</view>
+    <view class="team-hint">换个姓名或职位关键词试试。</view>
+  </view>
+
   <!-- 公司还没人开通名片：说清「不是坏了，是还没人」 -->
   <view class="team-empty" wx:else>
     <view class="team-empty-title">该公司还没有可展示的名片</view>
     <view class="team-hint">员工开通名片后会出现在这里。</view>
   </view>
 
-  <!-- 人数超过后端上限时才提示，避免正常情况多说一句废话 -->
-  <view class="team-truncated" wx:if="{{truncated}}">
-    仅显示前 {{list.length}} 位，共 {{total}} 位同事
+  <!-- 还有更多人：进「查看全部」做滚动加载。
+       首屏只拉 60，500 人的企业不必等 300 条 JSON 解析完才出画面。 -->
+  <view class="team-more" wx:if="{{hasMore}}" bindtap="goAll">
+    <view class="team-more-btn">
+      查看全部 {{total}} 位<block wx:if="{{activeKeyword}}">匹配的</block>同事
+    </view>
   </view>
 </view>

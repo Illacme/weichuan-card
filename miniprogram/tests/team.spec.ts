@@ -10,6 +10,10 @@
 //  2. 点某人跳名片页**必须带 companyId**，不传就落到平台缺省的 1 号企业，
 //     点进去看到的是别家公司的人；
 //  3. 后端只回公开字段，端上不得凭空补 phone 之类（这里只验证透传不改写）。
+//
+// 2026-10-30 增加分页与搜索后，另钉两件事（见下方「搜索」「查看全部」两组）：
+//  4. 首屏只拉一页 60，hasMore 以后端为准（不是用 total - list.length 推）；
+//  5. 输入时不发请求，只有确认搜索才查；搜索态下不走「默认进某个员工」的改道。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   installPageCapture,
@@ -59,19 +63,23 @@ const teamResp = (extra: any = {}) => ({
     { staffId: 12, name: '张三', title: '', avatar: '' },
   ],
   total: 2,
+  page: 1,
+  size: 60,
+  hasMore: false,
   ...extra,
 })
 
 describe('名片墙 · 状态与数据', () => {
-  it('拉到全员：名单、人数、企业抬头都落到 data 上', async () => {
+  it('拉到第一页：名单、人数、企业抬头都落到 data 上', async () => {
     mocks.request.mockResolvedValueOnce(teamResp())
     const p = await page()
 
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team')
+    // 首屏只拉一页 60（不是全量 300）：大企业不必等几百条 JSON 解析完才出画面
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 })
     expect(p.data.list).toHaveLength(2)
     expect(p.data.list[0]).toMatchObject({ staffId: 11, name: '高立新', title: '销售经理' })
     expect(p.data.total).toBe(2)
-    expect(p.data.truncated).toBe(false)
+    expect(p.data.hasMore).toBe(false)
     expect(p.data.title).toBe('朗汇机电')
     // 头像 / LOGO 必须是绝对地址：<image src> 不认相对路径，否则整屏裂图
     expect(p.data.list[0].avatar).toBe('https://cdn.test/uploads/a1.png')
@@ -101,13 +109,22 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.loading).toBe(false)
   })
 
-  it('人数超过上限：truncated 为真，页面才能说清「只显示了前 N 位」', async () => {
-    mocks.request.mockResolvedValueOnce(teamResp({ total: 500 }))
+  it('还有更多人：hasMore 为真，底部才显示「查看全部 N 位同事」', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ total: 500, hasMore: true }))
     const p = await page()
 
     expect(p.data.list).toHaveLength(2)
     expect(p.data.total).toBe(500)
-    expect(p.data.truncated).toBe(true)
+    expect(p.data.hasMore).toBe(true)
+  })
+
+  // hasMore 不能用 total > list.length 推：搜索时 total 是匹配总数、
+  // list 只有第一页，两者相减得到的是「没加载的匹配数」，语义不同。
+  it('hasMore 以后端为准：total 大于本页条数但后端说没有了，就不该显示入口', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ total: 2, hasMore: false }))
+    const p = await page()
+
+    expect(p.data.hasMore).toBe(false)
   })
 
   it('企业不存在 / 已停用（code=1）：走 unavailable，不是网络错误', async () => {
@@ -131,6 +148,104 @@ describe('名片墙 · 状态与数据', () => {
     await p.load()
     expect(p.data.error).toBe(false)
     expect(p.data.list).toHaveLength(2)
+  })
+})
+
+describe('名片墙 · 搜索', () => {
+  it('输入不发请求（每敲一个字打一次接口既费流量又会让宫格闪烁）', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+    mocks.request.mockClear()
+
+    p.onKeywordInput({ detail: { value: '张' } })
+
+    expect(p.data.keyword).toBe('张')
+    expect(p.data.activeKeyword).toBe('')
+    expect(mocks.request).not.toHaveBeenCalled()
+  })
+
+  it('确认搜索：带 keyword 从第一页重查', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+    mocks.request.mockClear()
+    mocks.request.mockResolvedValueOnce(teamResp({ data: [], total: 0 }))
+
+    p.onKeywordInput({ detail: { value: '  张  ' } })
+    p.onSearch()
+    await flush()
+
+    // 两端空格必须吃掉，否则后端会拿着「  张  」去匹配
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60, keyword: '张' })
+    expect(p.data.activeKeyword).toBe('张')
+  })
+
+  it('关键字没变：不重复请求', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+    p.onKeywordInput({ detail: { value: '张' } })
+    p.onSearch()
+    await flush()
+    mocks.request.mockClear()
+
+    p.onSearch()
+
+    expect(mocks.request).not.toHaveBeenCalled()
+  })
+
+  it('清空搜索：恢复全员列表', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+    p.onKeywordInput({ detail: { value: '张' } })
+    p.onSearch()
+    await flush()
+    mocks.request.mockClear()
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    p.onClearSearch()
+    await flush()
+
+    expect(p.data.keyword).toBe('')
+    expect(p.data.activeKeyword).toBe('')
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 })
+  })
+
+  // 用户在墙上搜人时突然被弹进某个人的名片，会觉得「我搜的人呢」
+  it('搜索态下不走「默认进入指定员工」的改道', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page()
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 11 } }))
+
+    p.onKeywordInput({ detail: { value: '张' } })
+    p.onSearch()
+    await flush()
+
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+  })
+})
+
+describe('名片墙 · 查看全部', () => {
+  it('带 companyId 与当前关键字进全部页', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ total: 500, hasMore: true }))
+    const p = await page()
+    p.onKeywordInput({ detail: { value: '张 三' } })
+    p.onSearch()
+    await flush()
+
+    p.goAll()
+
+    expect(wxStub.navigateTo).toHaveBeenCalledWith({
+      // 关键字要 encodeURIComponent：中文直接拼进 URL 会被截断
+      url: '/pages/team/all?companyId=7&keyword=' + encodeURIComponent('张 三'),
+    })
+  })
+
+  it('没有关键字时只带 companyId', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ total: 500, hasMore: true }))
+    const p = await page()
+
+    p.goAll()
+
+    expect(wxStub.navigateTo).toHaveBeenCalledWith({ url: '/pages/team/all?companyId=7' })
   })
 })
 

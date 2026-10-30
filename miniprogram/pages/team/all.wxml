@@ -1,0 +1,72 @@
+<!-- 查看全部同事：名片墙的第二层，滚动加载。
+     与落地页的区别只有两点：没有企业抬头（避免占掉半屏），列表滚到底自动续页。 -->
+<view class="team-search team-search-fixed">
+  <input
+    class="team-search-input"
+    value="{{keyword}}"
+    placeholder="搜索姓名或职位"
+    placeholder-class="team-search-ph"
+    confirm-type="search"
+    bindinput="onKeywordInput"
+    bindconfirm="onSearch"
+  />
+  <view class="team-search-clear" wx:if="{{keyword}}" catchtap="onClearSearch">✕</view>
+</view>
+
+<view class="team-count" wx:if="{{!loading && !error && !unavailable && total > 0}}">
+  <block wx:if="{{activeKeyword}}">找到 {{total}} 位匹配的同事</block>
+  <block wx:else>共 {{total}} 位同事</block>
+</view>
+
+<view wx:if="{{loading}}" class="loading">加载中…</view>
+
+<view wx:elif="{{error}}" class="error-box">
+  <view class="error-text">网络异常，加载失败</view>
+  <button class="retry-btn" bindtap="load">重新加载</button>
+</view>
+
+<view wx:elif="{{unavailable}}" class="error-box">
+  <view class="error-text">该企业暂不可用</view>
+  <view class="team-hint">可能已停用或链接已失效，请向分享者确认后再试。</view>
+  <button class="retry-btn" bindtap="load">重试</button>
+</view>
+
+<view wx:else>
+  <view class="team-grid" wx:if="{{list.length}}">
+    <view
+      class="team-cell"
+      wx:for="{{list}}"
+      wx:key="staffId"
+      data-id="{{item.staffId}}"
+      bindtap="onTap"
+    >
+      <image class="team-avatar" src="{{item.avatarThumb}}" mode="aspectFill" wx:if="{{item.avatar}}"
+        binderror="onImgErr" data-arr="list" data-idx="{{index}}" data-key="avatarThumb" data-full="{{item.avatar}}" />
+      <view class="team-avatar team-avatar-ph" wx:else>{{item.name}}</view>
+      <view class="team-cell-name">{{item.name}}</view>
+      <view class="team-cell-title" wx:if="{{item.title}}">{{item.title}}</view>
+    </view>
+  </view>
+
+  <!-- 搜不到：与「公司还没人」分开说 -->
+  <view class="team-empty" wx:elif="{{activeKeyword}}">
+    <view class="team-empty-title">没有找到「{{activeKeyword}}」</view>
+    <view class="team-hint">换个姓名或职位关键词试试。</view>
+  </view>
+
+  <view class="team-empty" wx:else>
+    <view class="team-empty-title">该公司还没有可展示的名片</view>
+    <view class="team-hint">员工开通名片后会出现在这里。</view>
+  </view>
+
+  <!-- 底部状态：加载中 / 失败可重试 / 到底了。
+       三个状态互斥且都必须有反馈——否则用户不知道是「还在加载」还是「已经没了」，
+       只会一直往下拽。 -->
+  <view class="team-foot" wx:if="{{list.length}}">
+    <view class="team-foot-text" wx:if="{{loadingMore}}">加载中…</view>
+    <view class="team-foot-text team-foot-retry" wx:elif="{{moreError}}" bindtap="onRetryMore">
+      加载失败，点击重试
+    </view>
+    <view class="team-foot-text" wx:elif="{{!hasMore}}">已经到底了</view>
+  </view>
+</view>

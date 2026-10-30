@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"time"
 
 	"weichuan/internal/model"
@@ -32,7 +33,30 @@ const (
 	MaxProjectsList = 200 // 案例列表（含分类筛选）
 	MaxFeaturedList = 20  // 首页精选：首页只画得下这么多个
 	MaxServicesList = 50  // 业务服务：实际业务量级在个位数到十几个
-	MaxTeamList     = 300 // 名片墙（全员）：宫格一屏十几个，300 已够几百人企业翻很久
+
+	// MaxTeamList 名片墙单页条数上限（2026-10-30 起改为**分页**，不再是一次全量）。
+	//
+	// 历史：这个常量原来是「一次全量展示」的天花板——企业超过 300 人时访客只能
+	// 看到前 300 位，且没有任何入口看到剩下的人（team.wxml 只有一句「仅显示前
+	// 300 位」）。500 人以上的企业等于不能用，这是产品上的硬伤。
+	//
+	// 现在：服务端分页，默认一页 TeamPageDefault；这个常量退化为「单页硬上限」，
+	// 防止有人传 size=100000 把响应体拉爆。
+	MaxTeamList = 300
+
+	// TeamPageDefault 名片墙默认每页条数。
+	// 取 60：三列宫格一屏约 12 个，60 是 5 屏，滚动加载的节奏刚好；
+	// 再大首屏就白等了，再小则一次滚动要连发好几个请求。
+	TeamPageDefault = 60
+
+	// MaxTeamSearchScan 带关键字搜索时最多扫描多少人。
+	//
+	// 姓名是 PII 密文列（model.Employee.NameEnc），SQL 层只有盲索引能做**等值**
+	// 匹配，做不了 LIKE '张%'——而名片墙的搜索框就是要能搜「张」。
+	// 所以带关键字时改为「取该企业全员 → AfterFind 解密 → Go 侧模糊过滤 →
+	// 分页切片」。这要求一次把全员读进内存，必须给上限：
+	// 5000 人 × 约 200B ≈ 1MB，可接受；再大的企业只扫前 5000（见 ListTeamPage 注释）。
+	MaxTeamSearchScan = 5000
 )
 
 // 列表只取展示所需列；未选中的列为零值（detail 会是空串而不是富文本正文）。
@@ -49,7 +73,7 @@ const (
 	teamBriefCols = "staff_id, company_id, name, title, avatar, status"
 )
 
-// ListTeam 名片墙：某企业**启用中**的员工（按 staff_id 升序）。
+// ListTeamPage 名片墙：某企业**启用中**的员工，服务端分页 + 关键字搜索。
 //
 // 存在的理由：小程序裸启动（扫体验版二维码 / 直接打开）时没有任何 staffId 参数，
 // 原先会弹「输入员工编号」——那是开发期兜底，访客看不懂。名片墙给访客一个
@@ -58,26 +82,87 @@ const (
 // 只统计/返回 enabled：停用员工的名片在 /api/card 里本来就是 code=2，
 // 挂在墙上点进去只会得到「该员工名片已停用」，不如不列。
 //
-// 同时返回 total：limit 只给天花板（MaxTeamList），企业人数超限时前端要能说清
-// 「只显示了前 N 位」，而不是让人以为公司就这么点人。
-func ListTeam(db *gorm.DB, companyID int64, limit int) ([]model.Employee, int64, error) {
+// 两条查询路径（为什么不是一条）：
+//
+//   - 无关键字 → 纯 SQL 分页（Count + Offset/Limit）。快，且走 staff_id 索引。
+//   - 有关键字 → 全员拉取（上限 MaxTeamSearchScan）→ 解密 → Go 侧模糊过滤 → 切片。
+//     因为姓名落库是密文，SQL 里没法 LIKE；而名片墙的搜索必须支持「张」这种
+//     前缀。企业规模在几千人以内时这条路径是毫秒级，换来的是搜索体验正常。
+//
+// 越界页码夹到末页（与后台分页 pagedQuery 同一语义）：删完数据后停在原页码
+// 不该看到空列表，让人以为没数据。
+func ListTeamPage(db *gorm.DB, companyID int64, keyword string, page, size int) ([]model.Employee, int64, int, error) {
 	const enabledOnly = "company_id = ? AND status = ?"
-	var total int64
-	if err := db.Model(&model.Employee{}).Where(enabledOnly, companyID, "enabled").
-		Count(&total).Error; err != nil {
-		return nil, 0, err
+
+	if size <= 0 || size > MaxTeamList {
+		size = MaxTeamList
 	}
-	if limit <= 0 || limit > MaxTeamList {
-		limit = MaxTeamList
+	if page < 1 {
+		page = 1
 	}
-	var list []model.Employee
-	err := db.Where(enabledOnly, companyID, "enabled").
+
+	kw := strings.TrimSpace(keyword)
+	if kw == "" {
+		var total int64
+		if err := db.Model(&model.Employee{}).Where(enabledOnly, companyID, "enabled").
+			Count(&total).Error; err != nil {
+			return nil, 0, 0, err
+		}
+		pages := int((total + int64(size) - 1) / int64(size))
+		if pages < 1 {
+			pages = 1
+		}
+		if page > pages {
+			page = pages
+		}
+		var list []model.Employee
+		err := db.Where(enabledOnly, companyID, "enabled").
+			Select(teamBriefCols).
+			Order("staff_id asc").
+			Offset((page - 1) * size).Limit(size).
+			Find(&list).Error
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		return list, total, page, nil
+	}
+
+	var all []model.Employee
+	if err := db.Where(enabledOnly, companyID, "enabled").
 		Select(teamBriefCols).
-		Order("staff_id asc").Limit(limit).Find(&list).Error
-	if err != nil {
-		return nil, 0, err
+		Order("staff_id asc").
+		Limit(MaxTeamSearchScan).
+		Find(&all).Error; err != nil {
+		return nil, 0, 0, err
 	}
-	return list, total, nil
+	// 统一小写做不区分大小写的包含匹配：姓名/职位里有英文（"Amy" / "Sales"）时，
+	// 用户不会注意大小写；中文不受 ToLower 影响。
+	needle := strings.ToLower(kw)
+	matched := make([]model.Employee, 0, 16)
+	for _, e := range all {
+		if strings.Contains(strings.ToLower(e.Name), needle) ||
+			strings.Contains(strings.ToLower(e.Title), needle) {
+			matched = append(matched, e)
+		}
+	}
+
+	total := int64(len(matched))
+	pages := int((total + int64(size) - 1) / int64(size))
+	if pages < 1 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	start := (page - 1) * size
+	if start > len(matched) {
+		start = len(matched)
+	}
+	end := start + size
+	if end > len(matched) {
+		end = len(matched)
+	}
+	return matched[start:end], total, page, nil
 }
 
 // GetAchievements 分类（按 sort）+ 首页精选项目（按租户隔离）

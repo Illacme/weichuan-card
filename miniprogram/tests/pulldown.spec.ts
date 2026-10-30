@@ -1,4 +1,4 @@
-// 下拉刷新（横切特性）：8 个内容页都要「下拉能重拉、指示器一定收掉」。
+// 下拉刷新（横切特性）：9 个内容页都要「下拉能重拉、指示器一定收掉」。
 //
 // 为什么单独一个 spec：这不是某一页的业务逻辑，而是横跨 8 个页面的同一份约定。
 // 最容易漏的是 finally —— 加载失败、或未登录被 redirectTo 时若不 stopPullDownRefresh，
@@ -46,6 +46,11 @@ type Case = { name: string; path: string; loaders: Loader[] }
 // me 的 loadMe 无整页 loading 态，故无参；project/list 的分类条不需要 silent。
 const CASES: Case[] = [
   { name: '名片墙 team', path: '../pages/team/team', loaders: [{ m: 'load', args: [{ silent: true }] }] },
+  {
+    name: '查看全部 team/all',
+    path: '../pages/team/all',
+    loaders: [{ m: 'load', args: [{ silent: true }] }],
+  },
   {
     name: '名片首页 index',
     path: '../pages/index/index',

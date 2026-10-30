@@ -1,0 +1,33 @@
+/* 查看全部同事：直接复用名片墙的宫格与搜索样式。
+   小程序的 wxss 是页面级作用域，不能跨页共享，所以用 @import 引入同一份文件，
+   而不是把 .team-* 复制一遍（复制出来的两份迟早会漂移，且改一处忘一处）。 */
+@import "./team.wxss";
+
+/* 搜索框吸顶：滚到第 300 个人时还能改关键字，不用一路划回顶部 */
+.team-search-fixed {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-top: 20rpx;
+}
+
+/* 结果计数：一行灰色小字，不占视觉重心 */
+.team-count {
+  background: #fff;
+  padding: 0 32rpx 16rpx;
+  font-size: 24rpx;
+  color: #8a97a5;
+}
+
+/* 底部状态：加载中 / 重试 / 到底了 */
+.team-foot {
+  padding: 32rpx 0 48rpx;
+  text-align: center;
+}
+.team-foot-text {
+  font-size: 24rpx;
+  color: #a9b4c0;
+}
+.team-foot-retry {
+  color: #1a8cff;
+}

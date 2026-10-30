@@ -98,9 +98,54 @@
   color: #9aa7b4;
   line-height: 1.6;
 }
-.team-truncated {
-  padding: 24rpx;
+
+/* 搜索框：贴在抬头下方，白底与宫格连成一片，避免出现「三明治」式色带 */
+.team-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  padding: 0 24rpx 20rpx;
+}
+.team-search-input {
+  flex: 1;
+  height: 68rpx;
+  background: #f2f4f7;
+  border-radius: 34rpx;
+  padding: 0 64rpx 0 28rpx;
+  font-size: 28rpx;
+  color: #1b2a3a;
+  box-sizing: border-box;
+}
+.team-search-ph {
+  color: #a9b4c0;
+  font-size: 28rpx;
+}
+/* 清除按钮：44rpx 的点击区太小，用 padding 撑到可点范围（手指约 40px 起） */
+.team-search-clear {
+  position: absolute;
+  right: 24rpx;
+  top: 0;
+  height: 68rpx;
+  width: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b6c0cb;
+  font-size: 26rpx;
+}
+
+/* 「查看全部 N 位同事」：白底 + 蓝色描边，与名片页的次要按钮同一套观感 */
+.team-more {
+  background: #fff;
+  padding: 8rpx 32rpx 40rpx;
+}
+.team-more-btn {
+  height: 76rpx;
+  line-height: 76rpx;
   text-align: center;
-  font-size: 24rpx;
-  color: #9aa7b4;
+  border: 1rpx solid #1a8cff;
+  border-radius: 38rpx;
+  color: #1a8cff;
+  font-size: 28rpx;
 }

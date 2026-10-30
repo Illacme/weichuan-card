@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/team/team",
+    "pages/team/all",
     "pages/index/index",
     "pages/employee/me/me",
     "pages/employee/stat/stat",

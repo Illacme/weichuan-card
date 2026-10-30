@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"weichuan/internal/model"
 	"weichuan/internal/repository"
@@ -149,12 +150,28 @@ func New(db *gorm.DB) *gin.Engine {
 	// **只输出白名单字段**（staffId / name / title / avatar）：model.Employee 上还挂着
 	// Phone / Phone2 / Email / Landline / OpenID，把结构体直接序列化给公开接口，
 	// 等于把全员手机号交给任何扫过码的人。这里的 gin.H 是刻意的，不要"简化"成直接返回 list。
+	//
+	// 分页与搜索（2026-10-30）：?page= &size= &keyword=
+	//   - size 缺省取 MaxTeamList(300)，与改造前「一次最多 300」的行为一致，
+	//     老版本小程序不带参数时表现不变；
+	//   - 新端固定传 size=60 做滚动加载；
+	//   - 回包新增 page / size / hasMore / keyword，total 仍是**匹配总数**
+	//     （不是当前页条数）——端上要靠它显示「共 N 位同事」与「还有更多」。
 	r.GET("/api/team", func(c *gin.Context) {
 		cid, ok := publicCompanyID(c, db)
 		if !ok {
 			return
 		}
-		list, total, err := repository.ListTeam(db, cid, repository.MaxTeamList)
+		page := atoiDefault(c.Query("page"), 1)
+		// size 缺省取 MaxTeamList(300)：改造前这个接口一次最多给 300，
+		// 老版本小程序不带参数时行为保持不变；新端固定传 size=60 做滚动加载。
+		// 超上限一律夹回 300——不夹的话一个 size=100000 就能把响应体拉爆。
+		size := atoiDefault(c.Query("size"), repository.MaxTeamList)
+		if size <= 0 || size > repository.MaxTeamList {
+			size = repository.MaxTeamList
+		}
+		keyword := strings.TrimSpace(c.Query("keyword"))
+		list, total, effPage, err := repository.ListTeamPage(db, cid, keyword, page, size)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
@@ -191,6 +208,12 @@ func New(db *gorm.DB) *gin.Engine {
 			},
 			"entry": gin.H{"mode": entryMode, "staffId": entryStaffID},
 			"data":  data, "total": total,
+			// 分页元信息：hasMore 由端上决定「要不要显示加载更多 / 查看全部」，
+			// 不要让它自己用 total 与已加载条数去推——搜索场景下 total 是匹配总数，
+			// 而 data 是当前页，两者相减会得出错误的剩余数。
+			"page": effPage, "size": size,
+			"hasMore": effPage*size < int(total),
+			"keyword": keyword,
 		})
 	})
 
