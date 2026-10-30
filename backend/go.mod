@@ -6,7 +6,7 @@ require (
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/gin-gonic/gin v1.9.1
 	github.com/glebarez/sqlite v1.11.0
-	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.57.0
