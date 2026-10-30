@@ -1,25 +1,37 @@
 // 「存入通讯录」的隐私前置（utils/contact.ts）。
 //
-// 真实事故：首页既没挂 privacy-consent 组件，saveCard 也没调 ensurePrivacy，
-// 于是 addPhoneContact 直接以 privacy 失败，代码弹出「请前往设置中开启后重试」——
+// 真实事故一（2026-10-30 上午）：首页既没挂 privacy-consent 组件，saveCard 也没调
+// ensurePrivacy，于是 addPhoneContact 直接以 privacy 失败，代码弹出「请前往设置中开启后重试」——
 // 可隐私授权根本不在系统设置里，而是在小程序内的弹窗点「同意」。
-// 用户无论怎么找设置都解决不了，这个功能等于永久不可用。
 //
-// 所以这里钉住四件事：
-//  1. 未同意隐私政策时不得调用 addPhoneContact（否则必然失败 + 弹误导提示）；
+// 真实事故二（2026-10-30 晚）：修完之后变成了死循环——点「存入通讯录」弹「保存名片」，
+// 确定后弹「需要隐私授权，请重新点击并选择同意」，点了确定什么也没发生，再点还是这两下。
+// 根因是把所有 errMsg 带 "privacy" 的失败都当成「未授权」：
+// 其中「平台未声明隐私类型」（errno 112）再怎么让用户点同意也永远不会成功。
+//
+// 所以这里钉住五件事：
+//  1. 未同意隐私政策时不得调用 addPhoneContact；
 //  2. 同意后先走「保存名片」确认，确认了才调 addPhoneContact；
-//  3. privacy 失败的文案必须指向「重新点击并同意」，不能再让用户去设置；
-//  4. 通讯录权限被拒（deny）才该引导去微信设置——两种 fail 不能混。
+//  3. 未授权失败要**主动**拉起授权并重试一次，不能只提示用户再点一遍（那就是死循环）；
+//  4. 未声明（errno 112）必须单独提示，文案不能引导用户去「同意」；
+//  5. 通讯录权限被拒（deny）才该引导去微信设置——三种 fail 不能混。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { installWx } from './helpers/harness'
+import { installWx, flush } from './helpers/harness'
 
 const mocks = vi.hoisted(() => ({
   ensurePrivacy: vi.fn(async (..._a: any[]): Promise<boolean> => true),
+  requireAuthorize: vi.fn(async (): Promise<boolean> => true),
 }))
 
-vi.mock('../utils/privacy', () => ({
-  ensurePrivacy: mocks.ensurePrivacy,
-}))
+vi.mock('../utils/privacy', async () => {
+  // privacyFailKind 是纯分类函数，用真实现（用假实现等于没测到分类逻辑）
+  const actual: any = await vi.importActual('../utils/privacy')
+  return {
+    ensurePrivacy: mocks.ensurePrivacy,
+    requireAuthorize: mocks.requireAuthorize,
+    privacyFailKind: actual.privacyFailKind,
+  }
+})
 
 let wxStub: any
 
@@ -28,6 +40,8 @@ beforeEach(() => {
   wxStub = installWx().wx
   mocks.ensurePrivacy.mockReset()
   mocks.ensurePrivacy.mockResolvedValue(true)
+  mocks.requireAuthorize.mockReset()
+  mocks.requireAuthorize.mockResolvedValue(true)
 })
 
 const emp = {
@@ -138,7 +152,28 @@ describe('saveCard：失败分支的文案', () => {
     expect(wxStub.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '已保存' }))
   })
 
-  it('privacy 失败：文案指向「重新点击并同意」，绝不能再让用户去设置', async () => {
+  // 死循环事故的直接回归：未授权失败必须**主动**再拉起一次授权并重试，
+  // 而不是弹一句「请重新点击」把球踢回给用户（用户点了还是同一个失败）。
+  it('未授权失败：主动拉起授权并重试一次', async () => {
+    confirmAll()
+    let n = 0
+    wxStub.addPhoneContact.mockImplementation((o: any) => {
+      n += 1
+      // 第一次未授权 → 补授权 → 第二次成功
+      if (n === 1) o.fail({ errMsg: 'addPhoneContact:fail privacy permission is not authorized' })
+      else o.success()
+    })
+    const { saveCard } = await loadContact()
+
+    await saveCard({}, emp, comp)
+    await flush()
+
+    expect(mocks.requireAuthorize).toHaveBeenCalledTimes(1)
+    expect(wxStub.addPhoneContact).toHaveBeenCalledTimes(2)
+    expect(wxStub.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '已保存' }))
+  })
+
+  it('补授权仍失败：只重试一次就停，弹「需要隐私授权」且不提设置', async () => {
     confirmAll()
     wxStub.addPhoneContact.mockImplementation((o: any) =>
       o.fail({ errMsg: 'addPhoneContact:fail privacy permission is not authorized' })
@@ -146,12 +181,55 @@ describe('saveCard：失败分支的文案', () => {
     const { saveCard } = await loadContact()
 
     await saveCard({}, emp, comp)
+    await flush()
 
+    // 只重试一次：无限重试就是另一个死循环
+    expect(wxStub.addPhoneContact).toHaveBeenCalledTimes(2)
     const m = lastModal()
     expect(m.title).toBe('需要隐私授权')
-    expect(m.content).toContain('同意')
-    // 这是本用例的核心：隐私授权不在系统设置里，指向设置等于把用户带进死胡同
+    expect(m.content).toContain('隐私政策')
+    // 隐私授权不在系统设置里，指向设置等于把用户带进死胡同
     expect(m.content).not.toContain('设置')
+  })
+
+  it('用户在官方弹窗里拒绝授权：不再重试，直接提示', async () => {
+    confirmAll()
+    mocks.requireAuthorize.mockResolvedValue(false)
+    wxStub.addPhoneContact.mockImplementation((o: any) =>
+      o.fail({ errMsg: 'addPhoneContact:fail privacy permission is not authorized' })
+    )
+    const { saveCard } = await loadContact()
+
+    await saveCard({}, emp, comp)
+    await flush()
+
+    expect(mocks.requireAuthorize).toHaveBeenCalledTimes(1)
+    expect(wxStub.addPhoneContact).toHaveBeenCalledTimes(1)
+    expect(lastModal().title).toBe('需要隐私授权')
+  })
+
+  // errno 112：平台没在《用户隐私保护指引》里勾「通讯录（仅写入）」。
+  // 这不是用户能解决的问题，提示里再出现「同意」就是把人往死路上带。
+  it('平台未声明（errno 112）：提示补声明，不能引导用户去「同意」', async () => {
+    confirmAll()
+    wxStub.addPhoneContact.mockImplementation((o: any) =>
+      o.fail({
+        errno: 112,
+        errMsg: 'addPhoneContact:fail api scope is not declared in the privacy agreement',
+      })
+    )
+    const { saveCard } = await loadContact()
+
+    await saveCard({}, emp, comp)
+    await flush()
+
+    // 未声明不是授权问题，别再去拉授权弹窗
+    expect(mocks.requireAuthorize).not.toHaveBeenCalled()
+    expect(wxStub.addPhoneContact).toHaveBeenCalledTimes(1)
+    const m = lastModal()
+    expect(m.title).toBe('功能暂不可用')
+    expect(m.content).toContain('声明')
+    expect(m.content).not.toContain('同意')
   })
 
   it('deny（通讯录权限被拒）：才引导去微信设置', async () => {
@@ -162,6 +240,7 @@ describe('saveCard：失败分支的文案', () => {
     const { saveCard } = await loadContact()
 
     await saveCard({}, emp, comp)
+    await flush()
 
     const m = lastModal()
     expect(m.title).toBe('需要通讯录权限')
@@ -174,6 +253,7 @@ describe('saveCard：失败分支的文案', () => {
     const { saveCard } = await loadContact()
 
     await saveCard({}, emp, comp)
+    await flush()
 
     expect(wxStub.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '已取消' }))
     // 只有「保存名片」那一次 modal，失败没有再弹第二个

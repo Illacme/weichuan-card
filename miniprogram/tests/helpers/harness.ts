@@ -76,6 +76,10 @@ export function installWx(overrides: WxStub = {}) {
     uploadFile: vi.fn(),
     // 存入通讯录：saveCard 调它，属微信隐私接口（未同意时 fail 且 errMsg 含 privacy）
     addPhoneContact: vi.fn(),
+    // 隐私授权：requireAuthorize 用它拉起微信官方弹窗。
+    // 默认按「用户同意」应答——绝大多数用例只关心「授权后能继续」，
+    // 需要验证拒绝的分支自己覆写成 opt.fail({})。
+    requirePrivacyAuthorize: vi.fn((o: any) => o && o.success && o.success({})),
     // 剪贴板：setClipboardData 属微信隐私接口，复制类用例会用到
     setClipboardData: vi.fn((o: any) => o && o.success && o.success({})),
     getClipboardData: vi.fn((o: any) => o && o.success && o.success({ data: '' })),

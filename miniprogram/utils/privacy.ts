@@ -144,6 +144,66 @@ export function settle(agreed: boolean): void {
   if (r) r(agreed)
 }
 
+// requireAuthorize 主动拉起**微信官方**隐私弹窗（不依赖自绘组件）。
+//
+// 用于两种兜不住自绘弹窗的场景：
+//   ① 页面漏挂 / 没编译进 privacy-consent 组件（selectComponent 拿到 null）；
+//   ② 隐私接口已经 fail（说明微信侧还没同意），需要补一次授权再重试。
+//
+// 为什么不注册 wx.onNeedPrivacyAuthorization 也能用它：该接口的语义是
+// 「模拟一次隐私接口调用」，因此走的是与真实隐私接口完全相同的弹窗逻辑——
+// 没注册监听时由微信弹官方弹窗，注册了才回调给开发者。
+//
+// 返回 true 表示微信侧已同意；false 表示用户拒绝 / 接口不可用。
+// 注意 fail 时**不能** markAgreed：拒绝不该被记成同意，否则后面永远弹不出来。
+export function requireAuthorize(): Promise<boolean> {
+  const api = wxPrivacy()
+  if (typeof api.requirePrivacyAuthorize !== 'function') {
+    // 旧基础库（< 2.32.3）没有该接口，本也不会拦截隐私接口 → 视为可继续
+    return Promise.resolve(true)
+  }
+  return new Promise<boolean>((resolve) => {
+    // 双保险：success / fail 只认第一次，避免个别基础库两个回调都回调
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      resolve(ok)
+    }
+    try {
+      api.requirePrivacyAuthorize!({
+        success: () => {
+          markAgreed()
+          finish(true)
+        },
+        fail: () => finish(false),
+      })
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+// 隐私接口 fail 的归类。
+//
+// 真实事故（2026-10-30）：首页「存入通讯录」一直弹「需要隐私授权」，
+// 用户点多少次都是同一个循环。原因不是没同意，而是**平台侧没声明隐私类型**——
+// 微信返回 `addPhoneContact:fail api scope is not declared in the privacy agreement`，
+// errMsg 里带 "privacy"，被一律当成「未授权」，于是让用户反复去点「同意」，
+// 而用户同意的次数再多也不会让一个未声明的接口变得可用。
+//
+// 两者必须分开：unauthorized 可以靠再授权解决；undeclared 只能去公众平台补声明。
+export type PrivacyFailKind = 'unauthorized' | 'undeclared' | 'none'
+
+export function privacyFailKind(err: any): PrivacyFailKind {
+  const msg = String((err && err.errMsg) || '')
+  const errno = err && err.errno
+  // errno 112 = api scope is not declared in the privacy agreement（平台未声明）
+  if (errno === 112 || /not declared/i.test(msg)) return 'undeclared'
+  if (/privacy/i.test(msg)) return 'unauthorized'
+  return 'none'
+}
+
 // ensurePrivacy 页面侧的统一入口：确保已获授权，未获授权则弹窗等待用户选择。
 //
 // 返回 true 表示可以继续调用隐私接口。
@@ -153,15 +213,15 @@ export function settle(agreed: boolean): void {
 //   2. wxml 里挂 <privacy-consent visible="{{privacyVisible}}" />
 //   3. 调隐私接口前：if (!(await ensurePrivacy(this))) return
 //
-// 找不到弹窗组件时不阻塞调用方（页面漏挂组件是编码错误，不能变成
-// 「用户点了没反应」）：按已同意放行，交由微信官方弹窗兜底。
+// 找不到弹窗组件时不能把这次点击吞掉（用户点了没反应最糟），但**也绝不能
+// markAgreed 后放行**——那样既没拿到微信侧同意，又把本地的 agreed 缓存污染成 true，
+// 后续每次调用都会跳过查询一路 fail，且再也弹不出授权（2026-10-30 的死循环事故）。
+// 正确做法是改走微信官方弹窗：requireAuthorize() 不依赖页面里的任何组件。
 export async function ensurePrivacy(page: any): Promise<boolean> {
   if (!(await needConsent())) return true
-  // 页面没挂 privacy-consent 组件 → 无法自绘弹窗，走官方兜底
   const comp = page && page.selectComponent ? page.selectComponent('#privacy-consent') : null
   if (!comp) {
-    markAgreed()
-    return true
+    return requireAuthorize()
   }
   page.setData({ privacyVisible: true })
   const ok = await requestConsent()

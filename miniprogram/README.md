@@ -45,6 +45,10 @@ miniprogram/
   用普通按钮 + 自己记状态是无效的。
 - **刻意不注册 `wx.onNeedPrivacyAuthorization`**：官方要求注册后必须调 `resolve`，
   否则原接口永久挂起（用户看到"点了没反应"）；不注册时漏网调用由微信官方弹窗兜底。
+- **自绘弹窗兜不住时走官方弹窗**：`ensurePrivacy(page)` 找不到 `#privacy-consent` 组件时，
+  调 `wx.requirePrivacyAuthorize()` 拉起微信官方弹窗（它不依赖页面里的任何组件），
+  **不能** `markAgreed()` 后直接放行——那会把本地同意缓存伪造成 true，后续调用全部跳过查询、
+  一路 fail，且再也弹不出授权（2026-10-30 的死循环事故就是这么来的）。
 - 涉及隐私接口的位置：`apply/open`（chooseMedia / getUserProfile）、
   `employee/edit`（chooseMedia）、`poster`（chooseMedia / saveImageToPhotosAlbum）、
   `employee-card`（setClipboardData）、`utils/contact.ts`（addPhoneContact）。
@@ -53,12 +57,17 @@ miniprogram/
   2. `.wxml` 最外层（`</block>` 之后）挂 `<privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />`，
      放在最外层是为了任何分支下 `selectComponent` 都找得到它；
   3. `.ts` 的 `data` 里声明 `privacyVisible: false`。
-  组件没挂上时 `ensurePrivacy` 会走「找不到组件 → 直接放行」的兜底，看着不报错，
-  实际是把授权甩给微信官方弹窗，用户很容易漏点同意后撞上 `require privacy authorize`。
   典型例子：`utils/contact.ts` 的 `addPhoneContact` 由首页 `action-bar` 触发，
   所以 `pages/index` 也必须挂组件，并且 `action-bar` 要把栈顶页面作为 `page` 透传给 `saveCard`。
 - 平台侧未声明对应隐私类型时**接口会被直接禁用**（`errno: 112`）——
-  声明清单见 `docs/deploy-runbook.md` §8。
+  声明清单见 `docs/deploy-runbook.md` §8。这种失败**加多少次授权都没用**，
+  所以 `utils/privacy.ts` 的 `privacyFailKind()` 把 fail 分成三类，调用方必须分开处理：
+
+  | 归类 | 判据 | 该怎么办 |
+  |---|---|---|
+  | `undeclared` | `errno === 112` 或 errMsg 含 `not declared` | 去公众平台补隐私声明，**别提示用户点「同意」** |
+  | `unauthorized` | errMsg 含 `privacy` | 调 `requireAuthorize()` 补授权，成功则重试一次 |
+  | `none` | 其余（含 `auth deny`） | 按取消处理；`deny` 才引导去微信设置 |
 
 ## 与后端接口对应
 | 页面 | 接口 |

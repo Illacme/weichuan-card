@@ -127,14 +127,83 @@ describe('utils/privacy', () => {
   // ---- 页面侧编排 ----
 
   // 页面漏挂 privacy-consent 组件是编码错误，但不能变成「用户点了没反应」——
-  // 此时按已同意放行，交由微信官方弹窗兜底。
-  it('ensurePrivacy：页面没挂弹窗组件时放行（不吞掉这次点击）', async () => {
-    installWx({
+  // 此时改走微信官方弹窗（wx.requirePrivacyAuthorize），它不依赖页面里的组件。
+  //
+  // 历史事故：这里原来是 markAgreed() + return true，既没拿到微信侧同意，
+  // 又把本地 agreed 缓存污染成 true，导致后续每次调用都跳过查询、一路 fail，
+  // 且再也弹不出授权 —— 用户看到的就是「点一次弹一次同样的提示」的死循环。
+  it('ensurePrivacy：页面没挂弹窗组件时改走微信官方弹窗', async () => {
+    const wx = installWx({
       getPrivacySetting: vi.fn((opt: any) => opt.success({ needAuthorization: true, privacyContractName: '' })),
-    })
+    }).wx
     const page: any = { setData: vi.fn(), selectComponent: () => null }
 
     expect(await privacy.ensurePrivacy(page)).toBe(true)
+    expect(wx.requirePrivacyAuthorize).toHaveBeenCalledTimes(1)
+    // 官方弹窗 success 后由回调 markAgreed —— 这是微信侧真给了同意，不是我们猜的
+    expect(await privacy.needConsent()).toBe(false)
+  })
+
+  it('ensurePrivacy：没挂组件且用户拒绝官方弹窗 → false，且不记成已同意', async () => {
+    installWx({
+      getPrivacySetting: vi.fn((opt: any) => opt.success({ needAuthorization: true, privacyContractName: '' })),
+      requirePrivacyAuthorize: vi.fn((opt: any) => opt.fail({ errMsg: 'fail' })),
+    })
+    const page: any = { setData: vi.fn(), selectComponent: () => null }
+
+    expect(await privacy.ensurePrivacy(page)).toBe(false)
+    // 拒绝不能被记成同意，否则下次连弹都弹不出来
+    expect(await privacy.needConsent()).toBe(true)
+  })
+
+  it('requireAuthorize：基础库没有该接口时放行（旧库本就不拦截）', async () => {
+    installWx({ requirePrivacyAuthorize: undefined })
+
+    expect(await privacy.requireAuthorize()).toBe(true)
+  })
+
+  it('requireAuthorize：用户拒绝返回 false，且不 markAgreed', async () => {
+    installWx({
+      getPrivacySetting: vi.fn((opt: any) => opt.success({ needAuthorization: true, privacyContractName: '' })),
+      requirePrivacyAuthorize: vi.fn((opt: any) => opt.fail({})),
+    })
+
+    expect(await privacy.requireAuthorize()).toBe(false)
+    expect(await privacy.needConsent()).toBe(true)
+  })
+
+  // ---- 失败归类 ----
+  // 这组是死循环事故的核心：带 "privacy" 的失败不一定是「没同意」。
+  describe('privacyFailKind', () => {
+    it('未授权：privacy permission is not authorized', () => {
+      expect(
+        privacy.privacyFailKind({ errMsg: 'addPhoneContact:fail privacy permission is not authorized' })
+      ).toBe('unauthorized')
+    })
+
+    it('平台未声明：errno 112（文案里同样带 privacy，必须优先识别）', () => {
+      expect(
+        privacy.privacyFailKind({
+          errno: 112,
+          errMsg: 'addPhoneContact:fail api scope is not declared in the privacy agreement',
+        })
+      ).toBe('undeclared')
+    })
+
+    it('平台未声明：没有 errno 时靠 not declared 文案识别', () => {
+      expect(
+        privacy.privacyFailKind({ errMsg: 'xxx:fail api scope is not declared in the privacy agreement' })
+      ).toBe('undeclared')
+    })
+
+    it('无关失败（用户取消）归 none', () => {
+      expect(privacy.privacyFailKind({ errMsg: 'addPhoneContact:fail cancel' })).toBe('none')
+    })
+
+    it('空错误不抛异常', () => {
+      expect(privacy.privacyFailKind(undefined)).toBe('none')
+      expect(privacy.privacyFailKind({})).toBe('none')
+    })
   })
 
   it('ensurePrivacy：已同意时不弹窗，直接放行', async () => {
