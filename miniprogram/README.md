@@ -48,6 +48,15 @@ miniprogram/
 - 涉及隐私接口的位置：`apply/open`（chooseMedia / getUserProfile）、
   `employee/edit`（chooseMedia）、`poster`（chooseMedia / saveImageToPhotosAlbum）、
   `employee-card`（setClipboardData）、`utils/contact.ts`（addPhoneContact）。
+- **凡是会调到上面接口的页面，都必须同时做三件事**，缺一件就必然踩隐私失败：
+  1. `.json` 的 `usingComponents` 注册 `"privacy-consent": "/components/privacy-consent/index"`；
+  2. `.wxml` 最外层（`</block>` 之后）挂 `<privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />`，
+     放在最外层是为了任何分支下 `selectComponent` 都找得到它；
+  3. `.ts` 的 `data` 里声明 `privacyVisible: false`。
+  组件没挂上时 `ensurePrivacy` 会走「找不到组件 → 直接放行」的兜底，看着不报错，
+  实际是把授权甩给微信官方弹窗，用户很容易漏点同意后撞上 `require privacy authorize`。
+  典型例子：`utils/contact.ts` 的 `addPhoneContact` 由首页 `action-bar` 触发，
+  所以 `pages/index` 也必须挂组件，并且 `action-bar` 要把栈顶页面作为 `page` 透传给 `saveCard`。
 - 平台侧未声明对应隐私类型时**接口会被直接禁用**（`errno: 112`）——
   声明清单见 `docs/deploy-runbook.md` §8。
 

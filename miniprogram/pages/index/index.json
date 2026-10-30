@@ -7,6 +7,7 @@
     "achievement-grid": "/components/achievement-grid/index",
     "featured-projects": "/components/featured-projects/index",
     "service-grid": "/components/service-grid/index",
-    "action-bar": "/components/action-bar/index"
+    "action-bar": "/components/action-bar/index",
+    "privacy-consent": "/components/privacy-consent/index"
   }
 }

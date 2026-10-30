@@ -7,6 +7,9 @@ import { FALLBACK_BRAND } from '../../utils/brand'
 Page({
   data: {
     staffId: 0,
+    // 微信隐私授权弹窗是否显示（由 ensurePrivacy 控制）：
+    // 「存入通讯录」调的是隐私接口 addPhoneContact，未同意时微信会直接 fail
+    privacyVisible: false,
     employee: null,
     company: null,
     profile: null,

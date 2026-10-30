@@ -16,7 +16,14 @@ Component({
       track('call', this.data.staffId)
     },
     onSave() {
-      saveCard(this.data.employee, this.data.company)
+      // ensurePrivacy 需要页面实例来 selectComponent('#privacy-consent')。
+      // 组件里拿不到 page，只能从页面栈取栈顶——action-bar 只挂在名片首页底部，
+      // 栈顶就是它。页面未挂组件时 ensurePrivacy 会放行，不会卡住这次点击。
+      const pages = getCurrentPages()
+      const page = pages[pages.length - 1]
+      saveCard(page, this.data.employee, this.data.company).catch(() => {
+        // 授权流程本身出错不该影响埋点，也不该把异常抛给点击事件
+      })
       track('save', this.data.staffId)
     },
   },

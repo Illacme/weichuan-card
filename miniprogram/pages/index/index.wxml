@@ -90,3 +90,9 @@
     </block>
   </view>
 </block>
+
+<!-- 微信隐私授权弹窗：点「存入通讯录」时由 ensurePrivacy 弹出，同意后才调 addPhoneContact。
+     放在最外层（不属于 loading / error / 正常态任一分支），保证任何状态下
+     selectComponent('#privacy-consent') 都能找到——找不到时 ensurePrivacy 会放行，
+     等于放弃自绘弹窗、退化成微信官方兜底，用户就又会撞上「需要隐私授权」那条死路。 -->
+<privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />
