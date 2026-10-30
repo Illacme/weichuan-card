@@ -460,6 +460,20 @@ python3 miniprogram/tests/audit_class_collision.py
 ### 排查「预览里凭空多出的线 / 边距」的方法
 截图肉眼判断不可靠，直接用像素扫描定位：取截图逐行找**连续横向线段**，输出其起止 x、宽度占比与主色——据此即可反查是哪个元素、什么颜色、多宽（例：曾据此定位到 `#f0f0f0`、宽 50% 的线来自全局 `.cell` 的 `border-bottom`，而非组件代码）。
 
+## 下拉刷新
+
+8 个内容页支持下拉重拉（页面 JSON 开 `enablePullDownRefresh` + TS 实现 `onPullDownRefresh`）：名片墙、名片首页、项目列表、项目详情、服务详情、我的、数据统计、个人信息。
+
+三条约定：
+
+- **收尾必须走 `finally`**：`onPullDownRefresh` 里写成 `try { await load({ silent: true }) } catch {} finally { wx.stopPullDownRefresh() }`。少写 `finally`，加载失败时顶部指示器会一直转，用户以为小程序卡死；少写 `catch`，`stat` / `mydata` 这类没有内部 try/catch 的加载函数会把网络异常抛成未捕获的 Promise rejection。
+- **`silent` 不闪整页 loading**：各页 `load(opts?: { silent?: boolean })` 在 silent 时不置 `loading: true`，只清 `error`。否则下拉瞬间内容被「加载中…」替换，比不刷新还难受。首次进入与点「重新加载」仍走非 silent。
+- **编辑态页面不加**：`apply/open`（申请表单）、`employee/edit`（资料编辑）、`employee/login`、`poster`（海报 canvas）、`privacy`（静态政策）。下拉会打断输入或打乱 canvas。
+
+`project/list` 下拉时分类与列表一起重拉（分类可能被后台增删，只刷列表会留下失效的切换条）。名片首页的访问埋点不必额外处理——`trackVisit` 按 staffId 去重，同一张名片只记一次。
+
+用例见 `tests/pulldown.spec.ts`（26 例）：逐页钉「注册了处理函数 / 触发正确的加载函数与入参 / 加载抛错也收指示器」，外加 team 上的 silent 精确断言。
+
 ## 单元测试（经前端 Vitest 运行）
 
 `tests/` 收录小程序**纯逻辑**单测（不依赖微信开发者工具 / 真机）。小程序侧没有独立测试工具链，统一由前端工程的 Vitest 纳管（`frontend/vitest.config.ts` 通过 `server.fs.allow` 放行仓库根外路径 + `vi.resetModules()` + 动态 import），并对 `getApp` / `wx` 全局做桩：
@@ -479,4 +493,4 @@ cd frontend && npm test        # 前端 + 小程序 spec 一并运行
 > 视图层 / 页面渲染不在覆盖范围（需微信 CLI 或真机自动化），由联调步骤保证。
 
 ## 待补（相对完整产品）
-- 真实视频号 feed-id 映射、图片懒加载/失败占位细化、下拉刷新等体验项。
+- 真实视频号 feed-id 映射、图片懒加载/失败占位细化等体验项。

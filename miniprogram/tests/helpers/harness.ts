@@ -68,6 +68,8 @@ export function installWx(overrides: WxStub = {}) {
     redirectTo: vi.fn(),
     switchTab: vi.fn(),
     setNavigationBarTitle: vi.fn(),
+    // 下拉刷新收尾：内容页的 onPullDownRefresh 一定会调，缺了会直接 TypeError
+    stopPullDownRefresh: vi.fn(),
     pageScrollTo: vi.fn(),
     previewImage: vi.fn(),
     chooseMedia: vi.fn(),

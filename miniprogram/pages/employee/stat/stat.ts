@@ -228,13 +228,14 @@ Page({
     return def ? def.days : 7
   },
 
-  async load() {
+  // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
+  async load(opts?: { silent?: boolean }) {
     if (!wx.getStorageSync('empToken')) {
       wx.redirectTo({ url: '/pages/employee/login/login' })
       return
     }
     const days = this.rangeDays()
-    this.setData({ loading: true })
+    if (!opts || !opts.silent) this.setData({ loading: true })
     const r = await request('GET', '/api/employee/me/stat', {
       from: dayStr(-(days - 1)),
       to: dayStr(0),
@@ -246,6 +247,19 @@ Page({
       wx.redirectTo({ url: '/pages/employee/login/login' })
     } else {
       wx.showToast({ title: r.msg || '加载失败', icon: 'none' })
+    }
+  },
+
+  // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
+  // 未登录时 load 内部会 redirectTo 登录页，finally 仍会执行，不会留下卡住的指示器。
+  async onPullDownRefresh() {
+    try {
+      await this.load({ silent: true })
+    } catch {
+      // stat 的 load 没有内部 try/catch，网络异常会抛到这里；
+      // 兜住避免未捕获的 Promise rejection，错误提示沿用原 onShow 的静默口径
+    } finally {
+      wx.stopPullDownRefresh()
     }
   },
 

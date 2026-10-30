@@ -33,6 +33,18 @@ Page({
       this.setData({ me: null, pendingModify: false })
     }
   },
+  // 下拉刷新：重拉登录态与资料。loadMe 没有整页 loading 态（页内各块各自兜底），
+  // 因此不需要 silent；无论成败都收掉顶部指示器。
+  async onPullDownRefresh() {
+    try {
+      await this.loadMe()
+    } catch {
+      // loadMe 没有内部 try/catch，网络异常会抛到这里；兜住避免未捕获的
+      // Promise rejection，错误提示沿用原 onShow 的静默口径
+    } finally {
+      wx.stopPullDownRefresh()
+    }
+  },
   goLogin() {
     wx.navigateTo({ url: '/pages/employee/login/login' })
   },

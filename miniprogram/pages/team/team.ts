@@ -40,8 +40,11 @@ Page({
     this.load()
   },
 
-  async load() {
-    this.setData({ loading: true, error: false, unavailable: false })
+  // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
+  async load(opts?: { silent?: boolean }) {
+    const patch: Record<string, unknown> = { error: false, unavailable: false }
+    if (!opts || !opts.silent) patch.loading = true
+    this.setData(patch)
     try {
       const r: any = await request('GET', '/api/team')
       if (r.code !== 0) {
@@ -94,6 +97,18 @@ Page({
       applyBrandTitle({ shortName: comp.shortName, fullName: comp.fullName })
     } catch {
       this.setData({ loading: false, error: true })
+    }
+  },
+
+  // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
+  async onPullDownRefresh() {
+    try {
+      await this.load({ silent: true })
+    } catch {
+      // 错误态由 load 自己落（error 标记）；这里只兜网络异常，
+      // 避免 onPullDownRefresh 抛出未捕获的 Promise rejection
+    } finally {
+      wx.stopPullDownRefresh()
     }
   },
 

@@ -152,9 +152,12 @@ Page({
   // 已移除：它是开发期联调用的兜底，但裸启动（扫体验版二维码 / 直接打开）走的正是
   // 这条路径，真实访客会被一个要数字的弹窗挡在门外。现在无 staffId 时跳名片墙
   // （见 onLoad），名片墙为空也能告诉访客「这家公司还没人开通名片」。
-  async loadAll() {
+  // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
+  async loadAll(opts?: { silent?: boolean }) {
     const sid = this.data.staffId
-    this.setData({ loading: true, error: false })
+    const patch: Record<string, unknown> = { error: false }
+    if (!opts || !opts.silent) patch.loading = true
+    this.setData(patch)
     try {
       const [card, ach, svc, layout] = await Promise.all([
         request('GET', '/api/card?staffId=' + sid),
@@ -219,6 +222,18 @@ Page({
       // 断网 / 接口异常：loading 必须落下来。此前 reject 直接冒泡出 async 函数，
       // 页面永远停在「加载中…」——这是真实缺陷，不是体验问题。
       this.setData({ loading: false, error: true })
+    }
+  },
+  // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
+  // 访问埋点不必额外处理——trackVisit 按 staffId 去重，同一张名片只记一次。
+  async onPullDownRefresh() {
+    try {
+      await this.loadAll({ silent: true })
+    } catch {
+      // 错误态由 loadAll 自己落（error 标记）；这里只兜网络异常，
+      // 避免 onPullDownRefresh 抛出未捕获的 Promise rejection
+    } finally {
+      wx.stopPullDownRefresh()
     }
   },
   reload() {

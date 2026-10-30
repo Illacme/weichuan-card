@@ -2,5 +2,6 @@
   "usingComponents": {
     "privacy-consent": "/components/privacy-consent/index"
   },
-  "navigationBarTitleText": "个人信息"
+  "navigationBarTitleText": "个人信息",
+  "enablePullDownRefresh": true
 }

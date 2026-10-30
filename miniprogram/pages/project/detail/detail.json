@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "案例详情",
+  "enablePullDownRefresh": true,
   "usingComponents": {
     "rich-video": "/components/rich-video/index"
   }

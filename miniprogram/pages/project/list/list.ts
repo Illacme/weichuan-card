@@ -42,8 +42,11 @@ Page({
     this.setData({ categoryId: id })
     this.load()
   },
-  async load() {
-    this.setData({ loading: true, error: false })
+  // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
+  async load(opts?: { silent?: boolean }) {
+    const patch: Record<string, unknown> = { error: false }
+    if (!opts || !opts.silent) patch.loading = true
+    this.setData(patch)
     try {
       const r = await request('GET', '/api/projects', { categoryId: this.data.categoryId })
       const list = (r.data || []).map((p: any) => {
@@ -57,6 +60,17 @@ Page({
       wx.setNavigationBarTitle({ title: name || '项目案例' })
     } catch {
       this.setData({ loading: false, error: true })
+    }
+  },
+  // 下拉刷新：分类与列表一起重拉（分类可能被后台增删，只刷列表会留下失效的切换条）。
+  async onPullDownRefresh() {
+    try {
+      await Promise.all([this.loadCats(), this.load({ silent: true })])
+    } catch {
+      // 错误态由 load 自己落（error 标记）；这里只兜网络异常，
+      // 避免 onPullDownRefresh 抛出未捕获的 Promise rejection
+    } finally {
+      wx.stopPullDownRefresh()
     }
   },
   onTap(e: any) {

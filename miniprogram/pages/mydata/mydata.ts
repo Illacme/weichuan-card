@@ -53,8 +53,9 @@ Page({
   onShow() {
     this.loadMe()
   },
-  async loadMe() {
-    this.setData({ loading: true })
+  // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
+  async loadMe(opts?: { silent?: boolean }) {
+    if (!opts || !opts.silent) this.setData({ loading: true })
     const r = await request('GET', '/api/employee/me')
     if (r.code === 0 && r.data) {
       const d = r.data as Record<string, any>
@@ -91,6 +92,17 @@ Page({
     } else {
       // token 失效：回未登录态
       this.setData({ loading: false, items: [] })
+    }
+  },
+  // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
+  async onPullDownRefresh() {
+    try {
+      await this.loadMe({ silent: true })
+    } catch {
+      // loadMe 没有内部 try/catch，网络异常会抛到这里；兜住避免未捕获的
+      // Promise rejection，错误提示沿用原 onShow 的静默口径
+    } finally {
+      wx.stopPullDownRefresh()
     }
   },
   // 「复制全部」：把全部信息拼成多行文本写入剪贴板（PIPL 复制权）。
