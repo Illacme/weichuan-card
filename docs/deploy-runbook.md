@@ -42,7 +42,7 @@ nginx（即 Docker 版 `frontend/nginx.conf` 的配置，仅把 `backend:8080` �
 ```nginx
 server {
     listen 80;
-    root /path/to/weichuan-card/frontend/dist;
+    root /path/to/weichuan-card-v2/frontend/dist;
     index index.html;
     client_max_body_size 50m;
 
@@ -124,7 +124,7 @@ location / { try_files $uri $uri/ /index.html; }
 后端常驻，二选一：
 
 ```bash
-nohup /path/to/weichuan-card/backend/weichuan > /var/log/weichuan.log 2>&1 &   # 最简
+nohup /path/to/weichuan-card-v2/backend/weichuan > /var/log/weichuan.log 2>&1 &   # 最简
 ```
 
 ```ini
@@ -134,9 +134,9 @@ Description=weichuan backend (dev mode)
 After=network.target
 
 [Service]
-WorkingDirectory=/path/to/weichuan-card/backend
+WorkingDirectory=/path/to/weichuan-card-v2/backend
 Environment=DEV_UPLOAD_BASE_URL=http://192.168.1.10:8080/uploads
-ExecStart=/path/to/weichuan-card/backend/weichuan
+ExecStart=/path/to/weichuan-card-v2/backend/weichuan
 Restart=always
 RestartSec=2
 
@@ -248,8 +248,8 @@ export TZ=Asia/Shanghai                        # 统计按服务端本地日期�
 ## 1. 获取代码与配置
 
 ```bash
-git clone git@github.com:Illacme/weichuan-card.git
-cd weichuan-card
+git clone git@github.com:Illacme/weichuan-card-v2.git
+cd weichuan-card-v2
 cp .env.example .env
 ```
 

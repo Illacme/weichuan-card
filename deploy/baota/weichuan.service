@@ -19,7 +19,7 @@
 
 [Unit]
 Description=微传名片后端 (weichuan backend)
-Documentation=https://github.com/Illacme/weichuan-card
+Documentation=https://github.com/Illacme/weichuan-card-v2
 After=network.target
 
 [Service]
