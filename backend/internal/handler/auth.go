@@ -131,6 +131,10 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "token": access, "refreshToken": refresh, "expiresIn": expiresIn})
 	})
 
+	// 微信一键登录 / 绑定（见 login_wechat.go）：
+	// 复用上面的登录限流器——一键登录同样要打微信接口、同样能被脚本刷。
+	RegisterWechatLogin(r, db, cfg, loginLimiter.Handler())
+
 	// 超管登录（按用户名）——PC 后台，httpOnly Cookie 鉴权（token 不入响应体）
 	r.POST("/api/admin/login", loginLimiter.Handler(), func(c *gin.Context) {
 		var req struct {

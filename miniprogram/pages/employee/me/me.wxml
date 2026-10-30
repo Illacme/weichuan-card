@@ -55,6 +55,13 @@
     <!-- 账号安全 -->
     <view class="group-label">账号</view>
     <view class="section cells">
+      <!-- 微信一键登录：绑定后下次登录不用输密码（员工忘密码是最高频的工单）。
+           已绑定时不再重复绑定，点进去只解释「怎么换微信」。 -->
+      <view class="cell" bindtap="onBindWechat" hover-class="cell-hover">
+        <text class="cell-label">微信一键登录</text>
+        <text class="cell-value">{{wechatBound ? '已绑定' : '未绑定'}}</text>
+        <text class="cell-arrow">›</text>
+      </view>
       <view class="cell" bindtap="openPwd" hover-class="cell-hover">
         <text class="cell-label">修改密码</text>
         <text class="cell-arrow">›</text>

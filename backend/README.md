@@ -439,12 +439,14 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | /api/employee/login | 否 | 员工登录（手机号+密码）→ 返回 token + refreshToken（小程序 Bearer）；企业停用返回 code=2 |
+| POST | /api/employee/login/wechat | 否 | **微信一键登录**：body `{code, companyId}` → 后端 jscode2session 换 openid → 找已绑定该 openid 的员工 → 发令牌。业务码：0 成功 / 1 参数或微信侧错误 / 2 账号或企业停用 / **3 该微信未绑定或绑定了多个账号**（前端据此引导去绑定或改用密码登录）。走登录限流器 |
+| POST | /api/employee/wechat/bind | employee | **绑定微信**（body `{code}`）→ 把当前员工与 openid 绑定，之后可一键登录。凭据取员工**自己企业**的 appid（不信客户端传值）；同一企业内一个微信只能绑一个账号；重复绑定是覆盖写（换微信时直接重绑，无需解绑接口） |
 | POST | /api/admin/login | 否 | 管理员登录（用户名+密码）→ 写 httpOnly Cookie，响应体仅 expiresIn + 身份（companyId/companyName/isPlatform） |
 | POST | /api/refresh | 否 | 换发新 access（PC 读 refresh Cookie；小程序 body 传 refreshToken） |
 | POST | /api/logout | 否 | 吊销当前会话 sid（单设备精确吊销）+ 清除 httpOnly 鉴权 Cookie（PC 后台登出） |
 | POST | /api/apply/open | 否 | 员工自助提交开通申请（pending；可含 landline / avatar / companyId，缺省落演示租户）。文字经内容安全检测，命中违规返回 code=1 且不落库 |
 | POST | /api/apply/open/avatar | 否 | 申请开通时上传头像（公开端点，仅图片，供访客在账号创建前设置头像） |
-| GET  | /api/employee/me | employee | 本人名片信息 |
+| GET  | /api/employee/me | employee | 本人名片信息；根级另带 `pendingModify`（有无待审修改）、`wechatBound`（是否已绑定微信，供「我的」页显示状态）、`companyName` / `companyShortName` |
 | PUT  | /api/employee/me | employee | 提交名片修改申请（待审，对外仍显旧信息；可含 landline）。姓名 / 职位经内容安全检测，命中违规返回 code=1 且不落库 |
 | GET  | /api/employee/me/stat | employee | 本人统计（?from=&to= 日期范围 YYYY-MM-DD，可缺省=全部）：八类事件计数 + 按天趋势 + 案例/服务 TOP3 + **来源分布**（只统计 visit，各行之和 = visit） |
 | PUT  | /api/employee/password | employee | 修改本人密码 |

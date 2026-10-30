@@ -1,5 +1,6 @@
 import { request, assetUrl } from '../../../utils/request'
 import { onImgFail } from '../../../utils/thumb'
+import { wxLoginCode } from '../../../utils/wechat'
 
 // 员工「我的」页（tabBar）：未登录给登录 / 申请开通入口，已登录给名片与账号操作。
 // 数据在 onShow 拉取而非 onLoad——从登录页 / 编辑页返回时需要刷新登录态与资料。
@@ -8,6 +9,11 @@ Page({
     me: null as any,
     // 有待审名片修改时为 true：「编辑名片」单元格显示「审核中」
     pendingModify: false,
+    // 是否已绑定微信：由 /api/employee/me 根级下发，「微信一键登录」单元格据此显示状态。
+    // 不用 me.openid 是否为空来判断——那是后端的承载字段，产品语义不该由前端猜。
+    wechatBound: false,
+    // 绑定请求在途：防连点（连点会连发两个 code，后一个必然失效并报错）
+    bindingWechat: false,
     pwdVisible: false,
     pwdSaving: false,
     pwd: { oldPwd: '', newPwd: '', confirmPwd: '' },
@@ -21,7 +27,7 @@ Page({
   async loadMe() {
     const token = wx.getStorageSync('empToken')
     if (!token) {
-      this.setData({ me: null, pendingModify: false })
+      this.setData({ me: null, pendingModify: false, wechatBound: false })
       return
     }
     const r = await request('GET', '/api/employee/me')
@@ -31,10 +37,51 @@ Page({
       app.globalData.myStaffId = r.data.staffId
       // 头像为后端相对路径，端上拼绝对（小程序 <image src> 不认相对）
       r.data.avatar = assetUrl(r.data.avatar)
-      this.setData({ me: r.data, pendingModify: !!r.pendingModify })
+      this.setData({
+        me: r.data,
+        pendingModify: !!r.pendingModify,
+        wechatBound: !!r.wechatBound,
+      })
     } else {
       // token 失效（拦截器已清 storage）：回到未登录态
-      this.setData({ me: null, pendingModify: false })
+      this.setData({ me: null, pendingModify: false, wechatBound: false })
+    }
+  },
+  // 绑定微信：绑定后下次可直接「微信一键登录」，不用再记密码。
+  //
+  // 已绑定时不再重复绑定（重复绑定只是把同一个 openid 又写一遍，没有意义），
+  // 改为说明「怎么换微信」——换微信的正确做法是用新微信登录 → 提示未绑定 →
+  // 密码登录 → 在这里重新绑定，新 openid 覆盖旧的。所以不需要「解绑」按钮。
+  async onBindWechat() {
+    if (this.data.wechatBound) {
+      wx.showModal({
+        title: '已绑定微信',
+        content: '当前微信已绑定本账号，下次登录可直接点「微信一键登录」。换微信时：用新微信进入本页重新绑定即可，旧微信会自动失效。',
+        showCancel: false,
+      })
+      return
+    }
+    if (this.data.bindingWechat) return
+    this.setData({ bindingWechat: true })
+    try {
+      const code = await wxLoginCode()
+      if (!code) {
+        wx.showToast({ title: '获取微信信息失败，请重试', icon: 'none' })
+        return
+      }
+      const r = await request('POST', '/api/employee/wechat/bind', { code })
+      if (r.code === 0) {
+        this.setData({ wechatBound: true })
+        wx.showToast({ title: '已绑定', icon: 'success' })
+        return
+      }
+      // 用 modal 而不是 toast：绑定失败的原因（这个微信已绑了别的账号）需要完整说明，
+      // toast 单行会被截断，用户只看到半句
+      wx.showModal({ title: '绑定失败', content: r.msg || '请稍后重试', showCancel: false })
+    } catch {
+      wx.showToast({ title: '网络异常，请重试', icon: 'none' })
+    } finally {
+      this.setData({ bindingWechat: false })
     }
   },
   // 下拉刷新：重拉登录态与资料。loadMe 没有整页 loading 态（页内各块各自兜底），

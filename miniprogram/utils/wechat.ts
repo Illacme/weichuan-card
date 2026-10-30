@@ -44,6 +44,25 @@ export function getOpenid(): Promise<string> {
   })
 }
 
+// 取一个**新的** wx.login code，供微信一键登录 / 绑定微信使用。
+//
+// 与 getOpenid 刻意不同：getOpenid 把 openid 缓存进 storage（openid 不变，缓存是为了
+// 少打一次接口），而一键登录必须每次拿新 code——code 一次性、5 分钟过期，
+// 拿缓存的 openid 等于让后端没法确认「这次请求真的来自这个微信」。
+//
+// 失败（用户拒绝 / 微信未就绪）返回空串，由调用方提示重试；不 reject，
+// 免得上层到处写 try/catch。
+export function wxLoginCode(): Promise<string> {
+  return new Promise((resolve) => {
+    wx.login({
+      success(res: any) {
+        resolve(res && res.code ? res.code : '')
+      },
+      fail: () => resolve(''),
+    })
+  })
+}
+
 // 本文件刻意**不再**提供 getWechatNickname()。
 //
 // 原因：wx.getUserProfile 已于 2022-10-25 被平台收回，此后调用统一返回

@@ -166,6 +166,35 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .form-item input { flex: 1; }
 .submit-btn { margin-top: 40rpx; background: #1a8cff; color: #fff; border-radius: 40rpx; }
 
+/* 登录页：微信一键登录（主入口）+「或」分隔线 + 手机号密码（备用方式）
+   微信官方对「登录」类按钮的品牌色是 #07c160，用品牌绿而不是主题蓝，
+   是为了让用户一眼认出这是微信授权登录、不是小程序自造的账号体系。 */
+.login { padding: 32rpx 24rpx; background: #fff; min-height: 100vh; box-sizing: border-box; }
+.wx-login-btn {
+  display: flex; align-items: center; justify-content: center;
+  height: 88rpx; line-height: 1; background: #07c160; color: #fff;
+  font-size: 32rpx; border-radius: 44rpx;
+}
+.wx-login-btn::after { border: none; } /* 去掉 button 默认边框（button 唯一可用的重置手段） */
+/* 微信气泡图标：CSS 画一个圆角方块 + 两个点，不引入图片资源
+   （包体越小冷启动越快，一个 4KB 的 png 不值得为它多一次请求）。
+   点用真实元素而不是伪元素：与项目「装饰线用真实元素」的约定保持一致。 */
+.wx-login-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 34rpx; height: 30rpx; margin-right: 14rpx;
+  background: #fff; border-radius: 10rpx 10rpx 10rpx 2rpx;
+}
+.wx-login-dot { width: 6rpx; height: 6rpx; background: #07c160; border-radius: 50%; }
+.wx-login-dot + .wx-login-dot { margin-left: 8rpx; }
+.wx-login-label { font-size: 32rpx; color: #fff; }
+.wx-login-hint { margin-top: 16rpx; text-align: center; font-size: 24rpx; color: #9aa7b4; line-height: 1.6; }
+/* 「或」分隔线：两侧细线 + 中间文字，比单独一行提示更像「两条并列的路」 */
+.or-line { display: flex; align-items: center; margin: 40rpx 0 8rpx; }
+.or-rule { flex: 1; height: 1rpx; background: #e8ebef; }
+.or-text { padding: 0 20rpx; font-size: 24rpx; color: #9aa7b4; }
+/* 登录页里的表单块已经在外层有 padding，内层不再重复留白 */
+.login .form { padding: 0; }
+
 /* 手机号行右侧「+ 备用手机号」（申请开通页 / 编辑名片页共用）：
    默认只展示一个手机号输入框，多数人只有一个号；需要第二个时点它展开，
    比一上来摆两个空框更不容易误解为「都要填」 */

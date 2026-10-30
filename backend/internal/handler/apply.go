@@ -104,6 +104,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "data": e, "pendingModify": pending > 0,
+			// 是否已绑定微信：「我的」页据此显示「已绑定 / 点击绑定」。
+			// 单独给一个布尔值，而不是让前端去判 data.openid 是否为空——
+			// 「有没有绑定」是产品语义，前端不该知道它是由 openid 这个字段承载的。
+			"wechatBound": e.OpenID != "",
 			"companyName": companyName, "companyShortName": companyShortName,
 		})
 	})
@@ -191,16 +195,16 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 	// 员工本人统计（?from=&to= 日期范围，YYYY-MM-DD 闭区间，均可缺省=全部时间）。
 	//
-		// 一次 statMeSnapshot 拿齐五块：八类事件汇总 + 按天趋势 + 案例/服务
-		// 内容浏览 TOP3 + **访客来源分布**。前四块见上方说明，来源分布单独说：
-		// 海报是唯一需要员工主动产出的物料（生成 → 传播），「海报带来了多少访问」
-		// 只有来源分布能回答——裂变那两个计数（share/poster_save）主体可能是
-		// 员工本人，证明不了海报有没有用。
-		//
-		// 兼容性：data 里原有的 visit/call/save 三个键保留不动（additive），
-		// 老版本小程序照旧能读；新增五个意向计数与 trend/topProjects/topServices/sourceDist。
-		// 形状对齐管理端 /api/admin/stats 的 data.summary / data.trend / data.topXxx / data.sourceDist。
-		r.GET("/api/employee/me/stat", middleware.AuthMiddleware(db, "employee"), func(c *gin.Context) {
+	// 一次 statMeSnapshot 拿齐五块：八类事件汇总 + 按天趋势 + 案例/服务
+	// 内容浏览 TOP3 + **访客来源分布**。前四块见上方说明，来源分布单独说：
+	// 海报是唯一需要员工主动产出的物料（生成 → 传播），「海报带来了多少访问」
+	// 只有来源分布能回答——裂变那两个计数（share/poster_save）主体可能是
+	// 员工本人，证明不了海报有没有用。
+	//
+	// 兼容性：data 里原有的 visit/call/save 三个键保留不动（additive），
+	// 老版本小程序照旧能读；新增五个意向计数与 trend/topProjects/topServices/sourceDist。
+	// 形状对齐管理端 /api/admin/stats 的 data.summary / data.trend / data.topXxx / data.sourceDist。
+	r.GET("/api/employee/me/stat", middleware.AuthMiddleware(db, "employee"), func(c *gin.Context) {
 		staffID := c.GetInt64("staffId")
 		from, to, ok := statDateRange(c)
 		if !ok {
