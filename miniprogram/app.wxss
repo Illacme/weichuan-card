@@ -192,8 +192,11 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .poster-btn { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; font-size: 28rpx; }
 .poster-page { padding: 24rpx; }
 .poster-canvas { width: 320px; height: 460px; background: #fff; border-radius: 12rpx; }
-/* 海报页：canvas 与「生成中 / 失败」覆盖层叠在同一块 320×460 的舞台上 */
-.poster-stage { position: relative; width: 320px; height: 460px; }
+/* 海报页：canvas 与「生成中 / 失败」覆盖层叠在同一块 320×460 的舞台上。
+   margin: 0 auto 让这块固定宽的舞台水平居中：画布是 block 且宽固定 320px，
+   不居中的话右侧会多出一整条留白（640rpx 画布放在 702rpx 可用宽里，右侧空 62rpx），
+   而下面的提示文字是 text-align:center、工具条是撑满，画布一偏就显得整页歪了。 */
+.poster-stage { position: relative; width: 320px; height: 460px; margin: 0 auto; }
 .poster-mask {
   position: absolute; left: 0; top: 0; right: 0; bottom: 0;
   background: #fff; border-radius: 12rpx;
@@ -380,8 +383,13 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .cell-label { flex: 1; font-size: 30rpx; }
 .cell-label.danger { color: #e64340; }
 /* 隐私政策等「需可查阅但低优先级」的入口：浅灰弱化、右对齐居右，不抢视觉重心
-   （合规要求保留入口，但不喧宾夺主；右对齐使其在菜单行里读起来像附注而非主操作） */
-.cell-label.muted { color: #b2b2b2; text-align: right; }
+   （合规要求保留入口，但不喧宾夺主；右对齐使其在菜单行里读起来像附注而非主操作）。
+   必须与 .cell-value 保持同一套度量，否则同一张卡片里会歪：
+   - font-size 24rpx：此前沿用 .cell-label 的 30rpx，比「查阅 / 复制」「不可恢复」
+     大 6rpx，几行右对齐的灰字并排时反而成了最抢眼的一行，与「弱化」意图相反；
+   - margin-right 12rpx：.cell-value 自带这个边距，而这里 flex:1 + text-align:right
+     会把文字推到 flex 容器最右缘，不加就成了唯一贴着箭头的一行。 */
+.cell-label.muted { color: #b2b2b2; text-align: right; font-size: 24rpx; margin-right: 12rpx; }
 .cell-value { color: #aaa; font-size: 24rpx; margin-right: 12rpx; }
 .cell-arrow { color: #ccc; font-size: 32rpx; }
 /* 分组小标题：灰色、位于两组白色卡片之间，用于区隔功能组（名片 / 数据 / 账号 / 隐私与合规） */
