@@ -1,6 +1,7 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
 import { getOpenid } from '../../../utils/wechat'
 import { ensurePrivacy, needConsent } from '../../../utils/privacy'
+import { onImgFail } from '../../../utils/thumb'
 
 // 访客自助提交开通申请（POST /api/apply/open）。
 // 头像：默认读取用户微信头像（按钮 open-type=chooseAvatar 会直接调起微信头像选择器，
@@ -21,6 +22,10 @@ import { ensurePrivacy, needConsent } from '../../../utils/privacy'
 Page({
   data: {
     form: { name: '', phone: '', phone2: '', title: '', landline: '', email: '', avatar: '', nickname: '' },
+    // 头像预览加载失败的地址：WXML 用 `form.avatar && avatarFail !== form.avatar` 判断，
+    // 失败时占位文案改成「加载失败」而不是「未设置」（见 utils/thumb.ts onImgFail）。
+    // 记 URL 而不是布尔标记：重新选一张图后地址变了，预览自动恢复。
+    avatarFail: '',
     // 备用手机号输入框是否展开：默认收起（多数人只有一个号），
     // 由「手机」行右侧「+ 备用手机号」按钮切换；编辑/回填场景见 loadMe
     showPhone2: false,
@@ -69,6 +74,8 @@ Page({
       })
       .catch(() => {})
   },
+  // 头像预览加载失败：记下失败的地址，WXML 据此换成「加载失败」占位（见 utils/thumb.ts）
+  onImgFail,
   onInput(e: any) {
     const field = e.currentTarget.dataset.field
     const form = this.data.form as any

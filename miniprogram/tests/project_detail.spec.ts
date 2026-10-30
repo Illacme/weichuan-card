@@ -129,13 +129,36 @@ describe('project/detail 页', () => {
     })
   })
 
-  it('没有相册时预览不崩（urls 传空数组）', async () => {
+  it('没有相册时点图不调预览（不把空数组丢给微信）', async () => {
     mocks.request.mockResolvedValueOnce({ code: 0, data: detail({ album: null }) })
     const p = await page({ id: '7' })
 
     p.preview({ currentTarget: { dataset: { url: '' } } })
 
-    expect(wxStub.previewImage).toHaveBeenCalledWith({ urls: [], current: '' })
+    // 空列表调 previewImage 只会让微信打一条告警，用户看不到任何东西——
+    // 干脆不调（见 detail.ts preview 的早退分支）
+    expect(wxStub.previewImage).not.toHaveBeenCalled()
+  })
+
+  it('相册里有图挂了：预览列表剔掉坏图，点坏图本身不弹预览', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: detail() })
+    const p = await page({ id: '7' })
+    // 模拟第 2 张加载失败（binderror → onImgFail 记下失败的 URL）
+    p.onImgFail({
+      currentTarget: {
+        dataset: { fail: 'albumFail', idx: 1, src: 'https://cdn.other/a2.jpg' },
+      },
+    })
+
+    p.preview({ currentTarget: { dataset: { url: 'https://cdn.test/uploads/a1.jpg' } } })
+    expect(wxStub.previewImage).toHaveBeenLastCalledWith({
+      urls: ['https://cdn.test/uploads/a1.jpg'],
+      current: 'https://cdn.test/uploads/a1.jpg',
+    })
+
+    // 点坏图：current 不在可用列表里，不弹（否则打开就是同一张裂图）
+    p.preview({ currentTarget: { dataset: { url: 'https://cdn.other/a2.jpg' } } })
+    expect(wxStub.previewImage).toHaveBeenCalledTimes(1)
   })
 
   it('分享：标题用案例名，路径回带 id / staffId / companyId', async () => {

@@ -1,5 +1,9 @@
 <view class="detail" wx:if="{{!loading && !error && project}}">
-  <image class="banner" src="{{project.cover}}" mode="aspectFill" lazy-load wx:if="{{project.cover}}" />
+  <!-- 封面 / 相册都挂了 binderror。相册图挂了不留白块：占位与图片同尺寸同圆角
+       （.album-img 自带 #eee 底色），宫格不会因为一张坏图塌掉一格。
+       占位不绑 preview——点它没有意义，还会用空地址调起预览。 -->
+  <image class="banner" src="{{project.cover}}" mode="aspectFill" lazy-load wx:if="{{project.cover && coverFail !== project.cover}}"
+    binderror="onImgFail" data-fail="coverFail" data-src="{{project.cover}}" />
   <view class="title">{{project.name}}</view>
   <view class="meta">
     <text wx:if="{{project.categoryName}}">{{project.categoryName}}</text>
@@ -13,16 +17,22 @@
     </block>
   </view>
   <view class="album" wx:if="{{project.album.length}}">
-    <image
-      wx:for="{{project.album}}"
-      wx:key="*this"
-      src="{{item}}"
-      mode="aspectFill"
-      lazy-load
-      class="album-img"
-      data-url="{{item}}"
-      bindtap="preview"
-    />
+    <block wx:for="{{project.album}}" wx:key="*this">
+      <image
+        wx:if="{{item && albumFail[index] !== item}}"
+        src="{{item}}"
+        mode="aspectFill"
+        lazy-load
+        class="album-img"
+        data-url="{{item}}"
+        bindtap="preview"
+        binderror="onImgFail"
+        data-fail="albumFail"
+        data-idx="{{index}}"
+        data-src="{{item}}"
+      />
+      <view wx:else class="album-img" />
+    </block>
   </view>
 </view>
 <view wx:elif="{{error}}" class="error-box">

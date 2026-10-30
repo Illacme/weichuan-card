@@ -26,6 +26,40 @@ export function thumbnailURL(src?: string | null): string {
   return base.slice(0, dot) + '_thumb.' + ext + suffix
 }
 
+// 单图 binderror 通用处理：记下「加载失败的那个 URL」，WXML 用
+//   src && xxxFail !== src
+// 决定还要不要画它——不画就露出同位置的占位（默认图标 / 容器自带的纯色底 /
+// 表单里的「未设置」），避免白块或裂图。
+//
+// 为什么记 URL 而不是布尔标记：布尔标记必须在每次换图时手动清掉（换头像、
+// 下拉刷新换了地址、图集重排……），漏一处就是「新图永远不显示」这种难查的 bug。
+// 记 URL 则天然自愈——地址一变就重新尝试；同一张坏图也不会无限重试。
+// 顺带解决了图集按下标标记的隐患：列表增删导致下标错位时，比较的是 URL，
+// 错位只会让标记失效（多画一次图），不会把别的图误藏起来。
+//
+// 用法：
+//   单图：binderror="onImgFail" data-fail="avatarFail" data-src="{{employee.avatar}}"
+//   图集：binderror="onImgFail" data-fail="albumFail" data-idx="{{index}}" data-src="{{item}}"
+//         （data 里放同名空数组，如 albumFail: []）
+export function onImgFail(this: any, e: any): void {
+  const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+  const key: string = ds.fail
+  const src: string = ds.src
+  if (!key || !src) return
+  const patch: Record<string, unknown> = {}
+  if (ds.idx != null) {
+    // 整数组重写而不是 setData('albumFail[2]')：路径写法在微信里合法，但数组只有
+    // 几项到几十项（相册 ≤9、海报素材 ≤44），整写省掉一个「路径解析」依赖，
+    // 也让测试脚手架不必模拟路径语义——少一处只在真机上才暴露的差异。
+    const cur: string[] = Array.isArray(this.data && this.data[key]) ? this.data[key].slice() : []
+    cur[ds.idx] = src
+    patch[key] = cur
+  } else {
+    patch[key] = src
+  }
+  this.setData(patch)
+}
+
 // 列表图 binderror 通用回退：缩略图加载失败时改回原图，避免裂图。
 // 配合 WXML 上的 data-arr / data-idx / data-key / data-full 使用；
 // 适用于页面与组件（组件内数组名即其属性名）。

@@ -49,9 +49,12 @@
     binderror="onVideoError"
   />
 
-  <!-- 无视频：封面图左上角叠白色「公司简介」标题；无封面时显示同风格占位（自带标题） -->
-  <view wx:elif="{{cover}}" class="cv-wrap">
-    <image src="{{cover}}" class="cv" mode="aspectFill" />
+  <!-- 无视频：封面图左上角叠白色「公司简介」标题；无封面时显示同风格占位（自带标题）。
+       封面挂了 binderror：封面丢了就退到同风格的蓝底占位，别留一块空白或裂图——
+       这块在首页是「公司简介」的唯一视觉，空白会被当成页面没加载完。 -->
+  <view wx:elif="{{cover && coverFail !== cover}}" class="cv-wrap">
+    <image src="{{cover}}" class="cv" mode="aspectFill"
+      binderror="onImgFail" data-fail="coverFail" data-src="{{cover}}" />
     <view class="cv-title">公司简介</view>
   </view>
   <view wx:else class="cv cv-ph">公司简介</view>

@@ -1,3 +1,5 @@
+import { onImgFail } from '../../utils/thumb'
+
 // 12px 字号（= 24rpx @375 视口）下 PingFang/-apple-system 的逐字符实测字宽。
 // 由 outputs/gen_char_table.js 用 canvas measureText 在 375 视口下逐字符量出后回填，
 // 之所以不用「按字符类别取平均值」：m/w 这类宽字母会把平均值拉偏，含它们的邮箱
@@ -47,6 +49,10 @@ Component({
   data: {
     // 邮箱是否「长」：超过半栏可用宽度 → 走 long 档（右列≤60% + 邮箱地址右对齐）
     emailLong: false,
+    // 加载失败的图片地址（头像 / 企业 LOGO）：WXML 用 `src && xxxFail !== src` 判断，
+    // 记 URL 而不是布尔标记，换图后自动重试（见 utils/thumb.ts onImgFail）
+    avatarFail: '',
+    logoFail: '',
   },
   observers: {
     // 员工数据是首页异步加载后 setData 进来的，observer 里拿不到渲染后的 DOM，
@@ -56,6 +62,8 @@ Component({
     },
   },
   methods: {
+    // 头像 / LOGO 加载失败：记下失败的地址，WXML 据此不再画这张图（见 utils/thumb.ts）
+    onImgFail,
     // 「查看案例」：只上报意图，具体行为（滚动业绩区 / 跳第一个分类 / 提示）由页面决定
     onEnterCase() {
       this.triggerEvent('entercase')

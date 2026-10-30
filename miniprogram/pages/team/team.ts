@@ -20,7 +20,7 @@
 //     同样走「查看全部」并带上关键字。
 //   - 首屏只拉 60 而不是 300：大企业首屏不必等 300 条 JSON 解析完才出画面。
 import { request, assetUrl } from '../../utils/request'
-import { thumbnailURL, onThumbError } from '../../utils/thumb'
+import { thumbnailURL, onThumbError, onImgFail } from '../../utils/thumb'
 import { FALLBACK_BRAND, applyBrandTitle } from '../../utils/brand'
 import { mapTeamList, teamParams, hasMoreOf } from '../../utils/team'
 
@@ -40,6 +40,9 @@ Page({
     // 企业抬头：企业信息还没填时后端给空串，标题回落品牌名
     title: FALLBACK_BRAND,
     logo: '',
+    // LOGO 加载失败的地址：WXML 用 `logo && logoFail !== logo` 判断是否还画它
+    // （见 utils/thumb.ts onImgFail——记 URL 而不是布尔标记，换 LOGO 自动重试）
+    logoFail: '',
     companyId: 0,
     loading: true,
     error: false,
@@ -177,4 +180,5 @@ Page({
   },
 
   onImgErr: onThumbError,
+  onImgFail,
 })

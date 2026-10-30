@@ -26,6 +26,7 @@
 // txv-video 是腾讯视频插件组件，只在 miniprogram/scripts/enable-tencent-video.mjs
 // 打开开关后（app.json 声明插件 + 本组件 index.json 注册组件）才可用。
 import { track } from '../../utils/track'
+import { onImgFail } from '../../utils/thumb'
 function pickMode(
   source: string,
   feedId: string,
@@ -71,6 +72,9 @@ Component({
   data: {
     mode: 'none',
     failed: false,
+    // 封面图加载失败的地址：WXML 用 `cover && coverFail !== cover` 判断是否还画它，
+    // 失败就退到同风格的蓝底占位（.cv-ph）。记 URL 而不是布尔标记，换封面自动重试。
+    coverFail: '',
     // 播放埋点去重标记：同一组件实例只报一次。微信 video 的 bindplay 在
     // 「暂停后继续播放」时会再次触发，不去重的话一次观看被记成多次——
     // 「访客反复看了几遍」与「手滑暂停再播」在统计里无法区分。
@@ -103,6 +107,8 @@ Component({
     },
   },
   methods: {
+    // 封面图加载失败：记下失败的地址，WXML 据此退到蓝底占位（见 utils/thumb.ts）
+    onImgFail,
     // video_play 埋点（mp4 档；channel-video 无播放事件，见文件头说明）。
     // 组件实例级去重：暂停恢复再播不重复计。
     onVideoPlay() {

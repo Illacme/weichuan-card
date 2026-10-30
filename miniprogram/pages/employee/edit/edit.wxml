@@ -6,8 +6,11 @@
   </view>
   <view class="form-item avatar-row">
     <text class="label">头像</text>
-    <image class="avatar-preview" src="{{form.avatar}}" mode="aspectFill" lazy-load wx:if="{{form.avatar}}" />
-    <view class="avatar-ph" wx:else>未设置</view>
+    <!-- 预览图挂了 binderror：这是表单字段，图挂了要说清「没传」还是「加载不出来」，
+         都显示「未设置」会让用户以为刚才选图白选了 -->
+    <image class="avatar-preview" src="{{form.avatar}}" mode="aspectFill" lazy-load wx:if="{{form.avatar && avatarFail !== form.avatar}}"
+      binderror="onImgFail" data-fail="avatarFail" data-src="{{form.avatar}}" />
+    <view class="avatar-ph" wx:else>{{form.avatar ? '加载失败' : '未设置'}}</view>
     <button class="picker-btn" size="mini" bindtap="chooseAvatar">选择图片</button>
   </view>
   <view class="form-item">

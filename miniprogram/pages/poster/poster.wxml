@@ -91,7 +91,9 @@
             </view>
           </view>
 
-          <!-- 自定义背景：长按删除（内置素材不可删，它们编译在二进制里） -->
+          <!-- 自定义背景：长按删除（内置素材不可删，它们编译在二进制里）。
+               缩略图挂了 binderror：换成同尺寸灰块（.bg-thumb 自带底色）而不是留裂图，
+               否则背景条里会出现一格破图，看起来像整排素材都坏了。 -->
           <view
             wx:for="{{customs}}"
             wx:key="id"
@@ -100,7 +102,17 @@
             bindtap="pickBg"
             bindlongpress="removeBg"
           >
-            <image class="bg-thumb" src="{{item.thumbUrl}}" mode="aspectFill" />
+            <image
+              wx:if="{{item.thumbUrl && customFail[index] !== item.thumbUrl}}"
+              class="bg-thumb"
+              src="{{item.thumbUrl}}"
+              mode="aspectFill"
+              binderror="onImgFail"
+              data-fail="customFail"
+              data-idx="{{index}}"
+              data-src="{{item.thumbUrl}}"
+            />
+            <view wx:else class="bg-thumb" />
           </view>
 
           <view
@@ -110,7 +122,17 @@
             data-id="{{item.id}}"
             bindtap="pickBg"
           >
-            <image class="bg-thumb" src="{{item.thumbUrl}}" mode="aspectFill" />
+            <image
+              wx:if="{{item.thumbUrl && posterFail[index] !== item.thumbUrl}}"
+              class="bg-thumb"
+              src="{{item.thumbUrl}}"
+              mode="aspectFill"
+              binderror="onImgFail"
+              data-fail="posterFail"
+              data-idx="{{index}}"
+              data-src="{{item.thumbUrl}}"
+            />
+            <view wx:else class="bg-thumb" />
             <!-- 今天这张：自动选中 + 排第一，加个角标说明原因。
                  节日（festival）与节气（term）分开配色——用户能看出
                  「这张是因为过节」而不是「上次选的」。 -->

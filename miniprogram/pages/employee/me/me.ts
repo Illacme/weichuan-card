@@ -1,4 +1,5 @@
 import { request, assetUrl } from '../../../utils/request'
+import { onImgFail } from '../../../utils/thumb'
 
 // 员工「我的」页（tabBar）：未登录给登录 / 申请开通入口，已登录给名片与账号操作。
 // 数据在 onShow 拉取而非 onLoad——从登录页 / 编辑页返回时需要刷新登录态与资料。
@@ -10,6 +11,9 @@ Page({
     pwdVisible: false,
     pwdSaving: false,
     pwd: { oldPwd: '', newPwd: '', confirmPwd: '' },
+    // 头像加载失败的地址：WXML 用 `me.avatar && avatarFail !== me.avatar` 判断
+    // （见 utils/thumb.ts onImgFail——记 URL 而不是布尔标记，换头像自动重试）
+    avatarFail: '',
   },
   onShow() {
     this.loadMe()
@@ -45,6 +49,8 @@ Page({
       wx.stopPullDownRefresh()
     }
   },
+  // 头像加载失败：记下失败的地址，WXML 据此退到浅底占位（见 utils/thumb.ts）
+  onImgFail,
   goLogin() {
     wx.navigateTo({ url: '/pages/employee/login/login' })
   },

@@ -4,6 +4,7 @@ import { solarTermOfDate, termFirst, type SolarTerm } from '../../utils/solarTer
 import { festivalOfDate, festivalFirst, type Festival } from '../../utils/festival'
 import { ensurePrivacy } from '../../utils/privacy'
 import { applyBrandTitle } from '../../utils/brand'
+import { onImgFail } from '../../utils/thumb'
 
 // 默认海报背景：节气会过时（立春的图在十月发很怪），商务款才能一直用。
 // 取不到清单或清单里没有这张时退回白底（BG_NONE）。
@@ -211,6 +212,11 @@ Page({
     // 页面退化成白底海报，不报错。
     posters: [] as any[],
     customs: [] as any[],
+    // 缩略图加载失败的地址（按下标记）：WXML 用 `url && xxxFail[index] !== url` 判断。
+    // 记 URL 而不是布尔标记——素材列表会重排（节气排最前）、会增删（上传 / 删除），
+    // 下标会错位；比较 URL 时错位只会让标记失效（多画一次图），不会误藏别的图。
+    customFail: [] as string[],
+    posterFail: [] as string[],
     bgId: BG_NONE,
     // 当天命中的素材 id（见 buildState）：空串表示今天既不是节日也不是节气，
     // 或年份超出内置表。wxml 用它给那张缩略图打角标。
@@ -483,6 +489,12 @@ Page({
   },
 
   // ---- 背景 ----
+
+  // 背景缩略图加载失败：记下失败的地址，WXML 据此换成同尺寸灰块（见 utils/thumb.ts）。
+  // 这里不做「缩略图 → 原图」回退：自定义背景的 thumbUrl 与 fileUrl 是同一个地址，
+  // 内置素材的 thumb 由素材清单直出（清单里没有的图根本不会列出来），
+  // 真挂了再退一次原图也是同一份坏文件，不如直接给干净占位。
+  onImgFail,
 
   // 切换底部工具：白名单外的值直接忽略（防止模板里写错 key 导致面板空白）
   switchTool(e: any) {

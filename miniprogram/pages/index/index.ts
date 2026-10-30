@@ -1,5 +1,5 @@
 import { request, assetUrl } from '../../utils/request'
-import { thumbnailURL } from '../../utils/thumb'
+import { thumbnailURL, onImgFail } from '../../utils/thumb'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { track, deriveSource } from '../../utils/track'
 import { FALLBACK_BRAND } from '../../utils/brand'
@@ -25,6 +25,10 @@ Page({
     bgImage: '',
     bgMask: 0,
     bgMaskAlpha: 0,
+    // 加载失败的图片地址（背景图 / 顶栏头像）：WXML 用 `src && xxxFail !== src` 判断，
+    // 记 URL 而不是布尔标记——换图或下拉刷新换了地址会自动重试（见 utils/thumb.ts）
+    bgFail: '',
+    meAvatarFail: '',
     disabled: false,
     notFound: false,
     loading: true,
@@ -242,6 +246,8 @@ Page({
   reload() {
     this.loadAll()
   },
+  // 背景图 / 顶栏头像加载失败：记下失败的地址，WXML 据此不再画它（见 utils/thumb.ts）
+  onImgFail,
   // 「查看案例」（首页文档 §2 名片区右上按钮）：业绩区在首页布局里 → 滚动过去（不离开名片页）；
   // 被布局隐藏 → 跳第一个分类的项目列表；一个分类都没有 → 提示
   // 「更多案例」：进入全部项目案例列表（categoryId=0 不过滤），列表页内有业绩分类切换

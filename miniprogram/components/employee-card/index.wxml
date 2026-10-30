@@ -3,12 +3,18 @@
        类名一律 ec- 前缀：组件 addGlobalClass 会吃到全局样式，
        通用名（cell/row/label…）会与「我的」页等全局类冲突泄漏样式 -->
   <view class="ec-head">
-    <image class="ec-avatar" src="{{employee.avatar}}" mode="aspectFill" lazy-load wx:if="{{employee.avatar}}" />
+    <!-- 头像 / LOGO 都挂了 binderror：图挂了（CDN 丢文件、后台换了域名、上传被清理）
+         原来会留一块白或裂图，而这块恰好是名片最上方第一眼看到的位置。
+         失败时不画这张图，露出同尺寸的浅蓝底占位（.ec-avatar 自带背景），
+         LOGO 失败则整块收掉——半截裂图比没有 LOGO 更难看。 -->
+    <image class="ec-avatar" src="{{employee.avatar}}" mode="aspectFill" lazy-load wx:if="{{employee.avatar && avatarFail !== employee.avatar}}"
+      binderror="onImgFail" data-fail="avatarFail" data-src="{{employee.avatar}}" />
     <view class="ec-avatar" wx:else />
     <view class="ec-info">
       <view class="ec-line1">
         <view class="ec-name">{{employee.name}}</view>
-        <image class="ec-logo" src="{{company.logo}}" mode="aspectFit" lazy-load wx:if="{{company.logo}}" />
+        <image class="ec-logo" src="{{company.logo}}" mode="aspectFit" lazy-load wx:if="{{company.logo && logoFail !== company.logo}}"
+          binderror="onImgFail" data-fail="logoFail" data-src="{{company.logo}}" />
       </view>
       <view class="ec-title" wx:if="{{employee.title}}">{{employee.title}}</view>
       <view class="ec-line3">

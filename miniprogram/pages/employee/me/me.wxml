@@ -15,7 +15,10 @@
   <!-- 已登录 -->
   <block wx:else>
     <view class="section profile">
-      <image class="avatar" src="{{me.avatar}}" mode="aspectFill" wx:if="{{me.avatar}}" />
+      <!-- 头像挂了 binderror：图挂了落到右侧的浅底占位（.avatar 自带背景），
+           不要留一块白或裂图——这是「我的」页第一眼位置 -->
+      <image class="avatar" src="{{me.avatar}}" mode="aspectFill" wx:if="{{me.avatar && avatarFail !== me.avatar}}"
+        binderror="onImgFail" data-fail="avatarFail" data-src="{{me.avatar}}" />
       <view class="avatar" wx:else />
       <view class="pinfo">
         <view class="pname">{{me.name}}</view>

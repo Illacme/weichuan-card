@@ -4,11 +4,14 @@
     <text class="label">申请加入</text>
     <text class="company-value">{{companyName}}</text>
   </view>
-  <!-- 头像：默认读取微信头像，也支持上传 -->
+  <!-- 头像：默认读取微信头像，也支持上传。
+       预览图挂了 binderror：这里不是展示位而是**表单字段**，图挂了必须说清是「没传」
+       还是「传了但加载不出来」——都显示「未设置」会让用户以为白选了图。 -->
   <view class="form-item avatar-row">
     <text class="label">头像</text>
-    <image class="avatar-preview" src="{{form.avatar}}" mode="aspectFill" wx:if="{{form.avatar}}" />
-    <view class="avatar-ph" wx:else>未设置</view>
+    <image class="avatar-preview" src="{{form.avatar}}" mode="aspectFill" wx:if="{{form.avatar && avatarFail !== form.avatar}}"
+      binderror="onImgFail" data-fail="avatarFail" data-src="{{form.avatar}}" />
+    <view class="avatar-ph" wx:else>{{form.avatar ? '加载失败' : '未设置'}}</view>
     <button class="picker-btn" size="mini" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">微信头像</button>
     <button class="picker-btn" size="mini" bindtap="chooseImage">上传头像</button>
   </view>

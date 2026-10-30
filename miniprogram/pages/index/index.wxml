@@ -10,11 +10,14 @@
 </block>
 
 <block wx:else>
-  <view class="page {{bgImage ? 'has-bg' : ''}}">
+  <view class="page {{bgImage && bgFail !== bgImage ? 'has-bg' : ''}}">
     <!-- 首页背景图（可选，后台「首页布局」设置）：全屏铺底 + 遮罩压暗，
-         白色内容卡片浮于其上，形成高端名片的层次感 -->
-    <image wx:if="{{bgImage}}" class="page-bg" src="{{bgImage}}" mode="aspectFill" />
-    <view wx:if="{{bgImage}}" class="page-bg-mask" style="opacity: {{bgMaskAlpha}}" />
+         白色内容卡片浮于其上，形成高端名片的层次感。
+         背景图挂了 binderror：它是纯装饰，图没了就整块收掉（连遮罩与 has-bg 一起），
+         否则会在白卡片后面留一块刺眼的白/裂图。 -->
+    <image wx:if="{{bgImage && bgFail !== bgImage}}" class="page-bg" src="{{bgImage}}" mode="aspectFill"
+      binderror="onImgFail" data-fail="bgFail" data-src="{{bgImage}}" />
+    <view wx:if="{{bgImage && bgFail !== bgImage}}" class="page-bg-mask" style="opacity: {{bgMaskAlpha}}" />
 
     <!-- 自定义顶栏（navigationStyle=custom）：按设计稿融入浅蓝渐变背景，无白色底与居中标题，
          仅保留左上角「我的」入口，固定常驻 -->
@@ -24,8 +27,10 @@
       <view class="nav-mask" style="opacity: {{navMask}}"></view>
       <view class="nav-inner">
         <view class="nav-me" bindtap="goMe">
-          <view class="nav-me-avatar" wx:if="{{meAvatar}}"><image src="{{meAvatar}}" mode="aspectFill" /></view>
-          <!-- 无头像时显示默认用户图标；文字固定「我的」——不显示姓名，避免与名片卡信息重复 -->
+          <view class="nav-me-avatar" wx:if="{{meAvatar && meAvatarFail !== meAvatar}}"><image src="{{meAvatar}}" mode="aspectFill"
+            binderror="onImgFail" data-fail="meAvatarFail" data-src="{{meAvatar}}" /></view>
+          <!-- 无头像时显示默认用户图标；文字固定「我的」——不显示姓名，避免与名片卡信息重复。
+               头像加载失败也落到这个默认图标（比一个空圆或裂图好认）。 -->
           <view class="nav-me-user-icon" wx:else></view>
           <text class="nav-me-text">我的</text>
         </view>

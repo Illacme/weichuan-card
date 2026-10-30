@@ -16,6 +16,7 @@ miniprogram/
 │   ├── privacy.ts      # 微信隐私授权：查 getPrivacySetting / 需否判定 / 等待与结算 / ensurePrivacy(page)
 │   ├── contact.ts      # 保存名片到通讯录（员工名片区 / 底部栏共用）
 │   ├── team.ts         # 名片墙数据层：分页参数 / 结果整形 / 跨页去重合并（落地页与全部页共用）
+│   ├── thumb.ts        # 图片兜底：thumbnailURL 派生 _thumb；onThumbError 退回原图；onImgFail 记失败 URL 换占位
 │   └── track.ts        # 埋点上报：8 类事件统一入口（白名单就近丢弃，失败静默）
 ├── components/         # 8 个可复用组件（均开启 addGlobalClass）
 │   ├── employee-card / company-video / achievement-grid
@@ -515,6 +516,38 @@ SQL 层只有盲索引能做等值匹配、做不了 `LIKE '张%'`，而名片�
 样式：`pages/team/all.wxss` 用 `@import "./team.wxss"` 复用落地页的宫格样式，
 不复制一份（复制出来的两份迟早会漂移）。
 
+## 图片失败兜底
+
+图挂了不会报错，只会安静地留一块白或裂图——而挂掉的往往是第一眼位置（名片头像、企业
+LOGO、首页背景、案例封面）。所以**所有 `<image>` 都必须挂 `binderror`**，由
+`tests/img_fallback.spec.ts` 扫全部 `.wxml` 守着，新增页面漏写会直接红。
+
+两种处理器，按「这张图有没有原图可退」二选一：
+
+| 场景 | 处理器 | data 绑定 | 失败后 |
+|---|---|---|---|
+| 列表 / 宫格（有 `_thumb` 兄弟对象） | `onThumbError` | `data-arr` + `data-idx` + `data-key` + `data-full` | 改回原图 |
+| 单图 / 图集（没有可退的原图） | `onImgFail` | `data-fail` + `data-src`（图集再加 `data-idx`） | 换成同尺寸占位 |
+
+`onImgFail` 记的是**失败的 URL**，WXML 用 `src && xxxFail !== src` 判断还要不要画：
+
+```wxml
+<image src="{{me.avatar}}" mode="aspectFill" wx:if="{{me.avatar && avatarFail !== me.avatar}}"
+  binderror="onImgFail" data-fail="avatarFail" data-src="{{me.avatar}}" />
+<view class="avatar" wx:else />
+```
+
+为什么不记布尔标记：布尔标记必须在每次换图时手动清掉（换头像、下拉刷新换了地址、图集
+重排……），漏一处就是「换了新头像却永远不显示」这种极难查的 bug。记 URL 天然自愈——地址
+一变就重新尝试，同一张坏图也不会无限重试；图集按下标记时若列表增删导致下标错位，比较的是
+URL，错位只会让标记失效（多画一次图），不会把别的图误藏起来。
+
+占位形态按容器自己的底色来，不额外加样式：`.ec-avatar` / `.album-img` / `.bg-thumb` /
+`.avatar-ph` 都自带背景，失败时露出的就是同尺寸的灰/浅蓝块，布局不塌、也不跳。
+
+表单页（`apply/open`、`employee/edit`）的占位文案区分两种状态——`{{form.avatar ? '加载失败'
+: '未设置'}}`。都写「未设置」会让用户以为刚才选图白选了。
+
 ## 下拉刷新
 
 9 个内容页支持下拉重拉（页面 JSON 开 `enablePullDownRefresh` + TS 实现 `onPullDownRefresh`）：名片墙、查看全部同事、名片首页、项目列表、项目详情、服务详情、我的、数据统计、个人信息。
@@ -540,6 +573,7 @@ SQL 层只有盲索引能做等值匹配、做不了 `LIKE '张%'`，而名片�
 - `tests/track.spec.ts`：埋点入口的 targetId / staffId / 白名单 / 失败静默，以及 `source` 场景推导（含 `from=poster` 的 URL 解码）。
 - `tests/team.spec.ts`：**名片墙**（裸启动落地页）——四种状态分开（有内容 / 公司没人 / 企业不可用 / 网络失败且能重试）、无头像用姓名首字占位、点某人跳名片页**必须带 `companyId`**（不传会落到平台缺省的 1 号企业，点进去是别家公司的人）、接口回传的 `companyId` 优先于 query、企业信息为空时标题回落品牌名、转发落点回到名片墙、企业默认入口为 `staff` 时**改道该员工名片且不渲染宫格**；**分页与搜索**（2026-10-30）：首屏只拉一页 60、`hasMore` 以后端为准、输入时不发请求、确认搜索才带 `keyword` 从第一页重查、关键字没变不重复请求、清空恢复全员、搜索态下不改道、进「查看全部」带 `companyId` 与 encode 过的关键字。
 - `tests/team_all.spec.ts`：**查看全部同事**（名片墙第二层）——滚动加载第 2 页并追加、**防重入**（请求在途时连滚只发一次）、后端 `hasMore=false` 时不再请求、**按 staffId 去重**（翻页期间增删员工会让同一人出现在相邻两页）、越界页码用后端回传值、**续页失败保留已加载列表**（只在底部标可重试，不能整页清空）、点重试能续上、带关键字进页面直接按关键字查、换关键字清空旧列表、下拉刷新成败都收指示器。
+- `tests/img_fallback.spec.ts`：**图片失败兜底**——扫全部 `.wxml` 断言每个 `<image>` 都挂了 `binderror`、且带 `data-fail` 或 `data-arr`（漏写会安静地留一块白）；`onImgFail` 的单图 / 图集 / `idx=0` / 缺参数 / 字段还不是数组五种形态；`onThumbError` 的「缩略图挂了改回原图」与「已在原图上不再 setData」（后者防的是 binderror 无限循环）。
 - `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、以及**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**。
 
 ```bash
@@ -549,4 +583,4 @@ cd frontend && npm test        # 前端 + 小程序 spec 一并运行
 > 视图层 / 页面渲染不在覆盖范围（需微信 CLI 或真机自动化），由联调步骤保证。
 
 ## 待补（相对完整产品）
-- 真实视频号 feed-id 映射、图片懒加载/失败占位细化等体验项。
+- 真实视频号 feed-id 映射（需正式 AppID + 已绑定视频号，代码链路已就绪）。

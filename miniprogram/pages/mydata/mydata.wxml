@@ -2,8 +2,10 @@
   <view class="hint">以下为本小程序保存的你的全部个人信息（PIPL 查阅复制权）。如有错误，可在「我的 → 编辑名片」中更正。</view>
 
   <view class="card" wx:if="{{!loading && items.length}}">
-    <view class="avatar-row" wx:if="{{avatar}}">
-      <image class="avatar" src="{{avatar}}" mode="aspectFill" />
+    <!-- 头像挂了 binderror：图挂了就整行收掉，别在「个人信息」清单顶上留一块裂图 -->
+    <view class="avatar-row" wx:if="{{avatar && avatarFail !== avatar}}">
+      <image class="avatar" src="{{avatar}}" mode="aspectFill"
+        binderror="onImgFail" data-fail="avatarFail" data-src="{{avatar}}" />
     </view>
     <view class="row" wx:for="{{items}}" wx:key="key">
       <text class="label">{{item.label}}</text>

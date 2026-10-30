@@ -1,4 +1,5 @@
 import { request, assetUrl } from '../../../utils/request'
+import { onImgFail } from '../../../utils/thumb'
 import { parseRich } from '../../../utils/richtext'
 import { formatDateTime } from '../../../utils/datetime'
 import { getCompanyId } from '../../../utils/tenant'
@@ -11,6 +12,10 @@ Page({
     project: null,
     segments: [],
     updatedAtText: '',
+    // 加载失败的图片地址（封面 / 相册逐项）：WXML 用 `src && xxxFail !== src` 判断。
+    // 记 URL 而不是布尔标记，换案例或下拉刷新换了地址会自动重试（见 utils/thumb.ts）
+    coverFail: '',
+    albumFail: [] as string[],
     loading: true,
     error: false,
   },
@@ -83,7 +88,16 @@ Page({
     }
   },
   preview(e: any) {
-    const album = (this.data.project && this.data.project.album) || []
-    wx.previewImage({ urls: album, current: e.currentTarget.dataset.url })
+    // 加载失败的图不放进预览列表：点开也是同一张坏图，还会让「第几张」对不上。
+    // 相册本身不因坏图塌格（占位仍在原位），但预览只列真正能看的。
+    const fail: string[] = this.data.albumFail || []
+    const album: string[] = ((this.data.project && this.data.project.album) || []).filter(
+      (u: string) => !!u && fail.indexOf(u) < 0
+    )
+    const current = e.currentTarget.dataset.url
+    if (!album.length || album.indexOf(current) < 0) return
+    wx.previewImage({ urls: album, current })
   },
+  // 封面 / 相册图加载失败：记下失败的地址，WXML 据此换成同尺寸占位（见 utils/thumb.ts）
+  onImgFail,
 })

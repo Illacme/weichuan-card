@@ -11,6 +11,7 @@
 // 复制用 setClipboardData，属微信隐私接口：复制前先走 ensurePrivacy 取得授权。
 import { request, assetUrl } from '../../utils/request'
 import { ensurePrivacy } from '../../utils/privacy'
+import { onImgFail } from '../../utils/thumb'
 
 // 标签映射：模型字段 → 中文标签。顺序即展示顺序。
 // 刻意**不列 companyId**：它是内部租户外键，员工看到「所属企业编号 1」既看不懂也无意义
@@ -47,6 +48,9 @@ Page({
     privacyVisible: false,
     // 头像（后端相对路径，端上拼绝对）
     avatar: '',
+    // 头像加载失败的地址：WXML 用 `avatar && avatarFail !== avatar` 判断
+    // （见 utils/thumb.ts onImgFail——记 URL 而不是布尔标记，换头像自动重试）
+    avatarFail: '',
     // 待展示的键值对（已过滤掉空值，保持页面干净）
     items: [] as Array<{ key: string; label: string; value: string }>,
   },
@@ -105,6 +109,8 @@ Page({
       wx.stopPullDownRefresh()
     }
   },
+  // 头像加载失败：记下失败的地址，WXML 据此整行收掉（见 utils/thumb.ts）
+  onImgFail,
   // 「复制全部」：把全部信息拼成多行文本写入剪贴板（PIPL 复制权）。
   // setClipboardData 是隐私接口，复制前先经 ensurePrivacy 取得授权——
   // 用户不同意就放弃复制，不报错但也不把信息外送。

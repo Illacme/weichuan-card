@@ -3,7 +3,10 @@
      五种状态必须分开画，混在一起会让访客误以为系统坏了：
        loading / error（网络）/ unavailable（企业不存在或停用）/ empty（公司还没人）/ 搜不到 -->
 <view class="team-hero">
-  <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo}}" />
+  <!-- 企业 LOGO 挂了 binderror：LOGO 丢了就整块收掉（留白），
+       否则页头正中会挂一块裂图，比没有 LOGO 更难看 -->
+  <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo && logoFail !== logo}}"
+    binderror="onImgFail" data-fail="logoFail" data-src="{{logo}}" />
   <view class="team-name">{{title}}</view>
   <view class="team-sub" wx:if="{{!loading && !error && !unavailable && total > 0}}">
     <block wx:if="{{activeKeyword}}">找到 {{total}} 位匹配的同事</block>

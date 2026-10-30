@@ -1,9 +1,14 @@
 import { request, apiBaseUrl, assetUrl } from '../../../utils/request'
 import { ensurePrivacy } from '../../../utils/privacy'
+import { onImgFail } from '../../../utils/thumb'
 
 Page({
   data: {
     form: { avatar: '', name: '', title: '', phone: '', phone2: '', landline: '', email: '' },
+    // 头像预览加载失败的地址：WXML 用 `form.avatar && avatarFail !== form.avatar` 判断，
+    // 失败时占位文案改成「加载失败」而不是「未设置」（见 utils/thumb.ts onImgFail）。
+    // 记 URL 而不是布尔标记：重新选一张图后地址变了，预览自动恢复。
+    avatarFail: '',
     // 备用手机号输入框是否展开：回填到已有 phone2 时自动展开（见 loadMe），
     // 之后由「手机」行右侧「+ 备用手机号」按钮切换
     showPhone2: false,
@@ -47,6 +52,8 @@ Page({
     if (!show) form.phone2 = ''
     this.setData({ showPhone2: show, form })
   },
+  // 头像预览加载失败：记下失败的地址，WXML 据此换成「加载失败」占位（见 utils/thumb.ts）
+  onImgFail,
   onInput(e: any) {
     const field = e.currentTarget.dataset.field
     const form = this.data.form as any
