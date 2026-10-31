@@ -239,6 +239,7 @@
     <!-- 租户小程序凭据（企业独立版小程序：一个企业一个 appid） -->
     <el-dialog
       v-model="wxVisible"
+      class="wx-cred-dialog"
       :title="`小程序凭据 - ${currentCompany?.name || ''}`"
       width="520px"
       @closed="resetWX"
@@ -1135,5 +1136,21 @@ function todayStr(): string {
 }
 .muted {
   color: #c0c4cc;
+}
+</style>
+
+<!-- 非 scoped：凭据弹窗（el-dialog 默认 teleport 到 body，scoped 选择器够不到）
+     高度封顶 + body 内部滚动，保证底部「取消 / 保存」按钮始终可见、不被挤出屏幕。
+     class 在 el-dialog 上可能落到 .el-overlay 也可能落到 .el-dialog 本体，两种情形都匹配。 -->
+<style>
+.wx-cred-dialog.el-dialog,
+.wx-cred-dialog .el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.wx-cred-dialog .el-dialog__body {
+  overflow-y: auto;
+  flex: 1 1 auto;
 }
 </style>
