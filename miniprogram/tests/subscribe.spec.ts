@@ -51,6 +51,23 @@ describe('utils/subscribe', () => {
     expect(mocks.request).toHaveBeenCalledWith('GET', '/api/subscribe/config')
   })
 
+  // 企业独立版：预取时要带上 companyId，后端才能返回该企业自己账号下的模板
+  // （模板与 AppID 绑定，问错账号会拿到平台的模板，发不出去）。
+  // 平台模式（companyId=0/不传）则不带该参数，回落全局模板。
+  it('带 companyId 预取：请求带上 companyId 参数', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: { auditTemplateId: 'TPL-CO' } })
+    const { loadAuditTemplate } = await import('../utils/subscribe')
+    expect(await loadAuditTemplate(5)).toBe('TPL-CO')
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/subscribe/config', { companyId: 5 })
+  })
+
+  it('平台模式（companyId=0）预取：不带 companyId 参数', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: { auditTemplateId: 'TPL-G' } })
+    const { loadAuditTemplate } = await import('../utils/subscribe')
+    expect(await loadAuditTemplate(0)).toBe('TPL-G')
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/subscribe/config')
+  })
+
   // 未配置模板时不能拿空 tmplIds 去调微信：那会直接 fail，
   // 用户看到的是「点了提交但什么都没发生」。
   it('未配置模板：不弹授权窗', async () => {

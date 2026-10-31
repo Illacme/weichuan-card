@@ -295,6 +295,23 @@
             clearable
           />
         </el-form-item>
+        <!-- 审核结果订阅通知模板：仅企业独立版小程序需要。模板与 AppID 绑定，
+             必须配在「本企业自己账号」下，用平台的模板会因 AppID 不符被拒。
+             平台模式（本企业无独立 AppID）留空即可，走系统设置里的全局模板。 -->
+        <el-form-item label="订阅模板 ID">
+          <el-input
+            v-model="wxForm.subscribeTmplId"
+            placeholder="企业独立版小程序自己的订阅模板 ID；平台模式留空"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="订阅字段">
+          <el-input
+            v-model="wxForm.subscribeTmplFields"
+            placeholder="模板字段名，逗号分隔，如 thing6,thing5,thing4（顺序=事项/结果/备注）；留空用默认"
+            clearable
+          />
+        </el-form-item>
         <el-form-item label="平台代发">
           <el-switch v-model="wxForm.releaseEnabled" />
           <span class="wx-switch-tip">
@@ -675,6 +692,10 @@ const wxForm = reactive({
   uploadKeyConfigured: false,
   configured: false,
   releaseEnabled: true,
+  // 审核结果订阅通知模板（仅企业独立版小程序需要，与 AppID 绑定）
+  subscribeTmplId: '',
+  subscribeTmplConfigured: false,
+  subscribeTmplFields: '',
 })
 
 const wxRules: FormRules = {
@@ -722,6 +743,10 @@ async function openWX(row: any) {
   wxForm.configured = false
   // 没配过凭据的企业也没有「关代发」一说（走平台全局小程序），缺省允许
   wxForm.releaseEnabled = true
+  // 订阅模板：没配过时回落平台全局那一份（系统设置 → 订阅消息）
+  wxForm.subscribeTmplId = ''
+  wxForm.subscribeTmplConfigured = false
+  wxForm.subscribeTmplFields = ''
   wxVisible.value = true
   wxLoading.value = true
   try {
@@ -731,6 +756,10 @@ async function openWX(row: any) {
     wxForm.releaseEnabled = resp.data?.releaseEnabled !== false
     // 上传密钥只回「配没配」，不回内容；这里要的是「留空保存会不会清掉已有配置」
     wxForm.uploadKeyConfigured = !!resp.data?.uploadKeyConfigured
+    // 订阅模板回明文（非密钥）：填进输入框，留空保存即清空
+    wxForm.subscribeTmplId = resp.data?.subscribeTmplId || ''
+    wxForm.subscribeTmplConfigured = !!resp.data?.subscribeTmplConfigured
+    wxForm.subscribeTmplFields = resp.data?.subscribeTmplFields || ''
   } catch {
     // 拦截器已提示；保持空表单，用户仍可手工填写
   } finally {
@@ -746,6 +775,9 @@ function resetWX() {
   wxForm.uploadKeyConfigured = false
   wxForm.configured = false
   wxForm.releaseEnabled = true
+  wxForm.subscribeTmplId = ''
+  wxForm.subscribeTmplConfigured = false
+  wxForm.subscribeTmplFields = ''
   wxFormRef.value?.clearValidate()
 }
 
@@ -777,8 +809,15 @@ async function submitWX() {
       // 与 appSecret 同语义：一律带上，空串即清空（后端无法区分「没传」和「传空」）
       uploadKey: wxForm.uploadKey.trim(),
       releaseEnabled: wxForm.releaseEnabled,
+      // 订阅模板同样是「空串即清空」：企业独立版留空视为不发；平台模式留空回落全局
+      subscribeTmplId: wxForm.subscribeTmplId.trim(),
+      subscribeTmplFields: wxForm.subscribeTmplFields.trim(),
     })
-    ElMessage.success(wxForm.appSecret || wxForm.uploadKey ? '凭据已保存' : '已清空，回落到平台全局小程序')
+    ElMessage.success(
+      wxForm.appSecret || wxForm.uploadKey || wxForm.subscribeTmplId
+        ? '凭据已保存'
+        : '已清空，回落到平台全局小程序'
+    )
     wxVisible.value = false
     await load()
   } catch {

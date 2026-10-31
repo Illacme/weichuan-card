@@ -1,4 +1,5 @@
 import { request } from './request'
+import { getCompanyId } from './tenant'
 
 // 审核结果订阅消息（微信「一次性订阅」）。
 //
@@ -15,8 +16,9 @@ import { request } from './request'
 //     绝不能因为没同意就拦住提交——那是拿「通知」去要挟主流程。
 //
 // 另一个容易踩的点：**模板 ID 必须来自后端**，不能写死在端上。企业独立版
-// 各家小程序各有各的模板；写死会让「平台能发、独立版发不出去」这种问题
-// 只在某个客户的真机上暴露。
+// 各家小程序各有各的模板（与各自 AppID 绑定）；写死会让「平台能发、独立版发不出去」
+// 这种问题只在某个客户的真机上暴露。所以预取时要把当前租户 companyId 带给后端，
+// 后端据此返回该企业自己的模板（平台模式传 0 回落全局）。
 
 // 模块级缓存：一次冷启动只查一次（模板 ID 在运行期不会变）。
 // null = 还没查过；'' = 查过但没有（未配置 / 请求失败）。
@@ -24,12 +26,18 @@ let tmplId: string | null = null
 
 // loadAuditTemplate 预取「审核结果通知」的模板 ID。页面 onLoad 调一次即可。
 //
+// companyId 默认取当前租户（企业独立版恒为锁定值，平台模式为扫码/分享粘滞值）；
+// 传 0 或不传时后端回落全局模板。模板与 AppID 绑定，必须问对账号的模板。
+//
 // 未配置时得到空串，后续 requestAuditSubscribe 直接跳过——不能拿空 tmplIds
 // 去调微信（会直接 fail），用户看到的是「点了没反应」。
-export async function loadAuditTemplate(): Promise<string> {
+export async function loadAuditTemplate(companyId: number = getCompanyId()): Promise<string> {
   if (tmplId !== null) return tmplId
   try {
-    const r = await request('GET', '/api/subscribe/config')
+    // companyId>0 才带上（平台模式无粘滞租户时传 0，避免 ?companyId=0 这种无意义参数）
+    const r = companyId > 0
+      ? await request('GET', '/api/subscribe/config', { companyId })
+      : await request('GET', '/api/subscribe/config')
     if (r && r.code === 0 && r.data) {
       // 只有拿到确定结果才缓存：网络异常时不缓存，下次进页面还能再试
       // （缓存空串会让整个会话都收不到通知，而用户完全无从察觉）

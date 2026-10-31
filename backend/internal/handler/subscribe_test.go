@@ -330,3 +330,53 @@ func TestClipRunes(t *testing.T) {
 	require.Equal(t, long, clipRunes(long, 20))
 	require.Equal(t, 20, len([]rune(clipRunes(long+"多", 20))))
 }
+
+// TestSubscribeConfigPerCompany 走 HTTP 验证：配置接口按 companyId 返回对应模板。
+// 取值链与 wxAppOf 一致：
+//   - 企业独立版（own AppID+AppSecret 且配了模板）→ 自家模板；
+//   - 不传 companyId → 回落全局 sys_setting.wx_tmpl_audit；
+//   - 企业独立版但没配模板 → 视为关闭（不回落平台模板，AppID 不同必失败），回空串；
+//   - 凭据不完整（只有 AppID 没 AppSecret，与 wxAppOf 同口径算「走全局 token」）→ 回落全局。
+func TestSubscribeConfigPerCompany(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+	useSetting(t, "wx_tmpl_audit", "TPL-GLOBAL")
+
+	// 给 2 号企业配独立凭据 + 订阅模板
+	_, body := c.do("PUT", "/api/admin/companies/2/wechat", map[string]interface{}{
+		"appId": "wxent222", "appSecret": "secret222",
+		"subscribeTmplId": "TPL-ENT-2", "subscribeTmplFields": "thing9,thing8,thing7",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+
+	// 查配置带 companyId=2 → 自家模板
+	_, body = c.do("GET", "/api/subscribe/config?companyId=2", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "TPL-ENT-2", body["data"].(map[string]interface{})["auditTemplateId"])
+
+	// 不传 companyId → 回落全局
+	_, body = c.do("GET", "/api/subscribe/config", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "TPL-GLOBAL", body["data"].(map[string]interface{})["auditTemplateId"])
+
+	// 配了独立凭据但没配模板的企业（3 号）→ 视为关闭，配置接口回空串
+	_, body = c.do("PUT", "/api/admin/companies/3/wechat", map[string]interface{}{
+		"appId": "wxent333", "appSecret": "secret333",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	_, body = c.do("GET", "/api/subscribe/config?companyId=3", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "", body["data"].(map[string]interface{})["auditTemplateId"])
+
+	// 凭据不完整（只有 AppID 没有 AppSecret）→ 与 wxAppOf 同口径走全局 token，
+	// 模板也该走全局而不是用企业自己那个（那会因 AppID 不匹配而失败）
+	_, body = c.do("PUT", "/api/admin/companies/4/wechat", map[string]interface{}{
+		"appId": "wxent444", "subscribeTmplId": "TPL-SHOULD-NOT-USE",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	_, body = c.do("GET", "/api/subscribe/config?companyId=4", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "TPL-GLOBAL", body["data"].(map[string]interface{})["auditTemplateId"],
+		"凭据不完整时回落全局模板")
+}

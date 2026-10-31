@@ -42,6 +42,13 @@ export interface CompanyWXApp {
   /** 是否配了小程序「代码上传密钥」。与 AppSecret 是两把不同的钥匙：
    *  AppSecret 只能调提审/发布接口，上传代码只认这把。永不明文回传 */
   uploadKeyConfigured?: boolean
+  /** 审核结果通知订阅模板 ID。仅企业独立版小程序需要（模板与 AppID 绑定，
+   *  必须用企业自己账号下的模板）；平台模式留空、走系统设置里的全局那一份 */
+  subscribeTmplId?: string
+  /** 是否配了订阅模板（内容回明文，非密钥） */
+  subscribeTmplConfigured?: boolean
+  /** 订阅模板字段名，逗号分隔、顺序=事项/结果/备注。留空即用默认 thing1,phrase2,thing3 */
+  subscribeTmplFields?: string
 }
 
 export interface CompanyAdminItem {
@@ -130,9 +137,19 @@ export function getCompanyWXApp(id: number) {
 // uploadKey 是小程序「代码上传密钥」（.key 文件内容），语义同 appSecret：
 // 空串 = 清空并落回平台全局那把。它与 AppSecret 不是同一把钥匙——
 // 上传代码只认它，见 api/mpRelease.ts 的 uploadMPRelease。
+// subscribeTmplId / subscribeTmplFields 是审核结果订阅通知的模板（仅企业独立版需要，
+// 因为模板与 AppID 绑定）：空串 = 清空并落回系统设置里的全局模板（平台模式）；
+// 企业已是独立 AppID 却只清模板不留新值，后端视为「该企业不发订阅通知」。
 export function saveCompanyWXApp(
   id: number,
-  payload: { appId: string; appSecret: string; releaseEnabled?: boolean; uploadKey?: string }
+  payload: {
+    appId: string
+    appSecret: string
+    releaseEnabled?: boolean
+    uploadKey?: string
+    subscribeTmplId?: string
+    subscribeTmplFields?: string
+  }
 ) {
   return http.put(`/admin/companies/${id}/wechat`, payload)
 }

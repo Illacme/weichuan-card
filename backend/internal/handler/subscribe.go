@@ -3,9 +3,11 @@ package handler
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"weichuan/internal/config"
+	"weichuan/internal/model"
 	"weichuan/internal/setting"
 	"weichuan/internal/wechat"
 
@@ -54,20 +56,51 @@ var dispatch = func(fn func()) { go fn() }
 // sendSubscribe 是 wechat.SendSubscribe 的间接层，唯一目的是可测（同 code2Session）。
 var sendSubscribe = wechat.SendSubscribe
 
-// auditTemplate 读「审核结果通知」的模板 ID 与字段名。
+// auditTemplate 解析「审核结果通知」的模板 ID 与字段名。
 //
 // 字段名可配而不是写死：模板是运营在公众平台**选**的，不同模板的字段名不同
 // （thing1 / phrase2 / character_string3 …）。写死会让「运营换个模板，代码就
 // 静默发不出去」——现象只是「审批成功了但员工没收到」，极难往配置上想。
-func auditTemplate() (tplID string, fields []string) {
+//
+// 取值链（两级），与 wxAppOf 的凭据解析保持一致：
+//  1. 企业独立版小程序：company_wx_app 里配了 own AppID **且** AppSecret（即
+//     真正走自己凭据的），用自家账号下的 SubscribeTmplID。模板与 access_token
+//     同属一个 AppID，必须一致，否则微信回「模板不存在」静默发不出去。
+//     若自家配了凭据却没配模板 → 视为「该企业不发」（不回落平台模板，那是另一个 AppID 的）。
+//  2. 平台模式（companyID=0，或本企业无 own 凭据）→ 用全局 sys_setting.wx_tmpl_audit。
+func auditTemplate(db *gorm.DB, companyID int64) (tplID string, fields []string) {
+	if companyID != 0 && db != nil {
+		var row model.CompanyWXApp
+		// 与 wxAppOf 同口径：AppID 与 AppSecret 都非空才算「走自己凭据」。
+		if err := db.Where("company_id = ?", companyID).First(&row).Error; err == nil &&
+			strings.TrimSpace(row.AppID) != "" && strings.TrimSpace(row.AppSecret) != "" {
+			if tpl := strings.TrimSpace(row.SubscribeTmplID); tpl != "" {
+				return tpl, parseTemplateFields(row.SubscribeTmplFields)
+			}
+			// 自有凭据却没配模板：不回落平台模板（AppID 不同必失败），直接视为关闭
+			return "", nil
+		}
+	}
+	// 平台模式 / 回落：全局模板
 	tplID = strings.TrimSpace(setting.GetString("wx_tmpl_audit", ""))
 	raw := setting.GetString("wx_tmpl_audit_fields", "thing1,phrase2,thing3")
-	for _, f := range strings.Split(raw, ",") {
+	return tplID, parseTemplateFields(raw)
+}
+
+// parseTemplateFields 把「thing1,phrase2,thing3」拆成去空格的非空切片。
+// 留空时给默认 thing1,phrase2,thing3（企业独立版模板大多也是这个布局）。
+func parseTemplateFields(raw string) []string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		s = "thing1,phrase2,thing3"
+	}
+	var fields []string
+	for _, f := range strings.Split(s, ",") {
 		if f = strings.TrimSpace(f); f != "" {
 			fields = append(fields, f)
 		}
 	}
-	return tplID, fields
+	return fields
 }
 
 // clipRunes 按**字符数**截断（微信的 thing ≤20 字符、phrase ≤5 字符都是按字符算）。
@@ -92,7 +125,7 @@ func notifyAudit(db *gorm.DB, cfg config.Config, n auditNotice) func() {
 		if openid == "" {
 			return // 没绑微信：没有可送达的通道，静默跳过
 		}
-		tplID, fields := auditTemplate()
+		tplID, fields := auditTemplate(db, n.CompanyID)
 		if tplID == "" {
 			return // 未配置模板 = 功能未启用，静默跳过（不是错误）
 		}
@@ -151,7 +184,14 @@ func RegisterSubscribe(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	// 未配置时回空串：小程序据此跳过授权请求，不弹一个「没有任何模板」的窗
 	// （微信对空 tmplIds 会直接 fail，用户看到的是点了没反应）。
 	r.GET("/api/subscribe/config", func(c *gin.Context) {
-		tplID, _ := auditTemplate()
+		// companyId 来自小程序端（getCompanyId）：企业独立版用它拿到自己账号下的模板；
+		// 平台模式传 0 / 不传则回落全局模板。该接口公开——模板 ID 不是密钥
+		// （用户授权弹窗里本就可见），泄露无妨，且访客提交申请前尚无身份不能挂鉴权。
+		companyID, _ := strconv.ParseInt(c.Query("companyId"), 10, 64)
+		if companyID < 0 {
+			companyID = 0
+		}
+		tplID, _ := auditTemplate(db, companyID)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0,
 			"data": gin.H{"auditTemplateId": tplID},

@@ -434,6 +434,8 @@ describe('企业管理 · 租户小程序凭据', () => {
       appSecret: 'secret-abc',
       uploadKey: '',
       releaseEnabled: true,
+      subscribeTmplId: '',
+      subscribeTmplFields: '',
     })
   })
 
@@ -460,6 +462,63 @@ describe('企业管理 · 租户小程序凭据', () => {
       appSecret: 'secret-abc',
       uploadKey: 'fake-upload-key-body',
       releaseEnabled: true,
+      subscribeTmplId: '',
+      subscribeTmplFields: '',
+    })
+  })
+
+  // 订阅模板（仅企业独立版小程序需要，与 AppID 绑定）：填了就随保存一起提交，
+  // 输入框的值原样进 payload。这是「企业小程序也能发审核结果通知」的关键接线。
+  it('订阅模板：填了就随保存一起提交', async () => {
+    mocks.getCompanyWXApp.mockImplementation(async () => ({ code: 0, data: { appId: 'wxok12345678', configured: true } }))
+    const w = await setup()
+    await btnIn(rowOf(w, 1), '凭据').trigger('click')
+    await flush()
+
+    const inputs = w.findAll('.el-dialog input.el-input')
+    // 顺序：0=AppID 1=AppSecret 2=上传密钥 3=订阅模板ID 4=订阅字段
+    await inputs[1].setValue('secret-abc')
+    await inputs[3].setValue('TPL-ENTERPRISE')
+    await inputs[4].setValue('thing6,thing5,thing4')
+    await w.findAll('.el-dialog .el-button').find((b: any) => b.text() === '保存')!.trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyWXApp).toHaveBeenCalledWith(1, {
+      appId: 'wxok12345678',
+      appSecret: 'secret-abc',
+      uploadKey: '',
+      releaseEnabled: true,
+      subscribeTmplId: 'TPL-ENTERPRISE',
+      subscribeTmplFields: 'thing6,thing5,thing4',
+    })
+  })
+
+  // 订阅模板留空保存 = 清空（回落平台全局模板）。和 AppSecret 同语义，断言 payload 带空串。
+  it('订阅模板：留空保存回传空串（回落平台全局模板）', async () => {
+    mocks.getCompanyWXApp.mockImplementation(async () => ({
+      code: 0,
+      data: { appId: 'wxok12345678', configured: true, subscribeTmplId: 'OLD-TPL', subscribeTmplFields: 'thing1,phrase2,thing3' },
+    }))
+    const w = await setup()
+    await btnIn(rowOf(w, 1), '凭据').trigger('click')
+    await flush()
+
+    // 已配过时回填：填报后输入框应是清空前的原值（验证 openWX 把回包填进了表单）
+    // 注意 el-input 用 property 绑定，这里改用 v-model 的副作用：保存时回传空串即代表已清空
+    const inputs = w.findAll('.el-dialog input.el-input')
+    await inputs[1].setValue('secret-abc')
+    await inputs[3].setValue('')
+    await inputs[4].setValue('')
+    await w.findAll('.el-dialog .el-button').find((b: any) => b.text() === '保存')!.trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyWXApp).toHaveBeenCalledWith(1, {
+      appId: 'wxok12345678',
+      appSecret: 'secret-abc',
+      uploadKey: '',
+      releaseEnabled: true,
+      subscribeTmplId: '',
+      subscribeTmplFields: '',
     })
   })
 
@@ -515,6 +574,8 @@ describe('企业管理 · 租户小程序凭据', () => {
       appSecret: '',
       uploadKey: '',
       releaseEnabled: true,
+      subscribeTmplId: '',
+      subscribeTmplFields: '',
     })
   })
 
@@ -541,6 +602,8 @@ describe('企业管理 · 租户小程序凭据', () => {
       appSecret: 'secret-abc',
       uploadKey: '',
       releaseEnabled: false,
+      subscribeTmplId: '',
+      subscribeTmplFields: '',
     })
   })
 

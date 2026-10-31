@@ -49,14 +49,14 @@ type Employee struct {
 // （全称/简称/地址/电话/LOGO）按租户隔离。
 // status: enabled / disabled；停用后该企业的管理员与员工均不能登录（见 handler/auth.go）。
 type Company struct {
-	ID        int64     `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	Name      string    `gorm:"column:name" json:"name"`
-	ShortName string    `gorm:"column:short_name" json:"shortName"` // 企业简称：PC 后台侧边栏品牌名 + 公司信息简称的初始值；公司信息里的简称仅用于小程序展示，两者相互独立
+	ID        int64  `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	Name      string `gorm:"column:name" json:"name"`
+	ShortName string `gorm:"column:short_name" json:"shortName"` // 企业简称：PC 后台侧边栏品牌名 + 公司信息简称的初始值；公司信息里的简称仅用于小程序展示，两者相互独立
 	// LoginCode 登录页白标码（?company=）：小写字母/数字/连字符 slug，仅精确匹配。
 	// 命中 enabled 企业时，公开接口回传该企业 ShortName 作为登录页品牌名；未命中回落全局 brand_name。
 	// 空串 = 未配置（多数企业不配，登录页回落全局品牌）。唯一性由后端写入时校验（见 handler/companies.go）。
-	LoginCode string `gorm:"column:login_code" json:"loginCode"`
-	Status    string `gorm:"column:status;default:enabled" json:"status"`
+	LoginCode string    `gorm:"column:login_code" json:"loginCode"`
+	Status    string    `gorm:"column:status;default:enabled" json:"status"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
@@ -404,9 +404,25 @@ type CompanyWXApp struct {
 	// 企业独立版的小程序归企业自己管，平台不该有单方面推送上线的能力——
 	// 企业把这项关掉后，一切代发动作（提审 / 发布 / 撤回）一律拒绝。
 	// 平台自有小程序（company_id=0，不落本表）没有这个开关。
-	ReleaseEnabled bool      `gorm:"column:release_enabled" json:"releaseEnabled"`
-	CreatedAt      time.Time `gorm:"column:created_at" json:"-"`
-	UpdatedAt      time.Time `gorm:"column:updated_at" json:"-"`
+	ReleaseEnabled bool `gorm:"column:release_enabled" json:"releaseEnabled"`
+	// SubscribeTmplID 该企业「审核结果通知」订阅消息模板 ID。
+	//
+	// 为什么放在这里而不是只靠全局 sys_setting：企业独立版小程序用的是企业
+	// 自己的 AppID，订阅模板必须配在**那个** AppID 的微信账号下——模板与
+	// access_token 同属一个 app，用平台的模板（不同 app）会被微信回
+	// 「模板不存在」而静默发不出去。所以走「本表有就用自己的」这条线。
+	//
+	// 取值链：本企业配了（且本企业是独立 AppID 形态）→ 用本列；否则回落到
+	// 全局 sys_setting.wx_tmpl_audit。注意回落只对「用平台 AppID 的小程序」有效，
+	// 本企业若已是独立 AppID 却没配模板，则视为「该企业不发订阅通知」（不应回落，
+	// 回落会发错模板）。详见 internal/handler/subscribe.go 的 auditTemplate。
+	SubscribeTmplID string `gorm:"column:subscribe_tmpl_id;size:128" json:"-"`
+	// SubscribeTmplFields 模板字段名（对齐公众平台模板详情里显示的 {{thing6.DATA}}），
+	// 逗号分隔，顺序 = 事项 / 结果 / 备注。留空 = 用默认 thing1,phrase2,thing3。
+	// 字段名必须与本企业那个模板**实际显示的**一致，否则微信回「字段不存在」。
+	SubscribeTmplFields string    `gorm:"column:subscribe_tmpl_fields;size:128" json:"-"`
+	CreatedAt           time.Time `gorm:"column:created_at" json:"-"`
+	UpdatedAt           time.Time `gorm:"column:updated_at" json:"-"`
 }
 
 // TableName 显式指定单数表名，与 migrations/0024 对齐（见 migrations_guard_test.go）。

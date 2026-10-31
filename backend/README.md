@@ -56,6 +56,7 @@ backend/
 ├── migrations/0013_home_layout_background.sql  # 首页背景图（home_layout.bg_image / bg_mask）
 ├── migrations/0025_mp_release.sql               # 小程序版本发布：mp_release 表（提审/发布状态机 + 审计字段）
 ├── migrations/0026_company_wx_app_release_enabled.sql  # 租户「允许平台代发版本」开关 release_enabled
+├── migrations/0035_company_wx_app_subscribe.sql        # 租户小程序「审核结果通知」订阅模板（subscribe_tmpl_id / subscribe_tmpl_fields）
 ├── Dockerfile                   # 多阶段构建，单二进制镜像
 └── go.mod
 ```
@@ -509,8 +510,8 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/companies/:id/status | 停用 / 启用企业（body `{"status":"enabled"\|"disabled"}`；停用后该企业管理员与员工均不能登录） |
 | GET  | /api/admin/companies/:id/admins | 企业管理员列表 |
 | POST | /api/admin/companies/:id/admins | 新增企业管理员（username + password） |
-| GET  | /api/admin/companies/:id/wechat | 该企业小程序凭据（只回 `appId` 明文 + `configured`；**appSecret 永不回传**） |
-| PUT  | /api/admin/companies/:id/wechat | 保存租户小程序凭据（`appId` 须 wx 开头；**`appSecret` 空串 = 清空并回落全局凭据**；`releaseEnabled` 省略则保持原值；不受 independent_lock 限制，见下） |
+| GET  | /api/admin/companies/:id/wechat | 该企业小程序凭据（只回 `appId` 明文 + `configured`；**appSecret 永不回传**；另含订阅模板 `subscribeTmplId` / `subscribeTmplConfigured` / `subscribeTmplFields`，均非密钥，回明文） |
+| PUT  | /api/admin/companies/:id/wechat | 保存租户小程序凭据（`appId` 须 wx 开头；**`appSecret` 空串 = 清空并回落全局凭据**；`releaseEnabled` 省略则保持原值；`subscribeTmplId` / `subscribeTmplFields` 同理「空串=清空」；不受 independent_lock 限制，见下） |
 
 > 企业简称（`company.short_name`）与公司信息里的简称（`company_info.short_name`，0009）相互独立：
 > 前者是 PC 后台侧边栏「简称 · 管理后台」品牌名（未设置时缺省「微传名片」，企业管理员登录/me 时随身份下发），
@@ -667,11 +668,13 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 - **字段按字符截断，不按字节**。`thing` ≤20 字符、`phrase` ≤5 字符都是按字符算；
   按字节切会把汉字劈成半个，微信收到非法 UTF-8 回 `47003`，现象是「明明配好了却发不出去」。
 
-> **已知限制**：模板 ID 目前是平台级配置（`sys_setting`）。平台模式下所有租户共用
-> 一个小程序，全局配一份即可；**企业独立版**各家小程序模板 ID 不同，需要把模板 ID
-> 下放到 `company_wx_app`（与 appid/appsecret 同样的回落模式）才能逐家配置。
-> 在此之前，企业独立版发通知会以 `40037` 失败，日志里会打出 `SubscribeErrHint` 的
-> 明确排查提示（不会静默）。
+> **企业独立版（每企业一个 AppID）的模板要逐家配**：模板与 AppID 绑定——A 企业账号下
+> 配的模板，B 企业（另一个 AppID）用不了，微信会回「模板不存在」（`40037`）静默发不出去。
+> 所以取值链是：本企业配了 own AppID+AppSecret **且**填了订阅模板 → 用 `company_wx_app`
+> 里的 `subscribe_tmpl_id`；否则回落平台全局 `sys_setting.wx_tmpl_audit`。注意回落只对
+> 「用平台 AppID 的小程序」有效——本企业已是独立 AppID 却没配模板，则视为「该企业不发」
+> （不回落，回落会发错模板），日志里会打出 `SubscribeErrHint` 的明确排查提示（不会静默）。
+> 配法：企业管理 →「凭据」→ 填「订阅模板 ID」与「订阅字段」（与 appSecret 同语义：留空=清空）。
 
 ## 埋点事件与三组统计口径
 

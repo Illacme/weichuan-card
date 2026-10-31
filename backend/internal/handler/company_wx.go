@@ -44,6 +44,12 @@ func RegisterCompanyWXApp(r *gin.Engine, db *gorm.DB) {
 				"releaseEnabled": true,
 				// 上传密钥同理：没配过时回落平台全局那份（sys_setting.wx_upload_key）
 				"uploadKeyConfigured": strings.TrimSpace(setting.GetString("wx_upload_key", "")) != "",
+				// 订阅模板同理：没配过时回落平台全局那一份（sys_setting.wx_tmpl_audit）。
+				// 这两个字段只回「配没配 + 内容」，模板 ID 不是密钥（微信授权弹窗里
+				// 用户本来就能看到模板名），字段名（thing6 之类）更不是密钥，回明文无妨。
+				"subscribeTmplId":         "",
+				"subscribeTmplConfigured": false,
+				"subscribeTmplFields":     "",
 			}})
 			return
 		}
@@ -54,6 +60,10 @@ func RegisterCompanyWXApp(r *gin.Engine, db *gorm.DB) {
 			// 与 appSecret 同策略：只回「配没配」，永不明文回传。
 			// 上传密钥是能把代码推到这个小程序上的凭证，泄漏了比 AppSecret 更难收场。
 			"uploadKeyConfigured": strings.TrimSpace(row.UploadKey) != "",
+			// 订阅模板：本企业独立版小程序用自己账号下的模板，内容回明文（非密钥）。
+			"subscribeTmplId":         row.SubscribeTmplID,
+			"subscribeTmplConfigured": strings.TrimSpace(row.SubscribeTmplID) != "",
+			"subscribeTmplFields":     row.SubscribeTmplFields,
 		}})
 	})
 
@@ -70,6 +80,10 @@ func RegisterCompanyWXApp(r *gin.Engine, db *gorm.DB) {
 			AppSecret      string `json:"appSecret"`
 			UploadKey      string `json:"uploadKey"`
 			ReleaseEnabled *bool  `json:"releaseEnabled"`
+			// 订阅模板：仅企业独立版小程序需要（与 AppID 绑定）。
+			// 平台模式（本企业无 own AppID）用全局 sys_setting.wx_tmpl_audit，这里留空即可。
+			SubscribeTmplID     string `json:"subscribeTmplId"`
+			SubscribeTmplFields string `json:"subscribeTmplFields"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -119,6 +133,20 @@ func RegisterCompanyWXApp(r *gin.Engine, db *gorm.DB) {
 		} else {
 			row.UploadKey = ""
 		}
+		// 订阅模板同 appSecret 的「空串=清空」语义：该企业改回平台模式、或管理员
+		// 只清空模板时，落回全局 sys_setting.wx_tmpl_audit（平台模式）或视为「不发」（独立版）。
+		// 模板 ID 与字段名都不是密钥，但与 appSecret 同处理，让「只看不改点保存」= 清空，
+		// 行为一致、可预期。
+		if t := strings.TrimSpace(req.SubscribeTmplID); t != "" {
+			row.SubscribeTmplID = t
+		} else {
+			row.SubscribeTmplID = ""
+		}
+		if f := strings.TrimSpace(req.SubscribeTmplFields); f != "" {
+			row.SubscribeTmplFields = f
+		} else {
+			row.SubscribeTmplFields = ""
+		}
 		if err := db.Save(&row).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
 			return
@@ -128,11 +156,14 @@ func RegisterCompanyWXApp(r *gin.Engine, db *gorm.DB) {
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionCompanyUpdate, TargetType: "company_wx_app", TargetID: strconv.FormatInt(id, 10),
 			// appSecret / uploadKey 都不进审计明细：脱敏规则按 key 名匹配（见 audit 包），
-			// 这里连 key 都不出现，从源头杜绝泄漏
+			// 这里连 key 都不出现，从源头杜绝泄漏。
+			// 订阅模板不是密钥，回明细便于追溯「这家企业用的是哪套模板」
 			Detail: map[string]any{
-				"appId":               appID,
-				"releaseEnabled":      row.ReleaseEnabled,
-				"uploadKeyConfigured": row.UploadKey != "",
+				"appId":                   appID,
+				"releaseEnabled":          row.ReleaseEnabled,
+				"uploadKeyConfigured":     row.UploadKey != "",
+				"subscribeTmplConfigured": row.SubscribeTmplID != "",
+				"subscribeTmplFields":     row.SubscribeTmplFields,
 			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
