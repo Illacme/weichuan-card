@@ -241,7 +241,7 @@
       v-model="wxVisible"
       class="wx-cred-dialog"
       :title="`小程序凭据 - ${currentCompany?.name || ''}`"
-      width="520px"
+      width="640px"
       @closed="resetWX"
     >
       <el-alert
