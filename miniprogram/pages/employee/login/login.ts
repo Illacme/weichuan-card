@@ -1,4 +1,4 @@
-import { request } from '../../../utils/request'
+import { assetUrl, request } from '../../../utils/request'
 import { getOpenid, wxLoginCode } from '../../../utils/wechat'
 import { getCompanyId } from '../../../utils/tenant'
 
@@ -23,6 +23,26 @@ Page({
     // 一键登录单独的 loading：两种登录方式互斥，各自一个标记，
     // 免得多点一下把另一个按钮也变成 loading。
     wxSubmitting: false,
+    // 品牌区：企业简称（优先）/ 全称。为空时页面显示中性的「员工登录」，
+    // **绝不回落到产品名**——登录页顶着平台产品名，客户会觉得「没改干净」。
+    brand: '',
+    logo: '',
+  },
+  onLoad() {
+    this.loadBrand()
+  },
+  // 拉当前企业的公开信息（/api/company 会自动带 companyId）：简称优先、全称次之；
+  // 两者都空时保持空串，由页面显示「员工登录」。失败不阻断登录——品牌只是装饰。
+  // 返回 Promise 方便测试 await（onLoad 里不 await，失败也不该拖慢页面）。
+  loadBrand() {
+    return request('GET', '/api/company')
+      .then((r: any) => {
+        const d = (r && r.code === 0 && r.data) || {}
+        const short = String(d.shortName || '').trim()
+        const full = String(d.name || '').trim()
+        this.setData({ brand: short || full, logo: assetUrl(d.logo) })
+      })
+      .catch(() => {})
   },
   onInput(e: any) {
     this.setData({ [e.currentTarget.dataset.field]: e.detail.value })

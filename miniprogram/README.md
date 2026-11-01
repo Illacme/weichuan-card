@@ -82,7 +82,7 @@ miniprogram/
 | project/list | GET /api/projects?categoryId= |
 | project/detail | GET /api/projects/:id + POST /api/stat/track(project_view / share，targetId=案例ID) |
 | service/detail | GET /api/services/:id + POST /api/stat/track(service_view / share，targetId=服务ID) |
-| employee/login → edit | POST /api/employee/login（手机号密码）、**POST /api/employee/login/wechat（微信一键登录）**、GET /api/employee/me、PUT /api/employee/me、POST /api/employee/upload(头像)、GET /api/subscribe/config（订阅模板 ID） |
+| employee/login → edit | POST /api/employee/login（手机号密码）、**POST /api/employee/login/wechat（微信一键登录）**、GET /api/company（登录页品牌：企业简称 / LOGO）、GET /api/employee/me、PUT /api/employee/me、POST /api/employee/upload(头像)、GET /api/subscribe/config（订阅模板 ID） |
 | employee/me | GET /api/employee/me（含根级 `wechatBound`）、**POST /api/employee/wechat/bind（绑定微信）**、PUT 密码、POST /api/employee/me/cancel |
 | apply/open | POST /api/apply/open、POST /api/apply/open/avatar、GET /api/company、GET /api/subscribe/config（订阅模板 ID） |
 | action-bar | wx.makePhoneCall + POST /api/stat/track(call/save) |
@@ -152,8 +152,11 @@ miniprogram/
 
 页面与状态：
 
-- `pages/employee/login`：主按钮「微信一键登录」（微信品牌绿 #07c160）+「或使用手机号密码登录」。
-  手机号密码降为备用方式，但**没有删掉**——它是「一键登录失败时的唯一出路」，也是绑定微信的前提。
+- `pages/employee/login`：默认登录是「手机号 + 密码」（蓝色主按钮）；「微信一键登录」放在其**下方**，
+  白底绿描边作为次入口（保留微信绿与微信 logo，仍一眼可辨）。顶部品牌区优先显示**企业简称**
+  （有企业 LOGO 就显示 LOGO），拿不到企业名时显示中性的「员工登录」——**不回落到产品名**，
+  避免登录页顶着平台品牌让客户觉得「没改干净」。
+  手机号密码仍是一键登录失败时的唯一出路，也是绑定微信的前提。
 - `pages/employee/me`：「账号」分组里的「微信一键登录」单元格显示 `已绑定 / 未绑定`，
   未绑定时点一下即绑（状态来自 `/api/employee/me` 根级 `wechatBound`，不由前端猜 `data.openid` 是否为空）。
 
@@ -177,7 +180,7 @@ miniprogram/
   效果等同解绑，还不会顺手清掉后台用于核实身份的历史记录。
 - **同一企业内一个微信只能绑一个账号**：否则两人共用一个微信号时，谁点一键登录都进到先绑的那个人。
 
-用例见 `tests/login_wechat.spec.ts`（15 例），后端见 `login_wechat_test.go`（4 组）。
+用例见 `tests/login_wechat.spec.ts`（20 例），后端见 `login_wechat_test.go`（4 组）。
 
 ## 订阅消息（审核结果通知，2026-10-31）
 

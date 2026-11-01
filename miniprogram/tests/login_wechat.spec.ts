@@ -188,6 +188,52 @@ describe('登录页 · 手机号密码（顺带修的 loading 卡死）', () => 
   })
 })
 
+describe('登录页 · 品牌区（企业简称优先，不显示产品名）', () => {
+  it('有简称：用简称，不用全称', async () => {
+    mocks.request.mockResolvedValueOnce({
+      code: 0,
+      data: { shortName: '甲科技', name: '甲科技股份有限公司', logo: '' },
+    })
+    const p = await loginPage()
+    await p.loadBrand()
+    expect(p.data.brand).toBe('甲科技')
+  })
+
+  it('无简称：回落全称', async () => {
+    mocks.request.mockResolvedValueOnce({
+      code: 0,
+      data: { shortName: '', name: '乙实业有限公司', logo: '' },
+    })
+    const p = await loginPage()
+    await p.loadBrand()
+    expect(p.data.brand).toBe('乙实业有限公司')
+  })
+
+  it('企业信息为空：brand 保持空串（页面显示中性的「员工登录」，绝不出现产品名）', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: {} })
+    const p = await loginPage()
+    await p.loadBrand()
+    expect(p.data.brand).toBe('')
+  })
+
+  it('企业 LOGO 转成可访问地址', async () => {
+    mocks.request.mockResolvedValueOnce({
+      code: 0,
+      data: { shortName: '丙', logo: '/upload/logo.png' },
+    })
+    const p = await loginPage()
+    await p.loadBrand()
+    expect(p.data.logo).toBe('https://cdn.test/upload/logo.png')
+  })
+
+  it('网络异常：loadBrand 不抛，brand 保持空串（品牌只是装饰，不阻断登录）', async () => {
+    mocks.request.mockRejectedValueOnce(new Error('offline'))
+    const p = await loginPage()
+    await expect(p.loadBrand()).resolves.toBeUndefined()
+    expect(p.data.brand).toBe('')
+  })
+})
+
 describe('「我的」页 · 绑定微信', () => {
   const meResp = (extra: any = {}) => ({
     code: 0,
