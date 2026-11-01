@@ -1,31 +1,38 @@
 <view class="login">
-  <!-- 微信一键登录：主入口，放最上面并做成主按钮。
-       员工忘记密码是 B 端最高频的工单，而「一键登录」把它整个省掉——
-       前提是账号已绑定微信（自助申请开通的员工开箱即绑，后台建号的员工要绑一次）。 -->
-  <button class="wx-login-btn" loading="{{wxSubmitting}}" bindtap="onWechatLogin">
-    <view class="wx-login-icon">
-      <view class="wx-login-dot"></view>
-      <view class="wx-login-dot"></view>
+  <view class="login-inner">
+    <!-- 品牌区：给登录页一个视觉锚点，避免整页内容贴顶、空荡。
+         名片类小程序没有品牌识别，用户容易把登录页当成「没加载出来」。 -->
+    <view class="brand">
+      <view class="brand-logo"><view class="brand-glyph"></view></view>
+      <view class="brand-name">微传名片</view>
+      <view class="brand-sub">企业电子名片 · 一键分享</view>
     </view>
-    <text class="wx-login-label">微信一键登录</text>
-  </button>
-  <view class="wx-login-hint">首次使用请先用手机号密码登录，登录后在「我的」页绑定微信</view>
 
-  <view class="or-line">
-    <view class="or-rule"></view>
-    <text class="or-text">或使用手机号密码登录</text>
-    <view class="or-rule"></view>
-  </view>
+    <!-- 微信一键登录：主入口。绿色为微信官方授权色，用户一眼认出这是微信登录，
+         不是小程序自造的账号体系。图标用内联 SVG（base64），不引入图片资源。 -->
+    <button class="wx-login-btn" loading="{{wxSubmitting}}" bindtap="onWechatLogin">
+      <view class="wx-login-icon"></view>
+      <text class="wx-login-label">微信一键登录</text>
+    </button>
+    <view class="wx-login-hint">未绑定微信？先用下方手机号密码登录，在「我的」页绑定后下次即可一键登录</view>
 
-  <view class="form">
-    <view class="form-item">
-      <text class="label">手机号</text>
-      <input data-field="phone" value="{{phone}}" bindinput="onInput" placeholder="请输入手机号" />
+    <view class="or-line">
+      <view class="or-rule"></view>
+      <text class="or-text">或使用手机号密码</text>
+      <view class="or-rule"></view>
     </view>
-    <view class="form-item">
-      <text class="label">密码</text>
-      <input data-field="password" value="{{password}}" bindinput="onInput" password placeholder="请输入密码" />
+
+    <!-- 手机号密码：备用方式，收进卡片里，与主入口在视觉上分层 -->
+    <view class="form login-form">
+      <view class="form-item">
+        <text class="label">手机号</text>
+        <input data-field="phone" value="{{phone}}" bindinput="onInput" placeholder="请输入手机号" />
+      </view>
+      <view class="form-item">
+        <text class="label">密码</text>
+        <input data-field="password" value="{{password}}" bindinput="onInput" password placeholder="请输入密码" />
+      </view>
+      <button class="submit-btn" loading="{{submitting}}" bindtap="onSubmit">登录</button>
     </view>
-    <button class="submit-btn" loading="{{submitting}}" bindtap="onSubmit">登录</button>
   </view>
 </view>

@@ -1,0 +1,122 @@
+/* 登录页布局：整页浅灰底（与全站 page 背景一致），顶部一条浅蓝渐变带把品牌区
+   从灰底里浮出来；内容居中且限制最大宽度，平板/大屏不会被拉得太散。
+   此前整页白底、内容堆在顶部、没有品牌区也没有卡片，视觉上既空又散。 */
+.login {
+  min-height: 100vh;
+  background: #f5f5f5;
+  box-sizing: border-box;
+  position: relative;
+}
+/* 顶部渐变带：近顶浅蓝、向下淡出到灰底，制造层次 */
+.login::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 380rpx;
+  background: linear-gradient(180deg, #e9f3ff 0%, #f3f8ff 55%, #f5f5f5 100%);
+  z-index: 0;
+}
+.login-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 680rpx;
+  margin: 0 auto;
+  padding: 0 48rpx 80rpx;
+  box-sizing: border-box;
+}
+
+/* 品牌区：logo 磁贴 + 产品名 + 一句话定位 */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 96rpx 0 60rpx;
+}
+.brand-logo {
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 30rpx;
+  background: linear-gradient(135deg, #1a8cff, #2bb0ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12rpx 28rpx rgba(26, 140, 255, 0.30);
+}
+.brand-glyph {
+  width: 68rpx;
+  height: 68rpx;
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHJlY3QgeD0iOSIgeT0iMTMiIHdpZHRoPSIzMCIgaGVpZ2h0PSIyMiIgcng9IjQiIGZpbGw9IiNmZmZmZmYiLz48Y2lyY2xlIGN4PSIxNyIgY3k9IjIyIiByPSIzLjUiIGZpbGw9IiMxYThjZmYiLz48cmVjdCB4PSIyNCIgeT0iMTgiIHdpZHRoPSIxMSIgaGVpZ2h0PSIyLjYiIHJ4PSIxLjMiIGZpbGw9IiMxYThjZmYiLz48cmVjdCB4PSIyNCIgeT0iMjUiIHdpZHRoPSIxMSIgaGVpZ2h0PSIyLjYiIHJ4PSIxLjMiIGZpbGw9IiMxYThjZmYiLz48L3N2Zz4K");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.brand-name {
+  margin-top: 26rpx;
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #1a2230;
+  letter-spacing: 2rpx;
+}
+.brand-sub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #8a97a6;
+}
+
+/* 微信一键登录（主入口）：绿色为微信官方授权色 */
+.wx-login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 92rpx;
+  line-height: 1;
+  background: #07c160;
+  color: #fff;
+  font-size: 32rpx;
+  border-radius: 46rpx;
+  box-shadow: 0 10rpx 24rpx rgba(7, 193, 96, 0.28);
+}
+.wx-login-btn::after { border: none; } /* 去掉 button 默认边框（button 唯一可用的重置手段） */
+/* 微信气泡图标：内联 SVG（白色微信 logo），比原先「白方块+两个绿点」更像微信，
+   也不引入图片资源（包体越小冷启动越快）。 */
+.wx-login-icon {
+  width: 40rpx;
+  height: 40rpx;
+  margin-right: 14rpx;
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTguNjkxIDJDNC44ODYgMiAxLjggNC41ODIgMS44IDcuOGMwIDEuNjk1Ljk4MiAzLjIxNyAyLjUwMyA0LjIyOEwzLjQgMTQuMDZsMi4xOS0xLjE0Yy43OS4yMTUgMS42My4zMzIgMi41LjMzMi4yMyAwIC40NTgtLjAxMi42ODQtLjAzLS4xNDItLjQ2LS4yMTgtLjk0Ni0uMjE4LTEuNDUgMC0yLjkxIDIuNzMyLTUuMjcgNi4xLTUuMjcuMjMgMCAuNDU4LjAxNC42ODQuMDNDMTQuNzQgNC4xOCAxMS45NiAyIDguNjkgMnpNNi4yIDYuNGExLjA1IDEuMDUgMCAxMTAtMi4xIDEuMDUgMS4wNSAwIDAxMCAyLjF6bTUgMGExLjA1IDEuMDUgMCAxMTAtMi4xIDEuMDUgMS4wNSAwIDAxMCAyLjF6Ii8+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTIyLjIgMTMuMDZjMC0yLjQ1LTIuNDctNC40NC01LjUxLTQuNDQtMy4wNSAwLTUuNTEgMS45OS01LjUxIDQuNDQgMCAyLjQ2IDIuNDYgNC40NSA1LjUxIDQuNDUuNjYgMCAxLjMtLjA5IDEuOS0uMjZsMS43OC45My0uNDgtMS41M2MxLjQtLjg2IDIuMzEtMi4xNiAyLjMxLTMuNTl6bS03LjM0LS45YS44My44MyAwIDExMC0xLjY2LjgzLjgzIDAgMDEwIDEuNjZ6bTMuNiAwYS44My44MyAwIDExMC0xLjY2LjgzLjgzIDAgMDEwIDEuNjZ6Ii8+PC9zdmc+Cg==");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.wx-login-label { font-size: 32rpx; color: #fff; }
+
+.wx-login-hint {
+  margin-top: 18rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: #9aa7b4;
+  line-height: 1.6;
+}
+
+/* 「或」分隔线：两侧细线 + 中间文字，比单独一行提示更像「两条并列的路」 */
+.or-line { display: flex; align-items: center; margin: 48rpx 0 28rpx; }
+.or-rule { flex: 1; height: 1rpx; background: #e3e7ec; }
+.or-text { padding: 0 20rpx; font-size: 24rpx; color: #9aa7b4; }
+
+/* 手机号密码卡片：白底圆角 + 软阴影，与全站 .emp-card / .section 同款质感，
+   把备用登录方式和主入口在视觉上分层。 */
+.login-form {
+  background: #fff;
+  border-radius: 20rpx;
+  box-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  padding: 8rpx 28rpx;
+}
+.login-form .form-item { padding: 28rpx 0; }
+.login-form .submit-btn {
+  margin: 28rpx 0 20rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  font-size: 32rpx;
+  border-radius: 44rpx;
+}
+.login-form .submit-btn::after { border: none; }
