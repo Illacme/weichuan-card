@@ -96,10 +96,18 @@
 /* 两个输入框之间一条淡分隔线；密码框下方不画线，避免和按钮之间多一道 */
 .login-form .form-item { padding: 30rpx 0; border-bottom: none; }
 .login-form .form-item + .form-item { border-top: 1rpx solid #eef1f5; }
+/* 微信原生 <button> 默认「收缩宽度 + margin:auto 居中 + line-height:2.55 + 左右 padding」，
+   只写 height 不写 flex 会出现「按钮变窄靠左、文字偏下」。这里用 flex 居中 + 满宽 + 清 padding 覆盖。 */
 .login-form .submit-btn {
-  margin: 36rpx 0 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
   height: 92rpx;
-  line-height: 92rpx;
+  line-height: 1;
+  margin: 36rpx 0 8rpx;
   font-size: 32rpx;
   font-weight: 600;
   border-radius: 46rpx;
@@ -120,6 +128,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
   height: 92rpx;
   line-height: 1;
   background: #fff;
