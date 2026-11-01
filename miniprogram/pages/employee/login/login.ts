@@ -1,6 +1,7 @@
 import { assetUrl, request } from '../../../utils/request'
 import { getOpenid, wxLoginCode } from '../../../utils/wechat'
 import { getCompanyId } from '../../../utils/tenant'
+import { onImgFail } from '../../../utils/thumb'
 
 // 登录成功后的收尾：存令牌 + 回到「我的」页。
 // 两个登录方式（微信一键 / 手机号密码）共用，避免一处改了另一处忘了。
@@ -27,6 +28,9 @@ Page({
     // **绝不回落到产品名**——登录页顶着平台产品名，客户会觉得「没改干净」。
     brand: '',
     logo: '',
+    // 企业 LOGO 加载失败的地址（utils/thumb.ts onImgFail 写入）：失败即回落到
+    // 渐变磁贴，避免页头正中挂一块裂图——比没有 LOGO 更难看。
+    logoFail: '',
   },
   onLoad() {
     this.loadBrand()
@@ -44,6 +48,8 @@ Page({
       })
       .catch(() => {})
   },
+  // 企业 LOGO 加载失败：记下失败地址（见 utils/thumb.ts），WXML 据此回落渐变磁贴
+  onImgFail,
   onInput(e: any) {
     this.setData({ [e.currentTarget.dataset.field]: e.detail.value })
   },

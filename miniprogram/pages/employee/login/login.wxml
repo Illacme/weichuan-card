@@ -4,8 +4,17 @@
          登录页顶着平台产品名会让客户觉得「没改干净」，所以这里只认企业名，
          拿不到企业名时显示中性的「员工登录」，不回落到产品名。 -->
     <view class="brand">
-      <view class="brand-logo {{logo ? 'has-img' : 'is-glyph'}}">
-        <image wx:if="{{logo}}" class="brand-logo-img" src="{{logo}}" mode="aspectFit" />
+      <view class="brand-logo {{logo && logoFail !== logo ? 'has-img' : 'is-glyph'}}">
+        <!-- 企业 LOGO 挂了 binderror：失败就回落到渐变磁贴，不挂一块裂图 -->
+        <image
+          wx:if="{{logo && logoFail !== logo}}"
+          class="brand-logo-img"
+          src="{{logo}}"
+          mode="aspectFit"
+          binderror="onImgFail"
+          data-fail="logoFail"
+          data-src="{{logo}}"
+        />
         <view wx:else class="brand-glyph"></view>
       </view>
       <view class="brand-name">{{brand || '员工登录'}}</view>
