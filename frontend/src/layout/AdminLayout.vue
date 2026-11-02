@@ -83,6 +83,42 @@
 
       <el-main class="admin-main">
         <!--
+          授权到期横幅（P0-3）：放在**所有页面之上**，因为它回答的是「你今天还能不能用」。
+          藏在某个设置页里等于没有——客户不会主动去看，而到期那天他只会看到「改不了」。
+
+          两种视角由 buildLicenseBanner 折叠成一条：企业管理员看自己那份，
+          平台超管看「哪些客户快到期」。同时存在时优先显示自己的（更紧急）。
+        -->
+        <el-alert
+          v-if="licenseBanner && !licenseDismissed"
+          class="license-banner"
+          :type="licenseBanner.type"
+          :closable="licenseBanner.closable"
+          show-icon
+          @close="dismissLicenseBanner"
+        >
+          <template #title>
+            <span class="lic-title">{{ licenseBanner.title }}</span>
+            <el-button
+              v-if="licenseBanner.action === 'companies'"
+              link
+              type="primary"
+              class="lic-action"
+              @click="router.push('/companies')"
+            >
+              去企业管理 →
+            </el-button>
+          </template>
+          <div class="lic-desc">{{ licenseBanner.desc }}</div>
+          <ul v-if="licenseBanner.items.length" class="lic-list">
+            <li v-for="it in licenseBanner.items" :key="it.id">
+              <b>{{ it.name }}</b>
+              <span>{{ it.text }}</span>
+            </li>
+          </ul>
+        </el-alert>
+
+        <!--
           平台超管未选企业时的空态：企业内容 / 统计 / 审核 / 员工这些页面一次只能对着
           一家企业看和改。不拦的话后端会兜到 1 号企业（零数据的商用版里可能不存在）或
           直接按「全部企业」出数——前者是**改着 A 家写进 B 家**，后者是把几家数据混一起，
@@ -146,6 +182,8 @@ import { useAuthStore } from '@/store/auth'
 import { useSettingsStore } from '@/store/settings'
 import { useTenantStore } from '@/store/tenant'
 import { adminLogout, getMe } from '@/api/auth'
+import { getLicense, type LicenseView } from '@/api/license'
+import { buildLicenseBanner } from '@/utils/licenseBanner'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import CompanyPicker from '@/components/CompanyPicker.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -164,6 +202,40 @@ const asideOpen = ref(false)
 const { isPhone } = useBreakpoint()
 const avatarText = computed(() => (auth.username || '管理员').charAt(0))
 
+// ── 授权到期横幅 ────────────────────────────────────────────────
+// 数据来自 GET /api/admin/license（登录即可访问，不限定平台超管）。
+// 与 /admin/me 分开取：授权信息需要能单独刷新（运营给客户续费后，客户刷新页面
+// 就该看到天数变了），而 /me 是身份接口，混进去会让它越来越不敢动。
+const licenseView = ref<LicenseView | null>(null)
+const licenseBanner = computed(() => buildLicenseBanner(licenseView.value))
+const licenseDismissed = ref(false)
+// 关闭状态按「内容指纹」记：同一份提示关过就不再弹，但内容变了
+// （又跳了一档、又多了几家到期）必须重新弹出来——否则关一次就永久静音。
+const LICENSE_DISMISS_KEY = 'license_banner_dismissed'
+
+function dismissLicenseBanner() {
+  licenseDismissed.value = true
+  const key = licenseBanner.value?.key
+  if (!key) return
+  try {
+    sessionStorage.setItem(LICENSE_DISMISS_KEY, key)
+  } catch {
+    // 隐私模式 / 存储被禁用：只影响「记住关闭」，不影响提醒本身
+  }
+}
+
+async function loadLicense() {
+  licenseView.value = await getLicense()
+  const key = licenseBanner.value?.key
+  let remembered = ''
+  try {
+    remembered = sessionStorage.getItem(LICENSE_DISMISS_KEY) || ''
+  } catch {
+    remembered = ''
+  }
+  licenseDismissed.value = !!key && remembered === key
+}
+
 // 身份 → 租户作用域同步。**必须放在 setup 而不是 onMounted**：子页面的 onMounted
 // 先于父组件执行，它们一挂载就发请求；晚一步同步，首屏那几个请求就漏了 ?companyId=，
 // 拿回的是「全部企业」或 1 号企业的数据（这正是本功能要消灭的静默串数据）。
@@ -174,6 +246,9 @@ tenant.syncIdentity(auth.isPlatform, auth.companyId)
 onMounted(async () => {
   // 品牌名等公开运行参数：先渲染本地缓存值，再静默刷新（失败回落内置默认）
   settings.load()
+  // 授权到期：无论身份是否已 hydration 过都要取（登录后 profileLoaded 已为 true，
+  // 只在 !profileLoaded 时才取的话，**刚登录进来那一次反而看不到提醒**）
+  loadLicense()
   if (auth.loggedIn && !auth.profileLoaded) {
     try {
       const resp = await getMe()
@@ -473,6 +548,31 @@ function onCommand(cmd: string) {
 .admin-main {
   background: #f5f7fa;
   padding: 16px;
+}
+
+/* 授权到期横幅：贴在所有页面顶部，滚动时留在可视区外也无所谓——
+   它只在临期/过期时出现，用户翻页时自然会再看一眼。 */
+.license-banner {
+  margin-bottom: 12px;
+}
+.lic-title {
+  font-weight: 600;
+}
+.lic-action {
+  margin-left: 10px;
+  vertical-align: baseline;
+}
+.lic-desc {
+  margin-top: 2px;
+  line-height: 1.7;
+}
+.lic-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.8;
+}
+.lic-list b {
+  margin-right: 8px;
 }
 
 /* 平台超管未选企业的空态：居中卡片，视觉上等同于「这页暂时没内容」，

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-# 最小告警检查（零第三方依赖，四条规则，配 crontab 每分钟运行）：
+# 最小告警检查（零第三方依赖，五条规则，配 crontab 每分钟运行）：
 #   R1 healthz    ：本地探活 GET /healthz/ready，非 2xx / 超时即告警。
 #                   用 ready 而不是 live：R1 要抓的是「进程在但不可用」（DB 断开、
 #                   实例宕机），live 只确认进程活着，查不出这类故障。
@@ -16,6 +16,11 @@
 #   R4 外部拨测   ：从本机之外访问对外地址（EXTERNAL_URL）：非 2xx / 耗时超阈值 /
 #                   证书临近过期即告警。R1 是本机视角，看不出反代、证书、防火墙
 #                   这类「本机全绿、用户全挂」的故障，R4 补的就是这一半
+#   R5 授权到期   ：日志新增 [LICENSE][EXPIRING] 行即告警。后端每天扫一次授权，
+#                   把「还剩几天 / 已过期」写进日志；本规则是**唯一不需要有人登录
+#                   后台**的通道，也是私有部署（没有平台后台，且到期即拒绝启动）
+#                   唯一的指望。已过期与临期用不同的告警键，避免前者被后者的
+#                   冷却窗口吞掉
 #
 # 定位：不替代 Prometheus/Alertmanager，而是「没有监控基建也能跑起来」
 # 的最小闭环；规则是纯增量，随时可平滑迁到标准监控栈。
@@ -251,8 +256,45 @@ cert_probe() {
   return $rc
 }
 
+# ── R5: 授权到期 ──
+# 后端（internal/license/remind.go）每天扫一次授权，把临期 / 已过期的项写成：
+#   [LICENSE][EXPIRING] scope=tenant company=3 name="朗汇机电" edition=trial \
+#     expiresAt=2026-11-09 daysLeft=7 level=urgent
+# 本规则把它变成一次推送。为什么这条通道不能省：授权到期会**自动**降级只读，
+# 私有部署更是直接拒绝启动——这类事故的共同点是「发生前没有任何报错」，
+# 只有翻日志或有人恰好打开后台才能发现。R5 是唯一不需要有人登录的通道。
+check_license() {
+  if [ ! -f "$LOG_FILE" ]; then
+    return 0
+  fi
+  local size last chunk line key
+  size="$(wc -c < "$LOG_FILE" | tr -d ' ')"
+  last=0
+  [ -f "$STATE_DIR/license_offset" ] && last="$(cat "$STATE_DIR/license_offset" 2>/dev/null || echo 0)"
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  # 日志轮转（文件变小）时偏移归零重扫，由冷却时间兜底防轰炸
+  if [ "$size" -lt "$last" ]; then
+    last=0
+  fi
+  chunk="$(tail -c "+$((last + 1))" "$LOG_FILE" 2>/dev/null)"
+  echo "$size" > "$STATE_DIR/license_offset"
+  line="$(printf '%s\n' "$chunk" | grep '\[LICENSE\]\[EXPIRING\]' | tail -1 || true)"
+  [ -n "$line" ] || return 0
+
+  # 已过期与临期用**不同的告警键**：刚响过「还剩 7 天」又被「已过期」的冷却
+  # 吞掉，正好漏掉最该看的那一条（与 R3 三件套各自独立键同一条教训）。
+  case "$line" in
+    *level=expired*) key=license_expired ;;
+    *)               key=license_expiring ;;
+  esac
+  # 冷却 6 小时：授权是「天」级事件，一天响一次足够；但每次重启都会重打同一行，
+  # 不设冷却会变成「重启几次就响几次」。
+  send_alert "$key" "授权到期：$(printf '%s' "$line" | sed 's/.*\[LICENSE\]\[EXPIRING\][[:space:]]*//' | cut -c1-200)" 21600
+}
+
 check_healthz
 check_5xx
 check_backup
 check_external
+check_license
 exit 0

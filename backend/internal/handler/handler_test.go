@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"weichuan/internal/config"
+	"weichuan/internal/license"
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
 	"weichuan/internal/setting"
@@ -122,6 +123,11 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 
 	SeedAdmin(db, cfg) // 首启 seed 初始超管
 
+	// 按租户解析授权的库连接（与 cmd/server、cmd/devserver 的启动序列一致）。
+	// 不注入的话 ResolveFor 永远回退全局 Current()，于是「企业管理员看到自己的到期日」
+	// 这类按租户的逻辑在测试里根本走不到——测试通过而线上走的是另一条分支。
+	license.SetTenantDB(db)
+
 	// 系统设置：seed 缺省值 + 载入内存缓存（测试依赖公开/后台设置接口）
 	require.NoError(t, setting.Init(db))
 
@@ -141,6 +147,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
 	RegisterBackup(r, db, cfg)    // 备份与恢复面板（状态 / 立即备份 / 下载）
+	RegisterLicenseView(r, db)    // 授权到期视图（企业管理员看自己 / 平台超管看汇总）
 	// 海报个性化设置：GET/PUT /api/employee/poster-prefs + 公开快照 GET /api/poster-prefs。
 	// 原先这里没注册（只在两个 cmd/main.go 里注册），于是任何带 DB 的海报接口测试
 	// 都会拿到 gin 的 404 纯文本——JSON 解析报 "invalid character 'p' after top-level

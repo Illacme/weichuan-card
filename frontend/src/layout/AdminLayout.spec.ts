@@ -11,6 +11,7 @@ import { routes } from '@/router'
 const mocks = vi.hoisted(() => ({
   getMe: vi.fn(async (): Promise<any> => ({ code: 0, data: { isPlatform: true } })),
   adminLogout: vi.fn(async () => ({ code: 0 })),
+  getLicense: vi.fn(async (): Promise<any> => null),
   settingsLoad: vi.fn(),
   isPhone: false,
 }))
@@ -32,6 +33,7 @@ vi.mock('@/store/settings', () => ({
   useSettingsStore: () => ({ load: mocks.settingsLoad, displayBrandName: '微传名片' }),
 }))
 vi.mock('@/api/auth', () => ({ getMe: mocks.getMe, adminLogout: mocks.adminLogout }))
+vi.mock('@/api/license', () => ({ getLicense: mocks.getLicense }))
 
 // tenant 也用普通对象：需要断言「同步身份」「登出清视角」这些副作用，
 // 真 store 还得额外挂 pinia，收益不成比例（store 自身的行为由 store/tenant.spec.ts 覆盖）。
@@ -94,6 +96,27 @@ const ElTag = defineComponent({
   template: `<span class="el-tag"><slot /></span>`,
 })
 const ElIcon = defineComponent({ name: 'ElIcon', template: `<i><slot /></i>` })
+// 授权横幅用的 alert：把 title 插槽与默认插槽都拍平进 DOM，
+// 并暴露 data-closable 以便断言「临期能不能关掉」。
+const ElAlert = defineComponent({
+  name: 'ElAlert',
+  props: ['type', 'closable', 'title'],
+  emits: ['close'],
+  setup(props, { slots, emit }) {
+    return () =>
+      h(
+        'div',
+        { class: 'el-alert', 'data-type': props.type, 'data-closable': String(!!props.closable) },
+        [
+          h('div', { class: 'el-alert-title' }, slots.title?.()),
+          h('div', { class: 'el-alert-body' }, slots.default?.()),
+          props.closable
+            ? h('button', { class: 'el-alert-close', onClick: () => emit('close') }, '×')
+            : null,
+        ]
+      )
+  },
+})
 const ElAvatar = defineComponent({ name: 'ElAvatar', props: ['size'], template: `<span class="el-avatar"><slot /></span>` })
 // 下拉：把子项的 command 真的回传到 el-dropdown 的 @command 上。
 // 不接这一层的话「手机端点头像 → 切换企业」这条路径在测试里永远点不动，
@@ -160,6 +183,7 @@ const mountOpts = {
       'el-button': ElButton,
       'el-tag': ElTag,
       'el-icon': ElIcon,
+      'el-alert': ElAlert,
       'el-avatar': ElAvatar,
       'el-dropdown': ElDropdown,
       'el-dropdown-menu': ElDropdownMenu,
@@ -233,8 +257,11 @@ describe('layout/AdminLayout', () => {
     auth.logout.mockClear()
     mocks.getMe.mockClear()
     mocks.adminLogout.mockClear()
+    mocks.getLicense.mockClear()
+    mocks.getLicense.mockImplementation(async () => null)
     mocks.settingsLoad.mockClear()
     mocks.isPhone = false
+    sessionStorage.clear()
     tenant.currentId = 0
     tenant.currentName = ''
     tenant.needPick = false
@@ -455,8 +482,11 @@ describe('layout/AdminLayout 企业作用域', () => {
     auth.logout.mockClear()
     mocks.getMe.mockClear()
     mocks.adminLogout.mockClear()
+    mocks.getLicense.mockClear()
+    mocks.getLicense.mockImplementation(async () => null)
     mocks.settingsLoad.mockClear()
     mocks.isPhone = false
+    sessionStorage.clear()
     tenant.currentId = 0
     tenant.currentName = ''
     tenant.needPick = false
@@ -654,5 +684,114 @@ describe('layout/AdminLayout 企业作用域', () => {
     await flushPromises()
 
     expect(tenant.clear).toHaveBeenCalled()
+  })
+
+  // ── 授权到期横幅（P0-3）───────────────────────────────────────
+  // 这条横幅是「客户在到期前能不能知道」的唯一出口：此前到期只有一条 code=2 的
+  // 拦截，客户是某天上午改不了内容才知道的。所以钉住三件事：临期必须显示、
+  // 最后一档不许关掉、平台超管要看到「哪几家快到期」。
+  describe('授权到期横幅', () => {
+    function tenantLicense(over: Record<string, unknown> = {}) {
+      return {
+        mode: 'platform',
+        scope: 'tenant',
+        self: {
+          edition: 'trial',
+          seats: 5,
+          seatsUsed: 2,
+          seatsFull: false,
+          expiresAt: '2026-11-09',
+          daysLeft: 7,
+          expired: false,
+          level: 'urgent',
+          title: '授权 2026-11-09 到期，仅剩 7 天',
+          consequence: '到期后后台自动切换为只读：可以登录查看，但无法再修改内容',
+          renewHint: '请联系服务商续费，续费后自动恢复，无需重启',
+          ...over,
+        },
+      }
+    }
+
+    it('企业管理员临期：顶部横幅说清到期日、后果与续费路径', async () => {
+      mocks.getLicense.mockImplementation(async () => tenantLicense())
+      const { w } = await mountLayout('/employees')
+
+      const banner = w.find('.license-banner')
+      expect(banner.exists()).toBe(true)
+      const text = banner.text()
+      expect(text).toContain('2026-11-09')
+      expect(text).toContain('只读')
+      expect(text).toContain('续费')
+      expect(banner.attributes('data-type')).toBe('warning')
+    })
+
+    it('最后一周不给关闭按钮；还剩 30 天可以关，且关掉后不再显示', async () => {
+      mocks.getLicense.mockImplementation(async () => tenantLicense())
+      const { w } = await mountLayout('/employees')
+      expect(w.find('.license-banner').attributes('data-closable')).toBe('false')
+
+      // 换成 warn 档（还剩 20 天）：可以关
+      mocks.getLicense.mockImplementation(async () =>
+        tenantLicense({ level: 'warn', daysLeft: 20, title: '授权 2026-11-22 到期，还剩 20 天' })
+      )
+      const w2 = (await mountLayout('/employees')).w
+      expect(w2.find('.license-banner').attributes('data-closable')).toBe('true')
+      await w2.find('.el-alert-close').trigger('click')
+      await nextTick()
+      expect(w2.find('.license-banner').exists()).toBe(false)
+    })
+
+    it('已过期：红色、不可关闭，并说明怎么恢复', async () => {
+      mocks.getLicense.mockImplementation(async () =>
+        tenantLicense({
+          level: 'expired',
+          expired: true,
+          daysLeft: -2,
+          title: '授权已于 2026-10-31 到期（2 天前）',
+        })
+      )
+      const { w } = await mountLayout('/employees')
+      const banner = w.find('.license-banner')
+      expect(banner.attributes('data-type')).toBe('error')
+      expect(banner.attributes('data-closable')).toBe('false')
+      expect(banner.text()).toContain('2026-10-31')
+    })
+
+    it('平台超管：显示「哪几家快到期」并可跳到企业管理', async () => {
+      auth.isPlatform = true
+      mocks.getLicense.mockImplementation(async () => ({
+        mode: 'platform',
+        scope: 'platform',
+        self: { level: 'none', seats: 0, seatsUsed: 0, seatsFull: false, expiresAt: '', daysLeft: 0, expired: false, title: '授权不过期', consequence: '', renewHint: '' },
+        alerts: { expired: 1, within7: 2, within30: 3 },
+        expiring: [
+          { companyId: 2, companyName: '朗汇机电', edition: 'trial', seats: 5, expiresAt: '2026-10-31', daysLeft: -2, expired: true, level: 'expired', title: '授权已于 2026-10-31 到期（2 天前）' },
+          { companyId: 3, companyName: '甲方公司', edition: 'trial', seats: 5, expiresAt: '2026-11-05', daysLeft: 3, expired: false, level: 'urgent', title: '授权 2026-11-05 到期，仅剩 3 天' },
+        ],
+      }))
+      const { w, router } = await mountLayout('/companies')
+
+      const banner = w.find('.license-banner')
+      expect(banner.text()).toContain('3 家企业')
+      expect(banner.text()).toContain('朗汇机电')
+      expect(banner.text()).toContain('甲方公司')
+      // 已过期时整体标红：这是事故，不是提醒
+      expect(banner.attributes('data-type')).toBe('error')
+
+      const go = w.findAll('.el-button').find((b: any) => b.text().includes('去企业管理'))!
+      await go.trigger('click')
+      await flushPromises()
+      expect(router.currentRoute.value.path).toBe('/companies')
+    })
+
+    it('授权正常/拿不到数据时一条提示都不出现（不能拿噪音训练用户无视提示）', async () => {
+      mocks.getLicense.mockImplementation(async () => tenantLicense({ level: 'ok', daysLeft: 180, consequence: '', renewHint: '', title: '授权 2027-05-01 到期' }))
+      const { w } = await mountLayout('/employees')
+      expect(w.find('.license-banner').exists()).toBe(false)
+
+      mocks.getLicense.mockImplementation(async () => null)
+      const w2 = (await mountLayout('/employees')).w
+      expect(w2.find('.license-banner').exists()).toBe(false)
+    })
   })
 })

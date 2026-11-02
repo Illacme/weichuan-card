@@ -65,6 +65,8 @@ tags:
     description: 上传 / 预签名 / 私有签名 / CDN 刷新 / 小程序码
   - name: 可观测性
     description: 请求追踪 / 前端报错回传 / 日志关联
+  - name: 授权
+    description: 授权状态与到期提醒（席位 / 到期日 / 临期清单）
 
 paths:
   # ───────────────────────── 系统 ─────────────────────────
@@ -3131,6 +3133,39 @@ paths:
                   size:
                     $ref: "#/components/schemas/PageSize"
 
+  # ===== 授权状态与到期提醒（登录即可访问，按角色分视角）=====
+  /api/admin/license:
+    get:
+      summary: 当前视角的授权状态与到期提醒
+      description: |
+        「到期自动降权」这件事必须有人知道，所以提醒分三层，本接口提供前两层：
+        ① **企业管理员**只拿 `self`（自己那份授权）；
+        ② **平台超管**额外拿 `alerts` + `expiring`（跨租户临期清单，过期优先、最多 10 家）。
+
+        第三层是运维告警：后端每天扫一次写 `[LICENSE][EXPIRING]`，由
+        `scripts/alert_check.sh` 的 R5 推送 webhook——那是**唯一不需要有人登录**的通道，
+        也是私有部署（没有平台后台，且到期即拒绝启动）唯一的指望。
+
+        `alerts` 三个计数是**包含关系**（expired ⊆ within7 ⊆ within30），
+        前端拼句子前必须拆成互斥段，否则「已过期 1 / 7 天内 2 / 30 天内 3」加不出 3 来。
+
+        `consequence` / `renewHint` 只在 level 属 warn / urgent / expired 时返回，且
+        **按部署形态分文案**：平台 / SaaS 续费即时生效、无需重启；私有部署必须换
+        `data/license.key` **并重启**。
+      tags: [授权]
+      responses:
+        "200":
+          description: code=0
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    $ref: "#/components/schemas/LicenseView"
+
   # ===== 租户（企业）管理：仅平台超管 =====
   /api/admin/companies:
     get:
@@ -4835,6 +4870,113 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    LicenseSelf:
+      type: object
+      description: |
+        当前登录者所在视角的那一份授权（客户看到的横幅就来自这里）。
+        阈值 30 / 7 天，判定集中在 `internal/license/expiry.go`。
+
+        `daysLeft` 按**日历天**算（两边先归到本地零点再取整），不按小时：
+        到期落库是当天 23:59:59，若用 `Hours()/24`，早上 9 点看「明天到期」会算出 0.6 →
+        显示 1 天，而客户心里的答案是「明天」。
+      properties:
+        edition:
+          type: string
+          example: trial
+        seats:
+          type: integer
+          description: 席位数；0 = 不限
+        seatsUsed:
+          type: integer
+        seatsFull:
+          type: boolean
+          description: 已满（新建员工会被拦，返回 code=403）
+        expiresAt:
+          type: string
+          description: 到期日（YYYY-MM-DD）；未配置授权时为空串
+          example: "2026-11-09"
+        daysLeft:
+          type: integer
+          description: 剩余日历天；已过期为负数
+          example: 7
+        expired:
+          type: boolean
+        level:
+          type: string
+          description: |
+            none = 未配置（不限制）；ok = 30 天以上；warn = 30 天内；
+            urgent = 7 天内；expired = 已过期
+          enum: [none, ok, warn, urgent, expired]
+          example: urgent
+        title:
+          type: string
+          example: 授权 2026-11-09 到期，仅剩 7 天
+        consequence:
+          type: string
+          description: 到期后果（仅 warn / urgent / expired 时有值），按部署形态分文案
+        renewHint:
+          type: string
+          description: 续费方式（同上）。平台：无需重启；私有部署：换 data/license.key 并重启
+
+    LicenseExpiringItem:
+      type: object
+      description: |
+        临期清单里的一条（仅平台超管可见）。字段是**摊平**的，不嵌 `status`——
+        前端拿到就直接渲染一行，不必多剥一层。
+      properties:
+        companyId:
+          type: integer
+          format: int64
+        companyName:
+          type: string
+        edition:
+          type: string
+        seats:
+          type: integer
+        expiresAt:
+          type: string
+          description: 到期日（YYYY-MM-DD）
+        daysLeft:
+          type: integer
+        expired:
+          type: boolean
+        level:
+          type: string
+          enum: [none, ok, warn, urgent, expired]
+        title:
+          type: string
+          example: 授权 2026-11-09 到期，仅剩 7 天
+
+    LicenseView:
+      type: object
+      properties:
+        mode:
+          type: string
+          description: 部署形态。private 下续费必须换 data/license.key 并重启
+          enum: [platform, private]
+        scope:
+          type: string
+          enum: [platform, tenant]
+        self:
+          $ref: "#/components/schemas/LicenseSelf"
+        alerts:
+          type: object
+          description: |
+            平台超管才有的汇总计数。**包含关系**：expired ⊆ within7 ⊆ within30，
+            前端必须拆成互斥段（within7 - expired、within30 - within7）再拼句子。
+          properties:
+            expired:
+              type: integer
+            within7:
+              type: integer
+            within30:
+              type: integer
+        expiring:
+          type: array
+          description: 临期清单（仅平台超管），过期优先、其后按剩余天数升序，最多 10 条
+          items:
+            $ref: "#/components/schemas/LicenseExpiringItem"
 
     MPReleaseStatus:
       type: string

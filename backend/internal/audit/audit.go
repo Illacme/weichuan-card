@@ -97,6 +97,12 @@ const (
 	// 删审计日志是最该被追责的动作之一：能删日志的人同时也能抹掉自己的痕迹。
 	// 留痕后审计页能回答「清掉了多少条、按多少天的保留期清的」。
 	ActionAuditPurge = "audit.purge"
+
+	// ActionLicenseExpiring 授权临近到期 / 已到期（后台定时任务，见 license/remind.go）。
+	// 这条不是「谁做了什么」，而是**系统在什么时候提醒过谁**——它是「我们提醒了、
+	// 客户没续」与「我们根本没提醒就把他停服了」之间唯一的证据。
+	// 按档位变化记录（warn → urgent → expired），不按天记，否则审计表会变成闹钟。
+	ActionLicenseExpiring = "license.expiring"
 )
 
 // ResultSuccess / ResultFail 操作结果。

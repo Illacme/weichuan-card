@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -115,9 +116,18 @@ func main() {
 	license.SetTenantDB(db)
 
 	// 授权校验（Phase 1 地基）：开发态下即便私有模式也只告警不致命，避免卡住本地联调。
-	if _, err := license.Verify(context.Background()); err != nil {
+	if ent, err := license.Verify(context.Background()); err != nil {
 		log.Printf("[LICENSE][WARN] 开发态忽略授权校验失败：%v", err)
+	} else if st := license.StatusOf(ent, time.Now()); st.NeedsAttention() {
+		// 与生产同口径：本地也能看到 [LICENSE][EXPIRING]，便于验证 alert_check 的 R5 规则
+		log.Printf("[LICENSE][EXPIRING] scope=platform company=%d name=%q edition=%s expiresAt=%s daysLeft=%d level=%s",
+			ent.TenantID, "", ent.Edition, st.ExpiresAtDate(), st.DaysLeft, st.Level)
 	}
+	// 到期扫描：devserver 是临时库，重启即重置，但「后台横幅 + 每日扫描」这条链
+	// 要能在本地被点开看一眼（联调时不跑起来，等于这条功能只能等上线才发现问题）。
+	license.RunExpiryReminderOnce(db, time.Now())
+	stopLicenseRemind := license.StartExpiryReminder(db, cfg.LicenseRemindInterval)
+	defer stopLicenseRemind()
 	cfg.UploadDir = mustDir(filepath.Join(os.TempDir(), "weichuan-dev-uploads"))
 	cfg.UploadBaseURL = uploadBaseURL(port)
 	cfg.StorageDriver = "local"
@@ -170,6 +180,7 @@ func main() {
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 	handler.RegisterBackup(r, db, cfg)    // 备份面板：状态 / 异步触发 / 下载（密钥包不提供下载）
+	handler.RegisterLicenseView(r, db)    // 授权到期视图：剩余天数 + 即将到期名单
 
 	up := &storage.LocalUploader{
 		Dir:      cfg.UploadDir,

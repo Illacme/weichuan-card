@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"weichuan/internal/audit"
 	"weichuan/internal/config"
@@ -228,8 +229,20 @@ func main() {
 
 	// 授权校验（Phase 1 地基）：私有 / 独立部署验本地签名许可证，集中模式读系统设置。
 	// 私有模式下验签失败或过期 = 拒绝启动（与 InsecureGates 同一类硬门槛逻辑）。
-	if _, err := license.Verify(context.Background()); err != nil {
+	ent, err := license.Verify(context.Background())
+	if err != nil {
 		log.Fatalf("[LICENSE][FATAL] 授权校验失败，拒绝启动：%v", err)
+	}
+	// 到期提醒（P0-3）：启动时就把「还剩几天」说出来。
+	//
+	// 为什么非要写在启动日志里：私有部署的运维唯一必看的就是启动那几行，而那种
+	// 形态**到期即拒绝启动**——等到某天早上服务起不来才去翻日志，业务已经停了。
+	// 前缀 [LICENSE][EXPIRING] 与每日扫描任务一致，alert_check.sh 的 R5 规则靠它抓取。
+	if st := license.StatusOf(ent, time.Now()); st.NeedsAttention() {
+		log.Printf("[LICENSE][EXPIRING] scope=platform company=%d name=%q edition=%s expiresAt=%s daysLeft=%d level=%s",
+			ent.TenantID, "", ent.Edition, st.ExpiresAtDate(), st.DaysLeft, st.Level)
+		log.Printf("[LICENSE][WARN] %s。%s。%s。",
+			st.Text(), license.Consequence(license.PrivateMode()), license.RenewHint(license.PrivateMode()))
 	}
 	// 上传限制从系统设置读取（后台改上限即时生效、无需重启）；未配置则回落 10MB / 默认白名单
 	storage.UploadLimitBytes = func() int64 {
@@ -275,6 +288,15 @@ func main() {
 	stopAuditPurge := audit.StartAuditLogPurge(db, cfg.AuditPurgeInterval, auditKeepDays)
 	defer stopAuditPurge()
 
+	// 授权到期扫描（P0-3）：启动先扫一次（把停机期间跨过的阈值补上），之后每天一次。
+	//
+	// 它只做两件事：往日志里写 `[LICENSE][EXPIRING]`（由 alert_check.sh R5 推送），
+	// 以及在档位变化时记一条 `license.expiring` 审计（warn → urgent → expired）。
+	// 「让客户自己看见」靠的是后台横幅（GET /api/admin/license），不靠这条任务。
+	license.RunExpiryReminderOnce(db, time.Now())
+	stopLicenseRemind := license.StartExpiryReminder(db, cfg.LicenseRemindInterval)
+	defer stopLicenseRemind()
+
 	r := handler.New(db)
 	// 可信反代：gin 的内置缺省是「信任所有代理」（启动日志自己会打一行
 	// "You trusted all proxies, this is NOT safe"）。那样 c.ClientIP() 直接采信
@@ -317,6 +339,7 @@ func main() {
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 	handler.RegisterBackup(r, db, cfg)    // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
+	handler.RegisterLicenseView(r, db)    // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，

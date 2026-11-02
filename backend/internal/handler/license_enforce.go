@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"weichuan/internal/license"
 	"weichuan/internal/model"
@@ -46,19 +48,25 @@ func isMutating(method string) bool {
 // 两条都必须卡席位上限。此前只有前者被卡，审批路径可以反复通过申请无限建号——
 // 席位上限形同虚设，客户超额使用却不付费。
 //
-// 返回 true 表示已达上限（应当拒绝建员工）。
-// 未解析出授权（ent==nil）、或授权不限席位（Seats<=0）时返回 false（放行）。
+// 返回「已用 / 上限」两个数（而不是一个 bool）：拦截文案要能说清 5/5 还是 5/8，
+// 只说「已达上限」的话，管理员既不知道差多少、也不知道该找谁加。
 //
 // 统计按「当前租户」隔离：企业 A 的员工数不会顶掉企业 B 的建人额度。
-func seatExceeded(db *gorm.DB, ent *license.Entitlement, cid int64) bool {
+func seatUsage(db *gorm.DB, ent *license.Entitlement, cid int64) (used int64, cap int, exceeded bool) {
 	if ent == nil || ent.Seats <= 0 || cid <= 0 {
-		return false
+		return 0, 0, false
 	}
-	var n int64
-	if err := db.Model(&model.Employee{}).Where("company_id = ?", cid).Count(&n).Error; err != nil {
-		return false
+	if err := db.Model(&model.Employee{}).Where("company_id = ?", cid).Count(&used).Error; err != nil {
+		// 查不出人数时放行：宁可少拦一次，也不能因为一次统计失败让客户建不了人
+		return 0, ent.Seats, false
 	}
-	return int(n) >= ent.Seats
+	return used, ent.Seats, int(used) >= ent.Seats
+}
+
+// seatExceeded 保留布尔语义的薄封装（既有调用点与测试用它）。
+func seatExceeded(db *gorm.DB, ent *license.Entitlement, cid int64) bool {
+	_, _, exceeded := seatUsage(db, ent, cid)
+	return exceeded
 }
 
 // EnforceLicense 把 Phase 1 解析出的授权（license.Current）真正落到运行期：
@@ -76,9 +84,19 @@ func EnforceLicense(db *gorm.DB) gin.HandlerFunc {
 		ent := license.ResolveFor(c.Request.Context(), tenantID)
 
 		// 1) 过期 → 只读降级
+		//
+		// 文案必须说清两件事：**哪天**到期（客户要核对合同）、以及**怎么恢复**。
+		// 原本文案是「请续费后重启」——对 SaaS 形态是错的：续费只改 tenant_license
+		// 一行，ResolveFor 每次请求都查库，立刻恢复，重启纯属白折腾一次生产服务；
+		// 而私有部署恰恰相反，不换 license.key 并重启就永远只读。两种形态的恢复
+		// 路径完全不同，所以按模式分别拼（见 license.RenewHint）。
 		if ent != nil && ent.IsExpired() && isMutating(c.Request.Method) && !licenseExpiryAllowed(c.Request.URL.Path) {
-			log.Printf("[LICENSE] 授权已过期，拒绝写操作（只读降级）：%s %s", c.Request.Method, c.Request.URL.Path)
-			c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 2, "msg": "授权已过期，系统已切换为只读模式，请续费后重启"})
+			st := license.StatusOf(ent, time.Now())
+			log.Printf("[LICENSE] 授权已过期（%s），拒绝写操作（只读降级）：%s %s",
+				st.ExpiresAtDate(), c.Request.Method, c.Request.URL.Path)
+			c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 2, "msg": fmt.Sprintf(
+				"授权已于 %s 到期，系统已切换为只读模式（可登录查看，不能修改）。%s。",
+				st.ExpiresAtDate(), license.RenewHint(license.PrivateMode()))})
 			return
 		}
 
@@ -86,8 +104,9 @@ func EnforceLicense(db *gorm.DB) gin.HandlerFunc {
 		// 不再全局计数——企业 A 的员工数不会顶掉企业 B 的建人额度（Phase 3 租户解析统一）。
 		if ent != nil && ent.Seats > 0 && c.Request.Method == http.MethodPost && c.FullPath() == "/api/admin/employees" {
 			cid := resolveTenantForLicense(c)
-			if seatExceeded(db, ent, cid) {
-				c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 403, "msg": "员工席位已达授权上限，请升级授权"})
+			if used, cap, exceeded := seatUsage(db, ent, cid); exceeded {
+				c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 403, "msg": fmt.Sprintf(
+					"员工席位已达授权上限（%d/%d），请升级授权后再新增", used, cap)})
 				return
 			}
 		}

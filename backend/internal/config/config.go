@@ -104,6 +104,10 @@ type Config struct {
 	// 这是**界面未设置时的回落值**：后台「审计保留天数」一旦填了就以界面为准。
 	// 默认 0 的理由见 audit/purge.go——删审计日志不可逆，不能靠升级顺手清掉存量。
 	AuditRetentionDays int
+	// LicenseRemindInterval 授权到期扫描间隔（LICENSE_REMIND_MINUTES，默认 1440 = 24 小时）。
+	// 到期是「天」级事件，扫得再勤也不会更早发现，只会每天多几条日志；
+	// 调小只为测试或演示（下限 1 分钟，避免 time.NewTicker panic）。
+	LicenseRemindInterval time.Duration
 	// LogFormat 日志形态（LOG_FORMAT：text / json，默认 text）。
 	// json = 每行一个 JSON 对象，供 Loki / ELK / 云日志服务按字段检索（C8 集中日志）；
 	// text 保留 [WARN] 等既有前缀，本地开发与已有 grep 规则不受影响。
@@ -207,10 +211,23 @@ func Load() Config {
 		RatePurgeInterval:    time.Duration(atoi(getEnv("RATE_PURGE_MINUTES", "10"), 10)) * time.Minute,
 		AuditPurgeInterval:   time.Duration(atoi(getEnv("AUDIT_PURGE_MINUTES", "720"), 720)) * time.Minute,
 		AuditRetentionDays:   atoi(getEnv("AUDIT_RETENTION_DAYS", "0"), 0),
-		LogFormat:            getEnv("LOG_FORMAT", "text"),
-		MetricsAllowCIDR:     splitList(getEnv("METRICS_ALLOW_CIDR", "")),
-		TrustedProxies:       parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
+		// 默认 24 小时；下限 1 分钟（0/负数会让 time.NewTicker panic）
+		LicenseRemindInterval: remindInterval(getEnv("LICENSE_REMIND_MINUTES", "1440")),
+		LogFormat:             getEnv("LOG_FORMAT", "text"),
+		MetricsAllowCIDR:      splitList(getEnv("METRICS_ALLOW_CIDR", "")),
+		TrustedProxies:        parseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 	}
+}
+
+// remindInterval 解析授权到期扫描间隔（分钟）：非法值回落 24h，下限 1 分钟。
+// 单独一个函数是为了「填错别让服务起不来」——这是个提醒任务，不是安全闸门，
+// 配错了最坏结果是提醒频率不对，不该升级成启动失败。
+func remindInterval(raw string) time.Duration {
+	n := atoi(raw, 1440)
+	if n <= 0 {
+		n = 1440
+	}
+	return time.Duration(n) * time.Minute
 }
 
 // InsecureWarnings 返回上线前应修正的不安全配置提示（超管口令偏弱）。

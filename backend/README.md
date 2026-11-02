@@ -30,6 +30,11 @@ backend/
 │   ├── wechat/wechat.go         # access_token 缓存（**按 appid 分键**）+ 通用 POST 助手（40001/42001 自动刷新重试）
 │   ├── wechat/release.go        # 微信侧四个接口：submit_audit / get_auditstatus / release / undo_code_audit
 │   ├── audit/audit.go           # 审计落库（动作常量 + 敏感字段脱敏），每次代发都记一条
+│   ├── license/                 # 授权：Entitlement 解析 / Ed25519 验签 / 席位与功能开关
+│   │   ├── expiry.go            # 剩余天数与档位（none/ok/warn/urgent/expired，阈值 30/7 天，按日历天算）
+│   │   └── remind.go            # 每日扫描 → [LICENSE][EXPIRING] 日志 + 跳档才记 license.expiring 审计
+│   ├── handler/license_enforce.go # EnforceLicense：过期降级只读 + 席位上限 + RequireFeature 功能开关
+│   ├── handler/license_view.go  # GET /api/admin/license：客户横幅与平台临期汇总（一个接口、按角色分视角）
 │   ├── handler/backup.go        # 备份面板：状态 / 异步触发 / 下载（密钥包刻意不下载，恢复不在后台做）
 │   ├── dbbackup/                # 库快照（SQLite VACUUM INTO / 完整性校验），供 backup 面板与 CLI 共用
 │   ├── handler/assets.go        # 开源素材库：清单 / 采用 / 预览（go:embed 内置，免外部找图）
@@ -523,6 +528,25 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 > 那个开关是「独立版部署就别再动租户结构了」，而凭据是阻塞性配置——真锁住了反而让独立版用户
 > 永远配不上小程序。`wxConfigured` 要求 AppID 与 AppSecret 成对非空，半配置算未配置，
 > 与取值侧口径一致（见下文「小程序码」的三级回落链）。
+
+### 授权状态与到期提醒（登录即可访问，按角色给不同视角）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET  | /api/admin/license | 当前视角的授权：`mode`（platform / private）、`scope`（platform / tenant）、`self`（edition / seats / seatsUsed / seatsFull / expiresAt / daysLeft / expired / level / title / consequence / renewHint）、`alerts`（expired / within7 / within30）、`expiring`（临期清单，仅平台超管） |
+
+> **一个接口、两种视角**：企业管理员只拿自己的 `self`；平台超管额外拿到 `alerts` + `expiring`
+> （过期优先，其后按剩余天数升序，最多 10 条）。跨租户名单不会漏给企业管理员。
+>
+> `alerts` 三个数是**包含关系**（`expired ⊆ within7 ⊆ within30`），前端必须拆成互斥段再拼句子，
+> 否则「已过期 1 家、7 天内 2 家、30 天内 3 家」加不出 3 来，读的人会先怀疑数据。
+>
+> `consequence` / `renewHint` 只在 `level` 属 warn / urgent / expired 时有值，且**按部署形态分文案**：
+> 平台续费即时生效、无需重启；私有部署必须换 `data/license.key` **并重启**（到期即拒绝启动）。
+> 前端把它渲染成布局级顶部横幅，接口失败时静默降级——横幅是增强，不能因为拿不到它就让后台白屏。
+>
+> 第三层「不需要有人登录」的提醒不在这里：`internal/license/remind.go` 每天扫一次写
+> `[LICENSE][EXPIRING]`，由 `scripts/alert_check.sh` 的 R5 推送 webhook。
+> 扫描间隔 `LICENSE_REMIND_MINUTES`（默认 1440，下限 1；填错只回落默认值，不会让服务起不来）。
 
 ### 操作日志与备份（仅平台超级管理员）
 | 方法 | 路径 | 说明 |
