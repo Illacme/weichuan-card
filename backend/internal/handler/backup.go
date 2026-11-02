@@ -324,7 +324,9 @@ func runBackupOnce(dir, dsn, uploadDir string) backupRunResult {
 
 	// ── 1. 数据库：VACUUM INTO 一致性快照 → gzip ──
 	snap := filepath.Join(dir, ".snapshot-"+stamp+".db")
-	defer os.Remove(snap) // 中间产物，无论成败都不留
+	// 中间产物，无论成败都不留。删不掉也不影响结果（失败路径本就以报错收场），
+	// 所以显式忽略错误而不是把它当成功条件。
+	defer func() { _ = os.Remove(snap) }()
 
 	rep, err := dbbackup.Snapshot(dsn, snap)
 	if err != nil {
@@ -333,7 +335,7 @@ func runBackupOnce(dir, dsn, uploadDir string) backupRunResult {
 	}
 	dbOut := filepath.Join(dir, "weichuan-"+stamp+".db.gz")
 	if err := gzipFile(snap, dbOut); err != nil {
-		os.Remove(dbOut)
+		_ = os.Remove(dbOut) // 半截的 gz 比没有更危险：解压时才炸
 		res.Message = "压缩数据库快照失败：" + err.Error()
 		return res
 	}
@@ -342,8 +344,9 @@ func runBackupOnce(dir, dsn, uploadDir string) backupRunResult {
 	upOut := filepath.Join(dir, "uploads-"+stamp+".tar.gz")
 	files, err := tarGzDir(uploadDir, upOut)
 	if err != nil {
-		os.Remove(dbOut)
-		os.Remove(upOut)
+		// 一件失败就整次不留：留着「新鲜但缺件」的包会喂饱新鲜度告警
+		_ = os.Remove(dbOut)
+		_ = os.Remove(upOut)
 		res.Message = "打包上传目录失败：" + err.Error()
 		return res
 	}
@@ -359,7 +362,8 @@ func gzipFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	// 只读句柄，关闭错误无处可报也无后果（与 internal/storage 同一写法）
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
@@ -367,12 +371,13 @@ func gzipFile(src, dst string) error {
 	}
 	zw := gzip.NewWriter(out)
 	if _, err := io.Copy(zw, in); err != nil {
-		zw.Close()
-		out.Close()
+		// 已经在错误路径上：关闭时的二次错误不该盖掉真正的失败原因
+		_ = zw.Close()
+		_ = out.Close()
 		return err
 	}
 	if err := zw.Close(); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
@@ -430,7 +435,7 @@ func tarGzDir(srcDir, dst string) (int, error) {
 				return err
 			}
 			_, cerr := io.Copy(tw, f)
-			f.Close()
+			_ = f.Close() // 只读句柄：拷贝的结果才是要报的错误
 			if cerr != nil {
 				return cerr
 			}
