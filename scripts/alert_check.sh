@@ -11,7 +11,8 @@
 #   R2 5xx        ：访问日志新增 [ACCESS-5XX] 行即告警（附请求 ID 便于排查）
 #   R3 备份新鲜度 ：backups/ 最新备份文件年龄超阈值即告警
 #                   （认 *.sql.gz 与 *.db.gz 两种产物；backup.sh 失败时不落新文件，
-#                    本规则可兜底捕获）
+#                    本规则可兜底捕获。uploads-* / secrets-* 若存在也一并查——
+#                    库备份新鲜但图片/密钥停跑，恢复时同样缺件）
 #   R4 外部拨测   ：从本机之外访问对外地址（EXTERNAL_URL）：非 2xx / 耗时超阈值 /
 #                   证书临近过期即告警。R1 是本机视角，看不出反代、证书、防火墙
 #                   这类「本机全绿、用户全挂」的故障，R4 补的就是这一半
@@ -152,6 +153,25 @@ check_backup() {
   if [ "$age_h" -ge "$BACKUP_MAX_HOURS" ]; then
     send_alert backup "最新备份 $(basename "$latest") 已 ${age_h}h 未更新（阈值 ${BACKUP_MAX_HOURS}h），备份任务可能未运行"
   fi
+
+  # 文件资产与密钥包：只在「曾经产出过」时才查新鲜度。
+  # 用对象存储的部署不会有 uploads-*，密钥由环境变量注入的也不会有 secrets-*，
+  # 对它们天天告警只会把人训练成无视告警。
+  local kind pat label latest_f m_f age_f key
+  for kind in "uploads-*.tar.gz:上传文件:backup_uploads" "secrets-*.tar.gz.enc:运行时密钥:backup_secrets"; do
+    pat="${kind%%:*}"; kind="${kind#*:}"
+    label="${kind%%:*}"; key="${kind#*:}"
+    latest_f="$(ls -t "$BACKUP_DIR"/$pat 2>/dev/null | head -1 || true)"
+    [ -n "$latest_f" ] || continue
+    m_f="$(file_mtime "$latest_f")"
+    [ -n "$m_f" ] || continue
+    age_f=$(( ( $(date +%s) - m_f ) / 3600 ))
+    if [ "$age_f" -ge "$BACKUP_MAX_HOURS" ]; then
+      # 每条用独立的告警键：共用同一个键会被冷却窗口吞掉，
+      # 结果只看到「上传文件不新鲜」，密钥停跑反而没人知道。
+      send_alert "$key" "最新${label}备份 $(basename "$latest_f") 已 ${age_f}h 未更新（阈值 ${BACKUP_MAX_HOURS}h）——恢复时会缺件"
+    fi
+  done
 }
 
 # ── R4: 外部拨测（R1 看不到的那一半：反代 / 证书 / 防火墙）──

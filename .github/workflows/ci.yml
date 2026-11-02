@@ -226,6 +226,21 @@ jobs:
       - name: 检查清单是否与当前依赖一致
         run: python3 scripts/gen_third_party_notices.py --check
 
+  # ───────── 备份链自检：备份脚本平时不执行，坏了也不会叫（门禁） ─────────
+  # 这类脚本只在出事那天才真正跑一次，平时全绿、失效无感——所以必须有守卫。
+  # 只依赖 bash / tar / openssl（ubuntu 自带），不启 docker、不碰真实数据；
+  # 验「备份 → 恢复 → 逐字节一致」以及「缺口令失败不留残件」「错口令不写垃圾」。
+  backup-selftest:
+    name: 备份链自检
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 运行 scripts/selftest_backup.sh
+        run: bash scripts/selftest_backup.sh
+
   # ───────── 密钥扫描：防止真实凭据被提交进仓库（门禁） ─────────
   # 为什么单列一个 job：密钥一旦进 git 历史就极难彻底清除，必须在合并前用 CI 拦住。
   # 测试 fixture / 文档里的伪密钥（明显是占位、非真实凭据）已在 .gitleaks.toml 的

@@ -12,6 +12,9 @@
 #   2. 恢复出来的库能不能打开（integrity_check）
 #   3. 表齐不齐（与生产当前库对比，少表 = FAIL）
 #   4. 数据新旧（行数差异只报告、不判失败——日备本来就会落后）
+#   5. 图片（uploads-*.tar.gz）与密钥包（secrets-*.tar.gz.enc）能不能用
+#      ——库能恢复不等于系统能恢复：图片不在库里，PII 的钥匙在 runtime.env 里。
+#      密钥包「存在但解不开」判 FAIL（需要 BACKUP_ENC_KEY）。
 #
 # SQLite 全程在临时目录里做，不启停容器；MySQL 恢复到临时库
 # `weichuan_drill_<时间戳>` 并在结束时删掉。
@@ -28,6 +31,10 @@ DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-root}"
 DB_NAME="${DB_NAME:-weichuan}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
+# 密钥包解密口令（与 backup_files.sh 同一个）。不设也能演练库，但密钥包那项会判 FAIL——
+# 「有密钥包却证明不了能解开」= 救不回 PII，不该算通过。
+BACKUP_ENC_KEY="${BACKUP_ENC_KEY:-}"
+export BACKUP_ENC_KEY
 
 usage() {
   # 只打头部注释：跳过 shebang 与开头的分隔线，遇到结尾分隔线就停
@@ -52,6 +59,8 @@ INTEGRITY=""
 TABLES_BACKUP=""
 TABLES_PROD=""
 MISSING_TABLES=0
+UPLOADS_NOTE="未检查"
+SECRETS_NOTE="未检查"
 
 FAILED=0
 # DEEP=1 表示真的打开了恢复出来的库做过校验。没做过就不能报「通过」——
@@ -268,11 +277,62 @@ drill_mysql() {
   fi
 }
 
+# ═══════════ 文件资产与运行时密钥 ═══════════
+# 库能恢复 ≠ 系统能恢复：图片在 uploads/，PII 的解密钥匙在 runtime.env。
+# 这两样不在库备份里，所以必须单独验，否则演练会给出一份「通过」的假象。
+drill_files() {
+  head_ "5. 文件资产与运行时密钥"
+  local up sec n
+  up="$(ls -t "$BACKUP_DIR"/uploads-*.tar.gz 2>/dev/null | head -1 || true)"
+  sec="$(ls -t "$BACKUP_DIR"/secrets-*.tar.gz.enc 2>/dev/null | head -1 || true)"
+
+  if [ -z "$up" ] && [ -z "$sec" ]; then
+    warn "没有文件/密钥备份（可能用对象存储、密钥由环境变量注入）——跳过，但请确认这符合你的部署形态"
+    UPLOADS_NOTE="无归档"
+    SECRETS_NOTE="无密钥包"
+    return 0
+  fi
+
+  if [ -n "$up" ]; then
+    if gzip -t "$up" 2>/dev/null; then
+      n="$(tar -tzf "$up" | grep -v '/$' | grep -v '^\.$' | wc -l | tr -d ' ')"
+      pass "上传目录归档可用（$(basename "$up")，${n} 个文件）"
+      UPLOADS_NOTE="${n} 个文件"
+    else
+      fail "上传目录归档损坏（gzip -t 未通过）：$(basename "$up")"
+      UPLOADS_NOTE="损坏"
+    fi
+  else
+    warn "没有上传目录归档（若用 local 存储，图片将无法恢复）"
+    UPLOADS_NOTE="无归档"
+  fi
+
+  if [ -n "$sec" ]; then
+    if [ -z "$BACKUP_ENC_KEY" ]; then
+      fail "有密钥包 $(basename "$sec") 但没设 BACKUP_ENC_KEY——无法证明能解开（等于救不回 PII）"
+      SECRETS_NOTE="口令缺失"
+    elif command -v openssl >/dev/null 2>&1 \
+         && openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_KEY -in "$sec" \
+            | tar -tzf - >/dev/null 2>&1; then
+      pass "密钥包可解密（$(basename "$sec")）"
+      SECRETS_NOTE="可解密"
+    else
+      fail "密钥包解不开：$(basename "$sec")（口令不对或文件损坏）"
+      SECRETS_NOTE="解不开"
+    fi
+  else
+    warn "没有密钥包（密钥可能由环境变量注入，由部署侧另行保管）"
+    SECRETS_NOTE="无密钥包"
+  fi
+}
+
 if [ "$DRIVER" = "sqlite" ]; then
   drill_sqlite
 else
   drill_mysql
 fi
+
+drill_files
 
 # ── 结论 ──
 echo
@@ -292,6 +352,7 @@ echo "- 日期：$(date +%F)"
 echo "- 备份文件：$(basename "$BACKUP_FILE")"
 echo "- 形态：${DRIVER}｜结论：**${CONCLUSION}**"
 echo "- 校验：gzip -t $([ "$FAILED" -gt 0 ] && echo 见上 || echo PASS)｜integrity_check=${INTEGRITY:-不适用（MySQL 以「导入成功 + 表清单覆盖」为判据）}｜表数 备份 ${TABLES_BACKUP:-?} / 生产 ${TABLES_PROD:-?}｜缺表 ${MISSING_TABLES}"
+echo "- 文件与密钥：上传目录 ${UPLOADS_NOTE}｜密钥包 ${SECRETS_NOTE}"
 echo "- 行数差异（备份落后于生产，属正常）："
 if [ -n "$DIFF_LINES" ]; then printf "$DIFF_LINES"; else echo "  - 无"; fi
 echo

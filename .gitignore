@@ -16,8 +16,19 @@ dist/
 uploads/
 **/uploads/
 *.log
+# 备份产物：库导出（含全量业务数据）+ 图片归档 + 加密密钥包。
+# 密钥包虽已加密，但备份永远不该进版本库——体积大、含客户数据、且会被克隆到每台机器。
+backups/
+**/backups/
+pre-restore-*/
+pre-restore-secrets-*/
 # 私有/独立部署的签名许可证文件（部署产物，非源码；签发私钥不进仓库）
 data/license.key
+# 安装向导 / 运行时写出的配置：含 PII_ENC_KEY、JWT_KEY、ADMIN_PASS 与数据库口令。
+# 本地起一次服务就会生成 ./data/runtime.env，`git add -A` 会把密钥一起提交——
+# 这里必须挡死（示例见 docs/deploy-runbook.md）。
+data/runtime.env
+**/runtime.env
 # 许可证签发私钥（scripts/license_setup.sh 生成）：只留在签发环境，
 # 进仓库 = 任何人都能伪造「永久 / 无限席位」的许可证
 license-private.key

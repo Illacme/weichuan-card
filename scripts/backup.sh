@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-# 数据库备份脚本（按 DB_DRIVER 选形态）。
+# 全量备份脚本：数据库 + 上传文件 + 运行时密钥（三件套）。
 #
 #   DB_DRIVER=mysql （默认）  mysqldump → gzip → 按保留天数轮转
 #   DB_DRIVER=sqlite          容器内 `server backup`（VACUUM INTO 一致性快照）→ gzip → 轮转
+#   文件与密钥                 转交 scripts/backup_files.sh（uploads-*.tar.gz / secrets-*.tar.gz.enc）
+#
+# **为什么必须是三件套**：只有数据库备份救不回两类东西——
+#   ① uploads/ 里的图片：库恢复了图全 404，名片页满屏裂图；
+#   ② /app/data/runtime.env 里的 PII_ENC_KEY：PII 是应用层加密落库的，
+#      没有这把钥匙，备份里的姓名/手机就是解不开的密文（无 re-key 机制）。
+# 密钥包用 BACKUP_ENC_KEY 加密后落盘，口令由运维另行保管——详见 backup_files.sh 头部。
 #
 # 用法：
+#   BACKUP_ENC_KEY='...' scripts/backup.sh              # 生产标准用法（加密密钥包）
 #   scripts/backup.sh                                  # MySQL，默认容器名 weichuan-mysql
 #   DB_DRIVER=sqlite scripts/backup.sh                 # SQLite（默认形态），容器名 weichuan-backend
 #   DB_CONTAINER=my-mysql DB_USER=root DB_PASSWORD=secret DB_NAME=weichuan scripts/backup.sh
 #   BACKUP_DIR=/data/backups KEEP_DAYS=14 scripts/backup.sh
+#   BACKUP_SKIP_FILES=1 scripts/backup.sh              # 只备库（不建议：会缺图与密钥）
+#
+# 一致性：任何一件失败都会删掉本次已产出的全部产物并非零退出。
+# 不让「新鲜但缺件」的备份留在目录里——那会让备份新鲜度告警闭嘴。
 #
 # 为什么 SQLite 不能直接 cp 库文件：库开着 WAL，cp 出来的是「主文件 + 未合并的
 # WAL」的撕裂快照，恢复回来是坏库（integrity_check 直接不通过）。`VACUUM INTO`
@@ -35,6 +47,12 @@ DB_PASSWORD="${DB_PASSWORD:-root}"
 DB_NAME="${DB_NAME:-weichuan}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 KEEP_DAYS="${KEEP_DAYS:-7}"
+BACKUP_SKIP_FILES="${BACKUP_SKIP_FILES:-0}"
+BACKUP_ENC_KEY="${BACKUP_ENC_KEY:-}"
+export BACKUP_ENC_KEY
+
+# 本次产出的数据库备份路径：文件备份失败时要把这个也删掉（见文末）。
+DB_OUT=""
 
 case "$DB_DRIVER" in
   mysql|sqlite) ;;
@@ -57,6 +75,7 @@ backup_mysql() {
   if docker exec -e MYSQL_PWD="$DB_PASSWORD" "$DB_CONTAINER" \
     mysqldump -u"$DB_USER" --single-transaction --quick --routines --events \
     --default-character-set=utf8mb4 "$DB_NAME" | gzip > "$out"; then
+    DB_OUT="$out"
     echo "[backup] OK -> $out ($(du -h "$out" | cut -f1))"
   else
     echo "[backup] FAILED (docker exec mysqldump 非零退出)" >&2
@@ -94,6 +113,7 @@ backup_sqlite() {
   docker exec "$APP_CONTAINER" rm -f "$inner" >/dev/null 2>&1 || true
 
   gzip -c "$tmp_local" > "$out"
+  DB_OUT="$out"
   echo "[backup] OK -> $out ($(du -h "$out" | cut -f1))"
 }
 
@@ -101,6 +121,27 @@ if [ "$DB_DRIVER" = "sqlite" ]; then
   backup_sqlite
 else
   backup_mysql
+fi
+
+# ── 文件资产 + 运行时密钥 ──
+# 交给 backup_files.sh（同一套 BACKUP_DIR / KEEP_DAYS / APP_CONTAINER）。
+# 它失败 = 这次备份不完整，所以把刚生成的库备份也删掉：
+# 留着它会让 alert_check 的「备份新鲜度」看到一份新文件、从而不再告警，
+# 而实际上这份备份恢复出来是「缺图 + PII 解不开」。
+if [ "$BACKUP_SKIP_FILES" = "1" ]; then
+  echo "[backup][WARN] BACKUP_SKIP_FILES=1：本次未备份上传文件与运行时密钥" >&2
+  echo "[backup][WARN] 缺这两样，恢复出来会是「图片 404 + PII 解不开」，仅建议在排查时使用" >&2
+else
+  # 显式传 APP_CONTAINER / BACKUP_SOURCE：它们在本脚本里是普通变量（未 export），
+  # 不显式传的话子脚本会用默认容器名——「库从 A 容器来、文件去 B 容器找」，
+  # 备份看着成功，恢复时才发现少一半。
+  if ! BACKUP_DIR="$BACKUP_DIR" KEEP_DAYS="$KEEP_DAYS" \
+       APP_CONTAINER="$APP_CONTAINER" BACKUP_SOURCE="${BACKUP_SOURCE:-auto}" \
+       "$(dirname "$0")/backup_files.sh"; then
+    echo "[backup][FATAL] 文件/密钥备份失败——删除本次库备份，避免留下「新鲜但缺件」的产物" >&2
+    [ -n "$DB_OUT" ] && rm -f "$DB_OUT"
+    exit 1
+  fi
 fi
 
 # 轮转：删除超过保留天数的旧备份（两种形态各自一套通配，互不影响）

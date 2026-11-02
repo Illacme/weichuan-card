@@ -1256,32 +1256,69 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 ### 9.2 备份（每天跑，进 crontab）
 
 ```bash
-# SQLite（默认形态）
-DB_DRIVER=sqlite scripts/backup.sh
-# MySQL
-DB_DRIVER=mysql scripts/backup.sh
+# 生产标准用法：口令由环境变量注入（见下「密钥包」）
+BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh
+BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 ```
 
-| 形态 | 产物 | 做法 |
+一次运行产出**三件套**，缺一件都不算备份完整：
+
+| 产物 | 内容 | 缺了会怎样 |
 |---|---|---|
-| SQLite | `backups/weichuan-<时间戳>.db.gz` | 容器内 `server backup`（`VACUUM INTO` 在线快照）→ 就地 `integrity_check` → 拷出 → gzip |
-| MySQL | `backups/weichuan-<时间戳>.sql.gz` | 容器内 `mysqldump --single-transaction` → gzip |
+| `backups/weichuan-<时间戳>.db.gz` / `.sql.gz` | 数据库 | —— |
+| `backups/uploads-<时间戳>.tar.gz` | `uploads/` 里的图片（头像、案例图、海报素材） | 库恢复了，名片页满屏裂图 |
+| `backups/secrets-<时间戳>.tar.gz.enc` | `runtime.env`（含 `PII_ENC_KEY`）+ `license.key`，**加密** | 库里的姓名/手机是密文，**没有钥匙解不开**；本项目没有 re-key，丢钥=永久失读 |
+
+| 形态 | 数据库做法 |
+|---|---|
+| SQLite | 容器内 `server backup`（`VACUUM INTO` 在线快照）→ 就地 `integrity_check` → 拷出 → gzip |
+| MySQL | 容器内 `mysqldump --single-transaction` → gzip |
 
 **SQLite 为什么不能直接 `cp` 库文件**：库开着 WAL，主文件里可能只有一部分页，剩下的还在
 `-wal` 里。`cp` 出来的是一份撕裂快照，恢复回来 `integrity_check` 直接不通过。
 实测：一个刚启动的库主文件只有 4 KB，WAL 有 1.2 MB——`cp` 得到的几乎是个空库。
 
-轮转按 `KEEP_DAYS`（默认 7 天）。备份失败**不落新文件**，所以
-`scripts/alert_check.sh` 的 R3（备份新鲜度）能兜底发现「备份停了」。
+#### 密钥包：加密 + 口令单独保管
+
+`runtime.env` 里除了 `PII_ENC_KEY`，还有 `JWT_KEY` / `ADMIN_PASS` / 数据库口令。
+所以它**不能明文躺在备份盘上**——那等于把「库 + 钥匙」放在一起，备份盘泄露就是
+大规模个人信息泄露。做法：
+
+1. 生成口令（**只做一次**）：`openssl rand -base64 24`
+2. 口令写进 crontab 的环境或 root 的受保护文件，例如 `/etc/weichuan/backup.env`（0600）：
+   ```cron
+   0 3 * * * set -a; . /etc/weichuan/backup.env; set +a; cd /path/to/repo && scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
+   ```
+3. 口令本身**另行保管**：密码管理器 / 纸质封存。不要和备份放同一台机器、同一个对象存储桶。
+
+`backup.sh` 每次都会用同一口令把刚生成的包解开一遍做自检；口令打错或 openssl 参数不兼容
+会在**备份时**就报错，而不是等到恢复那天。
+
+> **口令换了怎么办**：旧包只能用旧口令解。换口令前请确认手里还留着旧口令，
+> 或者先解出旧的 `secrets-*.enc` 再用新口令重新加密一份。
+
+#### 失败即失败
+
+任何一件失败（包括「有密钥文件但没给 `BACKUP_ENC_KEY`」），脚本会删掉**本次已产出的全部产物**
+并以非零退出。这是刻意的：一份「看起来新鲜、其实缺图/缺钥」的备份会喂饱
+`alert_check.sh` 的 R3（备份新鲜度），让告警闭嘴——比没有备份更危险。
+
+确需只备库（排查用）：`BACKUP_SKIP_FILES=1`；确需跳过密钥（明确接受 PII 永久失读）：
+`BACKUP_ALLOW_NO_KEY=1`。两者都会打 WARN。
+
+轮转按 `KEEP_DAYS`（默认 7 天），三件套各自轮转。
 
 ### 9.3 恢复
 
 ```bash
 scripts/restore.sh backups/weichuan-20261025-030000.db.gz          # 交互确认
 scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # 脚本化
+
+# 再恢复图片与密钥（灾难恢复 / 换了主机时必须做）
+scripts/restore_files.sh --all --yes
 ```
 
-它会做四件事，顺序不能变：
+`restore.sh` 会做四件事，顺序不能变：
 
 1. **先备份当前库**到 `backups/pre-restore-<时间戳>/`——恢复是破坏性操作，
    拿两周前的备份盖上去等于丢掉这两周的数据，没有退路不能动手。
@@ -1295,15 +1332,30 @@ scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # 脚本化
 **SQLite 必须删 `-wal` / `-shm`**：库文件被替换后，旧 WAL 里还是上一个库的页，
 SQLite 打开时会尝试回放它——结果是把旧数据「恢复」进新库，比不恢复更糟。
 
+`restore_files.sh` 负责另外两件：
+
+- `--uploads <文件>` / `--all`：把图片解回 `uploads/`（容器部署写进 `uploads_data` 卷）。
+- `--secrets <文件>` / `--all`：用 `BACKUP_ENC_KEY` 解密，写回 `runtime.env` / `license.key`；
+  覆盖前会把当前密钥另存到 `backups/pre-restore-secrets-<时间戳>/`。
+- `--target <目录>`：只解到指定目录，不碰容器与生产（演练 / 异地检查）。
+- **`runtime.env` 是启动时读取的**：恢复后必须 `docker compose restart backend` 才生效。
+
+**顺序不能反**：库里的 PII 密文必须与 `runtime.env` 里的 `PII_ENC_KEY` 配对。
+两者来自不同时期的备份会解不开——本项目没有 re-key 机制。
+
+> **新主机灾难恢复顺序**：① `docker compose up -d` 先让卷建出来 →
+> ② `restore.sh` 恢复库 → ③ `restore_files.sh --all --yes` → ④ 重启 backend。
+> 直接 `docker cp` 到一个还没建卷的容器会失败（`restore_files.sh` 会给出提示）。
+
 ### 9.4 恢复演练（每季度至少一次）
 
 ```bash
-scripts/restore_drill.sh                  # 演练最新一份备份
+BACKUP_ENC_KEY='<口令>' scripts/restore_drill.sh     # 演练最新一份备份（含文件与密钥）
 scripts/restore_drill.sh backups/xxx.db.gz
 ```
 
 演练**不碰生产**：SQLite 全程在临时目录里做，MySQL 恢复到临时库
-`weichuan_drill_<时间戳>` 并在结束时删掉。它验证四件事：
+`weichuan_drill_<时间戳>` 并在结束时删掉。它验证五件事：
 
 | 步骤 | 判据 | 失败含义 |
 |---|---|---|
@@ -1311,6 +1363,11 @@ scripts/restore_drill.sh backups/xxx.db.gz
 | 2. 恢复到临时目录 | 文件头是 `SQLite format 3` | 备份内容与预期不符 |
 | 3. 库完整性 | `integrity_check = ok` 且表数 > 0 | 备份是坏库 / 空库 |
 | 4. 与生产对比 | 生产有的表备份里都有 | **备份不完整**，恢复回去会缺功能 |
+| 5. 文件与密钥 | `uploads-*.tar.gz` 可解开；`secrets-*.enc` 能用 `BACKUP_ENC_KEY` 解开 | 图片恢复不了 / **PII 解不开** |
+
+第 5 项里「有密钥包却没设 `BACKUP_ENC_KEY`」判 **FAIL**，不是跳过——
+证明不了能解开，就等于救不回 PII。用对象存储、密钥由环境变量注入的部署
+没有这两类产物时，会打 WARN 并跳过。
 
 行数差异只报告不判失败——日备本来就落后于生产，判失败会让演练永远红着，
 最后没人看。

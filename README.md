@@ -14,7 +14,7 @@
 | `miniprogram/` | 原生微信小程序前端（员工 / 访客侧） |
 | `backend/migrations/` | MySQL 建表与种子 SQL（含软删除迁移 `0003` 等） |
 | `docs/` | OpenAPI 3 接口规范（`openapi.yaml`）· 分支保护协作规范（`branch-protection.md`）· 生产上线 Runbook（`deploy-runbook.md`） |
-| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：MySQL 逻辑备份 / SQLite 在线快照 + 轮转；`restore.sh`：恢复；`restore_drill.sh`：恢复演练；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
+| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复；`restore_drill.sh`：恢复演练；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
 | `*.md`（根目录） | 需求 / 架构 / 接口字段映射等中文文档 |
 
 ## 技术栈
@@ -216,8 +216,13 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - **上线前自检已落地**：`scripts/preflight.sh`（零依赖静态检查：JWT 密钥 / 初始口令 / 小程序引导基址 / 存储凭据 / 上传基址 / Cookie / 数据库口令 / 服务探活 / **微信凭据** / **对外 HTTPS 网关**（外部可达性 + 证书有效期），输出 PASS·WARN·FAIL·SKIP，有 FAIL 退出码 1；`PREFLIGHT_STRICT=1` 时 WARN 也算失败，便于接发布流水线）。与后端启动门槛是同一套判据的两道闸——门槛负责「跑不起来」，本脚本负责「跑起来之前先告诉你差哪几项」。
 - **备份与恢复**：`scripts/backup.sh` 按 `DB_DRIVER` 选形态——MySQL 走 `mysqldump --single-transaction`，
   SQLite 走二进制自带的 `server backup`（`VACUUM INTO` 在线快照，**不能直接 `cp` 库文件**：
-  WAL 里还有未合并的页，cp 出来是坏库）。`scripts/restore.sh` 恢复（**恢复前自动备份当前库**，
-  恢复后校验）；`scripts/restore_drill.sh` 在临时目录/临时库上演练，不碰生产，
+  WAL 里还有未合并的页，cp 出来是坏库）。**一次产出三件套**：库备份 + `uploads-*.tar.gz`（图片）
+  + `secrets-*.tar.gz.enc`（`runtime.env` 含 `PII_ENC_KEY` 与 `license.key`，AES-256 加密，
+  口令 `BACKUP_ENC_KEY` 单独保管）——只备库的话，恢复出来会是「图片 404 + PII 解不开」。
+  任一件失败即删掉本次全部产物并非零退出，避免「新鲜但缺件」的备份骗过告警。
+  `scripts/restore.sh` 恢复库（**恢复前自动备份当前库**，恢复后校验）；
+  `scripts/restore_files.sh` 恢复图片与密钥（覆盖前另存安全网）；
+  `scripts/restore_drill.sh` 在临时目录/临时库上演练，不碰生产，并额外校验图片与密钥包可解，
   退出码 `0/1/2` 分别是「通过 / 有失败 / 环境不完整」。详见 `docs/deploy-runbook.md` §9。
 - **运维子命令**：`server backup --out <文件>`（SQLite 在线快照）、
   `server dbcheck --file <文件> [--field <字段>]`（只读体检：完整性 / 表数 / 各表行数），
