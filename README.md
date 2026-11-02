@@ -14,7 +14,7 @@
 | `miniprogram/` | 原生微信小程序前端（员工 / 访客侧） |
 | `backend/migrations/` | MySQL 建表与种子 SQL（含软删除迁移 `0003` 等） |
 | `docs/` | OpenAPI 3 接口规范（`openapi.yaml`）· 分支保护协作规范（`branch-protection.md`）· 生产上线 Runbook（`deploy-runbook.md`） |
-| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复；`restore_drill.sh`：恢复演练；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
+| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复；`restore_drill.sh`：恢复演练；`selftest_backup.sh`：备份链自检（CI 里跑，不需 docker）；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
 | `*.md`（根目录） | 需求 / 架构 / 接口字段映射等中文文档 |
 
 ## 技术栈
@@ -224,6 +224,11 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
   `scripts/restore_files.sh` 恢复图片与密钥（覆盖前另存安全网）；
   `scripts/restore_drill.sh` 在临时目录/临时库上演练，不碰生产，并额外校验图片与密钥包可解，
   退出码 `0/1/2` 分别是「通过 / 有失败 / 环境不完整」。详见 `docs/deploy-runbook.md` §9。
+  **后台也有面板**（平台管理 → 备份与恢复）：看三件套齐不齐 / 多新鲜，SQLite 形态下可「立即备份」，
+  库与图片可下载——但密钥包不提供下载（后端直接拒绝），恢复也不在后台做（必须走 `restore.sh`）。
+  面板补的是「看不见」这个洞，不替代 crontab：按钮不会自己按，失败也不会告警。
+  `scripts/selftest_backup.sh` 是这条链的自检（备份→解密→恢复→逐字节比对→错口令必须失败），
+  已进 CI（`备份链自检` job），改脚本而链断了会直接红。
 - **运维子命令**：`server backup --out <文件>`（SQLite 在线快照）、
   `server dbcheck --file <文件> [--field <字段>]`（只读体检：完整性 / 表数 / 各表行数），
   与 `server migrate` 一样不启服务，可进 cron 与流水线。

@@ -140,6 +140,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
+	RegisterBackup(r, db, cfg)    // 备份与恢复面板（状态 / 立即备份 / 下载）
 	// 海报个性化设置：GET/PUT /api/employee/poster-prefs + 公开快照 GET /api/poster-prefs。
 	// 原先这里没注册（只在两个 cmd/main.go 里注册），于是任何带 DB 的海报接口测试
 	// 都会拿到 gin 的 404 纯文本——JSON 解析报 "invalid character 'p' after top-level

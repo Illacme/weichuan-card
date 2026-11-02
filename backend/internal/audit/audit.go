@@ -69,6 +69,12 @@ const (
 	ActionApplyApprove = "apply.approve"
 	ActionApplyReject  = "apply.reject"
 
+	// 备份：执行与下载。两者都是「数据离开系统边界」的动作——
+	// 执行产出一份可下载的全量副本，下载则把它带走。只读但必须留痕，
+	// 沿用 employee.export 的破例约定（见文件头）。
+	ActionBackupRun      = "backup.run"
+	ActionBackupDownload = "backup.download"
+
 	// 小程序版本发布（代租户提审 / 发布）。这条链上每个动作都对应微信侧的
 	// 真实后果（提审消耗审核额度、发布改变线上行为），所以逐个登记，
 	// 且轮询导致的被动状态同步只在**状态真的变了**时记一条。

@@ -143,6 +143,14 @@ export const routes = [
         component: () => import('@/views/platform/AuditLogs.vue'),
         meta: { title: '操作日志', group: '平台管理', platformOnly: true },
       },
+      {
+        // 备份与恢复：看备份状态（三件套齐不齐、多新鲜）+ 临时补一份 + 下载。
+        // 恢复不在这一页：它是破坏性操作，必须走 scripts/restore.sh 的确认流程。
+        path: 'platform/backup',
+        name: 'backup',
+        component: () => import('@/views/platform/Backup.vue'),
+        meta: { title: '备份与恢复', group: '平台管理', platformOnly: true },
+      },
     ],
   },
   {

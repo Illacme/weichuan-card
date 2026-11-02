@@ -19,10 +19,13 @@ const (
 
 // Config 通过环境变量注入，不写死（保证可平滑迁云托管）
 type Config struct {
-	DBDSN              string
-	Port               string
-	JWTKey             string
-	UploadDir          string // 本地上传目录（local 驱动用，小程序码缓存也落这里）
+	DBDSN     string
+	Port      string
+	JWTKey    string
+	UploadDir string // 本地上传目录（local 驱动用，小程序码缓存也落这里）
+	// BackupDir 备份产物目录（后台「备份与恢复」面板读它；与 scripts/backup.sh 的
+	// BACKUP_DIR 必须指向同一处，否则面板看到的和 cron 产出的不是同一批文件）
+	BackupDir          string
 	UploadBaseURL      string // 上传文件公开访问基址（小程序/前端取此拼 URL）
 	StorageDriver      string // 文件存储驱动：local(默认) | minio | oss | s3
 	StoragePublic      bool   // 是否为公开桶；false=私有桶，需限时签名访问（STORAGE_PUBLIC）
@@ -161,6 +164,7 @@ func Load() Config {
 		Port:               getEnv("PORT", "8080"),
 		JWTKey:             getEnv("JWT_KEY", DefaultJWTKey),
 		UploadDir:          getEnv("UPLOAD_DIR", "./uploads"),
+		BackupDir:          getEnv("BACKUP_DIR", "./backups"),
 		UploadBaseURL:      getEnv("UPLOAD_BASE_URL", "http://127.0.0.1:8080/uploads"),
 		StorageDriver:      getEnv("STORAGE_DRIVER", "local"),
 		StoragePublic:      parseBool(getEnv("STORAGE_PUBLIC", "true")),

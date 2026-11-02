@@ -316,6 +316,7 @@ func main() {
 	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
+	handler.RegisterBackup(r, db, cfg)    // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，

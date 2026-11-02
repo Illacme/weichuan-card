@@ -30,6 +30,8 @@ backend/
 │   ├── wechat/wechat.go         # access_token 缓存（**按 appid 分键**）+ 通用 POST 助手（40001/42001 自动刷新重试）
 │   ├── wechat/release.go        # 微信侧四个接口：submit_audit / get_auditstatus / release / undo_code_audit
 │   ├── audit/audit.go           # 审计落库（动作常量 + 敏感字段脱敏），每次代发都记一条
+│   ├── handler/backup.go        # 备份面板：状态 / 异步触发 / 下载（密钥包刻意不下载，恢复不在后台做）
+│   ├── dbbackup/                # 库快照（SQLite VACUUM INTO / 完整性校验），供 backup 面板与 CLI 共用
 │   ├── handler/assets.go        # 开源素材库：清单 / 采用 / 预览（go:embed 内置，免外部找图）
 │   ├── assets/assets.go         # 素材库加载器：embed library/ + manifest.json 解析 + 安全读取
 │   ├── assets/library/          # 内置素材资产（生成物，勿手改）：manifest.json + CREDITS.md + 图标/封面/LOGO/头像
@@ -521,6 +523,21 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 > 那个开关是「独立版部署就别再动租户结构了」，而凭据是阻塞性配置——真锁住了反而让独立版用户
 > 永远配不上小程序。`wxConfigured` 要求 AppID 与 AppSecret 成对非空，半配置算未配置，
 > 与取值侧口径一致（见下文「小程序码」的三级回落链）。
+
+### 操作日志与备份（仅平台超级管理员）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET  | /api/admin/audit-logs | 审计日志分页查询（`action` / `actorType` / `actorId` / `result` 过滤）；只读，无写接口 |
+| GET  | /api/admin/backup/status | 三件套状态：每类最新一份的文件名 / 大小 / 时间 / 新鲜度（阈值 26h，与 `alert_check.sh` 一致），外加 `canRun`（仅 SQLite）、`running`、`lastRun`、`notes`（缺件与不可下载的原因） |
+| POST | /api/admin/backup/run | 异步触发一次「库 + 图片」备份（`VACUUM INTO` → gzip、上传目录 → tar.gz）；MySQL 形态直接拒（mysqldump 不在运行镜像里）；进程内互斥，重复点击返回「已有备份任务在进行」 |
+| GET  | /api/admin/backup/download?name= | 流式下载（`FileAttachment`，不占内存）。文件名走白名单正则 + `filepath.Abs` 前缀双检；**`secrets-*.enc` 直接拒**——密钥包不许从后台取走 |
+
+> 三条边界（写在 `handler/backup.go` 顶部注释里，改代码前先读）：
+> ① 没有「上传备份并恢复」——恢复是破坏性操作，必须走 `scripts/restore.sh`；
+> ② 不生成也不下载密钥包，密钥的价值就在于不与数据同处一个故障域；
+> ③ 不在请求里同步跑备份——GB 级图片会拖到反代超时，用户看到 504 而实际仍在写盘。
+> 任何一件失败都会删掉本次已产出的半成品：一份「新鲜但缺件」的备份会让新鲜度告警闭嘴，比没有更危险。
+> 执行与下载都记审计（`backup.run` / `backup.download`），与导出员工信息同级敏感。
 
 ### 小程序码（公开，分享海报用）
 | 方法 | 路径 | 说明 |

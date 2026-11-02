@@ -124,6 +124,12 @@ services:
       # 安装向导把配置写到这里（默认 ./data/runtime.env）。必须落在持久卷上，
       # 否则容器重建后配置丢失、又会回到安装页。
       CONFIG_FILE: /app/data/runtime.env
+      # 备份目录：后台「备份与恢复」面板读它，scripts/backup.sh 也写它——
+      # 两者必须是同一处，否则面板显示的和 cron 实际产出的不是一批文件。
+      # 用**绑定挂载**而不是命名卷：备份要能直接 rsync 到异地，这是它离机的唯一途径。
+      # 注意：首次启动由 docker 创建 ./backups 时属主是 root；若 cron 以非 root 跑，
+      # 先 `mkdir -p backups && sudo chown $(id -u):$(id -g) backups`（见 runbook §9.2）。
+      BACKUP_DIR: /app/backups
       STORAGE_DRIVER: local
       STORAGE_PUBLIC: "true"
       UPLOAD_DIR: /app/uploads
@@ -157,6 +163,8 @@ services:
       - uploads_data:/app/uploads
       # 安装向导写出的配置（runtime.env）与 SQLite 库文件都在这里，必须持久化
       - data_data:/app/data
+      # 备份产物落宿主机目录：后台可下载、运维可 rsync 异地，且与 cron 共用同一处
+      - ./backups:/app/backups
     expose:
       - "8080"
     ports:

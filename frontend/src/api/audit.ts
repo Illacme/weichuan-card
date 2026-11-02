@@ -58,6 +58,9 @@ export const ACTION_LABELS: Record<string, string> = {
   'employee.export_batch': '批量导出员工信息',
   'apply.approve': '通过申请',
   'apply.reject': '驳回申请',
+  // 备份：执行与下载都是「数据离开系统边界」，与导出员工信息同级敏感
+  'backup.run': '执行备份',
+  'backup.download': '下载备份文件',
   // 商业动作：授权与配额直接决定客户能不能继续用、能占多少存储
   'company.license': '修改企业授权',
   'company.storage_quota': '设置企业存储配额',

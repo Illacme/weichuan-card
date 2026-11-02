@@ -169,6 +169,7 @@ func main() {
 	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
+	handler.RegisterBackup(r, db, cfg)    // 备份面板：状态 / 异步触发 / 下载（密钥包不提供下载）
 
 	up := &storage.LocalUploader{
 		Dir:      cfg.UploadDir,

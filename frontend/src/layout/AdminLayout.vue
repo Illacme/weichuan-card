@@ -305,6 +305,8 @@ const allMenuGroups = [
       { path: '/platform/accounts', title: '账号管理' },
       // 操作日志：后台写操作与登录失败审计（只读）
       { path: '/platform/audit-logs', title: '操作日志' },
+      // 备份与恢复：三件套是否齐全 / 多新鲜，可临时补一份并下载
+      { path: '/platform/backup', title: '备份与恢复' },
     ],
   },
 ]
