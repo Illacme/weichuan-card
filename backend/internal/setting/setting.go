@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 
+	"weichuan/internal/pii"
+
 	"gorm.io/gorm"
 )
 
@@ -341,6 +343,18 @@ var registry = []def{
 	{Key: "cookie_domain", Group: "security", Type: "string", Restart: true, ReadOnly: true, EnvVar: "COOKIE_DOMAIN",
 		Name: "登录 Cookie 作用域",
 		Desc: "登录 Cookie 在哪个范围内有效。留空只对当前域名生效；需要在多个子域名之间共享登录状态时才填（例：.example.com）。界面不能改，请到部署环境改环境变量 COOKIE_DOMAIN 或配置文件（默认 data/runtime.env）后重启。"},
+	// PII 加密密钥（C5）也归入只读档，但它与上面四项「改错锁死入口」不同：
+	// 不许在界面改的真正原因是**不能落库 + 无重加密能力**——
+	//   1. 它若能写进 sys_setting，库备份就自带解密钥匙，「数据库泄露也读不出明文」
+	//      这条 C5 的核心承诺当场作废（密钥包 secrets-*.tar.gz.enc 与库备份分开保管
+	//      的整个设计就是为了把钥匙挡在库外）；
+	//   2. 换钥不会重加密存量密文（无 re-key），界面上「顺手换个新钥」等于把全部
+	//      已写入的员工手机号/姓名变成再也解不开的死数据，且没有任何报错。
+	// EnvVar 引用 pii.KeyEnvVar 而不是写字面量：两处各写一份早晚会漂移
+	//（包级 init 读的就是那个常量）。
+	{Key: "pii_enc_key", Group: "security", Type: "string", Secret: true, Restart: true, ReadOnly: true, EnvVar: pii.KeyEnvVar,
+		Name: "个人信息加密密钥",
+		Desc: "员工与开通申请里个人信息（姓名 / 手机号 / 邮箱等）的加密密钥，base64 编码的 32 字节（用 openssl rand -base64 32 生成）。这些字段在数据库里只存密文，数据库文件泄露也读不出明文——这把钥匙就是「读不出」的全部依仗。界面不能改：一是它绝不能存进数据库（否则库备份自带钥匙，加密形同虚设）；二是系统没有重加密能力，已用某把密钥写入的数据换钥后无法解密。如需设置或更换，请到部署环境改环境变量 PII_ENC_KEY 或配置文件（默认 data/runtime.env）后重启；该文件已包含在密钥备份包（secrets-*.tar.gz.enc）里，请随备份妥善保管、与库备份分开存放。未配置时系统用源码内置的开发密钥加密——形同明文，生产启动会被直接拒绝（仅本地联调可用 ALLOW_INSECURE=1 放行）；走安装向导的部署已在安装时自动生成并写入配置文件，一般无需手工设置。"},
 
 	// 审计日志保留期（C3）。默认 0 = 永不自动清理，这是刻意的：
 	// 删审计日志不可逆，而审计的价值恰恰在「出事之后能翻到很久以前」。升级当天

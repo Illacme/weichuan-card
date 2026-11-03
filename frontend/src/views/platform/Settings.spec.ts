@@ -77,6 +77,7 @@ const items: SettingItem[] = [
   { key: 'cookie_secure', name: '登录 Cookie 强制 HTTPS', group: 'security', type: 'bool', value: 'false', description: 'Cookie Secure', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_SECURE', configured: true },
   { key: 'db_dsn', name: '数据库连接串', group: 'security', type: 'string', value: '******', description: '数据库连接串', secret: true, restart: true, readOnly: true, envVar: 'DB_DSN', configured: true },
   { key: 'jwt_key', name: '登录签名密钥', group: 'security', type: 'string', value: '******', description: 'JWT 密钥', secret: true, restart: true, readOnly: true, envVar: 'JWT_KEY', configured: true },
+  { key: 'pii_enc_key', name: '个人信息加密密钥', group: 'security', type: 'string', value: '******', description: 'PII 密钥', secret: true, restart: true, readOnly: true, envVar: 'PII_ENC_KEY', configured: true },
   { key: 'independent_lock', name: '独立版企业锁定', group: 'feature', type: 'bool', value: 'false', description: '独立版锁定', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'metrics_enabled', name: '开放监控指标', group: 'feature', type: 'bool', value: '', description: '指标开关', secret: false, restart: false, readOnly: false, envVar: 'METRICS_ENABLED', configured: false },
 ]
@@ -508,8 +509,8 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     // 常驻摘要条：一眼给出「还差几项」及其归属（本页可配 / 环境变量）
     expect(w.find('.ready-bar').exists()).toBe(true)
-    // local 驱动 6 项（文件访问基址仅对象存储需要，不进本地清单）
-    expect(w.text()).toContain('3 / 6 项就绪')
+    // local 驱动 7 项（文件访问基址仅对象存储需要，不进本地清单）
+    expect(w.text()).toContain('4 / 7 项就绪')
     expect(w.text()).toContain('还有 3 项待处理')
     // 清单本身默认不展开：本页主任务是改配置，不能被清单推到屏幕外
     expect(w.find('.ready-card').exists()).toBe(false)
@@ -530,26 +531,26 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     // 0 就绪会自动拉起向导（stub 不传送门，页面本体仍在同一棵树上，可直接断言）
     expect(w.find('.el-dialog').exists()).toBe(true)
-    expect(w.text()).toContain('0 / 6 项就绪')
+    expect(w.text()).toContain('0 / 7 项就绪')
     expect(w.find('.ready-card').exists()).toBe(true)
   })
 
   it('上线就绪面板：按「本页可配置 / 环境变量 / 配置文件」分组；只读项给可复制写法而非死路入口', async () => {
     const { w } = await setup()
-    // 夹具已配置 jwt_key / db_dsn / storage_driver → 3/6；
+    // 夹具已配置 jwt_key / pii_enc_key / db_dsn / storage_driver → 4/7；
     // cookie_secure=false、wx_appid 未配、miniprogram_base_url 未配；
     // upload_base_url 是云存储专属项，local 驱动下不进清单（假警报修复）
     expect(w.text()).toContain('上线就绪检查')
-    expect(w.text()).toContain('3 / 6 项就绪')
+    expect(w.text()).toContain('4 / 7 项就绪')
     // 清单默认收起：点「查看详情」展开后再断言明细
     if (!w.find('.ready-card').exists()) {
       await w.find('.ready-bar-toggle').trigger('click')
       await nextTick()
     }
     const readyRows = w.findAll('.ready-row')
-    expect(readyRows).toHaveLength(6)
+    expect(readyRows).toHaveLength(7)
 
-    // 分两组呈现：本页可配 3 项（1 就绪） / 部署环境变量 3 项（2 就绪）
+    // 分两组呈现：本页可配 3 项（1 就绪） / 部署环境变量 4 项（3 就绪）
     expect(w.findAll('.ready-section-title')).toHaveLength(2)
     expect(w.text()).toContain('本页可配置')
     expect(w.text()).toContain('环境变量 / 配置文件')
@@ -558,6 +559,11 @@ describe('Settings 系统设置', () => {
     const jwtRow = readyRows.find((r: any) => r.text().includes('登录签名密钥'))!
     expect(jwtRow.text()).toContain('已就绪')
     expect(jwtRow.findAll('button.el-button')).toHaveLength(0)
+
+    // PII 密钥也是只读就绪项：与 jwt_key 同组呈现（界面改不了，只在部署环境配）
+    const piiRow = readyRows.find((r: any) => r.text().includes('个人信息加密密钥'))!
+    expect(piiRow).toBeTruthy()
+    expect(piiRow.text()).toContain('已就绪')
 
     // 未就绪的可配置项：「去配置」按钮 + 原因提示；点击走 jumpTo（jsdom 无 scrollIntoView，不应抛错）
     const wxRow = readyRows.find((r: any) => r.text().includes('微信 AppID'))!
@@ -585,7 +591,31 @@ describe('Settings 系统设置', () => {
       data: items.map((it) => (it.key === 'cookie_secure' ? { ...it, value: 'true' } : it)),
     }) as any)
     const { w } = await setup()
-    expect(w.text()).toContain('4 / 6 项就绪')
+    expect(w.text()).toContain('5 / 7 项就绪')
+  })
+
+  it('PII 加密密钥未配置时进「环境变量」组：给可复制写法 + 点明形同明文的后果', async () => {
+    vi.mocked(getSettings).mockImplementationOnce(async () => ({
+      code: 0,
+      data: items.map((it) => (it.key === 'pii_enc_key' ? { ...it, value: '', configured: false } : it)),
+    }) as any)
+    const { w } = await setup()
+    if (!w.find('.ready-card').exists()) {
+      await w.find('.ready-bar-toggle').trigger('click')
+      await nextTick()
+    }
+    const piiRow = w
+      .findAll('.ready-row')
+      .find((r: any) => r.text().includes('个人信息加密密钥'))!
+    expect(piiRow, '未配置的 PII 密钥应出现在就绪清单').toBeTruthy()
+    // 后果要说透：不配不是「功能缺失」而是「敏感信息裸奔」——这条提示是清单存在的意义
+    expect(piiRow.text()).toContain('形同明文')
+    // 与 cookie_secure 同一改法呈现：可复制的环境变量示例，而不是改不了的死路入口
+    expect(piiRow.text()).toContain('PII_ENC_KEY=<openssl rand -base64 32 的输出>')
+    expect(piiRow.text()).toContain('设为环境变量，或写进配置文件 data/runtime.env，重启后生效')
+    const btns = piiRow.findAll('button.el-button')
+    expect(btns).toHaveLength(1)
+    expect(btns[0].text()).toBe('复制')
   })
 
   // ---- P1：依赖联动（非搜索态按分支过滤） + 分组顺序 ----
@@ -1024,9 +1054,9 @@ describe('Settings 系统设置', () => {
     await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
     expect(updateSettings).toHaveBeenCalledWith({ upload_dir: '/data/uploads' })
     // 保存成功 → 对话框关闭；upload_dir 不属于上线就绪检查的 key，
-    // 就绪数保持 3/6（不伪造进度），但该行「待配置」标记应随之消失
+    // 就绪数保持 4/7（不伪造进度），但该行「待配置」标记应随之消失
     expect(w.find('.el-dialog').exists()).toBe(false)
-    expect(w.text()).toContain('3 / 6 项就绪')
+    expect(w.text()).toContain('4 / 7 项就绪')
     expect(rowOf(w, 'upload_dir').text()).not.toContain('待配置')
   })
 
@@ -1165,9 +1195,9 @@ describe('Settings 系统设置', () => {
       await nextTick()
     }
     const dlg = dialogOf(w)
-    // 复用主页 checks 数据：分组 + 就绪数（夹具 3/6，local 驱动无文件访问基址项）
+    // 复用主页 checks 数据：分组 + 就绪数（夹具 4/7，local 驱动无文件访问基址项）
     expect(dlg.text()).toContain('上线就绪')
-    expect(dlg.text()).toContain('3 / 6')
+    expect(dlg.text()).toContain('4 / 7')
     expect(dlg.text()).toContain('本页可配置')
     expect(dlg.text()).toContain('只读项')
     // 只读未就绪项（cookie_secure）给可复制的环境变量写法

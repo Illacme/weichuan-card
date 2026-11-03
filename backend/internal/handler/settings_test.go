@@ -9,6 +9,7 @@ import (
 
 	"weichuan/internal/auth"
 	"weichuan/internal/config"
+	"weichuan/internal/pii"
 	"weichuan/internal/setting"
 
 	"github.com/stretchr/testify/require"
@@ -270,12 +271,14 @@ func TestPublicSettingsLoginCode(t *testing.T) {
 	require.NotContains(t, string(raw), "廊坊市朗汇机电设备有限公司", "公开接口不得泄露企业全称")
 }
 
-// TestReadOnlySettingsCannotBeWrittenFromUI 只读项（DB 连接串 / JWT 密钥 / Cookie 安全）
-// 必须在界面可见（管理员得知道当前配了什么），但不可改——改错会把「改回来的入口」一起弄丢。
+// TestReadOnlySettingsCannotBeWrittenFromUI 只读项（DB 连接串 / JWT 密钥 / Cookie 安全 /
+// PII 加密密钥）必须在界面可见（管理员得知道当前配了什么），但不可改——
+// 改错会把「改回来的入口」一起弄丢；PII 密钥更特殊：落库会让库备份自带钥匙。
 func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 	// 只读项的值来自环境变量（测试装配里的 cfg.DBDSN 是空的），先把它设上，
 	// 才能验证「界面如实展示已配置」而不是显示一片空白。
 	t.Setenv("DB_DSN", "sqlite://test-only")
+	t.Setenv(pii.KeyEnvVar, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=") // 合法：32 字节的 base64
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)
 	adminToken := loginAdmin(t, c)
@@ -287,7 +290,7 @@ func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 		m := it.(map[string]interface{})
 		meta[m["key"].(string)] = m
 	}
-	for _, k := range []string{"db_dsn", "jwt_key", "cookie_secure", "cookie_domain"} {
+	for _, k := range []string{"db_dsn", "jwt_key", "cookie_secure", "cookie_domain", "pii_enc_key"} {
 		require.Contains(t, meta, k)
 		require.Equal(t, true, meta[k]["readOnly"], k)
 		require.NotEmpty(t, meta[k]["envVar"], k)
@@ -296,6 +299,10 @@ func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 	// 所以给的是可辨认预览而不是六颗星：无凭据形态（sqlite://）原样显示，
 	// 含口令的连接串只遮口令段（遮罩规则见 setting 包的 preview 单测）。
 	require.Equal(t, "sqlite://test-only", meta["db_dsn"]["value"])
+	// PII 密钥同理：首尾各留 4 位的可辨认预览。不能是完整明文——
+	// 拿到它就能解密全库 PII；也不能是掩码——那就无法核对面前的库用的是不是这把钥。
+	require.Equal(t, "AAEC****Hh8=", meta["pii_enc_key"]["value"], "PII 密钥应显示首尾各 4 位的预览")
+	require.Equal(t, true, meta["pii_enc_key"]["configured"])
 
 	// 2) 试图从界面改写 → 拒绝，并提示改法（只说「不允许」等于没说）
 	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"db_dsn": "root@tcp(bad)"}, adminToken)
@@ -305,8 +312,40 @@ func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"jwt_key": "x"}, adminToken)
 	require.EqualValues(t, 1, body["code"])
 
-	// 3) 只读项不落库：库里没有 db_dsn 行（否则会出现「界面没改、库里有值」的误解）
+	// PII 密钥的拒绝文案要点名两条改法路径（环境变量 / runtime.env），
+	// 并把「为什么不能在界面配」说清——不说清，管理员会当成普通遗漏反复尝试。
+	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"pii_enc_key": "AAAA"}, adminToken)
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "PII_ENC_KEY")
+	require.Contains(t, body["msg"], "data/runtime.env")
+
+	// 3) 只读项不落库：库里没有 db_dsn / pii_enc_key 行（否则会出现「界面没改、库里有值」的误解；
+	//    对 PII 密钥而言落库更是直接击穿「库备份不含钥匙」这条安全边界）
 	require.Equal(t, "", setting.GetString("db_dsn", ""), "只读项不应被 seed 进 sys_setting")
+	require.Equal(t, "", setting.GetString("pii_enc_key", ""), "PII 密钥绝不应被 seed 进 sys_setting")
+}
+
+// TestPIIEncKeyUnsetShowsNotConfigured 未设置 PII_ENC_KEY 时，设置页要如实显示
+// 「未配置」——这个状态在语义上等于「PII 正用源码内置开发密钥加密，形同明文」，
+// 是部署就绪检查里最该被看见的红色项。绝不能因为回落了 dev 密钥就显示「已配置」，
+// 那会把唯一能暴露裸奔状态的信息藏掉。
+func TestPIIEncKeyUnsetShowsNotConfigured(t *testing.T) {
+	t.Setenv(pii.KeyEnvVar, "") // 显式清空，防外部环境干扰断言
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	_, body := c.do("GET", "/api/admin/settings", nil, adminToken)
+	for _, it := range body["data"].([]interface{}) {
+		m := it.(map[string]interface{})
+		if m["key"].(string) != "pii_enc_key" {
+			continue
+		}
+		require.Equal(t, false, m["configured"], "未设置 PII_ENC_KEY 应显示未配置")
+		require.Equal(t, "", m["value"], "未配置时不应有任何预览值")
+		return
+	}
+	t.Fatal("设置列表里没有 pii_enc_key 项")
 }
 
 // TestStorageSettingsOverlayEnv 云存储 / CDN 凭据的覆盖语义：
