@@ -1045,6 +1045,13 @@ index.html 717 字节
 验证：`curl -sI https://<域名>/ | grep -iE 'cf-cache-status|age'`，第二次起应为
 `HIT` 且 `age` 递增；TTFB 应从 ~1.1s 降到 0.2–0.3s。
 
+> ✅ **已上线并验证（2026-11-03）**：`/` 与 `/index.html` 两分支均 HIT、
+> `age` 连续递增、热 HIT TTFB 0.26–0.33s（此前 ~1.1s）。
+> 排障笔记（这次踩的）：① 用 **GET** 验证而非 `-I`（HEAD 会被 CF BYPASS，
+> 看不出缓存行为）；② 本站双栈，curl 在 IPv4/IPv6 边缘间轮换——**每个边缘
+> 独立缓存**，刚配置完时某一边缘 MISS 是冷启动不是规则失效，用
+> `-w '%{remote_ip}'` 看边缘 IP 再下结论。
+
 ### 5.4 真实客户端 IP：`real_ip` + `TrustedProxies` 是一条链，缺一环就整条断
 
 访客 IP 要传到业务代码，中间有四跳，**任何一跳断掉，`c.ClientIP()` 拿到的是边缘节点 IP**：
