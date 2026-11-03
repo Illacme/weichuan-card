@@ -278,7 +278,11 @@ func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 	// 只读项的值来自环境变量（测试装配里的 cfg.DBDSN 是空的），先把它设上，
 	// 才能验证「界面如实展示已配置」而不是显示一片空白。
 	t.Setenv("DB_DSN", "sqlite://test-only")
-	t.Setenv(pii.KeyEnvVar, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=") // 合法：32 字节的 base64
+	// 测试密钥刻意用 32 个相同字节的 base64（QUFB...QUE=）：解码后恰好 32 字节、
+	// 能被 pii 包原样接受，但熵极低、一眼即假——避免再触发 gitleaks 的
+	// generic-api-key（此前用过顺序字节 0x00..0x1f 的 base64，内容是假的、
+	// 字符熵却够高，CI 密钥扫描直接红：假的真相比真的假象更难解释）。
+	t.Setenv(pii.KeyEnvVar, "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=")
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)
 	adminToken := loginAdmin(t, c)
@@ -301,7 +305,7 @@ func TestReadOnlySettingsCannotBeWrittenFromUI(t *testing.T) {
 	require.Equal(t, "sqlite://test-only", meta["db_dsn"]["value"])
 	// PII 密钥同理：首尾各留 4 位的可辨认预览。不能是完整明文——
 	// 拿到它就能解密全库 PII；也不能是掩码——那就无法核对面前的库用的是不是这把钥。
-	require.Equal(t, "AAEC****Hh8=", meta["pii_enc_key"]["value"], "PII 密钥应显示首尾各 4 位的预览")
+	require.Equal(t, "QUFB****QUE=", meta["pii_enc_key"]["value"], "PII 密钥应显示首尾各 4 位的预览")
 	require.Equal(t, true, meta["pii_enc_key"]["configured"])
 
 	// 2) 试图从界面改写 → 拒绝，并提示改法（只说「不允许」等于没说）
