@@ -1,6 +1,6 @@
 # 第三方依赖许可清单（自动生成）
 
-> 生成日期：2026-10-26　·　随依赖版本变动会失效，交付前请重新生成一次。
+> 生成日期：2026-11-03　·　随依赖版本变动会失效，交付前请重新生成一次。
 >
 > 本软件（微传名片）为专有商业软件，许可见 [../LICENSE](../LICENSE)。
 > **本清单中的第三方组件不因该许可而改变**——它们各自仍受其原始许可约束。
@@ -143,7 +143,7 @@ BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Cl
 | estree-walker                      | 2.0.2   | MIT          |
 | event-emitter                      | 0.3.5   | MIT          |
 | ext                                | 1.7.0   | ISC          |
-| follow-redirects                   | 1.16.1  | MIT          |
+| follow-redirects                   | 1.16.2  | MIT          |
 | form-data                          | 4.0.6   | MIT          |
 | function-bind                      | 1.1.2   | MIT          |
 | get-intrinsic                      | 1.3.0   | MIT          |
