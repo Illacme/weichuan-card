@@ -48,10 +48,13 @@ h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
 chk "随机名上传 immutable 长缓存" "$h" "cache-control: public, max-age=31536000, immutable"
 chk "随机名上传 有 nosniff" "$h" "x-content-type-options: nosniff"
 chk "随机名上传 有 X-Frame-Options" "$h" "x-frame-options: SAMEORIGIN"
-# 普通前缀（非 ^~）才能让敏感文件正则先生效
+# ^~（2026-11-03 起改）：/uploads/ 前缀命中后跳过全部正则 location——
+# 2026-11-03 线上事故（/api/.../license 被「敏感文件 404」正则抢走 404）的根治之一。
+# 原「让正则拦 /uploads/.env、/uploads/dump.sql」的保守设计随之撤销：
+# 这类 URI 现在照常反代到后端（真正的访问控制在后端私有读鉴权），到达后端即正确。
 for p in /uploads/.env /uploads/dump.sql; do
-  code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B$p")
-  chk "$p 仍被敏感文件规则拦掉" "$code" "404"
+  body=$(curl -sk "${NOPROXY[@]}" $R "$B$p")
+  chk "$p 反代到后端（不再被敏感文件正则管辖）" "$body" '"stub":"backend"'
 done
 
 echo "== 3.6 /uploads/ 404 绝不能带长缓存头（否则 CF 把「文件不存在」锁死一年）=="
@@ -142,10 +145,22 @@ chk "/login(浏览器导航) → 200" "$code" "200"
 chk "/login 返回 SPA 壳" "$(curl -sk -H 'Accept: text/html' "${NOPROXY[@]}" $R "$B/login")" "SHELL"
 
 echo "== 8. 敏感文件拦截 =="
-for p in /.env /go.mod /.git/config /backup.sql; do
+for p in /.env /go.mod /.git/config /backup.sql /LICENSE /readme.md /CHANGELOG /Dockerfile; do
   code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B$p")
   chk "$p → 404" "$code" "404"
 done
+# 8a（2026-11-03 线上事故回归断言）：正则已段尾锚定 (^|/)(...)$，
+# 业务 URI 里的 license 不再被敏感文件规则抢走。
+# 修复前：正则 location 优先于普通前缀 location，/api/.../license 命中裸词 LICENSE
+# （~* 不区分大小写）被 return 404（nginx HTML 页），后端零日志——
+# 线上「授权与配额保存 = 网络异常」的根因。修复后应命中桩后端（200 + stub JSON）。
+for p in /api/admin/companies/1/license /api/admin/companies/1/License /api/admin/companies/1/licenses; do
+  body=$(curl -sk "${NOPROXY[@]}" $R "$B$p")
+  chk "$p 到达后端（不被敏感文件正则误拦）" "$body" '"stub":"backend"'
+done
+# 8b /api/ 改 ^~ 后，600s 发布上传超时改为 ^~ 内的嵌套正则 location——路径不能丢
+body=$(curl -sk "${NOPROXY[@]}" $R "$B/api/admin/companies/7/releases/upload")
+chk "/api/admin/companies/7/releases/upload 仍反代到后端（嵌套 location 生效）" "$body" '"stub":"backend"'
 
 echo "== 9. TLS 与头 =="
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/")
