@@ -908,6 +908,46 @@ curl -sI "https://<域名>/uploads/wxacode/<staffID>.jpg?cb=$RANDOM" \
 > `max-age=31536000`，`public` 和 `immutable` 被去掉——这是 CF 行为，**不代表 nginx 配错**；
 > 判断 nginx 是否生效要看上面那个**强制 MISS** 的回源响应。
 
+#### ⚠️ 已知风险：404 也会被缓存一年（2026-11-03 实测）
+
+`/uploads/` 的 `immutable` 头是 `add_header ... always` 发的，**它无法区分状态码**——
+于是「文件不存在」这个 404 响应也带着 `max-age=31536000, immutable`，并被 CF 收进边缘缓存。
+
+实测（同一个不存在的 URL 连打三次）：
+
+```bash
+curl -sSI "https://<域名>/uploads/zz-not-exist-$(date +%s).png" \
+  | grep -iE '^HTTP/|cf-cache-status|cache-control'
+# 第1次: HTTP/2 404 | cache-control: public, max-age=31536000, immutable | cf-cache-status: MISS
+# 第2次: HTTP/2 404 | cache-control: public, max-age=31536000, immutable | cf-cache-status: HIT
+```
+
+**为什么这是个雷**：某个 `_thumb` 缩略图在**回填之前**被访问过一次（端上先打缩略图、
+失败再回退原图，这是一次真实的 404），它的 404 就被 CF 锁死一年。
+之后再执行 `cmd/thumbbackfill` 回填，**文件已经存在了但客户端永远拿不到**——
+回填工具变得无效，而且没有任何报错。
+
+**当前状态**：本项目线上已执行完回填（所有存量图都有 `_thumb`），新上传的图由
+`Save` 同时写原图 + 缩略图，也不会缺 → **当前无实际伤害**。
+但换新环境 / 导入新素材 / 未来新增的图，仍可能踩到。
+
+**修法方向**（需要改 nginx 配置，等下次动线上时一并处理）：
+`add_header` 做不到按状态码区分，得用 `map $status $uploads_cache` 把 404 单独降级成
+`no-store`，或让后端在 404 时返回正确的 `Cache-Control`：
+
+```nginx
+map $status $uploads_cache {
+    404   "no-store";
+    default "public, max-age=31536000, immutable";
+}
+# 然后在 location /uploads/ 里用
+add_header Cache-Control $uploads_cache always;
+```
+
+> 注意 `map` 必须放在 `http` 块（站点配置文件里放 server 块外面），
+> 且这条 `location` 已有 `add_header`，server 级安全头不会继承——原本就要重声明那四个头，
+> 改成变量后**同样要保留它们**。
+
 ### 5.3 首屏 TTFB：HTML 不缓存 = 每次全页加载都跨境回源
 
 实测（Cloudflare 境外节点 → 国内源站，5 次）：
