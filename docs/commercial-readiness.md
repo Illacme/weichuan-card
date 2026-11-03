@@ -1052,3 +1052,35 @@ follow-redirects GHSA-mrwp-f3q8-3g9p（跨域重定向丢弃 sensitiveHeaders）
 
 - C4 水平扩展（需 Redis）、binlog 回放未演练、#163 真机验收（清单已备）、
   #231 向导测试与文档、E3 的两项 CF 面板手工配置。
+
+## 第十七轮实施记录（#231 安装向导测试与文档收口，2026-11-03）
+
+### 1. 结论先行
+
+向导的**安全与主流程**测试面本已很厚（同源/反代伪造/信封/双引擎 E2E/零数据/PII 顺序），
+本轮补的是**失败路径与半配置语义**——「装到一半坏了，运维面对什么」此前零覆盖，
+而文档声称「任何一步失败都不会留下半配置」与「安装中途失败不可重试」恰恰落在这些分支上。
+
+### 2. 新增测试（backend/internal/setup/install_test.go）
+
+| 用例 | 钉住的行为 | 反向验证 |
+| --- | --- | --- |
+| `TestInstallConfigFileWriteFailureNotRetryable` | 配置目录不可写 → 报错含自救办法（手动创建配置文件）、不留残缺文件、**库已初始化且重试被新鲜库守卫拦**（守卫改「清空重装」= 重放安装页成重置漏洞，此断言第一个红） | 逻辑推演（守卫删则第二条 Install 走到重复 SeedAdmin，报错文案变化必红） |
+| `TestInstallDemoDataFailureDegradesToWarning` | 演示数据写失败（UPLOAD_DIR 是文件 → MkdirAll 必败）→ **安装仍成功** + warnings 含「演示数据未完全写入」+ 企业照常写入。这是「不可重试」的直接推论：此刻报错重试只会把运维卡死在半路 | ✅ 临时把降级改为报错 → FAIL；还原 → 绿 |
+| `TestInstallKeepsExistingPIIKey` | 环境已提供 PII 密钥时**不写进配置文件**（install.go 刻意只在现场签发时落盘；重装覆盖 = 存量密文变天书） | ✅ 临时改成无条件写入 → FAIL；还原 → 绿 |
+| `TestInstallValidationErrors` +3 例 | 用户名含空格 / 超 64 字符、JWT 密钥含换行。**顺带发现**：validateAdmin 先 TrimSpace，尾部换行被静默剥掉（宽容），只有内部换行触发拒绝——用例必须打内部，打尾部会假绿 | — |
+| `TestInstallEndpointEnvelope` 增强 | `cookieSecure:true` 必须落盘 `COOKIE_SECURE=true`（HTTPS 部署漏勾的表现是「能登录但换浏览器丢登录态」，极难关联到安装页） | — |
+
+### 3. 文档收口（deploy-runbook 新增 §2.2）
+
+§2.1 只写了 Docker 路径；二进制/宝塔部署的向导行为（实际线上就是这么装的）此前
+散落在记忆里而非文档里。新增 §2.2：触发条件（DB_DSN 三处皆空）、四个前置
+（CONFIG_FILE 相对 WorkingDirectory、目录可写、UPLOAD_DIR 可写、unit 必设
+WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runtime.env
+（三把密钥，PII 丢 = 敏感数据永远解不开且无报错）、半配置的正确处理与「不可重试」
+的原因。§C 第 2 步补「更省事的替代：留空走 §2.2」。
+
+### 4. 验证
+
+`go test ./internal/setup/ -count=1` 全绿（TestInstall* 10 函数 + 子测试）；
+`go test ./...` 后端全量全绿。

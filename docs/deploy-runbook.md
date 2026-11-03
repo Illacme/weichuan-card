@@ -154,7 +154,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now weichuan
 ### C. 完整生产（MySQL 原生 + systemd + HTTPS，不用 Docker）
 
 1. 安装 MySQL 8.0（`apt install mysql-server` 或 yum），建库 `weichuan`，手动应用迁移（命令见第 4 节，与 Docker 无关完全适用）。
-2. `go build -o weichuan-server ./cmd/server`，环境变量：`DB_DSN` / `JWT_KEY` / `ADMIN_USER` / `ADMIN_PASS` / `UPLOAD_BASE_URL` / `COOKIE_SECURE=true`。
+2. `go build -o weichuan-server ./cmd/server`，环境变量：`DB_DSN` / `JWT_KEY` / `ADMIN_USER` / `ADMIN_PASS` / `UPLOAD_BASE_URL` / `COOKIE_SECURE=true`。  
+   **更省事的替代**：`DB_DSN` / `JWT_KEY` / `ADMIN_PASS` 全留空，首次访问走安装向导（§2.2，二进制路径的前置与坑都在那里）。
 3. systemd 常驻（unit 同 B，`ExecStart` 换二进制、补 `Environment=` 行）。
 4. nginx 反代（同 B）+ HTTPS：前置 Caddy 自动证书（配置见第 5 节）。
 5. **MySQL parity 验证照常执行（第 6 节）**——与是否用 Docker 无关，生产用 MySQL 就必须跑。
@@ -407,6 +408,37 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
 容器里自重启失败（非 Linux、或进程被托管）→ 手动 `docker compose restart backend`，  
 页面会提示「重新检测」。想重新走一次向导：停服务后删掉 `data_data` 卷  
 （`docker compose down -v` 会连 MySQL / uploads 一起删，别在已上线环境用）。
+
+## 2.2 二进制 / 宝塔部署的安装向导（§2.1 同一套代码，前置不同）
+
+**向导不是 Docker 专属**：`DB_DSN` 留空（环境变量与配置文件都没有）时，
+`cmd/server` 首次访问同样落安装页——朗汇机电线上（宝塔 + Go 二进制）就是这么装的。
+§C/§D 里「手动设环境变量」的路线仍然可用，二选一即可，**别两边混写**
+（取值优先级 界面 > 环境变量 > 配置文件，混用只会在排障时多一层迷惑）。
+
+二进制路径的四个前置（Docker 里 compose 已替你做好，裸机要自己确认）：
+
+| 前置 | 不满足的表现 |
+| --- | --- |
+| `DB_DSN` 留空（`.env`/环境变量/配置文件三处都没有） | 给了值就不进向导，直接按该 DSN 连库 |
+| `CONFIG_FILE` 所在目录可写（缺省 `./data/runtime.env`，**相对 WorkingDirectory**） | 装到最后一步报「写入配置文件失败」——库已建好、超管已存在，要按报错提示手工补配置文件（见下方「不可重试」） |
+| `UPLOAD_DIR` 可写（勾选演示数据时） | 演示图片素材写不进去——**只降级为告警**，安装仍成功，后台补传即可 |
+| systemd unit 必须设 `WorkingDirectory` | 不设的话 runtime.env 会落到服务根目录 `/data/`，与备份口径对不上 |
+
+HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导会写 `COOKIE_SECURE=true`。
+漏勾的表现是「装完能登录，换浏览器 / 走反代后丢登录态」，极难关联到安装页这一步。
+
+装完**立即备份** `data/runtime.env`（0600 那份）：里面同时有 `JWT_KEY`、`ADMIN_PASS`
+（初始超管口令）与 `PII_ENC_KEY` 三把密钥——**PII 密钥丢了 = 库里全部敏感信息永远解不开**
+（没有 re-key 机制），且没有任何报错提醒你这件事。
+
+**安装中途失败不可重试**（新鲜库守卫：`admins` 表非空即拒）。这是刻意的——
+守卫若改成「清空重装」，重放安装页就成了重置系统漏洞。半配置状态（库已建、
+配置文件没写上）的正确处理：按报错信息手工创建配置文件后重启；
+演示数据写不全则不算失败，安装照常完成、warnings 里给原因。
+以上行为全部有测试钉住（`backend/internal/setup/install_test.go`：
+`TestInstallConfigFileWriteFailureNotRetryable` / `TestInstallDemoDataFailureDegradesToWarning` /
+`TestInstallKeepsExistingPIIKey`）。
 
 ## 3. 首次验证清单（按顺序过一遍）
 

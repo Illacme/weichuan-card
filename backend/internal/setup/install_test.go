@@ -254,6 +254,23 @@ func TestInstallValidationErrors(t *testing.T) {
 			InstallReq{Engine: "sqlite", SQLitePath: filepath.Join(dir, "e.db"), AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123", JWTKey: config.DefaultJWTKey},
 			"内置缺省密钥",
 		},
+		{
+			"用户名含空格",
+			InstallReq{Engine: "sqlite", SQLitePath: filepath.Join(dir, "u.db"), AdminUser: "ad min", AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123"},
+			"管理员用户名",
+		},
+		{
+			"用户名超长",
+			InstallReq{Engine: "sqlite", SQLitePath: filepath.Join(dir, "u2.db"), AdminUser: strings.Repeat("a", 65), AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123"},
+			"管理员用户名",
+		},
+		{
+			// 注意 validateAdmin 先 TrimSpace：尾部换行被静默剥掉（宽容），
+			// 只有**内部**换行才会触发拒绝——用例必须打在内部，打尾部会假绿。
+			"JWT 密钥含换行",
+			InstallReq{Engine: "sqlite", SQLitePath: filepath.Join(dir, "u3.db"), AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123", JWTKey: strings.Repeat("k", 8) + "\n" + strings.Repeat("k", 8)},
+			"JWT 密钥不能包含换行",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -394,7 +411,7 @@ func TestInstallEndpointEnvelope(t *testing.T) {
 
 	r := Engine()
 	body := `{"engine":"sqlite","sqlitePath":"` + dbPath +
-		`","adminUser":"admin","adminPass":"installer-pass-123","adminPass2":"installer-pass-123"}`
+		`","adminUser":"admin","adminPass":"installer-pass-123","adminPass2":"installer-pass-123","cookieSecure":true}`
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/install", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -424,6 +441,11 @@ func TestInstallEndpointEnvelope(t *testing.T) {
 	}
 	if _, err := os.Stat(cfgPath); err != nil {
 		t.Fatalf("配置文件应已写入：%v", err)
+	}
+	// 勾选「Cookie 强制 HTTPS」必须落盘：宝塔等 HTTPS 部署全靠它，
+	// 漏了的表现是「装完能登录，换个浏览器或走代理就丢登录态」，极难关联到安装页。
+	if data, rerr := os.ReadFile(cfgPath); rerr != nil || !strings.Contains(string(data), "COOKIE_SECURE=true") {
+		t.Fatalf("cookieSecure=true 应写进配置文件（err=%v）：\n%s", rerr, data)
 	}
 }
 
@@ -742,4 +764,139 @@ func TestInstallWithDemoData(t *testing.T) {
 	if !auth.CheckPassword(adm.PasswordHash, admPass) {
 		t.Fatal("回显的企业管理员口令与库里哈希不匹配")
 	}
+}
+
+// 配置文件写不进去（目录名被一个文件占位 → MkdirAll 必失败）→ 走到
+// 「数据库已初始化，但写入配置文件失败」这个最微妙的半配置分支：
+// 库就绪、超管已建，只差最后落盘一步。三件事必须同时成立：
+//  1) 报错且指明自救办法（手动创建配置文件）——运维能自己救回来；
+//  2) 不留残缺配置文件误导重启；
+//  3) **重试必被新鲜库守卫拦下**——「安装中途失败不可重试」的执行者就是它。
+//     若有人把守卫改成「清空重装」，重放安装页就成了重置漏洞，这条断言第一个红。
+func TestInstallConfigFileWriteFailureNotRetryable(t *testing.T) {
+	resetInstallState(t)
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("占位：同名文件让 MkdirAll 失败"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(blocker, "data", "runtime.env")
+	t.Setenv("CONFIG_FILE", cfgPath)
+	t.Setenv("DB_DSN", "")
+	t.Setenv("JWT_KEY", "")
+	t.Setenv("ADMIN_PASS", "")
+	t.Setenv(pii.KeyEnvVar, "")
+
+	dbPath := filepath.Join(dir, "weichuan.db")
+	req := InstallReq{
+		Engine: "sqlite", SQLitePath: dbPath,
+		AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123",
+	}
+	res, err := Install(req)
+	if err == nil {
+		t.Fatalf("配置目录不可写时安装应失败，实际 %+v", res)
+	}
+	if !strings.Contains(err.Error(), "写入配置文件失败") || !strings.Contains(err.Error(), "手动创建") {
+		t.Fatalf("错误信息应指明失败点与自救办法，实际：%v", err)
+	}
+	if res.OK {
+		t.Fatal("失败分支不应返回 OK=true")
+	}
+	if _, serr := os.Stat(cfgPath); serr == nil {
+		t.Fatal("写失败的配置文件不应存在（哪怕残缺的）")
+	}
+
+	// 数据库那一半是真实完成的：超管已建——错误信息才要说「手动创建配置文件」
+	// 而不是「从头再来」
+	db, _, oerr := dbopen.Open("sqlite://" + dbPath)
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	defer closeDB(db)
+	var admins int64
+	if err := db.Model(&model.Admin{}).Count(&admins).Error; err != nil {
+		t.Fatal(err)
+	}
+	if admins != 1 {
+		t.Fatalf("库应已初始化（超管已建），实际 %d 个管理员", admins)
+	}
+
+	// 运维看到报错的第一反应多半是「再点一次安装」——必须被守卫拦下并说明原因
+	if _, rerr := Install(req); rerr == nil || !strings.Contains(rerr.Error(), "已初始化") {
+		t.Fatalf("半配置状态重试应被新鲜库守卫拦下，实际：%v", rerr)
+	}
+}
+
+// 演示数据写失败必须**降级为告警**而不是让整个安装报错：
+// 此刻数据库与管理员都已就绪，报错重试会被新鲜库守卫挡住，运维会被卡死在
+// 「装不成、也进不去」的半路——这是「安装中途失败不可重试」的直接推论，
+// 也是 install.go 里「演示数据是额外赠品」注释的行为契约。
+func TestInstallDemoDataFailureDegradesToWarning(t *testing.T) {
+	resetInstallState(t)
+	_, dbPath := sqliteEnv(t)
+	// 把 UPLOAD_DIR 指向一个「已存在的文件」：demoseed 建素材目录的 MkdirAll 必失败
+	upBlocker := filepath.Join(t.TempDir(), "uploads")
+	if err := os.WriteFile(upBlocker, []byte("占位：不是目录"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPLOAD_DIR", upBlocker)
+
+	res, err := Install(InstallReq{
+		Engine: "sqlite", SQLitePath: dbPath,
+		AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123",
+		LoadDemoData: true,
+	})
+	if err != nil {
+		t.Fatalf("演示数据失败不应让安装失败：%v", err)
+	}
+	if !res.OK {
+		t.Fatalf("安装应判定成功：%+v", res)
+	}
+	if res.Demo == nil {
+		t.Fatal("应返回 Demo 结果（哪怕不完整），页面才有东西可展示")
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "演示数据未完全写入") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应包含「演示数据未完全写入」告警，实际：%v", res.Warnings)
+	}
+
+	// 核心数据不受牵连：企业已写入、能登录
+	db, _, oerr := dbopen.Open("sqlite://" + dbPath)
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	defer closeDB(db)
+	if n := tableCount(t, db, "company"); n != 1 {
+		t.Fatalf("企业应已写入，实际 %d 行", n)
+	}
+}
+
+// PII 密钥已由环境提供时**不写进配置文件**：install.go 刻意只在「现场签发」时落盘。
+// 已存在的钥匙不该被复制或覆盖——重装场景覆盖它会让存量密文变成天书（无 re-key）。
+// 测试密钥按仓库约定用 32 个相同字节的 base64：合法 32 字节、pii 包接受、熵极低一眼即假。
+func TestInstallKeepsExistingPIIKey(t *testing.T) {
+	resetInstallState(t)
+	cfgPath, dbPath := sqliteEnv(t)
+	const fakeKey = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+	t.Setenv(pii.KeyEnvVar, fakeKey)
+
+	if _, err := Install(InstallReq{
+		Engine: "sqlite", SQLitePath: dbPath,
+		AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123",
+	}); err != nil {
+		t.Fatalf("安装失败：%v", err)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "PII_ENC_KEY") {
+		t.Fatalf("环境已提供 PII 密钥时不应再写进配置文件：\n%s", data)
+	}
+	// 演示数据（如果装）将用环境里的钥加密——这里不装，只验证落盘行为
 }
