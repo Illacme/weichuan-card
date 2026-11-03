@@ -908,10 +908,13 @@ curl -sI "https://<域名>/uploads/wxacode/<staffID>.jpg?cb=$RANDOM" \
 > `max-age=31536000`，`public` 和 `immutable` 被去掉——这是 CF 行为，**不代表 nginx 配错**；
 > 判断 nginx 是否生效要看上面那个**强制 MISS** 的回源响应。
 
-#### ⚠️ 已知风险：404 也会被缓存一年（2026-11-03 实测）
+#### ✅ 已修复：404 也曾被缓存一年（2026-11-03 实测发现并当日修复）
 
-`/uploads/` 的 `immutable` 头是 `add_header ... always` 发的，**它无法区分状态码**——
-于是「文件不存在」这个 404 响应也带着 `max-age=31536000, immutable`，并被 CF 收进边缘缓存。
+> 仓库内最终配置见 `deploy/baota/nginx-site.live.conf`（文件头改动清单第 12 条）。
+> 行为验证：`tools/nginx-check`（§3.6 专门钉住本修复，含反向验证）。
+
+**问题**：`/uploads/` 的 `immutable` 头是 `add_header ... always` 发的，**它无法区分状态码**——
+「文件不存在」这个 404 响应也带着 `max-age=31536000, immutable`，并被 CF 收进边缘缓存。
 
 实测（同一个不存在的 URL 连打三次）：
 
@@ -927,26 +930,49 @@ curl -sSI "https://<域名>/uploads/zz-not-exist-$(date +%s).png" \
 之后再执行 `cmd/thumbbackfill` 回填，**文件已经存在了但客户端永远拿不到**——
 回填工具变得无效，而且没有任何报错。
 
-**当前状态**：本项目线上已执行完回填（所有存量图都有 `_thumb`），新上传的图由
-`Save` 同时写原图 + 缩略图，也不会缺 → **当前无实际伤害**。
-但换新环境 / 导入新素材 / 未来新增的图，仍可能踩到。
-
-**修法方向**（需要改 nginx 配置，等下次动线上时一并处理）：
-`add_header` 做不到按状态码区分，得用 `map $status $uploads_cache` 把 404 单独降级成
-`no-store`，或让后端在 404 时返回正确的 `Cache-Control`：
+**修复（2026-11-03，`nginx-site.live.conf`）**：`add_header` 做不到按状态码区分，
+用 `map $status $uploads_cache` 分流——`map` 放在 http 级（宝塔 include 进 http{}，
+写在 server 块外即可）：
 
 ```nginx
 map $status $uploads_cache {
-    404   "no-store";
-    default "public, max-age=31536000, immutable";
+    200      "public, max-age=31536000, immutable";
+    206      "public, max-age=31536000, immutable";   # 视频拖动的 Range 分片
+    304      "public, max-age=31536000, immutable";   # 协商缓存校验
+    404      "no-store";
+    410      "no-store";
+    500      "no-store";
+    502      "no-store";
+    503      "no-store";
+    504      "no-store";
+    default  "no-cache";   # 403 等兜底：可存但必须回源校验，绝不进长缓存
 }
-# 然后在 location /uploads/ 里用
+# location /uploads/ 里：
 add_header Cache-Control $uploads_cache always;
 ```
 
-> 注意 `map` 必须放在 `http` 块（站点配置文件里放 server 块外面），
-> 且这条 `location` 已有 `add_header`，server 级安全头不会继承——原本就要重声明那四个头，
-> 改成变量后**同样要保留它们**。
+比最初设想的「404 降级、default 保持 immutable」更进一步：**5xx 也降为 no-store**
+（后端故障期间不缓存任何东西），**default 兜底 no-cache**（没列到的状态码绝不进长缓存——
+宁可少缓存，不可错缓存）。
+
+验证（`tools/nginx-check`，83 项断言全绿）：
+
+```
+✓ /uploads/ 404 是 no-store      ✗（反向验证：摘掉 map 改回写死 → 恰好这两条红）
+✓ /uploads/ 404 不带 immutable
+✓ /uploads/ 200 仍是 immutable 长缓存（改动不伤正常路径）
+✓ wxacode 404 仍是 no-cache
+```
+
+**上线步骤与残余事项**：
+
+1. 把 `nginx-site.live.conf` 整体替换进宝塔（保存时宝塔自动 `nginx -t` + reload）。
+2. **已被 CF 缓存的旧 404 副本仍按旧 TTL 走**——修复只影响今后的 MISS。
+   本项目当前无实际伤害（回填已完成、无已知被锁死的 URL），无需全量 Purge；
+   若未来发现某个 URL「文件在但永远 404」，去 CF 面板对该 URL 手动 Purge 即可。
+3. `deploy/baota/nginx-site.conf`（参考版）的 `/uploads/` 本来就没写缓存头
+   （新部署默认不缓存，天然没有本雷）——参考版与线上版在这块是**有意不同**，
+   若要给参考版也补长缓存，须连 `map` 与四个安全头重声明一起搬。
 
 ### 5.3 首屏 TTFB：HTML 不缓存 = 每次全页加载都跨境回源
 

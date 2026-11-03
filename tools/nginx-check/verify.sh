@@ -54,6 +54,23 @@ for p in /uploads/.env /uploads/dump.sql; do
   chk "$p 仍被敏感文件规则拦掉" "$code" "404"
 done
 
+echo "== 3.6 /uploads/ 404 绝不能带长缓存头（否则 CF 把「文件不存在」锁死一年）=="
+# 对应线上事故：404 带 immutable → CF MISS→HIT 缓存一年 → thumbbackfill 补上文件也永远拿不到。
+# 修复：map $status $uploads_cache 把非 200/206/304 全部降级。
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/missing$$.png")
+chk "桩后端确实回了 404" "$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/uploads/missing$$.png")" "404"
+chk "/uploads/ 404 是 no-store"        "$h" "cache-control: no-store"
+bad "/uploads/ 404 不带 immutable"     "$h" "immutable"
+chk "/uploads/ 404 仍带 nosniff"       "$h" "x-content-type-options: nosniff"
+chk "/uploads/ 404 仍带 X-Frame-Options" "$h" "x-frame-options: SAMEORIGIN"
+chk "/uploads/ 404 仍带 X-Robots-Tag"  "$h" "x-robots-tag: noindex"
+# 200 路径不受影响（对照：改动不能伤到正常缓存）
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
+chk "/uploads/ 200 仍是 immutable 长缓存" "$h" "cache-control: public, max-age=31536000, immutable"
+# wxacode 本来就 no-cache（含 404），后端故障期间也不会被长缓存
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/wxacode/missing$$.jpg")
+chk "wxacode 404 仍是 no-cache" "$h" "cache-control: no-cache"
+
 echo "== 4. /api/ 反代头是否正确 =="
 j=$(curl -sk "${NOPROXY[@]}" $R "$B/api/x")
 chk "Host 保持原始域名" "$j" '"host":"weichuan.ziyuanxingqiu.cn"'
