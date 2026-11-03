@@ -30,9 +30,10 @@ describe('wxVideoModule 视频号块', () => {
     const html = mod.elemsToHtml[0].elemToHtml({ feedId: 'f_abc', channelId: 'sph_1' })
     expect(html).toBe('<wx-video feed-id="f_abc" channel-id="sph_1"></wx-video>')
 
-    // 渲染节点必须把三个值写进 data-*：编辑弹窗靠它们回填表单、并按原值定位目标节点。
+    // 渲染节点必须把全部值写进 data-*：编辑弹窗靠它们回填表单、并按原值定位目标节点。
     // 刻意不含节点 id——wangEditor 的 slate 节点没有 id 属性（getElemsByType 返回的 id
     // 是 findKey 动态包装的），elem.id 恒为 undefined，靠它定位会静默失败误走新增分支。
+    // videoType 缺省按 channels（存量内容无 type）。
     const vnode = mod.renderElems[0].renderElem({
       feedId: 'f_1',
       feedToken: 'tok_1',
@@ -40,10 +41,22 @@ describe('wxVideoModule 视频号块', () => {
     })
     expect(vnode.data.dataset).toEqual({
       wEType: WX_VIDEO_TYPE,
+      videoType: 'channels',
       feedId: 'f_1',
       feedToken: 'tok_1',
       channelId: 'sph_1',
+      vid: '',
+      src: '',
     })
+
+    // 腾讯视频 / MP4 档：占位块带类型，回填三字段完整
+    const vnodeTx = mod.renderElems[0].renderElem({ videoType: 'tencent', vid: 'v_1' })
+    expect(vnodeTx.data.dataset.videoType).toBe('tencent')
+    expect(vnodeTx.data.dataset.vid).toBe('v_1')
+    expect(vnodeTx.data.dataset.src).toBe('')
+    const vnodeMp4 = mod.renderElems[0].renderElem({ videoType: 'mp4', src: 'https://x/v.mp4' })
+    expect(vnodeMp4.data.dataset.videoType).toBe('mp4')
+    expect(vnodeMp4.data.dataset.src).toBe('https://x/v.mp4')
 
     // 跨主体：只有 feed-token 时序列化出 feed-token 属性
     const htmlCross = mod.elemsToHtml[0].elemToHtml({ feedToken: 'tok_cross' })
@@ -60,9 +73,12 @@ describe('wxVideoModule 视频号块', () => {
     const node1 = mod.parseElemsHtml[0].parseElemHtml(dom1)
     expect(node1).toEqual({
       type: WX_VIDEO_TYPE,
+      videoType: 'channels',
       feedId: '',
       feedToken: '',
       channelId: 'sph_old',
+      vid: '',
+      src: '',
       children: [{ text: '' }],
     })
     expect(mod.elemsToHtml[0].elemToHtml(node1)).toBe('<wx-video channel-id="sph_old"></wx-video>')
@@ -81,11 +97,60 @@ describe('wxVideoModule 视频号块', () => {
     const node2 = mod.parseElemsHtml[0].parseElemHtml(dom2)
     expect(node2).toEqual({
       type: WX_VIDEO_TYPE,
+      videoType: 'channels',
       feedId: 'f_xyz',
       feedToken: 'tok_xyz',
       channelId: 'sph_xyz',
+      vid: '',
+      src: '',
       children: [{ text: '' }],
     })
+
+    // ===== tencent / mp4 档：序列化契约 =====
+    // type 只在非 channels 档输出（保持「缺省即存量形态」，新旧两端独立演进互不拖累）；
+    // 各档只输出本类型的凭证属性，避免写出 type="tencent" feed-id=… 的混搭脏数据。
+    expect(
+      mod.elemsToHtml[0].elemToHtml({ videoType: 'tencent', vid: 'v_abc' })
+    ).toBe('<wx-video type="tencent" vid="v_abc"></wx-video>')
+    expect(
+      mod.elemsToHtml[0].elemToHtml({ videoType: 'mp4', src: 'https://cdn.x/v.mp4' })
+    ).toBe('<wx-video type="mp4" src="https://cdn.x/v.mp4"></wx-video>')
+    // 凭证为空的 tencent/mp4 块只输出 type（解析端守卫会把它当空块留给 rich-text）
+    expect(mod.elemsToHtml[0].elemToHtml({ videoType: 'tencent', vid: '' })).toBe(
+      '<wx-video type="tencent"></wx-video>'
+    )
+    // tencent 档绝不把 feed-id 带出去（即便节点上残留了别的类型属性）
+    expect(
+      mod.elemsToHtml[0].elemToHtml({ videoType: 'tencent', vid: 'v_1', feedId: 'f_stale' })
+    ).toBe('<wx-video type="tencent" vid="v_1"></wx-video>')
+
+    // ===== tencent / mp4 档：反解析契约 =====
+    // type 全量读入、未知 type 按 channels；属性跨类型全读，手工改过 HTML 的块更可抗
+    const domTx = {
+      getAttribute: (k: string) => (k === 'type' ? 'tencent' : k === 'vid' ? 'v_9' : null),
+    }
+    const nodeTx = mod.parseElemsHtml[0].parseElemHtml(domTx)
+    expect(nodeTx).toEqual({
+      type: WX_VIDEO_TYPE,
+      videoType: 'tencent',
+      feedId: '',
+      feedToken: '',
+      channelId: '',
+      vid: 'v_9',
+      src: '',
+      children: [{ text: '' }],
+    })
+    const domMp4 = {
+      getAttribute: (k: string) => (k === 'type' ? 'mp4' : k === 'src' ? 'https://y/w.mp4' : null),
+    }
+    const nodeMp4 = mod.parseElemsHtml[0].parseElemHtml(domMp4)
+    expect(nodeMp4.videoType).toBe('mp4')
+    expect(nodeMp4.src).toBe('https://y/w.mp4')
+    // 未知 type 值 → channels（与小程序端 parseRich 同口径）
+    const domUnknown = {
+      getAttribute: (k: string) => (k === 'type' ? 'future' : k === 'feed-id' ? 'f_1' : null),
+    }
+    expect(mod.parseElemsHtml[0].parseElemHtml(domUnknown).videoType).toBe('channels')
 
     // ===== 末尾视频块：光标落点 + 序列化剥尾巴 =====
     // 视频号块是 void，位于文档末尾时光标无处落脚（用户反馈：点不到块后面、没法继续输入）。

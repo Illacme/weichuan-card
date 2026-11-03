@@ -978,7 +978,7 @@ CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
 ```
 
 ## 待补全（下一步，均为可选增强）
-- 富文本中视频号块渲染：已落地 `rich-video` 组件 + `utils/richtext.ts` 鲁棒解析（见 miniprogram README）
+- 富文本视频块渲染（视频号 / 腾讯视频 / MP4 直链三来源，`<wx-video type=…>` 区分）：已落地 `rich-video` 组件 + `utils/richtext.ts` 鲁棒解析（见 miniprogram README）
 - 存储增强已落地：直传预签名 / CDN 刷新 / 私有桶限时签名（见上文「存储增强」）
 - 内容模型软删除已落地（见「安全加固」），如需「回收站 / 恢复」可在此基础上扩展
 - 可观测性已落地：RequestID / AccessLog / Metrics + 黑名单定期清理（启动时一次 + 后台每 6h）+ 备份脚本（见「安全加固」与仓库根 `scripts/backup.sh`）

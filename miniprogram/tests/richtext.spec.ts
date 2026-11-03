@@ -18,7 +18,16 @@ describe('parseRich', () => {
     const segs = parseRich('<p>a</p><wx-video feed-id="feed_1"></wx-video><p>b</p>')
     expect(segs).toEqual<RichSegment[]>([
       { type: 'html', content: '<p>a</p>' },
-      { type: 'video', content: 'feed_1', feedId: 'feed_1', feedToken: '', channelId: '' },
+      {
+        type: 'video',
+        content: 'feed_1',
+        feedId: 'feed_1',
+        feedToken: '',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
       { type: 'html', content: '<p>b</p>' },
     ])
   })
@@ -26,15 +35,122 @@ describe('parseRich', () => {
   it('跨主体格式（feed-token）被拆成独立 video 片段', () => {
     const segs = parseRich('<wx-video feed-token="tok_1"></wx-video>')
     expect(segs).toEqual<RichSegment[]>([
-      { type: 'video', content: 'tok_1', feedId: '', feedToken: 'tok_1', channelId: '' },
+      {
+        type: 'video',
+        content: 'tok_1',
+        feedId: '',
+        feedToken: 'tok_1',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
     ])
   })
 
   it('存量格式（只有 channel-id）仍能被解析，回退旧行为而不是整块消失', () => {
     const segs = parseRich('<wx-video channel-id="sph_1"></wx-video>')
     expect(segs).toEqual<RichSegment[]>([
-      { type: 'video', content: 'sph_1', feedId: '', feedToken: '', channelId: 'sph_1' },
+      {
+        type: 'video',
+        content: 'sph_1',
+        feedId: '',
+        feedToken: '',
+        channelId: 'sph_1',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
     ])
+  })
+
+  it('type="tencent"：vid 作为主标识与取片凭证', () => {
+    const segs = parseRich('<p>a</p><wx-video type="tencent" vid="v_abc"></wx-video><p>b</p>')
+    expect(segs).toEqual<RichSegment[]>([
+      { type: 'html', content: '<p>a</p>' },
+      {
+        type: 'video',
+        content: 'v_abc',
+        feedId: '',
+        feedToken: '',
+        channelId: '',
+        videoType: 'tencent',
+        vid: 'v_abc',
+        src: '',
+      },
+      { type: 'html', content: '<p>b</p>' },
+    ])
+  })
+
+  it('type="mp4"：src 作为主标识与播放地址', () => {
+    const segs = parseRich('<wx-video type="mp4" src="https://cdn.example.com/v.mp4"></wx-video>')
+    expect(segs).toEqual<RichSegment[]>([
+      {
+        type: 'video',
+        content: 'https://cdn.example.com/v.mp4',
+        feedId: '',
+        feedToken: '',
+        channelId: '',
+        videoType: 'mp4',
+        vid: '',
+        src: 'https://cdn.example.com/v.mp4',
+      },
+    ])
+  })
+
+  it('tencent 缺 vid / mp4 缺 src 时不拆分（凭证不全渲染不出任何东西）', () => {
+    // 两种空块都留给 rich-text 当文本，避免切出空白 video 段割裂前后 html
+    expect(parseRich('<wx-video type="tencent"></wx-video>')).toEqual<RichSegment[]>([
+      { type: 'html', content: '<wx-video type="tencent"></wx-video>' },
+    ])
+    expect(parseRich('<wx-video type="mp4" src=""></wx-video>')).toEqual<RichSegment[]>([
+      { type: 'html', content: '<wx-video type="mp4" src=""></wx-video>' },
+    ])
+  })
+
+  it('未知 type 值按 channels 处理（向前兼容不炸存量）', () => {
+    const segs = parseRich('<wx-video type="future" feed-id="f_1"></wx-video>')
+    expect(segs).toEqual<RichSegment[]>([
+      {
+        type: 'video',
+        content: 'f_1',
+        feedId: 'f_1',
+        feedToken: '',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
+    ])
+  })
+
+  it('三种来源混排互不干扰', () => {
+    const segs = parseRich(
+      'a<wx-video feed-id="f_a"></wx-video>b' +
+        '<wx-video type="tencent" vid="v_b"></wx-video>c' +
+        '<wx-video type="mp4" src="https://x/v.mp4"></wx-video>d'
+    )
+    expect(segs.map((s) => s.type)).toEqual([
+      'html',
+      'video',
+      'html',
+      'video',
+      'html',
+      'video',
+      'html',
+    ])
+    expect(segs.map((s) => s.content)).toEqual([
+      'a',
+      'f_a',
+      'b',
+      'v_b',
+      'c',
+      'https://x/v.mp4',
+      'd',
+    ])
+    expect(segs[1].videoType).toBe('channels')
+    expect(segs[3].videoType).toBe('tencent')
+    expect(segs[5].videoType).toBe('mp4')
   })
 
   it('优先级 feed-id > feed-token > channel-id', () => {
@@ -50,7 +166,16 @@ describe('parseRich', () => {
   it('兼容自闭合写法且属性顺序无关', () => {
     const segs = parseRich('<wx-video data-x="1" feed-id="feed_2" />')
     expect(segs).toEqual<RichSegment[]>([
-      { type: 'video', content: 'feed_2', feedId: 'feed_2', feedToken: '', channelId: '' },
+      {
+        type: 'video',
+        content: 'feed_2',
+        feedId: 'feed_2',
+        feedToken: '',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
     ])
   })
 
@@ -99,7 +224,16 @@ describe('buildWxVideo', () => {
   it('buildWxVideo 的产出可被 parseRich 还原', () => {
     const segs = parseRich(buildWxVideo('f_roundtrip'))
     expect(segs).toEqual<RichSegment[]>([
-      { type: 'video', content: 'f_roundtrip', feedId: 'f_roundtrip', feedToken: '', channelId: '' },
+      {
+        type: 'video',
+        content: 'f_roundtrip',
+        feedId: 'f_roundtrip',
+        feedToken: '',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
     ])
   })
 })

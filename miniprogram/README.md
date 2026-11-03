@@ -11,7 +11,7 @@ miniprogram/
 │   ├── request.ts      # wx.request 封装（自动注入 empToken、统一 code 处理）
 │   ├── tenant.ts       # 多租户：企业独立版锁定（pinnedCompanyId）/ 平台模式扫码分发与粘滞
 │   ├── types.ts        # 与后端 JSON 对齐的 TS 类型
-│   ├── richtext.ts     # <wx-video> 富文本拆分（视频号块 ↔ channel-video）
+│   ├── richtext.ts     # <wx-video> 富文本拆分（视频块三来源 ↔ rich-video：视频号/腾讯视频/MP4）
 │   ├── wechat.ts       # 微信身份：wx.login 换 openid（可缓存）/ wxLoginCode（一次性 code，一键登录用）
 │   ├── privacy.ts      # 微信隐私授权：查 getPrivacySetting / 需否判定 / 等待与结算 / ensurePrivacy(page)
 │   ├── contact.ts      # 保存名片到通讯录（员工名片区 / 底部栏共用）

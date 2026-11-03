@@ -70,13 +70,22 @@ describe('project/detail 页', () => {
     ])
   })
 
-  it('正文按 parseRich 切成 html / 视频号片段', async () => {
+  it('正文按 parseRich 切成 html / 视频片段', async () => {
     mocks.request.mockResolvedValueOnce({ code: 0, data: detail() })
     const p = await page({ id: '7' })
 
     expect(p.data.segments).toEqual([
       { type: 'html', content: '<p>正文</p>' },
-      { type: 'video', content: 'f1', feedId: 'f1', feedToken: '', channelId: '' },
+      {
+        type: 'video',
+        content: 'f1',
+        feedId: 'f1',
+        feedToken: '',
+        channelId: '',
+        videoType: 'channels',
+        vid: '',
+        src: '',
+      },
     ])
   })
 

@@ -13,7 +13,7 @@
   <view class="rich">
     <block wx:for="{{segments}}" wx:key="index">
       <rich-text wx:if="{{item.type === 'html'}}" nodes="{{item.content}}" />
-      <rich-video wx:else feedId="{{item.feedId}}" feedToken="{{item.feedToken}}" channelId="{{item.channelId}}" />
+      <rich-video wx:else videoType="{{item.videoType}}" feedId="{{item.feedId}}" feedToken="{{item.feedToken}}" channelId="{{item.channelId}}" vid="{{item.vid}}" src="{{item.src}}" staffId="{{staffId}}" />
     </block>
   </view>
   <view class="album" wx:if="{{project.album.length}}">

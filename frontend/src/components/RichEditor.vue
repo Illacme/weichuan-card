@@ -1,9 +1,9 @@
 <template>
   <div class="rich-editor">
     <div class="rich-toolbar">
-      <el-button size="small" :icon="VideoCamera" @click="openVideoDialog()">插入视频号块</el-button>
+      <el-button size="small" :icon="VideoCamera" @click="openVideoDialog()">插入视频块</el-button>
       <span class="tip">
-        视频号块序列化为 &lt;wx-video feed-id="…" feed-token="…" channel-id="sph_…"&gt;；
+        视频块序列化为 &lt;wx-video&gt;（视频号 / 腾讯视频 / MP4 直链三种来源，见弹窗内说明）；
         <b>点击已有块可重新编辑</b>；块在末尾时会自动留一个空段落，方便在它后面继续输入
       </span>
     </div>
@@ -22,32 +22,74 @@
 
     <el-dialog
       v-model="videoDialogVisible"
-      :title="editingMode ? '编辑视频号块' : '插入视频号块'"
-      width="520px"
+      :title="editingMode ? '编辑视频块' : '插入视频块'"
+      width="560px"
       append-to-body
     >
       <el-form :model="videoForm" label-width="110px">
-        <el-form-item label="feedId">
-          <el-input v-model="videoForm.feedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
+        <el-form-item label="视频来源">
+          <el-radio-group v-model="videoForm.videoType">
+            <el-radio-button value="channels">视频号</el-radio-button>
+            <el-radio-button value="tencent">腾讯视频</el-radio-button>
+            <el-radio-button value="mp4">MP4 直链</el-radio-button>
+          </el-radio-group>
           <div class="field-hint">
-            决定播哪一条视频。<b>同主体</b>填这个即可（可自动播放）。与 feed-token 二选一。
+            三种来源都渲染为同一个 &lt;wx-video&gt; 块；点已有块编辑时类型随块回填。
           </div>
         </el-form-item>
-        <el-form-item label="feed-token">
-          <el-input v-model="videoForm.feedToken" placeholder="跨主体才填：MP 平台开权限后移动端复制" />
-          <div class="field-hint">
-            <b>跨主体才需要</b>：视频号与我们小程序不同主体时 feed-id 无效，必须改用它。
-            代价是<b>强制不能自动播放</b>（用户需点一下）。
-            <span v-if="videoForm.feedId.trim()" class="field-warn">已填 feedId，本项不会生效。</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="视频号 ID">
-          <el-input v-model="videoForm.channelId" placeholder="sph 开头，可留空" />
-          <div class="field-hint">
-            选填，仅作留档。视频号 ID 是 <b>sph</b> 开头（<code>gh_</code> 是公众号 ID）。
-            只填它而不填 feedId 时，小程序端只能展示视频号主页。
-          </div>
-        </el-form-item>
+
+        <!-- 视频号：feedId / feed-token / channel-id 三件套 -->
+        <template v-if="videoForm.videoType === 'channels'">
+          <el-form-item label="feedId">
+            <el-input v-model="videoForm.feedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
+            <div class="field-hint">
+              决定播哪一条视频。<b>同主体</b>填这个即可（可自动播放）。与 feed-token 二选一。
+            </div>
+          </el-form-item>
+          <el-form-item label="feed-token">
+            <el-input v-model="videoForm.feedToken" placeholder="跨主体才填：MP 平台开权限后移动端复制" />
+            <div class="field-hint">
+              <b>跨主体才需要</b>：视频号与我们小程序不同主体时 feed-id 无效，必须改用它。
+              代价是<b>强制不能自动播放</b>（用户需点一下）。
+              <span v-if="videoForm.feedId.trim()" class="field-warn">已填 feedId，本项不会生效。</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="视频号 ID">
+            <el-input v-model="videoForm.channelId" placeholder="sph 开头，可留空" />
+            <div class="field-hint">
+              选填，仅作留档。视频号 ID 是 <b>sph</b> 开头（<code>gh_</code> 是公众号 ID）。
+              只填它而不填 feedId 时，小程序端只能展示视频号主页。
+            </div>
+          </el-form-item>
+        </template>
+
+        <!-- 腾讯视频：vid 一项 -->
+        <template v-else-if="videoForm.videoType === 'tencent'">
+          <el-form-item label="视频 vid">
+            <el-input v-model="videoForm.vid" placeholder="填 vid，或直接粘贴 v.qq.com 播放页地址" />
+            <div class="field-hint">
+              vid 是 v.qq.com 播放页地址 <code>/page/</code> 与 <code>.html</code> 之间那段；
+              粘贴完整播放页地址可自动提取。视频须在腾讯视频上<b>公开可播</b>（自己创作号上传或他人非会员视频）。
+            </div>
+          </el-form-item>
+          <el-form-item label="部署前提">
+            <div class="field-hint">
+              腾讯视频块依赖小程序的<b>腾讯视频插件</b>：需部署方在「系统设置 → 功能开关」开启腾讯视频档、
+              且插件已在 MP 后台授权。未开启的部署上这块<b>不会渲染</b>——不确定时先用 MP4 直链。
+            </div>
+          </el-form-item>
+        </template>
+
+        <!-- MP4 直链：src 一项 -->
+        <template v-else>
+          <el-form-item label="MP4 地址">
+            <el-input v-model="videoForm.src" placeholder="https://…/video.mp4" />
+            <div class="field-hint">
+              可用上传到「素材库 / 对象存储」的 MP4，或客户自备 CDN 直链。
+              <b>正式版</b>要求该域名在小程序后台「开发设置 → 业务域名」白名单内，否则真机上播不出来。
+            </div>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="videoDialogVisible = false">取消</el-button>
@@ -161,26 +203,41 @@ function handleChange(editor: IDomEditor) {
   emit('update:modelValue', editor.getHtml())
 }
 
-// ===== 视频号块：新增 / 编辑 =====
+// ===== 视频块：新增 / 编辑（三种来源共用一个 <wx-video> 块） =====
+type VideoKind = 'channels' | 'tencent' | 'mp4'
+interface VideoValues {
+  videoType: VideoKind
+  feedId: string
+  feedToken: string
+  channelId: string
+  vid: string
+  src: string
+}
+const EMPTY_VIDEO: VideoValues = {
+  videoType: 'channels',
+  feedId: '',
+  feedToken: '',
+  channelId: '',
+  vid: '',
+  src: '',
+}
+
 const videoDialogVisible = ref(false)
-const videoForm = reactive({ feedId: '', feedToken: '', channelId: '' })
+const videoForm = reactive<VideoValues>({ ...EMPTY_VIDEO })
 // true = 编辑已有块（按点击时的原值定位）；false = 新增
 const editingMode = ref(false)
-// 点击时的原值三元组：确认时用它全文匹配定位目标节点
-const editingOld = reactive({ feedId: '', feedToken: '', channelId: '' })
+// 点击时的原值全集：确认时用它全文匹配定位目标节点
+const editingOld = reactive<VideoValues>({ ...EMPTY_VIDEO })
 
-function openVideoDialog(feedId = '', feedToken = '', channelId = '', editing = false) {
-  videoForm.feedId = feedId
-  videoForm.feedToken = feedToken
-  videoForm.channelId = channelId
+function openVideoDialog(values: Partial<VideoValues> = {}, editing = false) {
+  const v = { ...EMPTY_VIDEO, ...values }
+  Object.assign(videoForm, v)
   editingMode.value = editing
-  editingOld.feedId = feedId
-  editingOld.feedToken = feedToken
-  editingOld.channelId = channelId
+  Object.assign(editingOld, v)
   videoDialogVisible.value = true
 }
 
-// 编辑区点击委托：命中视频号块就带出现值打开弹窗。
+// 编辑区点击委托：命中视频块就带出现值打开弹窗。
 // 不用 renderElem 的 on.click——wangEditor 注册的 snabbdom 模块只保证 props / dataset，
 // 事件绑定不在此列，走 DOM 委托最稳。
 function onEditorClick(e: MouseEvent) {
@@ -188,44 +245,55 @@ function onEditorClick(e: MouseEvent) {
   if (!(t instanceof HTMLElement)) return
   const block = t.closest('.wx-video-block')
   if (!block) return
+  const tAttr = (block.getAttribute('data-video-type') || 'channels') as VideoKind
   openVideoDialog(
-    block.getAttribute('data-feed-id') || '',
-    block.getAttribute('data-feed-token') || '',
-    block.getAttribute('data-channel-id') || '',
+    {
+      videoType: tAttr === 'tencent' || tAttr === 'mp4' ? tAttr : 'channels',
+      feedId: block.getAttribute('data-feed-id') || '',
+      feedToken: block.getAttribute('data-feed-token') || '',
+      channelId: block.getAttribute('data-channel-id') || '',
+      vid: block.getAttribute('data-vid') || '',
+      src: block.getAttribute('data-src') || '',
+    },
     true
   )
 }
 
-// 按三属性全文匹配定位视频号块。
+// 从用户输入提取腾讯视频 vid：完整播放页地址自动取片段，裸 vid 直接用。
+// v.qq.com 播放页形态：/x/page/<vid>.html、/cover/<系列>/<vid>.html；
+// vid 本身是字母数字组合，其余输入一律不认（宁可让用户改粘贴完整地址，不猜）。
+function extractTencentVid(input: string): string {
+  const raw = input.trim()
+  if (!raw) return ''
+  const m = raw.match(/\/(?:page|cover)\/(?:[^/]+\/)?([^/.]+)\.html/)
+  if (m) return m[1]
+  if (/^[A-Za-z0-9]+$/.test(raw)) return raw
+  return ''
+}
+
+// 按全属性（videoType + 六值）全文匹配定位视频块。
 // 不能用节点 id：wangEditor 的 slate 节点没有 id 属性（getElemsByType 返回的 id 是
 // findKey 动态包装的），elem.id 恒为 undefined，靠它定位会静默失败误走新增分支。
-function findVideoPath(
-  editor: IDomEditor,
-  feedId: string,
-  feedToken: string,
-  channelId: string
-): number[] | null {
+function findVideoPath(editor: IDomEditor, ref: VideoValues): number[] | null {
   const entries = SlateEditor.nodes(editor, {
     at: [],
     match: (n: any) =>
       n.type === WX_VIDEO_TYPE &&
-      (n.feedId || '') === feedId &&
-      (n.feedToken || '') === feedToken &&
-      (n.channelId || '') === channelId,
+      (n.videoType || 'channels') === ref.videoType &&
+      (n.feedId || '') === ref.feedId &&
+      (n.feedToken || '') === ref.feedToken &&
+      (n.channelId || '') === ref.channelId &&
+      (n.vid || '') === ref.vid &&
+      (n.src || '') === ref.src,
   } as any)
   for (const [, path] of entries) return path as number[]
   return null
 }
 
-// 视频号块是 void 块，插入后光标停在块上，用户没法直接在它后面继续打字。
+// 视频块是 void 块，插入后光标停在块上，用户没法直接在它后面继续打字。
 // 把光标移到块后面那个节点（末尾时 wxVideoModule 的 normalizeNode 已补好空段落）。
-function moveCaretAfterVideo(
-  editor: IDomEditor,
-  feedId: string,
-  feedToken: string,
-  channelId: string
-) {
-  const path = findVideoPath(editor, feedId, feedToken, channelId)
+function moveCaretAfterVideo(editor: IDomEditor, ref: VideoValues) {
+  const path = findVideoPath(editor, ref)
   if (!path) return
   const nextIndex = path[0] + 1
   if (nextIndex >= (editor.children || []).length) return
@@ -237,24 +305,47 @@ function moveCaretAfterVideo(
 }
 
 async function confirmVideo() {
-  const feedId = videoForm.feedId.trim()
-  const feedToken = videoForm.feedToken.trim()
-  const channelId = videoForm.channelId.trim()
-  // feed-id（同主体）与 feed-token（跨主体）至少要有一个，否则播不出任何东西
-  if (!feedId && !feedToken) {
-    ElMessage.warning('请填写 feedId（同主体）或 feed-token（跨主体）')
-    return
+  const kind = videoForm.videoType
+  // 按类型归一化出要写入节点的完整值集：未选中类型的字段一律清空，
+  // 这样「编辑时切换类型」能把旧类型的残留属性一并抹掉，不会出现
+  // 「type 改成 mp4 了但 feedId 还挂在节点上」的脏数据。
+  const values: VideoValues = {
+    videoType: kind,
+    feedId: kind === 'channels' ? videoForm.feedId.trim() : '',
+    feedToken: kind === 'channels' ? videoForm.feedToken.trim() : '',
+    channelId: kind === 'channels' ? videoForm.channelId.trim() : '',
+    vid: '',
+    src: '',
   }
+
+  if (kind === 'channels') {
+    // feed-id（同主体）与 feed-token（跨主体）至少要有一个，否则播不出任何东西
+    if (!values.feedId && !values.feedToken) {
+      ElMessage.warning('请填写 feedId（同主体）或 feed-token（跨主体）')
+      return
+    }
+  } else if (kind === 'tencent') {
+    // 支持直接粘贴播放页地址：能提取就回填表单，用户看得见提取结果
+    const vid = extractTencentVid(videoForm.vid)
+    if (!vid) {
+      ElMessage.warning('请填写腾讯视频 vid，或粘贴 v.qq.com 播放页地址')
+      return
+    }
+    values.vid = vid
+    videoForm.vid = vid
+  } else {
+    const src = videoForm.src.trim()
+    if (!/^https?:\/\//i.test(src)) {
+      ElMessage.warning('请填写以 http(s):// 开头的 MP4 直链地址')
+      return
+    }
+    values.src = src
+  }
+
   const editor = editorRef.value
   if (!editor) return
 
-  const node = {
-    type: WX_VIDEO_TYPE,
-    feedId,
-    feedToken,
-    channelId,
-    children: [{ text: '' }],
-  } as any
+  const node = { type: WX_VIDEO_TYPE, ...values, children: [{ text: '' }] } as any
 
   if (editingMode.value) {
     // 就地更新：先按「点击时的原值」全文搜索拿到目标节点的确切 path，再带 at 更新。
@@ -262,18 +353,11 @@ async function confirmVideo() {
     // 两个都不能省：
     //  1. 不按原值匹配、而是匹配节点 id —— wangEditor 的 slate 节点没有 id 属性，必然落空；
     //  2. setNodes 不传 at —— 会缺省落到 editor.selection 上，slate 在 range 边界拆分节点
-    //     并把视频号属性带给拆出的新节点，表现为「保存后凭空多出一个块」。
+    //     并把视频块属性带给拆出的新节点，表现为「保存后凭空多出一个块」。
     // 找不到目标（弹窗打开期间内容被并发改动等极端情况）退化为插入，至少不丢用户输入。
-    const targetPath = findVideoPath(
-      editor,
-      editingOld.feedId,
-      editingOld.feedToken,
-      editingOld.channelId
-    )
+    const targetPath = findVideoPath(editor, editingOld)
     if (targetPath) {
-      SlateTransforms.setNodes(editor, { feedId, feedToken, channelId } as any, {
-        at: targetPath,
-      } as any)
+      SlateTransforms.setNodes(editor, { ...values } as any, { at: targetPath } as any)
     } else {
       editor.insertNode(node)
     }
@@ -283,7 +367,7 @@ async function confirmVideo() {
   }
 
   // 无论新增还是编辑，都把光标放到块之后：末尾场景以前点不到块后面，现在能直接续写。
-  moveCaretAfterVideo(editor, feedId, feedToken, channelId)
+  moveCaretAfterVideo(editor, values)
 
   videoDialogVisible.value = false
   editor.updateView?.()
@@ -322,23 +406,44 @@ onBeforeUnmount(() => {
 .editor-wrap :deep(.w-e-toolbar) {
   border-bottom: 1px solid #dcdfe6;
 }
-/* 编辑区：视频号块占位样式 */
+/* 编辑区：视频块占位样式——三种来源共一个 class，用 data-video-type 区分色 */
 .rich-editor :deep(.wx-video-block) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin: 4px 0;
   padding: 6px 10px;
-  background: #f0f9eb;
-  border: 1px dashed #67c23a;
   border-radius: 4px;
-  color: #67c23a;
   font-size: 13px;
   cursor: pointer;
+  /* 缺省（视频号）：绿 */
+  background: #f0f9eb;
+  border: 1px dashed #67c23a;
+  color: #67c23a;
 }
 .rich-editor :deep(.wx-video-block:hover) {
-  background: #e8f6df;
   border-style: solid;
+}
+.rich-editor :deep(.wx-video-block:hover[data-video-type='channels']) {
+  background: #e8f6df;
+}
+/* 腾讯视频：蓝 */
+.rich-editor :deep(.wx-video-block[data-video-type='tencent']) {
+  background: #ecf5ff;
+  border-color: #409eff;
+  color: #409eff;
+}
+.rich-editor :deep(.wx-video-block[data-video-type='tencent']:hover) {
+  background: #d9ecff;
+}
+/* MP4 直链：橙 */
+.rich-editor :deep(.wx-video-block[data-video-type='mp4']) {
+  background: #fdf6ec;
+  border-color: #e6a23c;
+  color: #e6a23c;
+}
+.rich-editor :deep(.wx-video-block[data-video-type='mp4']:hover) {
+  background: #faecd8;
 }
 .field-hint {
   margin-top: 4px;

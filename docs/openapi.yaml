@@ -4635,7 +4635,9 @@ components:
         content:
           type: string
           description: >-
-            富文本，视频号块为 <wx-video feed-id="…" feed-token="…" channel-id="sph_…"></wx-video>。
+            富文本。视频块为 <wx-video …></wx-video>，type 属性区分三种来源（缺省 channels）：
+            type="tencent" vid="…"（腾讯视频，插件取片）；type="mp4" src="…"（MP4 直链，域名需在小程序业务域名白名单）；
+            无 type 时为视频号块 <wx-video feed-id="…" feed-token="…" channel-id="sph_…"></wx-video>，
             优先级 feed-id（同主体，可自动播放）> feed-token（跨主体，强制不能自动播放）>
             channel-id（视频号 ID，sph 开头，仅在两者都缺失时回退展示视频号主页，兼容存量内容）
         sort:

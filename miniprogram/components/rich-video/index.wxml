@@ -1,6 +1,35 @@
 <view class="rich-video-wrap">
-  <!-- 同主体：feed-id（视频号助手 → 动态管理复制），可自动播放 -->
-  <channel-video wx:if="{{feedId}}" feed-id="{{feedId}}" class="rich-video" />
+  <!-- MP4 直链（type="mp4"）：标准 video 播放，src 域名在正式版需加入「业务域名」白名单。
+       bindplay 接播放埋点（video_play，实例级去重）。 -->
+  <video
+    wx:if="{{videoType === 'mp4' && src}}"
+    src="{{src}}"
+    class="rich-video"
+    object-fit="contain"
+    show-fullscreen-btn
+    enable-progress-gesture
+    bindplay="onVideoPlay"
+    binderror="onVideoError"
+  />
+
+  <!-- 腾讯视频（type="tencent"）：插件 vid 取片，原位播放、无视频号角标。
+       插件须在 app.json 静态声明（未声明时该标签渲染不出来，块静默消失——
+       编辑器侧应提示客户「部署未开启腾讯视频档时勿用」，见组件 ts 文件头）。
+       playerid 固定即可：本组件不做手动播放控制，不存在跨实例取 TxvContext 的场景。 -->
+  <txv-video
+    wx:elif="{{videoType === 'tencent' && vid}}"
+    vid="{{vid}}"
+    playerid="richVideo"
+    class="rich-video"
+    object-fit="contain"
+    use-poster="{{true}}"
+    controls="{{true}}"
+    bindplay="onVideoPlay"
+    binderror="onVideoError"
+  />
+
+  <!-- 视频号块（无 type / type="channels"，存量内容兼容）：三凭证优先级递减 -->
+  <channel-video wx:elif="{{feedId}}" feed-id="{{feedId}}" class="rich-video" />
 
   <!-- 跨主体：feed-id 官方明确仅同主体生效，不同主体必须改用 feed-token。
        代价是强制 autoplay=false（只能显示封面让用户点），故排在同主体之后。 -->
