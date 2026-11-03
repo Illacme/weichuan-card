@@ -66,7 +66,10 @@ func StatusOf(e *Entitlement, now time.Time) ExpiryStatus {
 	st := ExpiryStatus{
 		ExpiresAt: e.ExpiresAt,
 		DaysLeft:  DaysBetween(now, e.ExpiresAt),
-		Expired:   e.IsExpired(),
+		// 必须用同一个基准：DaysLeft 上面刚按 now 算完，这里若改用 e.IsExpired()
+		// （内部 time.Now()）就会与 DaysLeft 差一个基准，出现「还剩 0 天但已过期」
+		// 的自相矛盾状态。见 Entitlement.IsExpiredAt 的注释。
+		Expired: e.IsExpiredAt(now),
 	}
 	switch {
 	case st.Expired:

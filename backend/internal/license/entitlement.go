@@ -21,7 +21,25 @@ type Entitlement struct {
 
 // IsExpired 是否已过期（零值 ExpiresAt 视为永不过期）。
 func (e *Entitlement) IsExpired() bool {
-	return !e.ExpiresAt.IsZero() && time.Now().After(e.ExpiresAt)
+	return e.IsExpiredAt(time.Now())
+}
+
+// IsExpiredAt 是否在给定时刻 now 已过期（零值 ExpiresAt 视为永不过期）。
+//
+// 为什么要有这个「带基准时刻」的版本：StatusOf 需要在**同一个基准**上同时算出
+// 「还剩几天」与「是否已过期」。若过期判定内部写死 time.Now()，两者基准就可能
+// 差一秒——最典型的翻车是「今天 23:59:59 到期」的授权：
+//
+//	now = 今天 09:00，ExpiresAt = 今天 23:59:59
+//	  DaysLeft 按传入的 now 算 → 0（还没到期）
+//	  Expired 按内部 time.Now() 算 → true（已过期）
+//
+// 于是同一个 StatusOf 里，level 判成 expired、text 却说「今天到期」。
+// 更糟的是这种不一致**只在写测试那天不明显**：测试一旦把 now 固定成某个历史日期，
+// 内部 time.Now() 仍在往前走，于是这条用例从「写完当天绿」变成「过了那天必红」——
+// 一条会随日历自己爆炸的用例，比没有用例更危险：它让人以为边界被钉住了。
+func (e *Entitlement) IsExpiredAt(now time.Time) bool {
+	return !e.ExpiresAt.IsZero() && now.After(e.ExpiresAt)
 }
 
 // SeatsUnlimited 席位是否不限制。

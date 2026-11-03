@@ -56,6 +56,58 @@ func TestStatusOfNilIsNotExpired(t *testing.T) {
 	require.Equal(t, "", st.ExpiresAtDate(), "不过期时不该出现 0001-01-01")
 }
 
+// 回归：StatusOf 必须完全由传入的 now 决定，不得偷用 time.Now()。
+//
+// 这条用例是**日期无关**的：它把 now 设成一个遥远的过去（2001 年），
+// 于是「今天 23:59:59 到期」在真实时钟里必然已经过期。
+// 若 StatusOf 内部用 time.Now() 判过期，这条用例在任何时候跑都会 FAIL；
+// 而只断言 daysLeft/level 的旧写法，在写测试当天恰好是绿的，
+// 过了那天就自己爆炸——一条会随日历走红的用例比没有用例更危险。
+func TestStatusOfUsesGivenNowNotWallClock(t *testing.T) {
+	// 2001 年的 now：这个授权在真实世界里早就过期一万年了
+	now := time.Date(2001, 1, 1, 9, 0, 0, 0, time.Local)
+	exp := time.Date(2001, 1, 1, 23, 59, 59, 0, time.Local)
+
+	st := StatusOf(&Entitlement{ExpiresAt: exp}, now)
+	require.Equal(t, ExpiryLevelUrgent, st.Level, "按传入的 now 算，此刻尚未过期")
+	require.Equal(t, 0, st.DaysLeft)
+	require.False(t, st.Expired, "Expired 必须跟 DaysLeft 用同一个基准，否则两者自相矛盾")
+	require.Equal(t, "授权今天（2001-01-01）到期", st.Text())
+}
+
+// 反向断言：同一个函数在「真实时钟已经过去」的基准下，必须判成已过期。
+// 与上一条成对，证明 StatusOf 的输出确实由 now 驱动，而非被墙钟钳住。
+func TestStatusOfRespectsNowInBothDirections(t *testing.T) {
+	exp := time.Date(2001, 1, 1, 23, 59, 59, 0, time.Local)
+
+	// 基准早于到期 → 未过期
+	st := StatusOf(&Entitlement{ExpiresAt: exp}, time.Date(2001, 1, 1, 9, 0, 0, 0, time.Local))
+	require.False(t, st.Expired)
+
+	// 基准晚于到期 → 已过期（哪怕只晚 1 纳秒）
+	st2 := StatusOf(&Entitlement{ExpiresAt: exp}, time.Date(2001, 1, 2, 0, 0, 0, 0, time.Local))
+	require.True(t, st2.Expired)
+	require.Equal(t, ExpiryLevelExpired, st2.Level)
+}
+
+// IsExpiredAt 是 StatusOf 的单一时间基准来源，必须与 IsExpired 在「当下」一致。
+func TestIsExpiredAtMatchesIsExpiredAtNow(t *testing.T) {
+	// 未来的授权：两种算法都应判未过期
+	future := &Entitlement{ExpiresAt: time.Now().Add(24 * time.Hour)}
+	require.False(t, future.IsExpired())
+	require.False(t, future.IsExpiredAt(time.Now()))
+
+	// 过去的授权：都应判已过期
+	past := &Entitlement{ExpiresAt: time.Now().Add(-24 * time.Hour)}
+	require.True(t, past.IsExpired())
+	require.True(t, past.IsExpiredAt(time.Now()))
+
+	// 零值：永不过期
+	never := &Entitlement{}
+	require.False(t, never.IsExpired())
+	require.False(t, never.IsExpiredAt(time.Now()))
+}
+
 // DaysBetween 必须按日历天算：到期时间统一是 23:59:59，若用 Hours()/24，
 // 上午看会得到 0.6 天——四舍五入成 1，客户理解成「还有一天」实际当天就停服。
 func TestDaysBetweenUsesCalendarDays(t *testing.T) {
