@@ -11,6 +11,10 @@ node_modules/
 # ── 构建产物 ──
 dist/
 **/dist/
+# 本机验证构建用的输出目录（vite build --outDir dist-check）——
+# 真构建 dist/ 会清掉几十个旧 hash 文件触发沙箱删除保护，验证一律走 dist-check
+dist-check/
+**/dist-check/
 
 # ── 运行时数据 / 上传目录 ──
 uploads/

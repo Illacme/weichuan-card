@@ -83,7 +83,7 @@
 | # | 缺口 | 现状（证据） | 建议动作 |
 |---|---|---|---|
 | D1 | **lint 门禁（✅ 已落地）** | 后端新增 `backend/.golangci.yml`（v2 配置，跟着 Go module 走）：`errcheck / govet / ineffassign / staticcheck / unused` 五个——**只留「报出来一定是问题」的静默失败类，不留风格类**；CI 按官方安装脚本取固定版本 v2.15.0（不用 action：action 大版本与 linter 大版本是两套编号）。前端新增 `eslint.config.mjs`（ESLint 9 flat）：未使用变量/导入 + Vue 模板硬错误 + 少数 JS 陷阱；`vue-tsc` 仍是类型门禁，lint 不重复做类型检查。**存量已清零**：29 处后端（20 处 `defer Close()` / 清理路径的显式 `_ =` + 说明、2 处 ShouldBindJSON 按「理由可选」显式丢弃、1 处 ineffassign、1 处未使用的测试 helper）+ 25 处前端（真未使用的导入/变量）全部修掉，现在两边都是 0 issue | 静默失败没人发现（`errcheck` 最典型：丢弃的 error 编译过、vet 也过） | **已落地**。刻意不启用：gofmt（存量文件有 Go 版本导致的注释排版差异，一开就是上百处噪音）、`no-explicit-any`（测试桩里大量 any，逼着加 disable 反而淹没有效信号）、`vue/multi-word-component-names`（组件名与路由一一对应） |
-| D2 | **依赖漏洞扫描（✅ 已落地，先非阻塞）** | CI 新增 `vuln` job：`govulncheck ./...`（按**实际调用到的函数**判定，比单纯比对版本准）+ `npm audit --omit=dev`（只看运行时依赖，构建链告警量极大且不进产物）。job 级 `continue-on-error: true` | 依赖链上有 CVE 没人知道 | **已落地**。为什么先不当门禁：相当一部分 CVE 在本项目里根本调不到那条路径，修它要升大版本；一上来就红灯＝红灯常态化＝没人看。现在先让风险**看得见**，基线清干净再摘掉 `continue-on-error` | 
+| D2 | **依赖漏洞扫描（✅ 已落地，2026-11-03 起转正式门禁）** | CI 新增 `vuln` job：`govulncheck ./...`（按**实际调用到的函数**判定，比单纯比对版本准）+ `npm audit --omit=dev`（只看运行时依赖，构建链告警量极大且不进产物）。~~job 级 `continue-on-error: true`~~ **已摘除**：2026-11-03 运行时基线清零（follow-redirects GHSA-mrwp-f3q8-3g9p 升 1.16.2，`npm audit --omit=dev` = 0），按本行原定计划转阻塞 | 依赖链上有 CVE 没人知道 | **已落地并转门禁**。口径注意：门禁只看**运行时依赖**；`npm ci` 装包时打印的全量树摘要（含 dev 工具链，如 vitest 的 tinypool critical）只是提示行、不影响退出码——dev 依赖不进产物，修它要升 vitest@5 大版本，噪音不应阻塞合并。之前 CI 上「26 vulnerabilities」红的全貌：那行其实是 `npm ci` 的摘要，真正让 job 失败的只有 follow-redirects 这 1 条 high | 
 | D3 | **CI 构建镜像（✅ 已落地）** | CI 新增 `images` job：用 buildx 分别 build `backend/` 与 `frontend/` 两个 Dockerfile（`push: false`，带 gha 缓存） | `go build` / `npm run build` 绿只代表代码能编译，Dockerfile 里的 COPY 路径、多阶段产物名、运行镜像缺 tzdata/wget 这类问题只有真 build 才暴露——全是「本地能跑、客户装不上」 | **已落地** | 
 | D4 | **端到端冒烟（✅ 已落地，非阻塞）** | 新增 `scripts/e2e_smoke.sh`：真起一个进程（临时目录 + 临时端口，不碰现有数据），走完 **安装向导建库 → 登录拿 httpOnly Cookie → 建企业 → 配企业信息 → 建员工 → 小程序侧 `/api/card` 读回刚写的数据**，七步逐步 PASS/FAIL 并带退出码。CI 新增 `e2e-smoke` job（非阻塞） | 单测与接口测试**结构上覆盖不到**「真进程 + 自重启 + 两端衔接」这一层 | **已落地**。本机实测全绿（七步全 PASS）。为什么非阻塞：它依赖起真实进程与端口可用，runner 上偶发环境性抖动，先积累稳定性数据再转门禁 | 
 
@@ -997,3 +997,58 @@ PII 密钥**刻意不做**成可在界面修改的配置，与 db_dsn/jwt_key �
   系统不会（也无法）阻止启动——旧密文在读取时报「解密失败」，属显式失败而非静默。
   真正的密钥轮换（re-key）是独立特性，未排期。
 
+
+## 第十六轮实施记录（E3 gzip 兜底 + D2 基线清零转门禁，2026-11-03）
+
+### 1. E3 收尾：站点级 gzip 兜底（live.conf 补齐与参考版的差距）
+
+**缺口**：E3 主体（frontend/nginx.conf 的 gzip + /assets 强缓存）早已落地，但**线上用的
+是宝塔站点配置**（`nginx-site.live.conf`），其中没有 gzip 段——压缩全靠宝塔面板
+「性能调整 → gzip」的全局开关。全局依赖意味着：换机器 / 重装面板 / 有人关掉开关，
+本站立刻裸奔，且没人会想到「站点配置里本来就没写」。参考版 `nginx-site.conf` 有兜底段，
+live 版漏了——两边本该一致。
+
+**做法**：live.conf 补上与参考版相同的 gzip 段（`gzip on` / `gzip_vary` /
+`gzip_min_length 1024` / `gzip_proxied any` / `comp_level 6` / `gzip_types` 只列文本与
+ttf/otf——png/jpg/webp/mp4/woff2 不进，白烧 CPU）。同名指令「重新定义即覆盖」，
+全局开着时行为一致，全局消失时本站不裸奔。文件头改动清单加第 13 条。
+
+**验证**：`tools/nginx-check` 断言 83 → **87 项全绿**，新增 §6.5 四条：
+>1024B 文本资产压缩、Vary 头、小响应不压缩（min_length 生效反证）、png 不压缩
+（gzip_types 语义）。线上实测压缩本就生效（HTML/JSON/assets 均 `content-encoding: gzip`），
+本改动是把「生效」从面板全局收编为站点自持。
+
+**E3 剩余为纯 CF 面板手工项**（runbook §5.2/§5.3 已有完整规则表与验证命令，代码侧无剩余）：
+① Browser Cache TTL 改 Respect Existing Headers（否则 /uploads immutable 被覆盖成 4h）；
+② HTML 边缘短缓存 60s 规则（TTFB 1.1s → 0.2-0.3s，前置：发版不清空 assets/）。
+
+### 2. D2 收尾：运行时基线清零，vuln job 转正式门禁
+
+**真相反驳了表象**：CI 上一直显示的「26 vulnerabilities (22 moderate, 2 high, 2 critical)」
+是 **`npm ci` 装包时顺带打印的全量树审计摘要（含 dev 工具链）**——它不决定退出码。
+真正让 job 失败的是 `npm audit --omit=dev` 的 **1 条 high**：
+follow-redirects GHSA-mrwp-f3q8-3g9p（跨域重定向丢弃 sensitiveHeaders）。
+「26 个」与「1 个」在 CI 日志里上下相邻，极容易误读成同一件事。
+
+**做法**：
+1. `npm audit fix`（官方源）→ follow-redirects 1.16.1 → 1.16.2，lockfile 仅 9+/21-，
+   package.json 零改动。`npm audit --omit=dev` = **0 vulnerabilities**。
+2. 摘掉 vuln job 的 `continue-on-error: true`，job 名去「（非阻塞）」——按本表原定
+   「基线清干净再摘」的计划执行。门禁口径写在注释里：只看运行时依赖；
+   `npm ci` 的全量摘要（dev 侧 tinypool critical 要升 vitest@5、minimatch/editorconfig
+   链等 25 条）是提示行不算红，dev 依赖不进产物，不为它阻塞合并。
+
+**验证**：
+
+| 项 | 结果 |
+|---|---|
+| `npm audit --omit=dev`（官方源） | 0 vulnerabilities |
+| eslint | 0 issue |
+| `vue-tsc --noEmit` | 干净 |
+| vitest 全量 | 76 文件 / 1119 例全绿 |
+| `vite build --outDir dist-check` | 成功 |
+
+### 3. 仍然开放的项（本轮划掉后）
+
+- C4 水平扩展（需 Redis）、binlog 回放未演练、#163 真机验收（清单已备）、
+  #231 向导测试与文档、E3 的两项 CF 面板手工配置。

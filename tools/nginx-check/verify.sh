@@ -105,6 +105,19 @@ h=$(curl -sk -D- -o /dev/null -H 'Accept: text/html' "${NOPROXY[@]}" $R "$B/")
 chk "/ 落到 index.html 且 no-cache" "$h" "Cache-Control: no-cache"
 chk "/ 返回 SPA 壳" "$(curl -sk -H 'Accept: text/html' "${NOPROXY[@]}" $R "$B/")" "SHELL"
 
+echo "== 6.5 gzip 站点级兜底 =="
+# 线上压缩目前靠宝塔面板全局开关，站点配置里这份是兜底——它失效没人会察觉，
+# 所以必须在行为断言里钉住：Accept-Encoding: gzip 的 >1024B 文本资产必须压缩。
+h=$(curl -sk -D- -o /dev/null -H 'Accept-Encoding: gzip' "${NOPROXY[@]}" $R "$B/assets/big-abc123.css")
+chk ">1024B 文本资产被 gzip 压缩"  "$h" "content-encoding: gzip"
+chk "gzip_vary 带上 Vary"          "$h" "vary: accept-encoding"
+# 小响应（<gzip_min_length）不压缩，反证 min_length 真的在生效（而不是无脑全压）
+h=$(curl -sk -D- -o /dev/null -H 'Accept-Encoding: gzip' "${NOPROXY[@]}" $R "$B/api/x")
+bad "小响应不被压缩（min_length 生效）" "$h" "content-encoding: gzip"
+# 已压缩格式（png）即使 >1024B 也不进 gzip_types——不烧无谓 CPU
+h=$(curl -sk -D- -o /dev/null -H 'Accept-Encoding: gzip' "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
+bad "png 不被 gzip（不在 gzip_types）" "$h" "content-encoding: gzip"
+
 echo "== 7. 404 与 SPA 兜底不互相污染 =="
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/assets/nope.js")
 chk "缺失的 assets 返回 404（非 HTML）" "$code" "404"

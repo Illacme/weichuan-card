@@ -432,9 +432,11 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
   安全头的**可粘贴片段**在 `deploy/baota/security-headers.snippet.conf`（每个带 `add_header` 的
   location 都要重复声明整组，一处都别漏，尤其 `location = /index.html` 与 `location ~* ^/assets/`
   ——nginx 的 `add_header` 继承陷阱：location 里只要有一个 `add_header`，server 级的整组都不再继承）。
-  **判断 gzip 是否生效只能看实测的 `content-encoding`，不能看站点配置文件**：宝塔的 gzip
-  是面板 `性能调整 → gzip` 的全局开关（写进 `nginx.conf` 的 `http` 块），站点配置文件里
-  本来就搜不到，据此断言「没开 gzip」是错的。若 HEAD 请求没返回 `content-encoding`
+  **判断 gzip 是否生效只能看实测的 `content-encoding`，不能只看面板开关**：gzip 过去
+  只由宝塔面板 `性能调整 → gzip` 的全局开关提供（写进 `nginx.conf` 的 `http` 块），站点配置
+  里搜不到——2026-11-03 起 `nginx-site.live.conf` 已补**站点级 gzip 兜底段**（对齐参考版）：
+  换机器 / 重装面板 / 全局开关被关时本站不再裸奔。全局开着时两者行为一致（同名指令
+  重新定义即覆盖），判断依据仍是实测 `content-encoding`。若 HEAD 请求没返回 `content-encoding`
   （部分 CDN 对 HEAD 不压缩），改用 `curl -sS -o /dev/null -D- --compressed <url>` 复测。
   缺长缓存则每次刷新几十个资源都要回源校验——这是「感觉整体很慢」最常见的原因。
 - [ ] **全站不可索引**（后台被搜索引擎收录 = 白送一份后台结构图）：

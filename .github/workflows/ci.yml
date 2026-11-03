@@ -262,16 +262,15 @@ jobs:
           # 不自动上传 SARIF 到 code scanning，避免额外权限；命中即让本步失败即可
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
-  # ───────── 依赖漏洞扫描（**非阻塞**，先只做可见性） ─────────
-  # 为什么先不设门禁：govulncheck 报的是「依赖链上有 CVE」，其中相当一部分
-  # 在本项目里根本调不到那条代码路径，而修它往往要升大版本（连带一堆行为变化）。
-  # 一上来就当门禁，结果通常是「红灯常态化 → 没人看 → 等于没有」。
-  # 现在的目标是先让风险**看得见**（每次 PR 都能在 Checks 里点到），
-  # 等基线清干净了再摘掉 continue-on-error 转正式门禁。
+  # ───────── 依赖漏洞扫描（**正式门禁**，2026-11-03 起阻塞） ─────────
+  # 演进：先非阻塞只做可见性 → 2026-11-03 运行时基线清零（npm audit --omit=dev = 0，
+  # follow-redirects GHSA-mrwp-f3q8-3g9p 修掉），按既定计划摘掉 continue-on-error。
+  # 注意口径：门禁只看 **运行时依赖**（--omit=dev）；npm ci 装包时打印的全量树摘要
+  # （含 dev 工具链的告警，如 tinypool/minimatch）只是提示行，不影响退出码、也不算红——
+  # dev 依赖不进产物，修它们要升大版本（vitest@5），噪音不应阻塞合并。
   vuln:
-    name: 依赖漏洞扫描（非阻塞）
+    name: 依赖漏洞扫描
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
