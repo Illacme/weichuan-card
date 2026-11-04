@@ -242,6 +242,62 @@ func TestGetWXACodeUnlimitRejectsBadSceneBeforeCallingWX(t *testing.T) {
 	require.Equal(t, 0, f.hits("/wxa/getwxacodeunlimit"))
 }
 
+// 环境版本与 check_path 必须真的进请求体：微信按 env_version 出码，
+// 且 check_path 的语义是「page 是否存在于该版本」。正式版未发布时
+// release + check_path=true 必然 41030（验收期出不了码的根因）。
+func TestGetWXACodeSendsEnvVersionAndCheckPath(t *testing.T) {
+	var raw string
+	f := newFakeWX(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/token":
+			writeJSON(t, w, map[string]any{"access_token": "tk-1", "expires_in": 7200})
+		case "/wxa/getwxacodeunlimit":
+			b, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			raw = string(b)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write(jpegBytes)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+
+	_, err := GetWXACode(testCfg, WXACodeParams{
+		Scene: "staffId=1", Page: "pages/index/index",
+		EnvVersion: "trial", CheckPath: false,
+	})
+	require.NoError(t, err)
+	require.Contains(t, raw, `"env_version":"trial"`)
+	require.Contains(t, raw, `"check_path":false`)
+	require.Equal(t, 1, f.hits("/wxa/getwxacodeunlimit"))
+
+	// 非法 / 空环境版本一律回 release（配错的表现是「扫出来打不开」，比报错更难查）
+	resetTokenCache()
+	_, err = GetWXACode(testCfg, WXACodeParams{Scene: "staffId=1", Page: "pages/index/index", EnvVersion: "prod"})
+	require.NoError(t, err)
+	require.Contains(t, raw, `"env_version":"release"`)
+}
+
+// 41030 的文案必须点明「page 在该环境版本里不存在」：微信原文只有 invalid page，
+// 运维照着去改 page 路径会越改越远（本项目 page 一直是 pages/index/index，没写错）。
+func TestGetWXACodeHintsOnInvalidPage(t *testing.T) {
+	newFakeWX(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/token":
+			writeJSON(t, w, map[string]any{"access_token": "tk-1", "expires_in": 7200})
+		default:
+			writeJSON(t, w, map[string]any{"errcode": 41030, "errmsg": "invalid page"})
+		}
+	})
+
+	_, err := GetWXACode(testCfg, WXACodeParams{
+		Scene: "staffId=1", Page: "pages/index/index", EnvVersion: "release", CheckPath: true,
+	})
+	require.ErrorContains(t, err, "41030")
+	require.ErrorContains(t, err, "正式版")
+	require.ErrorContains(t, err, "体验版")
+}
+
 // access_token 失效（40001/42001）必须刷新后重试一次：这是生产上最高频的失败
 // ——token 在别处被刷新（多实例 / 后台手工调用）后本地缓存就成了废票。
 func TestGetWXACodeUnlimitRetriesOnExpiredToken(t *testing.T) {

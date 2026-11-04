@@ -106,7 +106,7 @@ func TestWXACodeRateLimitedPerIP(t *testing.T) {
 	used := []int64{880001, 880002, 880003}
 	orig := getWXACode
 	calls := 0
-	getWXACode = func(wechat.Config, string, string) ([]byte, error) {
+	getWXACode = func(wechat.Config, wechat.WXACodeParams) ([]byte, error) {
 		calls++
 		return []byte("fake-jpeg"), nil
 	}

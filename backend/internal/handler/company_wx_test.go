@@ -126,7 +126,7 @@ func TestWxacodeUsesTenantCredential(t *testing.T) {
 	// 捕获真正传给微信的凭据
 	var got wechat.Config
 	origGen := getWXACode
-	getWXACode = func(wc wechat.Config, scene, page string) ([]byte, error) {
+	getWXACode = func(wc wechat.Config, _ wechat.WXACodeParams) ([]byte, error) {
 		got = wc
 		return []byte("fake-jpeg"), nil
 	}

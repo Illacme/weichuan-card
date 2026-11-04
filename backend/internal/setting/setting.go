@@ -156,6 +156,16 @@ var registry = []def{
 	{Key: "sign_get_ttl_minutes", Group: "upload", Type: "int", Value: "30",
 		Name: "私有桶下载链接有效期",
 		Desc: "私有存储里的文件，生成的临时访问链接能用多久（分钟）。填 0 或负数会回到默认 30 分钟。"},
+	{Key: "wxacode_env_version", Group: "wechat", Type: "string", Value: "release",
+		Name:     "小程序码环境版本",
+		Options:  []string{"release", "trial", "develop"},
+		Validate: oneOf("release", "trial", "develop"),
+		// 为什么需要这一项：微信的 getwxacodeunlimit 按「环境版本」出码，并且会校验
+		// page 是否存在于**该版本**（check_path 默认 true）。小程序还没发布正式版时，
+		// 任何 release 码都会回 41030 invalid page——验收 / 内测阶段就卡在这里。
+		// 出码时若选 trial/dev，同时关掉 page 校验（体验版与现网的页面集合不同，
+		// 校验只会误拒），见 internal/wechat/wechat.go 的 WXACodeParams。
+		Desc: "生成的码指向哪个版本的小程序：release=正式版（默认，要求小程序已发布，否则报 41030）、trial=体验版（**正式版未发布时选它**，仅体验成员可打开）、develop=开发版（开发者工具调试用）。"},
 	{Key: "wxacode_ttl_hours", Group: "wechat", Type: "int", Value: "720",
 		Name: "小程序码缓存时长",
 		Desc: "生成的小程序码图片缓存多久（小时），到期后会自动重新生成。未设置或填 0 会用部署环境的默认值（默认 720 小时，约 30 天）。"},

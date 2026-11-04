@@ -37,6 +37,10 @@ type wxacodeEntry struct {
 	key       string    // 对象键，如 wxacode/12.jpg
 	publicURL string    // 公开形态 URL（BaseURL/key），公开桶或本地私有兜底用
 	expAt     time.Time // 二维码内容过期时间（按 cfg.WxacodeTTL）
+	// env 生成这个码时用的环境版本。缓存命中要求它等于当前设置——
+	// 否则后台把「正式版 / 体验版」切换后，已缓存的码仍指向旧版本，要等
+	// 720 小时 TTL 到期才生效，表现为「设置改了没反应」。
+	env string
 }
 
 // wxacodePut 写入缓存并在接近上限时先淘汰：先清已过期的，仍满则按 expAt 淘汰最早的一半。
@@ -75,10 +79,29 @@ func wxacodeEvictLocked() {
 	}
 }
 
-// getWXACode 小程序码生成器的间接层：生产指向 wechat.GetWXACodeUnlimit。
+// getWXACode 小程序码生成器的间接层：生产指向 wechat.GetWXACode。
 // 抽这一层的唯一目的是可测——微信接口要外网 + 真凭据，注入后才能在单测里覆盖
 // 「固定对象名覆盖写 → CDN 刷新」这条支线（见 TestCDNRefreshOnOverwritePaths）。
-var getWXACode = wechat.GetWXACodeUnlimit
+var getWXACode = wechat.GetWXACode
+
+// wxacodeParams 组装出码参数：page 默认首页，环境版本取后台设置。
+//
+// check_path 与 env_version 必须联动：微信的 check_path 语义是「page 是否存在于
+// **该环境版本**」。正式版未发布时 release + check_path=true 必然 41030
+// （验收期就是这个坑），而体验版 / 开发版的页面集合与现网不同，校验只会误拒，
+// 所以非 release 一律不校验。设置项见 sys_setting.wxacode_env_version。
+func wxacodeParams(scene, page string) wechat.WXACodeParams {
+	env := strings.ToLower(strings.TrimSpace(setting.GetString("wxacode_env_version", "release")))
+	if env != "trial" && env != "develop" {
+		env = "release"
+	}
+	return wechat.WXACodeParams{
+		Scene:      scene,
+		Page:       page,
+		EnvVersion: env,
+		CheckPath:  env == "release",
+	}
+}
 
 // RegisterWechat 小程序码接口：按 staffId 生成（写入当前存储驱动）小程序码，返回可访问 URL
 // 海报合成放在小程序端 canvas；后端只负责产出小程序码图片，存到 local/minio/oss 后返回访问 URL。
@@ -164,6 +187,9 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		if fromMark == "poster" {
 			scene += "&from=poster"
 		}
+		// 出码参数先算出来：缓存命中判断要用到 env（见 wxacodeEntry.env），
+		// 不能等真正生成时才算。
+		p := wxacodeParams(scene, page)
 
 		// 重新生成的码（不论命中/未命中缓存都会走到这里），e 在函数作用域内声明，
 		// 缓存命中的提前返回分支不会用到它，故放在外层。
@@ -177,7 +203,10 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 			wxacodeMu.Lock()
 			e, ok = wxacodeCache[staffID]
 			wxacodeMu.Unlock()
-			if ok && time.Now().Before(e.expAt) {
+			// 命中条件里必须带 env：后台把正式版切成体验版后，旧 entry 指向的是
+			// 另一个版本的码，直接给它用户会扫到「非预期版本」（且要等 TTL 到期才
+			// 自愈）。env 不同就当作未命中，重新生成。
+			if ok && time.Now().Before(e.expAt) && e.env == p.EnvVersion {
 				url, err := resolveWxacodeURL(e, cfg, up)
 				if err != nil {
 					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
@@ -189,7 +218,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		}
 
 		// 2) 重新生成：调微信 -> 写入当前存储驱动 -> 缓存
-		b, err := getWXACode(wc, scene, page)
+		b, err := getWXACode(wc, p)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 			return
@@ -210,7 +239,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 			return
 		}
-		e = wxacodeEntry{key: key, publicURL: publicURL, expAt: time.Now().Add(wxacodeTTL(cfg))}
+		e = wxacodeEntry{key: key, publicURL: publicURL, expAt: time.Now().Add(wxacodeTTL(cfg)), env: p.EnvVersion}
 		// 仅默认码写入缓存；海报码（fromMark=poster）每次重生成、不缓存，
 		// 避免与默认码共用 staffID 键相互覆盖（见上方缓存读取处的注释）。
 		if fromMark == "" {

@@ -1233,7 +1233,7 @@ func TestCDNRefreshOnOverwritePaths(t *testing.T) {
 
 	// 小程序码要调微信外网接口：注入假生成器，只覆盖「生成 → 覆盖写 → 刷新」这条支线
 	origGen := getWXACode
-	getWXACode = func(wechat.Config, string, string) ([]byte, error) { return []byte("fake-jpeg"), nil }
+	getWXACode = func(wechat.Config, wechat.WXACodeParams) ([]byte, error) { return []byte("fake-jpeg"), nil }
 	t.Cleanup(func() { getWXACode = origGen })
 
 	ref := &fakeRefresher{}
@@ -1270,6 +1270,71 @@ func TestCDNRefreshOnOverwritePaths(t *testing.T) {
 	require.Equal(t, 3, ref.calls, "失败也算一次尝试（有 [WARN] 日志可查）")
 }
 
+// TestWxacodeEnvVersionSettingDrivesParams 环境版本设置必须真的传到微信请求参数里，
+// 并且 check_path 随之联动。
+//
+// 背景（2026-11-04）：小程序未发布正式版时，release + check_path=true 必然
+// 41030 invalid page——验收期出不了码。设置项 `wxacode_env_version` 就是给这个
+// 窗口用的：切 trial 后不再校验 page（体验版与现网页面集合不同，校验只会误拒）。
+// 这条用例钉住「设置 → 参数」这段，避免设置项变成改了没反应的空开关。
+func TestWxacodeEnvVersionSettingDrivesParams(t *testing.T) {
+	cfg := config.Config{
+		UploadDir:     t.TempDir(),
+		UploadBaseURL: "http://final",
+		StorageDriver: "minio",
+		StoragePublic: true,
+		JWTKey:        "test-jwt-key",
+		AdminUser:     "admin",
+		AdminPass:     "admin123456",
+		WXAppID:       "wx-appid-for-test",
+		WXAppSecret:   "wx-secret-for-test",
+	}
+	origGen := getWXACode
+	var got []wechat.WXACodeParams
+	getWXACode = func(_ wechat.Config, p wechat.WXACodeParams) ([]byte, error) {
+		got = append(got, p)
+		return []byte("fake-jpeg"), nil
+	}
+	t.Cleanup(func() { getWXACode = origGen })
+
+	r := buildEngine(t, newSeedDB(t), cfg, fakeUploader{}, &fakeRefresher{})
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	const staffID = 990003 // 偏僻 ID：小程序码缓存是进程级全局 map
+	t.Cleanup(func() {
+		wxacodeMu.Lock()
+		delete(wxacodeCache, staffID)
+		wxacodeMu.Unlock()
+	})
+
+	// 缺省：release + 校验 page
+	_, body := c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	require.Len(t, got, 1)
+	require.Equal(t, "release", got[0].EnvVersion)
+	require.True(t, got[0].CheckPath, "正式版必须校验 page，否则配错页面要等用户扫码才发现")
+
+	// 同版本重复请求应命中缓存（不重复打微信）
+	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	require.Len(t, got, 1, "同环境重复请求必须命中缓存")
+
+	// 切体验版：不再校验 page（否则未发布正式版时又是 41030）；
+	// 而且**不需要手工清缓存**——entry 记了生成时的 env，与当前设置不一致即视为未命中，
+	// 否则后台改完设置要等 720 小时 TTL 才生效（「改了没反应」）。
+	_, body = c.do("PUT", "/api/admin/settings", map[string]string{
+		"wxacode_env_version": "trial",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"], "写入设置失败：%v", body)
+
+	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	require.Len(t, got, 2, "切换环境版本后应自动重新生成，而不是等 TTL")
+	require.Equal(t, "trial", got[1].EnvVersion)
+	require.False(t, got[1].CheckPath, "体验版不该校验 page")
+}
+
 // TestPosterWxacodeUsesDistinctObjectKey 海报码与普通码必须落在**不同对象**上。
 //
 // 两者 scene 不同（普通码 staffId=N，海报码 &from=poster），共用
@@ -1290,8 +1355,8 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 	}
 	origGen := getWXACode
 	var gotScenes []string
-	getWXACode = func(_ wechat.Config, scene, _ string) ([]byte, error) {
-		gotScenes = append(gotScenes, scene)
+	getWXACode = func(_ wechat.Config, p wechat.WXACodeParams) ([]byte, error) {
+		gotScenes = append(gotScenes, p.Scene)
 		return []byte("fake-jpeg"), nil
 	}
 	t.Cleanup(func() { getWXACode = origGen })

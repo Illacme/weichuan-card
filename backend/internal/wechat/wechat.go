@@ -149,9 +149,40 @@ func refreshToken(cfg Config) (string, error) {
 	return accessToken(cfg)
 }
 
-// GetWXACodeUnlimit 生成无数量限制的小程序码（scene 携带参数），返回图片二进制
+// WXACodeParams 小程序码参数。
+//
+// EnvVersion 与 CheckPath 是绑在一起的：微信的 check_path 是「page 是否存在于
+// **该环境版本**」。release 下 page 必须已发布，否则 41030 invalid page——
+// 这正是「小程序还没上线就想出码」时会撞的墙（2026-11-04：朗汇机电验收期）。
+// 体验版 / 开发版的页面集合与现网不同，校验只会误拒，故非 release 时不校验。
+type WXACodeParams struct {
+	Scene      string
+	Page       string
+	EnvVersion string // release（默认）/ trial（体验版）/ develop（开发版）
+	CheckPath  bool
+}
+
+// GetWXACode 生成小程序码（scene 携带参数），返回图片二进制。
+func GetWXACode(cfg Config, p WXACodeParams) ([]byte, error) {
+	return getWXACode(cfg, p, true)
+}
+
+// GetWXACodeUnlimit 兼容入口：正式版 + 校验 page（历史行为）。
 func GetWXACodeUnlimit(cfg Config, scene, page string) ([]byte, error) {
-	return getWXACodeUnlimit(cfg, scene, page, true)
+	return GetWXACode(cfg, WXACodeParams{Scene: scene, Page: page, EnvVersion: "release", CheckPath: true})
+}
+
+// envVersion 归一化：只认微信的三个值，别的（含空串）一律按 release。
+// 不做「填错就报错」——这一项配错的表现是「扫出来打不开」，比直接回 41030 更难查。
+func envVersion(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "trial":
+		return "trial"
+	case "develop":
+		return "develop"
+	default:
+		return "release"
+	}
 }
 
 // checkScene 按微信的 scene 规则预校验：≤32 个可见字符，只允许
@@ -179,20 +210,24 @@ func checkScene(scene string) error {
 	return nil
 }
 
-func getWXACodeUnlimit(cfg Config, scene, page string, retry bool) ([]byte, error) {
-	if err := checkScene(scene); err != nil {
+func getWXACode(cfg Config, p WXACodeParams, retry bool) ([]byte, error) {
+	if err := checkScene(p.Scene); err != nil {
 		return nil, err
 	}
 	tk, err := GetAccessToken(cfg)
 	if err != nil {
 		return nil, err
 	}
+	env := envVersion(p.EnvVersion)
 	url := apiBase + "/wxa/getwxacodeunlimit?access_token=" + tk
 	body, err := marshalBody(map[string]interface{}{
-		"scene":       scene,
-		"page":        page,
+		"scene":       p.Scene,
+		"page":        p.Page,
 		"width":       430,
-		"env_version": "release",
+		"env_version": env,
+		// 显式传，不依赖微信默认值：check_path 的默认值是 true，而它的语义
+		// 随 env_version 变化——写死在请求里比「靠默认」可追溯
+		"check_path": p.CheckPath,
 	})
 	if err != nil {
 		return nil, err
@@ -215,8 +250,16 @@ func getWXACodeUnlimit(cfg Config, scene, page string, retry bool) ([]byte, erro
 	// access_token 失效：刷新后重试一次
 	if retry && (r.ErrCode == 40001 || r.ErrCode == 42001) {
 		if _, e := refreshToken(cfg); e == nil {
-			return getWXACodeUnlimit(cfg, scene, page, false)
+			return getWXACode(cfg, p, false)
 		}
+	}
+	// 41030 是最容易误判的一条：它**不代表 page 写错了**，而是「该 page 在你指定的
+	// 环境版本里找不到」——小程序还没发布正式版时，任何 release 码都会撞上。
+	// 微信原文只有 "invalid page"，运维照着去改 page 路径只会越改越远，故补一句指向。
+	if r.ErrCode == 41030 {
+		return nil, fmt.Errorf(
+			"wxacode err %d: %s（page=%q 在 %s 版本中不存在：小程序是否已发布正式版？未发布时把「系统设置 → 微信 → 小程序码环境版本」改成体验版）",
+			r.ErrCode, r.ErrMsg, p.Page, env)
 	}
 	return nil, fmt.Errorf("wxacode err %d: %s", r.ErrCode, r.ErrMsg)
 }
