@@ -245,22 +245,59 @@ jobs:
   # 为什么单列一个 job：密钥一旦进 git 历史就极难彻底清除，必须在合并前用 CI 拦住。
   # 测试 fixture / 文档里的伪密钥（明显是占位、非真实凭据）已在 .gitleaks.toml 的
   # allowlist 中按「具体假字符串」精确抑制；任何不在白名单里的真实密钥都会让本 job 失败。
+  #
+  # 为什么**不用** gitleaks/gitleaks-action@v2（2026-11-04 改）：
+  #   该 action 对组织仓库强制要求 GITLEAKS_LICENSE，而「是不是组织」是拿**未认证**的
+  #   GitHub API 判断的。共享 runner 的出口 IP 撞到速率限制时，它就把「查不到」当成
+  #   「是组织、必须给 license」直接判失败——日志原话：
+  #     Get user [Illacme] failed with error [API rate limit exceeded] ...
+  #     License key validation will be enforced
+  #   于是同一个提交可能前一次绿、后一次红（41770405100 绿 → 41771611323 红）。
+  #   本项目不需要商业 license，改用 MIT 的 CLI：无授权校验、无 API 依赖、版本可钉死。
   secrets-scan:
     name: 密钥扫描 (gitleaks)
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # gitleaks 需要完整历史，才能扫出历史提交里残留的密钥
+          fetch-depth: 0   # 按 before..sha / base..head 扫描，浅克隆解析不到那些提交
+
+      - name: 安装 gitleaks CLI
+        run: |
+          # 取官方 release 二进制并钉死版本（不用 latest，避免上游发版改变行为）
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/gitleaks" version
 
       - name: gitleaks 扫描
-        uses: gitleaks/gitleaks-action@v2
+        # 口径与原先的 action 一致：**只扫本次变更的提交范围**（push 的 before..sha、
+        # PR 的 base..head），不是整段历史。理由见下：
+        #   整段历史里存在若干**测试用假密钥**（backend/internal/mpupload、mpupload_test、
+        #   mp_release_upload_test、pipl_rights_test、settings_test 里的假 PEM / 假 key），
+        #   这些从未被扫过（action 也只扫增量）。切到全历史扫描会一次性冒出 7 条，
+        #   把门禁变成「先清理历史」，那是另一件事（要么加 allowlist、要么 rewrite 历史），
+        #   不该夹在一次 CI 机制替换里做。
+        # 命中即退出码非 0（这一步就是门禁）；--redact 保证日志里不二次泄漏命中的值。
         env:
-          GITLEAKS_CONFIG: .gitleaks.toml
-          # 不自动上传 SARIF 到 code scanning，避免额外权限；命中即让本步失败即可
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            RANGE="$BASE_SHA..$GITHUB_SHA"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="$BEFORE..$GITHUB_SHA"
+          else
+            RANGE="-1"   # 新建分支 / 没有 before：退化为最后一次提交
+          fi
+          echo "扫描范围：$RANGE"
+          gitleaks detect --source . --config .gitleaks.toml --redact --verbose --log-opts="$RANGE"
 
   # ───────── 依赖漏洞扫描（**正式门禁**，2026-11-03 起阻塞） ─────────
   # 演进：先非阻塞只做可见性 → 2026-11-03 运行时基线清零（npm audit --omit=dev = 0，
