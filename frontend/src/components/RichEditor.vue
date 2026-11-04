@@ -109,6 +109,7 @@ import { SlateEditor, SlateTransforms, type IDomEditor } from '@wangeditor/edito
 import '@wangeditor/editor/dist/css/style.css'
 import { VideoCamera } from '@element-plus/icons-vue'
 import { registerWxVideoModule, WX_VIDEO_TYPE } from '@/editor/wxVideoModule'
+import { uploadFile } from '@/api/uploadFile'
 
 // 必须在创建编辑器前注册自定义元素（全局仅一次）
 registerWxVideoModule()
@@ -189,8 +190,37 @@ const toolbarConfig = {
   // 排除自带视频上传：本项目视频用「视频号块」承载
   excludeKeys: ['group-video', 'fullScreen'],
 }
+// 选图时的预校验上限，与后端 sys_setting.upload_max_mb 的出厂默认值（10）一致。
+// 后台可以把上限调大，但直传路径下这个值**只能靠前端把关**（对象存储看不到我们的设置），
+// 所以宁可在这里拦，不要因为「服务端会拦」就省掉。
+const IMG_MAX_MB = 10
 const editorConfig = {
   placeholder: props.placeholder,
+  MENU_CONF: {
+    // 图片菜单接后台存储：此前没配 customUpload，wangEditor 走的是它自己的默认上传
+    // 地址（不可用），运营只能「插入网络图片」贴外链——这才是详情页图片失效的根因。
+    uploadImage: {
+      allowedFileTypes: ['image/*'],
+      maxFileSize: IMG_MAX_MB * 1024 * 1024,
+      async customUpload(file: File, insertFn: (url: string, alt: string, href: string) => void) {
+        try {
+          // 预签名直传优先、失败回退 multipart：与 UploadField 共用同一实现
+          const url = await uploadFile(file)
+          // href 传空：非空会被序列化成 data-href（一个用不上的链接属性）。
+          // 宽度约束不在这里加——图片节点的 style 只有 width/height 能序列化出去
+          // （见 basic-modules 的 image elemToHtml），max-width 会在下次保存时丢掉；
+          // 真正的收口在小程序端 utils/richtext.ts 的 constrainImages。
+          insertFn(url, file.name, '')
+        } catch (e: any) {
+          ElMessage.error(e?.message || '图片上传失败')
+        }
+      },
+      // 类型/大小不达标时 wangEditor 只回调这里，不弹提示——不接就等于点了没反应
+      onFailed(_file: File, res: any) {
+        ElMessage.error(res?.message || `图片不符合要求（仅支持图片，单文件 ≤${IMG_MAX_MB}MB）`)
+      },
+    },
+  },
 }
 
 function handleCreated(editor: IDomEditor) {
@@ -405,6 +435,14 @@ onBeforeUnmount(() => {
 }
 .editor-wrap :deep(.w-e-toolbar) {
   border-bottom: 1px solid #dcdfe6;
+}
+/* 编辑时图片按容器宽度收敛（观感与小程序端一致）。
+   注意这只是「所见」的一半：真正落到内容里的约束在小程序端
+   utils/richtext.ts 的 constrainImages（<rich-text> 不吃外部样式表，
+   而 wangEditor 只序列化图片的 width/height，内联 max-width 存不住）。 */
+.editor-wrap :deep(.w-e-text-container img) {
+  max-width: 100%;
+  height: auto;
 }
 /* 编辑区：视频块占位样式——三种来源共一个 class，用 data-video-type 区分色 */
 .rich-editor :deep(.wx-video-block) {

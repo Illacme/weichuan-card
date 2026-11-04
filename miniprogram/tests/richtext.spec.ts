@@ -2,7 +2,7 @@
 // 说明：这些是纯 TS 函数（无 wx / DOM 依赖），挂在 frontend 的 vitest 下统一运行，
 // 避免为 miniprogram 再引入一套 Node 工具链（小程序包保持零依赖，见 miniprogram/README）。
 import { describe, it, expect } from 'vitest'
-import { parseRich, buildWxVideo, type RichSegment } from '../utils/richtext'
+import { parseRich, buildWxVideo, constrainImages, type RichSegment } from '../utils/richtext'
 
 describe('parseRich', () => {
   it('空输入返回空数组', () => {
@@ -203,6 +203,73 @@ describe('parseRich', () => {
     const html = '<wx-video feed-id="f_1"></wx-video>tail'
     expect(parseRich(html)).toEqual(parseRich(html))
     expect(parseRich(html).length).toBe(2)
+  })
+})
+
+describe('constrainImages（图片宽度收口）', () => {
+  // 背景：<rich-text> 按节点树自绘，**外部 wxss 命中不了内部节点**，只有内联样式生效。
+  // 不补这一步，手机上一张 1200px 宽的图会把详情页撑出横向滚动条。
+
+  it('无 style 的 img 补上内联宽度约束', () => {
+    expect(constrainImages('<p><img src="a.png"></p>')).toBe(
+      `<p><img src="a.png" style="max-width:100%;height:auto"></p>`
+    )
+  })
+
+  it('自闭合写法同样补，且保留 />', () => {
+    expect(constrainImages('<img src="a.png" />')).toBe(
+      `<img src="a.png" style="max-width:100%;height:auto" />`
+    )
+  })
+
+  it('已有 style：合并而不是覆盖（客户自己设的样式要留住）', () => {
+    expect(constrainImages('<img src="a.png" style="border:1px solid red">')).toBe(
+      `<img src="a.png" style="border:1px solid red;max-width:100%;height:auto">`
+    )
+  })
+
+  it('原有 style 末尾已带分号时不重复加分号', () => {
+    expect(constrainImages(`<img src="a.png" style="border:0;">`)).toBe(
+      `<img src="a.png" style="border:0;max-width:100%;height:auto">`
+    )
+  })
+
+  it('空 style（wangEditor 序列化出的 style=""）也补上约束', () => {
+    expect(constrainImages('<img src="a.png" alt="p.png" data-href="" style=""/>')).toBe(
+      `<img src="a.png" alt="p.png" data-href="" style="max-width:100%;height:auto"/>`
+    )
+  })
+
+  it('已有 width/height（编辑器里缩放过）：追加 max-width 并让 height 自适应', () => {
+    // 后面的 height:auto 覆盖前面的 height:400px（CSS 同优先级后者胜），宽高比不丢
+    expect(constrainImages('<img src="a.png" style="width: 300px;height: 400px;"/>')).toBe(
+      `<img src="a.png" style="width: 300px;height: 400px;max-width:100%;height:auto"/>`
+    )
+  })
+
+  it('已经带 max-width 的原样返回（幂等，反复保存不叠加）', () => {
+    const tag = '<img src="a.png" style="max-width:80%">'
+    expect(constrainImages(tag)).toBe(tag)
+    expect(constrainImages(constrainImages(tag))).toBe(tag)
+  })
+
+  it('样式值里含 $ 不会被当成替换模式吃掉', () => {
+    // String.replace 的第二参数里 $ 有特殊含义，拼接实现必须避开
+    expect(constrainImages('<img src="a.png" style="background:url(x$1.png)">')).toBe(
+      `<img src="a.png" style="background:url(x$1.png);max-width:100%;height:auto">`
+    )
+  })
+
+  it('无 img 时原样返回（含无 img 的空串）', () => {
+    expect(constrainImages('<p>纯文字</p>')).toBe('<p>纯文字</p>')
+    expect(constrainImages('')).toBe('')
+  })
+
+  it('parseRich 输出已收口：图片在 html 片段里带上约束', () => {
+    const segs = parseRich('<p><img src="a.png"></p><wx-video feed-id="f_1"></wx-video>')
+    expect(segs[0].content).toBe('<p><img src="a.png" style="max-width:100%;height:auto"></p>')
+    // 视频片段不受影响（它走 <rich-video> 组件，尺寸由组件自己管）
+    expect(segs[1].type).toBe('video')
   })
 })
 

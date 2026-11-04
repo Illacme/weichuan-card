@@ -191,6 +191,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 `项目案例.详情` 与 `业务服务.内容` 使用可视化富文本编辑器 `src/components/RichEditor.vue`（基于 wangEditor v5 + `@wangeditor/editor-for-vue`），替换了原先的纯 textarea。
 
 - 工具栏开箱即用（加粗/标题/列表/图片/链接等），并通过 `excludeKeys` 排除了自带视频上传。
+- **图片菜单已接后台存储**：`MENU_CONF.uploadImage.customUpload` 调 `src/api/uploadFile.ts`（预签名直传优先、不支持则回退 multipart），与 `UploadField` 共用同一份实现——此前没配 `customUpload`，wangEditor 只会去它自己的默认上传地址，运营被迫「插入网络图片」贴外链，这是详情页图片失效的根因。上传上限 10MB（与 `sys_setting.upload_max_mb` 出厂默认一致；直传路径后端看不到字节，只能前端把关）。
 - **视频块节点（三种来源）**：通过 `src/editor/wxVideoModule.ts` 注册了自定义元素 `wxVideo`，序列化为 `<wx-video …></wx-video>`，用 `type` 属性区分来源（缺省 `channels`，兼容存量视频号内容），与小程序端 `rich-video` 组件约定一致；回显时 `<wx-video>` 标签会被解析还原为编辑区节点。三种来源的凭证：
   - **视频号**（缺省 / `channels`，编辑区绿色占位）：`feed-id`（同主体，视频号助手 → 动态管理复制）> `feed-token`（跨主体专用，基础库 2.31.1+，强制不能自动播放）> `channel-id`（视频号 ID，**sph 开头**，`gh_` 是公众号 ID，只能展示视频号主页）。存量内容里只有 `channel-id`，故仍读写它以便回退，编辑区会标出「视频号主页」提示它播不了指定视频。
   - **腾讯视频**（`type="tencent"`，蓝色占位）：`vid` 是唯一取片凭证（v.qq.com 播放页 `/page/` 与 `.html` 之间那段；弹窗里可直接粘贴播放页地址自动提取）。依赖小程序的腾讯视频插件——部署未开启该档时块渲染不出来，弹窗内有提示。
@@ -198,6 +199,8 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - 编辑器上方有一个「插入视频块」按钮，弹窗先选「视频来源」，再按所选类型填凭证（void 原子块，内部不可编辑）。编辑已有块时类型随块回填，切换类型会把旧类型的残留属性一并清掉。
 - **已有视频号块可直接点击重新编辑**：`.wx-video-block` 上挂了点击委托（走 DOM 委托而非 snabbdom 的 `on.click`，后者不在 wangEditor 注册的模块之列），命中后带出现值打开同一个对话框；确认后用 `SlateTransforms.setNodes` **就地更新节点属性**（该 API 由 `@wangeditor/editor` 再导出，不必额外引入 slate），不删除重插，光标与上下文都不受影响。节点 id 缺失时退化为按原值匹配。
 - `v-model` 双向绑定 HTML 字符串，保存时直接写入 `detail` / `content` 字段（后端按字符串原样存储）。
+- **图片宽度只能在渲染侧收口**：wangEditor 的图片节点只序列化 `width` / `height`（`basic-modules` 的 image `elemToHtml` 硬编码了这两个键），`max-width` 写进节点会在下次保存时被丢掉；而小程序的 `<rich-text>` 按节点树自绘、**外部 wxss 命中不了内部节点**。所以约束落在小程序端 `utils/richtext.ts` 的 `constrainImages`（解析时给每个 `<img>` 补内联 `max-width:100%;height:auto`，幂等，历史外链图一并受益）；编辑器里的 `.w-e-text-container img` 样式只负责编辑时观感一致。
+- **长度上限**：`project_cases.detail` / `biz_services.content` 为 MySQL `MEDIUMTEXT`（16MB，原 `TEXT` 仅 64KB，视频块 + 多图的内容很容易超）；迁移见 `0036_richtext_mediumtext.sql`。
 
 > 富文本中的视频号块约定、小程序端渲染（`<wx-video>` → `<channel-video>`）详见《首页/跳转页组件与接口字段映射》。
 
@@ -229,7 +232,8 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `src/views/ApplyOpen.spec.ts`（16 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功。
 - `src/views/ApplyModify.spec.ts`（18 例）：名片修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端隐藏员工ID/提交时间列；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
-- `src/components/UploadField.spec.ts`：上传组件用例——直传/回退分支、素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断。
+- `src/api/uploadFile.spec.ts`（10 例）：上传两条链路的**回退矩阵**——直传成功、预签名 `code!=0` / 接口 404 回退、PUT 5xx 回退、业务失败抛后端 `msg`、非 JSON 抛 `HTTP 502`、回包无 `urls` 抛错；另有 `size` 随预签名上报（配额计量的唯一来源）与「action 自带查询串时用 `&` 续接」。XHR 用最小假实现（不用 mock 库），六类失败全是静默降级，写错只表现为「偶尔有人说图传不上去」。
+- `src/components/UploadField.spec.ts`：上传组件用例——素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断（直传/回退分支已下沉到 `api/uploadFile.spec.ts`）。
 - `src/api/mpRelease.spec.ts`（10 例）：版本发布接口契约——路径拼装（租户维度列表 / 登记 vs 记录维度四个动作）、`undo-audit` 必须带 `confirm:true`、审核状态回包 `wxStatus/changed` 解包、`mpReleaseTagType` 六态映射（含未知值回落 info）、**上传与探活两条路径**（`/releases/upload` 带版本号+备注、`/releases/upload-readiness` 把 `data` 摊平且缺字段兜底）。
 - `src/components/MPReleaseDialog.spec.ts`（12 例）：版本弹窗——打开即按企业拉列表、**每个状态出哪些按钮**（draft 只有提交审核 / auditing 查状态+撤回 / audit_passed 发布 / released 终态无动作）、驳回原因渲染与「重新提审」、撤回与发布的二次确认（含用户取消时不调接口）、**上传链路**（打开即探活并逐条列出缺失项 / 就绪提示 / **环境不齐时点「开始上传」不发请求** / 就绪后提交并刷新列表）。`el-dialog` 桩认 `modelValue`，否则嵌套的登记弹窗会把「取消 / 登记」混进行内按钮断言；`el-button` 桩要把 `disabled` 声明成 prop，否则它以 attr 落到真 `<button>` 上，VTU 的 `trigger` 会直接跳过点击，那道 guard 就永远测不到。
 - `src/views/Companies.spec.ts`（凭据部分）：租户小程序凭据 + **平台代发开关** + **上传密钥**——缺省允许、关掉后随保存提交 `releaseEnabled:false`、回包 `releaseEnabled:false` 时显示关闭态；上传密钥填了随保存提交、**原本已配置却留空时确认文案同时点名 AppSecret 与上传密钥**（一次说清要清掉什么，不连弹两窗）；以及原先的列表标签 / 回填 / Secret 留空二次确认 / AppID 前缀校验。
@@ -254,7 +258,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 
 小程序纯逻辑（`miniprogram/tests/`，经本目录 Vitest 运行，桩化 `getApp`/`wx` 全局）：
 
-- `miniprogram/tests/richtext.spec.ts`：`<wx-video>` 富文本拆分（自闭合 / 成对 / 属性顺序无关）、无视频号时整体走 `rich-text` 等。
+- `miniprogram/tests/richtext.spec.ts`：`<wx-video>` 富文本拆分（自闭合 / 成对 / 属性顺序无关）、无视频号时整体走 `rich-text` 等；以及 `constrainImages` 的图片宽度收口（无 style / 空 style / 自闭合 / 合并已有 style / 幂等 / 值里含 `$` 不被替换模式吞掉）。
 - `miniprogram/tests/request.spec.ts`：`wx.request` 封装的 token 注入、`code=401` 静默 refresh 重试一次、失败清 token 等。
 - `miniprogram/tests/poster.spec.ts`（19 例）：分享海报页。桩掉全局 `Page` 捕获页面选项，再手工驱动 `onLoad`，
   覆盖「带 staffId 进入」「**扫码 scene 解析**（含混参 / 无参归 0）」「头像与小程序码转绝对 URL」

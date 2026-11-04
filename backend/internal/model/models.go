@@ -176,7 +176,7 @@ type ProjectCase struct {
 	CategoryID     int64          `gorm:"column:category_id;index" json:"categoryId"`
 	Name           string         `gorm:"column:name" json:"name"`
 	Summary        string         `gorm:"column:summary" json:"summary"`
-	Detail         string         `gorm:"column:detail;type:text" json:"detail"`
+	Detail         string         `gorm:"column:detail;type:mediumtext" json:"detail"`
 	Cover          string         `gorm:"column:cover" json:"cover"`
 	Album          string         `gorm:"column:album;type:json" json:"-"` // 存 JSON 数组字符串
 	IsHomeFeatured bool           `gorm:"column:is_home_featured;default:false" json:"isHomeFeatured"`
@@ -197,7 +197,7 @@ type BizService struct {
 	CompanyID int64          `gorm:"column:company_id;index" json:"companyId"`
 	Title     string         `gorm:"column:title" json:"title"`
 	Icon      string         `gorm:"column:icon" json:"icon"` // 业务服务图标（首页服务区卡片展示）
-	Content   string         `gorm:"column:content;type:text" json:"content"`
+	Content   string         `gorm:"column:content;type:mediumtext" json:"content"`
 	Sort      int            `gorm:"column:sort" json:"sort"`
 	CreatedAt time.Time      `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt time.Time      `gorm:"column:updated_at" json:"updatedAt"`

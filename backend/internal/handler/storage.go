@@ -38,7 +38,8 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher 
 // presignHandler 返回预签名 PUT URL + 最终可访问 URL；本地驱动不支持时返回 code=1（前端回退普通上传）
 //
 // 关于存储配额（B3）：直传由客户端直接 PUT 到对象存储，**后端永远看不到这批字节**，
-// 所以只能靠客户端在申请签名时把 size 报上来（UploadField.vue 已带上）。
+// 所以只能靠客户端在申请签名时把 size 报上来（frontend/src/api/uploadFile.ts 统一带上，
+// UploadField 与富文本编辑器图片菜单共用它）。
 // 这里做两件事：① size 可信时先判配额，超了直接拒（前端会回退普通上传，那边还会再判一次）；
 // ② 签名成功即按 size 记一次用量——**即使随后 PUT 失败也会记**。
 // 这个偏向是有意的：不记就完全统计不到对象存储的用量（那配额等于形同虚设），

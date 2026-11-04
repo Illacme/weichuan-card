@@ -44,9 +44,10 @@
 <script setup>
 import { ElMessage } from 'element-plus'
 import { Picture } from '@element-plus/icons-vue'
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import AssetPicker from './AssetPicker.vue'
 import ImageViewer from './ImageViewer.vue'
+import { uploadFile } from '@/api/uploadFile'
 
 const props = defineProps({
   modelValue: { type: [String, Array], default: '' }, // 单选为 string，多选为 string[]
@@ -106,9 +107,6 @@ function onLibraryPicked(picked) {
 // 上传走同源请求，浏览器会自动附带 Cookie，无需手动拼 Bearer。
 // 早期 Bearer 方案已迁移，localStorage 不保存 token，拼空 Bearer 属误导性死代码，已移除。
 
-// 由 action 推导预签名地址：/api/admin/upload -> /api/admin/upload/presign
-const presignAction = computed(() => props.action.replace('/upload', '/upload/presign'))
-
 const fileList = ref([])
 
 // 外部值 → 内部 file-list（用于回显已保存 URL）
@@ -127,69 +125,19 @@ function beforeUpload(file) {
   return ok
 }
 
-// 自定义上传：先尝试直传预签名，失败则回退普通上传
+// 自定义上传：实现细节（预签名直传 → 回退 multipart）抽在 api/uploadFile.ts，
+// 富文本编辑器的图片菜单用的是同一份——两条链路各写一遍必然漂移
+// （此前就出现过「这里能把图传上去、编辑器里传不上去」）。
+// el-upload 的成功契约是 onSuccess 收一个 { code, data } 信封，这里把拿到的 URL 包回去，
+// 就仍由下面的 onSuccess 统一处理多选追加 / 单选替换。
 async function customUpload(option) {
-  const file = option.file
-  const ext = (file.name.split('.').pop() || '').toLowerCase()
-  const contentType = file.type || 'application/octet-stream'
   try {
-    const p = await presign(ext, contentType)
-    if (p && p.code === 0 && p.data && p.data.putUrl) {
-      await putDirect(p.data.putUrl, file, contentType)
-      option.onSuccess({ code: 0, data: { urls: [p.data.url] } })
-      return
-    }
-  } catch {
-    // 预签名异常，落入回退分支
+    const url = await uploadFile(option.file, { action: props.action })
+    option.onSuccess({ code: 0, data: { urls: [url] } })
+  } catch (e) {
+    ElMessage.error(e?.message || '上传失败')
+    option.onError(e)
   }
-  await serverUpload(option)
-}
-
-async function presign(ext, contentType) {
-  const url =
-    presignAction.value +
-    '?ext=' + encodeURIComponent(ext) +
-    '&contentType=' + encodeURIComponent(contentType)
-  // 同源请求自动携带 httpOnly Cookie；不附加 Bearer（无 token 可附）
-  const resp = await fetch(url)
-  return resp.json()
-}
-
-function putDirect(putUrl, file, contentType) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('PUT', putUrl)
-    xhr.setRequestHeader('Content-Type', contentType)
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr)
-      else reject(new Error('put failed: ' + xhr.status))
-    }
-    xhr.onerror = () => reject(new Error('put error'))
-    xhr.send(file)
-  })
-}
-
-function serverUpload(option) {
-  return new Promise((resolve) => {
-    const form = new FormData()
-    form.append('file', option.file)
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', props.action)
-    // 同源请求自动携带 httpOnly Cookie；不附加 Bearer（无 token 可附）
-    xhr.onload = () => {
-      try {
-        option.onSuccess(JSON.parse(xhr.responseText))
-      } catch (e) {
-        option.onError(e)
-      }
-      resolve()
-    }
-    xhr.onerror = (e) => {
-      option.onError(e)
-      resolve()
-    }
-    xhr.send(form)
-  })
 }
 
 function onSuccess(res) {

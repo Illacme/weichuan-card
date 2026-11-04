@@ -39,6 +39,45 @@ function attr(attrs: string, name: string): string {
   return m ? m[1] : ''
 }
 
+// 图片宽度收口。
+//
+// 为什么必须在数据侧做、而不是写一条 wxss：`<rich-text nodes="…">` 里的节点**不是真实
+// DOM**，微信把它按节点树自绘，外部样式表命中不了内部节点——只有节点自带的内联样式生效。
+// 而编辑器（wangEditor 图片菜单 / 粘贴外链图）插进来的 `<img>` 只带原始像素尺寸，
+// 一张 1200px 宽的图会把详情页撑出横向滚动条，用户看到的是一半内容加一条横滚条。
+//
+// 约束放在「渲染」这一步、而不是编辑器保存时，有两个不能绕开的理由：
+//   1）存量内容（历史外链图、粘贴进来的图）也一起受益，不必回写数据库；
+//   2）wangEditor 的图片节点**只序列化 width / height**（basic-modules 的 image
+//      elemToHtml 硬编码了这两个键），max-width 之类写进节点会在下次保存时被丢掉——
+//      也就是说「存进库里的 max-width」随时会被下一个编辑者抹掉，靠不住。
+//      渲染侧补一次是幂等的，且永远成立。
+const IMG_TAG_RE = /<img\b[^>]*>/gi
+const IMG_HAS_MAX_WIDTH_RE = /max-width\s*:/i
+const IMG_STYLE_ATTR_RE = /\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i
+const IMG_STYLE = 'max-width:100%;height:auto'
+
+export function constrainImages(html: string): string {
+  // 没有 <img> 就直接返回原串：绝大多数段落走这条路径，连正则都不跑
+  if (!html || html.indexOf('<img') === -1) return html
+  return html.replace(IMG_TAG_RE, (tag) => {
+    // 幂等：已有 max-width（客户自己写了宽度，或第二次经过这里）原样放过
+    if (IMG_HAS_MAX_WIDTH_RE.test(tag)) return tag
+    const m = IMG_STYLE_ATTR_RE.exec(tag)
+    if (m) {
+      const quoted = m[1] // 含引号的原始值，如 "color:red"
+      const quote = quoted[0]
+      const cur = (m[2] !== undefined ? m[2] : m[3]).trim()
+      const merged = cur ? (cur.endsWith(';') ? cur : cur + ';') + IMG_STYLE : IMG_STYLE
+      // 用切片拼接而不是 String.replace：样式串里可能有 `$`（如 `$1`），
+      // 会被当成替换模式而吞掉内容。
+      return tag.slice(0, m.index) + ` style=${quote}${merged}${quote}` + tag.slice(m.index + m[0].length)
+    }
+    // 无 style：插在结束符之前（自闭合 `<img …/>` 与普通 `<img …>` 都可能出现）
+    return tag.replace(/\s*\/?>$/, (end) => ` style="${IMG_STYLE}"${end}`)
+  })
+}
+
 export function parseRich(html: string): RichSegment[] {
   const segs: RichSegment[] = []
   if (!html) return segs
@@ -59,7 +98,7 @@ export function parseRich(html: string): RichSegment[] {
       videoType === 'tencent' ? !!vid : videoType === 'mp4' ? !!src : !!(feedId || feedToken || channelId)
     if (!playable) continue
     if (m.index > last) {
-      segs.push({ type: 'html', content: html.slice(last, m.index) })
+      segs.push({ type: 'html', content: constrainImages(html.slice(last, m.index)) })
     }
     segs.push({
       type: 'video',
@@ -75,7 +114,7 @@ export function parseRich(html: string): RichSegment[] {
     last = VIDEO_RE.lastIndex
   }
   if (last < html.length) {
-    segs.push({ type: 'html', content: html.slice(last) })
+    segs.push({ type: 'html', content: constrainImages(html.slice(last)) })
   }
   return segs
 }

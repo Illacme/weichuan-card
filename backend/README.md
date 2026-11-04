@@ -114,6 +114,10 @@ backend/
   - `WEICHUAN_MIGRATIONS_DIR` 显式指定目录时跳过守门（目录内容由调用方负责）。
   - **新增 / 改名迁移后必须重跑** `python3 scripts/gen_migrations_manifest.py`；
     CI 的 `TestManifestMatchesMigrationsDir` 双向比对，漏跑即红。
+- **长文本列用 `MEDIUMTEXT`（0036）**：`project_cases.detail` / `biz_services.content` 存的是
+  富文本 HTML，`TEXT` 只有 64KB——视频块 + 多图的内容很容易超，超了就是 MySQL 报
+  `Data too long for column`（前端只看到「保存失败」）。模型 tag 已写 `type:mediumtext`
+  （SQLite 忽略长度、MySQL 由迁移改列），**新增富文本列一律按 MEDIUMTEXT 起步**。
 
 ```bash
 # 手工跑一次（不启服务）
