@@ -84,7 +84,8 @@ var getWXACode = wechat.GetWXACodeUnlimit
 // 海报合成放在小程序端 canvas；后端只负责产出小程序码图片，存到 local/minio/oss 后返回访问 URL。
 // 私有桶（STORAGE_PUBLIC=false）下，返回的是限时签名 GET URL，避免把对象设为公开读。
 //
-// refresher 可选：小程序码对象名固定（wxacode/<staffID>.jpg），TTL 到期重新生成 = 覆盖写，
+// refresher 可选：小程序码对象名固定（默认码 wxacode/<staffID>.jpg、海报码
+// wxacode/<staffID>_poster.jpg），TTL 到期重新生成 = 覆盖写，
 // 覆盖后要让 CDN 边缘失效，否则已分享出去的旧链接会一直拿到旧图
 // （2026-10-23 之前刷新只挂在随机名的上传接口，这条覆盖路径根本没触发）。
 func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
@@ -193,7 +194,17 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 			return
 		}
-		key := fmt.Sprintf("wxacode/%d.jpg", staffID)
+		// 对象名：默认码与海报码**必须分开命名**。
+		// 两者的 scene 不同（普通码 staffId=N，海报码多一个 &from=poster），
+		// 共用 wxacode/<staffID>.jpg 时后生成的那个会直接覆盖前者：
+		// 海报码生成完，内存缓存里默认码的 entry 仍指向同一个对象 → 扫普通码
+		// 拿到的是「带 from=poster 的码」，来源被记成 poster，裂变榜虚高；反之同理。
+		// 这种错**不报错、码也能打开**，只会在数据对不上时才被发现。
+		suffix := ""
+		if fromMark == "poster" {
+			suffix = "_poster"
+		}
+		key := fmt.Sprintf("wxacode/%d%s.jpg", staffID, suffix)
 		publicURL, err := up.SaveBytes(key, b, "image/jpeg")
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})

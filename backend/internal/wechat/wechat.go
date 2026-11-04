@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -153,18 +154,49 @@ func GetWXACodeUnlimit(cfg Config, scene, page string) ([]byte, error) {
 	return getWXACodeUnlimit(cfg, scene, page, true)
 }
 
+// checkScene 按微信的 scene 规则预校验：≤32 个可见字符，只允许
+// 数字 / 大小写英文 / !#$&'()*+,/:;=?@-._~（官方口径见 getwxacodeunlimit 文档）。
+//
+// 为什么要自己先判一道：微信对非法 scene 只回
+// 「40129 invalid scene rid: 6aeaaaa28-2b677cb2-78a65b71」——**rid 是它的请求 ID，
+// 不是我们传的值**，运维看到这行完全不知道自己错在哪（2026-11-04 海报码就是这个坑）。
+// 本地先判能把「哪个字符、多长」说清楚。
+func checkScene(scene string) error {
+	if scene == "" {
+		return fmt.Errorf("scene 不能为空")
+	}
+	if n := len([]rune(scene)); n > 32 {
+		return fmt.Errorf("scene 超长：%d 个字符（上限 32）：%s", n, scene)
+	}
+	// 允许集：字母数字 + 官方白名单里的符号
+	for _, r := range scene {
+		ok := r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' ||
+			strings.ContainsRune("!#$&'()*+,/:;=?@-._~", r)
+		if !ok {
+			return fmt.Errorf("scene 含非法字符 %q（只允许数字、大小写英文与 !#$&'()*+,/:;=?@-._~）：%s", r, scene)
+		}
+	}
+	return nil
+}
+
 func getWXACodeUnlimit(cfg Config, scene, page string, retry bool) ([]byte, error) {
+	if err := checkScene(scene); err != nil {
+		return nil, err
+	}
 	tk, err := GetAccessToken(cfg)
 	if err != nil {
 		return nil, err
 	}
 	url := apiBase + "/wxa/getwxacodeunlimit?access_token=" + tk
-	body, _ := json.Marshal(map[string]interface{}{
+	body, err := marshalBody(map[string]interface{}{
 		"scene":       scene,
 		"page":        page,
 		"width":       430,
 		"env_version": "release",
 	})
+	if err != nil {
+		return nil, err
+	}
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -200,6 +232,30 @@ func isImage(b []byte) bool {
 	return false
 }
 
+// marshalBody 把请求体编码成 JSON，**但关掉 HTML 转义**。
+//
+// 这是踩过的坑，不是洁癖：`json.Marshal` 默认把 `&` `<` `>` 转成
+// `\u0026` / `\u003c` / `\u003e`。JSON 层面这合法，任何规范解析器都会还原，
+// 但微信的 scene 校验是**按原始字符串**做字符集检查的，看到反斜杠就判非法：
+//
+//	scene = "staffId=3&from=poster"
+//	json.Marshal  → {"scene":"staffId=3\u0026from=poster"}  → 40129 invalid scene
+//	本函数        → {"scene":"staffId=3&from=poster"}       → 正常出码
+//
+// 表现极具迷惑性：名片普通码（scene=staffId=3，无 &）一直正常，只有海报码
+// （scene 多一个 &from=poster）失败，且错误文案里的 rid 是微信的请求 ID，
+// 看着像「参数是真的传错了」，实际是我们自己编码的锅（2026-11-04）。
+func marshalBody(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode 会在末尾补一个换行，去掉它（严格网关对多余空白不友好，且不利于日志比对）
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
 // postWX 统一的微信 JSON POST：拼 access_token、发请求、解析 errcode。
 // 提取出来是因为版本发布那一组接口（提审 / 查状态 / 发布 / 撤回）都是
 // 「POST + JSON in / JSON out + errcode 判成败」，各写一遍就会有哪一份
@@ -211,7 +267,10 @@ func postWX(path string, cfg Config, body any, retry bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf, _ := json.Marshal(body)
+	buf, err := marshalBody(body)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := http.Post(apiBase+path+"?access_token="+tk, "application/json", bytes.NewReader(buf))
 	if err != nil {
 		return nil, err

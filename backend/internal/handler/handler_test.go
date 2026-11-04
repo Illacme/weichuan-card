@@ -1270,6 +1270,67 @@ func TestCDNRefreshOnOverwritePaths(t *testing.T) {
 	require.Equal(t, 3, ref.calls, "失败也算一次尝试（有 [WARN] 日志可查）")
 }
 
+// TestPosterWxacodeUsesDistinctObjectKey 海报码与普通码必须落在**不同对象**上。
+//
+// 两者 scene 不同（普通码 staffId=N，海报码 &from=poster），共用
+// wxacode/<staffID>.jpg 时后生成的那个会覆盖前者：海报码画完后，内存缓存里
+// 默认码的 entry 仍指向同一对象 → 扫普通码被记成 poster（裂变榜虚高），
+// 反过来则把海报流量记成普通扫码。**码都能打开、不报错**，只有对数据时才会发现。
+func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
+	cfg := config.Config{
+		UploadDir:     t.TempDir(),
+		UploadBaseURL: "http://final",
+		StorageDriver: "minio",
+		StoragePublic: true,
+		JWTKey:        "test-jwt-key",
+		AdminUser:     "admin",
+		AdminPass:     "admin123456",
+		WXAppID:       "wx-appid-for-test",
+		WXAppSecret:   "wx-secret-for-test",
+	}
+	origGen := getWXACode
+	var gotScenes []string
+	getWXACode = func(_ wechat.Config, scene, _ string) ([]byte, error) {
+		gotScenes = append(gotScenes, scene)
+		return []byte("fake-jpeg"), nil
+	}
+	t.Cleanup(func() { getWXACode = origGen })
+
+	r := buildEngine(t, newSeedDB(t), cfg, fakeUploader{}, &fakeRefresher{})
+	c := newTestClient(r, t)
+
+	const staffID = 990002 // 偏僻 ID：小程序码缓存是进程级全局 map
+	t.Cleanup(func() {
+		wxacodeMu.Lock()
+		delete(wxacodeCache, staffID)
+		wxacodeMu.Unlock()
+	})
+
+	// 普通码
+	_, body := c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
+		body["data"].(map[string]interface{})["url"])
+
+	// 海报码：对象名带 _poster，且 scene 带来源标记
+	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d&from=poster", staffID), nil, "")
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d_poster.jpg", staffID),
+		body["data"].(map[string]interface{})["url"], "海报码不能复用普通码的对象名")
+
+	// scene 口径：普通码只有 staffId，海报码多 &from=poster
+	require.Equal(t, []string{
+		fmt.Sprintf("staffId=%d", staffID),
+		fmt.Sprintf("staffId=%d&from=poster", staffID),
+	}, gotScenes)
+
+	// 普通码重新请求仍走缓存（海报码不写缓存，不能把它的 URL 顶进默认码的 entry）
+	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
+	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
+		body["data"].(map[string]interface{})["url"])
+	require.Len(t, gotScenes, 2, "第三次请求应命中缓存，不再调微信")
+}
+
 // TestTokenRefresh 验证 refresh 端点（Body 流，小程序端）与令牌吊销：
 //  1. 用 refresh 令牌换取新 access，且新 access 可用；
 //  2. 垃圾 refresh / 把 access 当 refresh 均被拒绝（类型与签名校验）；

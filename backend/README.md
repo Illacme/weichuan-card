@@ -304,7 +304,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - 触发点（三处覆盖写路径，均 best-effort，失败只记日志、不影响接口结果）：
   - `POST /api/admin/upload`（含员工端 / 申请头像）：对象名随机，实际不会覆盖，刷新属「有备无患」；
   - `POST /api/admin/assets/adopt`：对象名固定 `library/<素材ID>.<ext>`，**重复采用 = 覆盖写**（素材库升级换图），必须让边缘失效；
-  - `GET /api/wechat/wxacode`：对象名固定 `wxacode/<staffID>.jpg`，TTL 到期重生成 = 覆盖写；私有桶下刷新的是公开形态 URL（短期签名 URL 每次都变，不该交给 CDN 刷）。
+  - `GET /api/wechat/wxacode`：对象名固定——默认码 `wxacode/<staffID>.jpg`、海报码 `wxacode/<staffID>_poster.jpg`（**两者 scene 不同，必须分开命名**；共用会让后生成的那个覆盖前者，扫普通码被记成 poster/裂变榜虚高，且不报错），TTL 到期重生成 = 覆盖写；私有桶下刷新的是公开形态 URL（短期签名 URL 每次都变，不该交给 CDN 刷）。
   - 注：CloudFront 提交的是 **URL 的 path**（`/uploads/a.png`），不含协议 / 主机 / 查询串。
 - 也可手动触发：`POST /api/admin/cdn/refresh` body `{"urls":["https://cdn.xxx/a.jpg", ...]}`（单次最多 1000 条，按厂商上限自动分批）。
 - 加厂商：实现 `storage.CDNRefresher`（单方法 `Refresh(urls []string) error`），在 `storage/cdn.go` 的 `NewCDNRefresher` 加一个 case，并在 `setting.go` registry 登记（Desc 写清该厂商要填什么）。全部为标准库实现，无额外依赖。
@@ -587,6 +587,16 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 
 > openid 接口复用 `WX_APPID/WX_APPSECRET`（与小程序码同一份凭据）：`wx.login` 拿到临时 `code`，后端换取用户在本小程序内的唯一 `openid`。昵称由小程序端经用户授权（`getUserProfile`）获取后随申请/登录提交。未配置凭据时 openid 接口返回明确错误，前端降级为空，不影响账号密码登录与申请。员工登录成功时若带上 openid/昵称会记录到员工表，便于后台「员工管理」核实。
 
+> **scene 一定要原样发出去（2026-11-04 事故：海报码 40129）**：
+> `getwxacodeunlimit` 的 `scene` 只允许数字 / 大小写英文 / `!#$&'()*+,/:;=?@-._~`，
+> 而微信是**按原始字符串**做字符集校验的。Go 的 `json.Marshal` 默认把 `&` 转成 `\u0026`
+> （JSON 合法，但微信不还原），于是 scene 里只要有个 `&` 就必然 `40129 invalid scene`。
+> 表现极具迷惑性：名片普通码 scene=`staffId=3` 一直正常，只有海报码
+> scene=`staffId=3&from=poster` 失败，且错误里的 `rid: 6aeaaaa28-...` 是**微信的请求 ID、
+> 不是我们传的值**，看着像参数真错了。所以本包统一走 `marshalBody()`（`SetEscapeHTML(false)`），
+> 并在调用前用 `checkScene()` 本地校验（能直接报出是哪个字符）
+> ——见 `wechat.go` 注释与 `TestGetWXACodeUnlimitSendsSceneUnescaped`（断言原始字节，不含 `\u0026`）。
+>
 > 小程序码缓存 TTL：生成的图片通过当前存储驱动的 `SaveBytes` 写入（local → `uploads/wxacode/<staffId>.jpg`；minio/oss → 对应对象）。返回策略：公开桶/本地直接返回公开 URL；**私有桶**（`STORAGE_PUBLIC=false` 且存储支持签名）返回**每次重新签发的 1 小时限时签名 URL**。二维码内容按 `WXACODE_TTL_HOURS`（默认 720h=30 天）做内存 TTL 缓存，过期才重新调微信生成，既避免反复消耗微信配额，也支持变更样式/落地页后自然刷新。`access_token` 服务端内存缓存并在 40001/42001 时自动刷新重试。
 > 鉴权方式：请求头 `Authorization: Bearer <token>`（admin 接口）。小程序码接口为公开（分享用），未配置 `WX_APPID/WX_APPSECRET` 时返回明确错误。
 >

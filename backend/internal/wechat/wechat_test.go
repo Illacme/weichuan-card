@@ -2,6 +2,7 @@ package wechat
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,6 +178,68 @@ func TestGetWXACodeUnlimitSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, jpegBytes, b)
 	require.Equal(t, 1, f.hits("/wxa/getwxacodeunlimit"))
+}
+
+// 请求体里的 scene **必须原样**发出去：`json.Marshal` 会把 `&` 转成 `\u0026`，
+// 而微信的 scene 校验按原始字符串做字符集检查 → 40129 invalid scene。
+//
+// 这条坑的迷惑性在于只影响海报码（scene = staffId=N&from=poster，含 &），
+// 名片普通码（scene = staffId=N）一直正常，所以看日志会以为是「微信抽风」。
+// 断言直接看**原始字节**，而不是解成 map 再比——那样转义会被还原，等于没测。
+func TestGetWXACodeUnlimitSendsSceneUnescaped(t *testing.T) {
+	var raw string
+	f := newFakeWX(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cgi-bin/token":
+			writeJSON(t, w, map[string]any{"access_token": "tk-1", "expires_in": 7200})
+		case "/wxa/getwxacodeunlimit":
+			b, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			raw = string(b)
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write(jpegBytes)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+
+	_, err := GetWXACodeUnlimit(testCfg, "staffId=3&from=poster", "pages/index/index")
+	require.NoError(t, err)
+	require.Equal(t, 1, f.hits("/wxa/getwxacodeunlimit"))
+	require.Contains(t, raw, `"scene":"staffId=3&from=poster"`)
+	require.NotContains(t, raw, `\u0026`, "scene 里的 & 不能被 HTML 转义（微信会判 40129）")
+}
+
+func TestCheckScene(t *testing.T) {
+	// 合法：普通名片码 / 海报码 / 满 32 字符
+	require.NoError(t, checkScene("staffId=3"))
+	require.NoError(t, checkScene("staffId=3&from=poster"))
+	require.NoError(t, checkScene("abcdefghijklmnopqrstuvwxyz123456"))
+
+	// 超长（33 字符）
+	require.ErrorContains(t, checkScene("abcdefghijklmnopqrstuvwxyz1234567"), "超长")
+	// 中文 / 空格 / % / 引号都不在官方白名单里
+	require.ErrorContains(t, checkScene("员工=3"), "非法字符")
+	require.ErrorContains(t, checkScene("staff id=3"), "非法字符")
+	require.ErrorContains(t, checkScene("staffId%3D3"), "非法字符")
+	require.ErrorContains(t, checkScene(`staffId="3"`), "非法字符")
+	require.ErrorContains(t, checkScene(""), "不能为空")
+}
+
+// 非法 scene 在本地就被拦下，不浪费一次微信调用（也不让 operator 只看到
+// 「invalid scene rid: xxx」这种查不到东西的文案）。
+func TestGetWXACodeUnlimitRejectsBadSceneBeforeCallingWX(t *testing.T) {
+	f := newFakeWX(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cgi-bin/token" {
+			writeJSON(t, w, map[string]any{"access_token": "tk-1", "expires_in": 7200})
+			return
+		}
+		t.Fatalf("非法 scene 不应该发起微信请求，却打到了 %s", r.URL.Path)
+	})
+
+	_, err := GetWXACodeUnlimit(testCfg, "员工=3", "pages/index/index")
+	require.ErrorContains(t, err, "非法字符")
+	require.Equal(t, 0, f.hits("/wxa/getwxacodeunlimit"))
 }
 
 // access_token 失效（40001/42001）必须刷新后重试一次：这是生产上最高频的失败
