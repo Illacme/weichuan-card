@@ -113,11 +113,9 @@ func TestWXACodeRateLimitedPerIP(t *testing.T) {
 	defer func() {
 		getWXACode = orig
 		// 缓存是进程级全局 map：用例结束必须把自己塞进去的清掉（其它用例共用）
-		wxacodeMu.Lock()
 		for _, id := range used {
-			delete(wxacodeCache, id)
+			wxacodeDrop(id)
 		}
-		wxacodeMu.Unlock()
 	}()
 
 	_, body := c.do("GET", "/api/wechat/wxacode?staffId=880001", nil, "")
@@ -136,16 +134,22 @@ func TestWXACodeRateLimitedPerIP(t *testing.T) {
 // 就能把这张进程级 map 撑成一张越来越大的表（配合限流做纵深防御）。
 func TestWXACodeCacheEvictsAtCap(t *testing.T) {
 	const base = int64(900000)
+	total := wxacodeCacheMax + 10
+	// 缓存键是 string（staffId + 后缀），清理也得按同一把键
+	keys := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		keys = append(keys, wxacodeCacheKey(base+int64(i), ""))
+	}
 	defer func() {
 		wxacodeMu.Lock()
-		for i := int64(0); i < wxacodeCacheMax+20; i++ {
-			delete(wxacodeCache, base+i)
+		for _, k := range keys {
+			delete(wxacodeCache, k)
 		}
 		wxacodeMu.Unlock()
 	}()
 
-	for i := int64(0); i < wxacodeCacheMax+10; i++ {
-		wxacodePut(base+i, wxacodeEntry{key: "wxacode/x.jpg", expAt: time.Now().Add(time.Hour)})
+	for _, k := range keys {
+		wxacodePut(k, wxacodeEntry{key: "wxacode/x.jpg", expAt: time.Now().Add(time.Hour)})
 	}
 	wxacodeMu.Lock()
 	n := len(wxacodeCache)

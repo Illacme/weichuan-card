@@ -62,6 +62,19 @@ func newTestClient(r *gin.Engine, t *testing.T) *testClient {
 	return &testClient{r: r, t: t, cookies: map[string]string{}}
 }
 
+// wxacodeDrop 清掉某个 staffId 的**全部**小程序码缓存条目（普通码 + 海报码）。
+//
+// 缓存是进程级全局 map，用例前后必须各自清干净；而缓存键是 staffId + 后缀，
+// 按裸 staffId 删（delete(wxacodeCache, id)）已经删不到了——键类型都变了。
+// 集中成一个 helper，是为了以后再加一种码（后缀多一个值）时只改这一处。
+func wxacodeDrop(staffID int64) {
+	wxacodeMu.Lock()
+	defer wxacodeMu.Unlock()
+	for _, suffix := range []string{"", "_poster"} {
+		delete(wxacodeCache, wxacodeCacheKey(staffID, suffix))
+	}
+}
+
 // do  Bearer 头鉴权调用（token 为空则不带头，也不带 cookie）。
 func (c *testClient) do(method, path string, body interface{}, token string) (int, map[string]interface{}) {
 	return c.doRaw(method, path, body, token, "")
@@ -1249,11 +1262,7 @@ func TestCDNRefreshOnOverwritePaths(t *testing.T) {
 
 	// 2. 小程序码：对象名固定 wxacode/<staffID>.jpg，TTL 到期重生成 = 覆盖写
 	const staffID = 990001 // 偏僻 ID：小程序码缓存是进程级全局 map，避免与其它用例串扰
-	t.Cleanup(func() {
-		wxacodeMu.Lock()
-		delete(wxacodeCache, staffID)
-		wxacodeMu.Unlock()
-	})
+	t.Cleanup(func() { wxacodeDrop(staffID) })
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
 	require.EqualValues(t, 0, body["code"], "响应：%v", body)
 	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
@@ -1302,11 +1311,7 @@ func TestWxacodeEnvVersionSettingDrivesParams(t *testing.T) {
 	adminToken := loginAdmin(t, c)
 
 	const staffID = 990003 // 偏僻 ID：小程序码缓存是进程级全局 map
-	t.Cleanup(func() {
-		wxacodeMu.Lock()
-		delete(wxacodeCache, staffID)
-		wxacodeMu.Unlock()
-	})
+	t.Cleanup(func() { wxacodeDrop(staffID) })
 
 	// 缺省：release + 校验 page
 	_, body := c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
@@ -1341,6 +1346,10 @@ func TestWxacodeEnvVersionSettingDrivesParams(t *testing.T) {
 // wxacode/<staffID>.jpg 时后生成的那个会覆盖前者：海报码画完后，内存缓存里
 // 默认码的 entry 仍指向同一对象 → 扫普通码被记成 poster（裂变榜虚高），
 // 反过来则把海报流量记成普通扫码。**码都能打开、不报错**，只有对数据时才会发现。
+//
+// 内存缓存同样要分键（wxacodeCacheKey = staffId + 对象名后缀）：分键之前为了
+// 躲开互相覆盖，海报码干脆不进缓存，代价是每次打开海报页都同步重走
+// 「调微信 → 写对象存储 → 刷 CDN」——缓存分了键，两个目标一起满足。
 func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 	cfg := config.Config{
 		UploadDir:     t.TempDir(),
@@ -1365,11 +1374,7 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 	c := newTestClient(r, t)
 
 	const staffID = 990002 // 偏僻 ID：小程序码缓存是进程级全局 map
-	t.Cleanup(func() {
-		wxacodeMu.Lock()
-		delete(wxacodeCache, staffID)
-		wxacodeMu.Unlock()
-	})
+	t.Cleanup(func() { wxacodeDrop(staffID) })
 
 	// 普通码
 	_, body := c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
@@ -1389,11 +1394,19 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 		fmt.Sprintf("staffId=%d&from=poster", staffID),
 	}, gotScenes)
 
-	// 普通码重新请求仍走缓存（海报码不写缓存，不能把它的 URL 顶进默认码的 entry）
+	// 普通码重新请求仍走缓存（分键后海报码的 entry 顶不掉默认码的）
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
 	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
 		body["data"].(map[string]interface{})["url"])
 	require.Len(t, gotScenes, 2, "第三次请求应命中缓存，不再调微信")
+
+	// 海报码同样必须命中缓存：它是**每次打开海报页**都会请求的那个，
+	// 一次 miss = 调微信 + 写存储 + 刷 CDN 三个同步外网往返，全压在海报页首屏上。
+	// 分键之前这里每请求一次就多调一次微信（海报页「很慢」的直接原因）。
+	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d&from=poster", staffID), nil, "")
+	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d_poster.jpg", staffID),
+		body["data"].(map[string]interface{})["url"])
+	require.Len(t, gotScenes, 2, "海报码重复请求必须命中缓存（否则每次打开海报页都要重走一遍微信 + 存储 + CDN）")
 }
 
 // TestTokenRefresh 验证 refresh 端点（Body 流，小程序端）与令牌吊销：

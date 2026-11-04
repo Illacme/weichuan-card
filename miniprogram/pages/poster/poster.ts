@@ -1344,11 +1344,30 @@ Page({
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, W, H)
 
-      const paint = (hasBg: boolean) => {
+      // 三张图**并行**预载：背景 → 头像 → 小程序码。
+      //
+      // 原来是一条 onload 套着下一条，等于三个连续的 RTT：手机上每个来回
+      // 100~300ms，首屏白白多等 1~2 个来回（「打开海报页很慢」有一半出在这）。
+      // 并行之后总等待 ≈ 最慢的那张。拖动时三张都在 _imgs 里，loadCached 同步
+      // 回缓存，不会引入任何调度延迟（每帧的时序与改造前一致）。
+      //
+      // 码被关掉时（layout.showQr=false）不取码：几何算出来 size 为 0，
+      // 取了也画不上，白跑一次请求。
+      const sources = [
+        (bg && bg.fileUrl) || '',
+        empAvatar(that.data.card),
+        that.data.layout.showQr ? that.data.qrUrl || '' : '',
+      ]
+      that.preload(canvas, sources, (imgs: any[]) => {
+        const bgImg = imgs[0]
+        const avatarImg = imgs[1]
+        const qrImg = imgs[2]
+        // 自定义背景是任意比例，按 cover 裁剪铺满（否则会拉伸变形）
+        if (bgImg) drawCover(ctx, bgImg, W, H)
         // 量宽函数交给几何计算：夹紧要按真实字形宽度算，粗估会让「贴边」
         // 变成「差两个字出画」。measureText 只对当前 ctx.font 有效，
         // 所以每次量之前都要重设 font。
-        const geo = that.computeGeometry(W, H, hasBg, (text: string, size: number, weight?: string) => {
+        const geo = that.computeGeometry(W, H, !!bgImg, (text: string, size: number, weight?: string) => {
           ctx.font = `${weight || ''} ${size}px sans-serif`.trim()
           return that.textWidth(ctx, text)
         })
@@ -1362,57 +1381,40 @@ Page({
           drawScrim(ctx, W, H, Math.max(0, first - 40))
         }
         that.drawContent(ctx, W, H, geo)
-        // 头像 → 小程序码 → 完成：串行挂在 onload 里，保证两张图都画完再导出。
-        // 并行加载 + 立即导出会拿到一张「只有背景没有头像和码」的半成品。
-        that.loadCached(canvas, empAvatar(that.data.card), (img: any) => {
-          if (img && geo.avatar) drawAvatar(ctx, img, geo.avatar)
-          // 码被关掉时 size 为 0：不加载、不占位、不提示，直接收工
-          if (!geo.qr.size) {
-            if (done) done()
-            return
-          }
-          that.loadCached(canvas, that.data.qrUrl, (qimg: any) => {
-            if (qimg) {
-              // 白底衬**无条件**垫：深色底上不垫会糊成一片；码放大后还可能压住
-              // 最后一两行文字，不垫就变成「字从码缝里透出来」，扫码成功率直接掉。
-              // 圆角 + 5px 内缩，在浅底上也不突兀（白衬融进白底，肉眼看不出来）。
-              ctx.fillStyle = '#ffffff'
-              roundRect(ctx, geo.qr.x - 5, geo.qr.y - 5, geo.qr.size + 10, geo.qr.size + 10, 6)
-              ctx.fill()
-              ctx.drawImage(qimg, geo.qr.x, geo.qr.y, geo.qr.size, geo.qr.size)
-            } else {
-              // 没有码：画一个占位框，而不是留一片空白。
-              // 留白 + 「长按识别名片」的组合会让用户以为图是好的，
-              // 直接发出去才发现对方扫不出东西。
-              drawQrPlaceholder(ctx, geo)
-              // URL 拿到了但图加载失败（域名未配 downloadFile 白名单 / 对象被删）：
-              // 和「接口没给码」一样要暴露出来，否则用户只会看到一张缺码的海报。
-              if (that.data.qrUrl && !that.data.qrError && !that._drag) {
-                that.setData({ qrError: true, qrMsg: '小程序码图片加载失败，请检查下载域名配置' })
-              }
-            }
-            // 提示只在真的有码、且画得下时画：码都没有还提示「长按识别」是骗人
-            if (qimg && geo.hint && geo.hint.show) {
-              ctx.textAlign = 'center'
-              ctx.fillStyle = geo.light ? 'rgba(255,255,255,0.78)' : '#666'
-              ctx.font = '12px sans-serif'
-              ctx.fillText('长按识别名片', geo.hint.x, geo.hint.y)
-              ctx.textAlign = 'left'
-            }
-            if (done) done()
-          })
-        })
-      }
+        if (avatarImg && geo.avatar) drawAvatar(ctx, avatarImg, geo.avatar)
 
-      if (bg && bg.fileUrl) {
-        that.loadCached(canvas, bg.fileUrl, (img: any) => {
-          // 自定义背景是任意比例，按 cover 裁剪铺满（否则会拉伸变形）
-          if (img) drawCover(ctx, img, W, H)
-          paint(!!img)
-        })
-      } else {
-        paint(false)
-      }
+        // 码被关掉时 size 为 0：不画、不占位、不提示
+        if (geo.qr.size) {
+          if (qrImg) {
+            // 白底衬**无条件**垫：深色底上不垫会糊成一片；码放大后还可能压住
+            // 最后一两行文字，不垫就变成「字从码缝里透出来」，扫码成功率直接掉。
+            // 圆角 + 5px 内缩，在浅底上也不突兀（白衬融进白底，肉眼看不出来）。
+            ctx.fillStyle = '#ffffff'
+            roundRect(ctx, geo.qr.x - 5, geo.qr.y - 5, geo.qr.size + 10, geo.qr.size + 10, 6)
+            ctx.fill()
+            ctx.drawImage(qrImg, geo.qr.x, geo.qr.y, geo.qr.size, geo.qr.size)
+          } else {
+            // 没有码：画一个占位框，而不是留一片空白。
+            // 留白 + 「长按识别名片」的组合会让用户以为图是好的，
+            // 直接发出去才发现对方扫不出东西。
+            drawQrPlaceholder(ctx, geo)
+            // URL 拿到了但图加载失败（域名未配 downloadFile 白名单 / 对象被删）：
+            // 和「接口没给码」一样要暴露出来，否则用户只会看到一张缺码的海报。
+            if (that.data.qrUrl && !that.data.qrError && !that._drag) {
+              that.setData({ qrError: true, qrMsg: '小程序码图片加载失败，请检查下载域名配置' })
+            }
+          }
+          // 提示只在真的有码、且画得下时画：码都没有还提示「长按识别」是骗人
+          if (qrImg && geo.hint && geo.hint.show) {
+            ctx.textAlign = 'center'
+            ctx.fillStyle = geo.light ? 'rgba(255,255,255,0.78)' : '#666'
+            ctx.font = '12px sans-serif'
+            ctx.fillText('长按识别名片', geo.hint.x, geo.hint.y)
+            ctx.textAlign = 'left'
+          }
+        }
+        if (done) done()
+      })
     })
   },
 
@@ -1543,6 +1545,34 @@ Page({
       // 老基础库 / 测试桩没有 measureText：按字号粗估，够用即可
       return text.length * 12
     }
+  },
+  // preload 并行预载多张图，**全部落定**（成功或失败）后回调一次。
+  //
+  // 为什么不用 Promise.all：canvas.createImage() 是回调式的，包成 Promise 只是
+  // 把同样的等待换个写法，还要多一层 polyfill 心智。这里只需要一个计数。
+  // 空 src（没有背景 / 关掉了码）算「立刻落定」，不发起任何请求。
+  //
+  // 回调只触发一次：真机上偶尔出现 onload 与 onerror 都触发的情况，
+  // 不设闸门就会把画布画两遍、导出两张图。
+  preload(canvas: any, sources: string[], cb: (imgs: any[]) => void) {
+    const imgs: any[] = new Array(sources.length)
+    let pending = sources.length
+    let fired = false
+    if (!pending) {
+      cb(imgs)
+      return
+    }
+    sources.forEach((src, i) => {
+      this.loadCached(canvas, src, (img: any) => {
+        if (fired) return
+        imgs[i] = img
+        pending--
+        if (pending === 0) {
+          fired = true
+          cb(imgs)
+        }
+      })
+    })
   },
   // loadCached 带缓存的图片加载：同一 src 只真正加载一次，之后直接回缓存。
   // 拖动时每帧都要重画背景 + 头像 + 二维码，不走缓存的话每帧都在等网络/解码，

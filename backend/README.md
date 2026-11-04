@@ -614,6 +614,19 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 > ——见 `wechat.go` 注释与 `TestGetWXACodeUnlimitSendsSceneUnescaped`（断言原始字节，不含 `\u0026`）。
 >
 > 小程序码缓存 TTL：生成的图片通过当前存储驱动的 `SaveBytes` 写入（local → `uploads/wxacode/<staffId>.jpg`；minio/oss → 对应对象）。返回策略：公开桶/本地直接返回公开 URL；**私有桶**（`STORAGE_PUBLIC=false` 且存储支持签名）返回**每次重新签发的 1 小时限时签名 URL**。二维码内容按 `WXACODE_TTL_HOURS`（默认 720h=30 天）做内存 TTL 缓存，过期才重新调微信生成，既避免反复消耗微信配额，也支持变更样式/落地页后自然刷新。`access_token` 服务端内存缓存并在 40001/42001 时自动刷新重试。
+>
+> **缓存键是「staffId + 对象名后缀」，不是裸 staffId（2026-11-04，海报页性能）**：
+> 普通码（`wxacode/<id>.jpg`）与海报码（`wxacode/<id>_poster.jpg`）是两个不同的码，
+> 各占一条缓存（`wxacodeCacheKey`）。中间踩过一次坑——两者共用 `staffId` 一个键会互相
+> 覆盖，当时为了躲开覆盖就把**海报码整个排除在缓存外**，代价是每次打开海报页都要同步走
+> 「调微信 → 写对象存储 → 刷 CDN」三个外网往返，直接压在小程序首屏上（用户反馈的
+> 「生成海报页很慢」）。分键后两个目标同时满足：不互相覆盖，也都只生成一次。
+> 回归用例 `TestPosterWxacodeUsesDistinctObjectKey` 的最后一组断言钉住「海报码第二次请求不再调微信」。
+>
+> 副作用（可接受）：码对象如果被人工清理掉，缓存仍指向那个 key，端上的「重试」会拿回同一个
+> 失效 URL，直到 TTL 到期才自愈。普通码一直就是这个行为——清理对象存储后记得
+> 在后台把 `WXACODE_TTL_HOURS` 临时调小或重启进程，不要指望端上重试能自愈。
+>
 > 鉴权方式：请求头 `Authorization: Bearer <token>`（admin 接口）。小程序码接口为公开（分享用），未配置 `WX_APPID/WX_APPSECRET` 时返回明确错误。
 >
 > **未配凭据的后果要知道**：小程序端海报页拿不到码时会画一个「小程序码 / 未生成」占位框，

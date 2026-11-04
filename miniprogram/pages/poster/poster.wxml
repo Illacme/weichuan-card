@@ -93,7 +93,11 @@
 
           <!-- 自定义背景：长按删除（内置素材不可删，它们编译在二进制里）。
                缩略图挂了 binderror：换成同尺寸灰块（.bg-thumb 自带底色）而不是留裂图，
-               否则背景条里会出现一格破图，看起来像整排素材都坏了。 -->
+               否则背景条里会出现一格破图，看起来像整排素材都坏了。
+               lazy-load：这一条横滑里有「59 张内置素材 + 9 张自己的图」，不加这个属性
+               就是进页面瞬间并发几十个图片请求，把画布真正需要的背景/头像/码挤在后面
+               ——首屏慢的主因之一。scroll-view 内的 image 支持懒加载（基础库 2.11+），
+               只在滑到可视区时才取图。 -->
           <view
             wx:for="{{customs}}"
             wx:key="id"
@@ -107,6 +111,7 @@
               class="bg-thumb"
               src="{{item.thumbUrl}}"
               mode="aspectFill"
+              lazy-load
               binderror="onImgFail"
               data-fail="customFail"
               data-idx="{{index}}"
@@ -127,6 +132,7 @@
               class="bg-thumb"
               src="{{item.thumbUrl}}"
               mode="aspectFill"
+              lazy-load
               binderror="onImgFail"
               data-fail="posterFail"
               data-idx="{{index}}"

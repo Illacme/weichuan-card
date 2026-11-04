@@ -134,9 +134,7 @@ func TestWxacodeUsesTenantCredential(t *testing.T) {
 	// 缓存是进程级全局 map：用例前后各自清理，避免与其它用例串扰
 	for _, id := range []int64{880201, 880202} {
 		t.Cleanup(func() {
-			wxacodeMu.Lock()
-			delete(wxacodeCache, id)
-			wxacodeMu.Unlock()
+			wxacodeDrop(id)
 			staffCompanyMu.Lock()
 			delete(staffCompanyCache, id)
 			staffCompanyMu.Unlock()
@@ -175,9 +173,7 @@ func TestCompanyWXAppSaveClearsCache(t *testing.T) {
 		wxAppMu.Lock()
 		delete(wxAppCache, 2)
 		wxAppMu.Unlock()
-		wxacodeMu.Lock()
-		delete(wxacodeCache, 880301)
-		wxacodeMu.Unlock()
+		wxacodeDrop(880301)
 	})
 
 	// 先读一次把缓存焐热

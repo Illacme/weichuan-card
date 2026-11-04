@@ -7,6 +7,10 @@
 // 做法：桩掉全局 Page 捕获页面选项，再手工造一个「页面实例」调用生命周期，
 // 与真机上的调用形态一致（onLoad → prepare → draw）。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+// 静态守门（背景条 lazy-load）要直接读 wxml：这条属性删掉不报错、不报丑，只悄悄变慢
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (_method: string, _url: string) => ({})),
@@ -314,6 +318,50 @@ describe('poster 页', () => {
 
     expect(page.data.loading).toBe(false)
     expect(page.data.error).toBe(false)
+    expect(page.data.tempFilePath).toBe('wxfile://tmp.png')
+  })
+
+  // 三张图（背景 / 头像 / 码）必须**并行**预载。
+  //
+  // 原来是 onload 套 onload，在真机上就是三个连续 RTT（每个 100~300ms），
+  // 首屏白白多等 1~2 个来回——「打开海报页很慢」有一半出在这里。
+  // 这条用例把「图片什么时候回来」交给用例自己控制：串行实现下第二、三张
+  // 根本不会发起请求，断言立刻不成立，而不用等到某个真实的加载时序。
+  it('三张图并行预载：背景没回来时头像与码也已经发起请求', async () => {
+    const opts = await loadPage()
+    mockApis(
+      { employee: { name: '张伟', avatar: '/uploads/a.png' } },
+      '/uploads/wxacode/42.jpg',
+      { code: 0, data: { items: POSTER_LIST } }
+    )
+    const canvas = stubCanvasNode()
+    const requested: string[] = []
+    const pending: any[] = []
+    canvas.createImage = () => {
+      const img: any = {}
+      Object.defineProperty(img, 'src', {
+        set(v: string) {
+          requested.push(v)
+          pending.push(img)
+        },
+        get() {
+          return ''
+        },
+      })
+      return img
+    }
+    const page = instance(opts)
+    await page.onLoad({ staffId: '42' })
+    await new Promise((r) => setTimeout(r, 0))
+
+    // 三张全在飞（串行实现这里只会有 1 张），且没图回来之前不许导出
+    expect(requested).toHaveLength(3)
+    expect((globalThis as any).wx.canvasToTempFilePath).not.toHaveBeenCalled()
+
+    // 全部到齐后一次性绘制并导出：不能出现「画到一半就导出」的半成品
+    pending.forEach((img) => img.onload())
+    await new Promise((r) => setTimeout(r, 0))
+    expect((globalThis as any).wx.canvasToTempFilePath).toHaveBeenCalledTimes(1)
     expect(page.data.tempFilePath).toBe('wxfile://tmp.png')
   })
 
@@ -2309,5 +2357,23 @@ describe('poster 页 · 公开快照与只读态', () => {
     expect(page.data.canEdit).toBe(true)
     expect(page.data.visitorTip).toBe('')
     expect(page.data.layout.template).toBe('center')
+  })
+})
+
+// ---- 首屏并发守门 ----
+//
+// 背景条里是「59 张内置素材 + 最多 9 张自己的图」，全部渲染在同一个 scroll-view 里。
+// 不挂 lazy-load 时，进页面瞬间会并发几十个图片请求，把画布真正要用的
+// 背景 / 头像 / 小程序码挤到队尾——这是「打开海报页图片显示很慢」的另一半原因，
+// 而且删掉这个属性不会报错、不会变丑，只会悄悄变慢，所以用一条静态用例钉住。
+describe('poster.wxml · 背景条懒加载', () => {
+  const wxmlPath = resolve(dirname(fileURLToPath(import.meta.url)), '../pages/poster/poster.wxml')
+
+  it('背景条的 <image> 全部带 lazy-load', () => {
+    const wxml = readFileSync(wxmlPath, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+    const tags = [...wxml.matchAll(/<image\b[^>]*\/?>/g)].map((m) => m[0])
+    // 至少「我的背景」和「内置素材」两条 for 各一个（防止正则失效导致假通过）
+    expect(tags.length).toBeGreaterThanOrEqual(2)
+    expect(tags.filter((t) => !/\blazy-load\b/.test(t))).toEqual([])
   })
 })

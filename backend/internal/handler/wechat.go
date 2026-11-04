@@ -22,9 +22,15 @@ import (
 
 // 小程序码内存缓存：避免每次请求都重新调微信 + 重新写对象存储。
 // expAt 表示「二维码内容」的过期时间（到达后重新调微信生成）；私有桶下每次返回前会单独签发短期 GET URL。
+//
+// 键是 staffId + 对象名后缀（见 wxacodeCacheKey），不是裸 staffId：
+// 普通码与海报码是**两个不同的码**（scene 不同、对象名不同），必须各占一条缓存。
+// 曾经让两者共用一个键，导致后生成的顶掉前者；后来又干脆让海报码不进缓存——
+// 那等于每次打开海报页都要同步走「调微信 + 写存储 + 刷 CDN」，海报页首屏
+// 硬等 0.3~1s（2026-11-04 用户反馈「生成海报页很慢」就是这条）。
 var (
 	wxacodeMu    sync.Mutex
-	wxacodeCache = map[int64]wxacodeEntry{}
+	wxacodeCache = map[string]wxacodeEntry{}
 )
 
 // wxacodeCacheMax 小程序码缓存条数上限。
@@ -43,15 +49,22 @@ type wxacodeEntry struct {
 	env string
 }
 
+// wxacodeCacheKey 缓存键 = staffId + 对象名后缀（普通码 ""、海报码 "_poster"）。
+// 后缀与对象名用的是同一个值，所以「缓存分键」和「对象分名」永远同步，
+// 不会出现「缓存分开了但还写同一个对象」或反过来。
+func wxacodeCacheKey(staffID int64, suffix string) string {
+	return strconv.FormatInt(staffID, 10) + suffix
+}
+
 // wxacodePut 写入缓存并在接近上限时先淘汰：先清已过期的，仍满则按 expAt 淘汰最早的一半。
 // 调用方不持锁（本函数内部加锁）。
-func wxacodePut(staffID int64, e wxacodeEntry) {
+func wxacodePut(key string, e wxacodeEntry) {
 	wxacodeMu.Lock()
 	defer wxacodeMu.Unlock()
-	if _, exists := wxacodeCache[staffID]; !exists && len(wxacodeCache) >= wxacodeCacheMax {
+	if _, exists := wxacodeCache[key]; !exists && len(wxacodeCache) >= wxacodeCacheMax {
 		wxacodeEvictLocked()
 	}
-	wxacodeCache[staffID] = e
+	wxacodeCache[key] = e
 }
 
 // wxacodeEvictLocked 淘汰：先删已过期的；删完仍满则删掉 expAt 最早的一半。
@@ -67,15 +80,15 @@ func wxacodeEvictLocked() {
 		return
 	}
 	// 按过期时间排序取最早的一半：保留离过期最远的（最可能还被用到的）那一半
-	ids := make([]int64, 0, len(wxacodeCache))
-	for id := range wxacodeCache {
-		ids = append(ids, id)
+	keys := make([]string, 0, len(wxacodeCache))
+	for k := range wxacodeCache {
+		keys = append(keys, k)
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		return wxacodeCache[ids[i]].expAt.Before(wxacodeCache[ids[j]].expAt)
+	sort.Slice(keys, func(i, j int) bool {
+		return wxacodeCache[keys[i]].expAt.Before(wxacodeCache[keys[j]].expAt)
 	})
-	for _, id := range ids[:len(ids)/2] {
-		delete(wxacodeCache, id)
+	for _, k := range keys[:len(keys)/2] {
+		delete(wxacodeCache, k)
 	}
 }
 
@@ -191,30 +204,39 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		// 不能等真正生成时才算。
 		p := wxacodeParams(scene, page)
 
+		// 对象名后缀 / 缓存键后缀：海报码与普通码是两个不同的码，落不同对象、占不同缓存条目。
+		// 后缀**只由 fromMark 决定**，与 env 无关：切环境版本时靠 entry.env 判失效，
+		// 若把它编进对象名，每切一次版本就会在存储里留一份新的孤儿文件。
+		suffix := ""
+		if fromMark == "poster" {
+			suffix = "_poster"
+		}
+		cacheKey := wxacodeCacheKey(staffID, suffix)
+
 		// 重新生成的码（不论命中/未命中缓存都会走到这里），e 在函数作用域内声明，
 		// 缓存命中的提前返回分支不会用到它，故放在外层。
 		var e wxacodeEntry
 		var ok bool
 		// 1) 命中缓存且二维码内容未过期：直接取（私有桶下当场签发短期 URL）
-		//    仅默认码（fromMark 为空）走缓存：海报码带 from=poster 标记、内容
-		//    与默认码不同，若共用 staffID 缓存键会互相污染（先生成海报码则默认
-		//    扫出来也是海报标记）。海报码低频、每次重生成代价可接受，故不缓存。
-		if fromMark == "" {
-			wxacodeMu.Lock()
-			e, ok = wxacodeCache[staffID]
-			wxacodeMu.Unlock()
-			// 命中条件里必须带 env：后台把正式版切成体验版后，旧 entry 指向的是
-			// 另一个版本的码，直接给它用户会扫到「非预期版本」（且要等 TTL 到期才
-			// 自愈）。env 不同就当作未命中，重新生成。
-			if ok && time.Now().Before(e.expAt) && e.env == p.EnvVersion {
-				url, err := resolveWxacodeURL(e, cfg, up)
-				if err != nil {
-					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
-					return
-				}
-				c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"url": url}})
+		//
+		// 海报码同样走缓存：它每次打开海报页都会被请求一次，而一次 miss 的代价是
+		// 「调微信 + 写对象存储 + 刷 CDN」三个同步外网往返，直接压在海报页首屏上。
+		// 分键之后普通码与海报码各存一条，互不覆盖（这正是当初关掉海报码缓存的
+		// 原因，用分键解决比放弃缓存正确得多）。
+		wxacodeMu.Lock()
+		e, ok = wxacodeCache[cacheKey]
+		wxacodeMu.Unlock()
+		// 命中条件里必须带 env：后台把正式版切成体验版后，旧 entry 指向的是
+		// 另一个版本的码，直接给它用户会扫到「非预期版本」（且要等 TTL 到期才
+		// 自愈）。env 不同就当作未命中，重新生成。
+		if ok && time.Now().Before(e.expAt) && e.env == p.EnvVersion {
+			url, err := resolveWxacodeURL(e, cfg, up)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 				return
 			}
+			c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"url": url}})
+			return
 		}
 
 		// 2) 重新生成：调微信 -> 写入当前存储驱动 -> 缓存
@@ -229,10 +251,6 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		// 海报码生成完，内存缓存里默认码的 entry 仍指向同一个对象 → 扫普通码
 		// 拿到的是「带 from=poster 的码」，来源被记成 poster，裂变榜虚高；反之同理。
 		// 这种错**不报错、码也能打开**，只会在数据对不上时才被发现。
-		suffix := ""
-		if fromMark == "poster" {
-			suffix = "_poster"
-		}
 		key := fmt.Sprintf("wxacode/%d%s.jpg", staffID, suffix)
 		publicURL, err := up.SaveBytes(key, b, "image/jpeg")
 		if err != nil {
@@ -240,11 +258,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 			return
 		}
 		e = wxacodeEntry{key: key, publicURL: publicURL, expAt: time.Now().Add(wxacodeTTL(cfg)), env: p.EnvVersion}
-		// 仅默认码写入缓存；海报码（fromMark=poster）每次重生成、不缓存，
-		// 避免与默认码共用 staffID 键相互覆盖（见上方缓存读取处的注释）。
-		if fromMark == "" {
-			wxacodePut(staffID, e)
-		}
+		wxacodePut(cacheKey, e)
 		// 固定对象名的覆盖写：刷新的是公开形态 URL（私有桶下返回的短期签名 URL 每次都变，
 		// 交给 CDN 刷也没有意义；私有桶本身也不该被 CDN 缓存）
 		refreshCDN(refresher, e.publicURL)
