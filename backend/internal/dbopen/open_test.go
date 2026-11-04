@@ -1,6 +1,8 @@
 package dbopen
 
 import (
+	"bytes"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +72,121 @@ func TestNormalizeSQLiteDSN(t *testing.T) {
 	got = NormalizeSQLiteDSN("file:/data/weichuan.db?mode=rwc")
 	if n := strings.Count(got, "?"); n != 1 {
 		t.Errorf("查询串分隔符拼接错误（? 出现 %d 次）：%s", n, got)
+	}
+}
+
+// TestGormLoggerRedactsBindParams 钉住「绑定参数不进日志」。
+//
+// 2026-11-03 线上事故：company_wx_app 的 UPDATE 语句把 app_secret 明文打进了
+// GORM 日志（用户又在工单里贴了日志 → 密钥只能重置）。这类泄露不报错、不告警，
+// 只在「日志被人看到」的那一刻变成事故——只能靠断言钉住。
+//
+// 做法：接管标准 log 输出，跑一条**必然报错**的语句（Warn 级只在慢查询/错误时
+// 打印，普通成功查询不打），断言日志里没有密钥值、但有 ? 占位符。
+func TestGormLoggerRedactsBindParams(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log.db")
+	db, _, err := Open("sqlite://" + p)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// gormLogger 绑的是 log.Default()，换掉标准 log 的输出即可捕获它
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	defer func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	}()
+
+	const secret = "SUPERSECRET-app-secret-0123456789"
+	var rows []map[string]any
+	// 表不存在 → gorm 以 Error 级打印 SQL + 错误
+	if err := db.Raw("SELECT * FROM definitely_missing WHERE app_secret = ?", secret).Scan(&rows).Error; err == nil {
+		t.Fatal("期望查询报错（表不存在），否则 gorm 不会打日志、断言落空")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "definitely_missing") {
+		t.Fatalf("日志里没有这条 SQL，捕获失败，断言无意义。输出：%s", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("绑定参数泄露进了日志（应被参数化为 ?）：%s", out)
+	}
+	if !strings.Contains(out, "?") {
+		t.Fatalf("日志里应有 ? 占位符（ParameterizedQueries 生效的证据）：%s", out)
+	}
+}
+
+// TestGormLoggerRedactsUpdate 覆盖 **callbacks 路径**（Updates/Find/Create）：
+// 这条路径靠 ParamsFilter 丢弃绑定参数。与上面 Scan 路径（靠 redactSQL）是两道独立防线，
+// 任一失效都该被断言抓住——2026-11-03 泄露的正是这条 UPDATE 路径。
+func TestGormLoggerRedactsUpdate(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log2.db")
+	db, _, err := Open("sqlite://" + p)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	type rec struct {
+		ID     int64 `gorm:"primaryKey"`
+		Secret string
+	}
+	if err := db.AutoMigrate(&rec{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := db.Create(&rec{Secret: "x"}).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var buf bytes.Buffer
+	origOut, origFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	defer func() {
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	}()
+
+	const secret = "SUPERSECRET-wx-app-secret-9876543210"
+	// 往不存在的列写 → 必然报错 → 以 Error 级打印 SQL
+	if err := db.Model(&rec{}).Where("id = ?", 1).Update("no_such_col", secret).Error; err == nil {
+		t.Fatal("期望 Update 报错（列不存在），否则 gorm 不打日志、断言落空")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "no_such_col") {
+		t.Fatalf("日志里没有这条 SQL，捕获失败。输出：%s", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("绑定参数泄露进了日志（应被参数化为 ?）：%s", out)
+	}
+}
+
+// TestRedactSQL 钉住字面量打码的边界：该打码的打干净、不该动的（标识符/数字）保留。
+func TestRedactSQL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// 基本形态：单/双引号字面量都打码（SQLite 用双引号表示字符串）
+		{`SELECT * FROM t WHERE a = 'x'`, `SELECT * FROM t WHERE a = '?'`},
+		{`SELECT * FROM t WHERE a = "x"`, `SELECT * FROM t WHERE a = "?"`},
+		// 反引号是标识符（MySQL），必须保留
+		{"SELECT * FROM `company_wx_app` WHERE app_secret = 'k'", "SELECT * FROM `company_wx_app` WHERE app_secret = '?'"},
+		// 数字字面量保留：分页与行 id 是最常看的排查线索
+		{`SELECT * FROM t LIMIT 10 OFFSET 20`, `SELECT * FROM t LIMIT 10 OFFSET 20`},
+		// SQL 标准转义：双写引号不是结束
+		{`WHERE a = 'it''s here'`, `WHERE a = '?'`},
+		// MySQL 反斜杠转义
+		{`WHERE a = 'it\'s' AND b = 'y'`, `WHERE a = '?' AND b = '?'`},
+		// 中文与空串
+		{`WHERE name = "张三"`, `WHERE name = "?"`},
+		{`WHERE a = ''`, `WHERE a = '?'`},
+		// 无引号 SQL 原样返回（不引入任何改动）
+		{`UPDATE t SET a = ? WHERE id = ?`, `UPDATE t SET a = ? WHERE id = ?`},
+		// 引号不闭合（截断的 SQL）也要能终止，不能吞掉后面内容
+		{`WHERE a = 'unterminated`, `WHERE a = '?`},
+	}
+	for _, c := range cases {
+		if got := redactSQL(c.in); got != c.want {
+			t.Errorf("redactSQL(%q)\n  got  %q\n  want %q", c.in, got, c.want)
+		}
 	}
 }
 

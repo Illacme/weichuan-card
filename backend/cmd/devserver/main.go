@@ -29,6 +29,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"weichuan/internal/config"
+	"weichuan/internal/dbopen"
 	"weichuan/internal/demoseed"
 	"weichuan/internal/handler"
 	"weichuan/internal/license"
@@ -37,9 +38,6 @@ import (
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
-
-	"github.com/glebarez/sqlite"
-	"gorm.io/gorm"
 )
 
 // devModels devserver 的建表清单，直接取 model 包的权威清单（新增模型只改那里一处）。
@@ -72,7 +70,10 @@ func main() {
 	// 缺的从来是「DB_DSN 这个环境变量」而不是数据库，故这里补上真实值。
 	_ = os.Setenv("DB_DSN", dbPath) // 仅影响本进程；失败只会让联调页误判，故不中断
 
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	// 走 dbopen（与生产同一条打开路径）：SQLite pragma（WAL/busy_timeout/外键）
+	// 与 GORM 日志脱敏（ParameterizedQueries）都由它统一配好，
+	// 避免 devserver 与生产在建表方式/日志形态上悄悄漂移。
+	db, _, err := dbopen.Open(dbPath)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}

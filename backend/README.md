@@ -775,6 +775,11 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   - `AccessLog`：每请求一行（方法 / 路径 / 状态 / 耗时 / IP），5xx 以 `[ACCESS-5XX]` 前缀标出，便于日志告警规则直接匹配；panic 抛穿本中间件，由链上 `gin.Recovery`（`handler.New` 已用 `gin.New()+Recovery` 替代 `gin.Default()`）记录含栈日志；
   - `Metrics`：内存计数器 + Prometheus 文本格式 `/metrics`（**默认关闭**，`METRICS_ENABLED=1` 显式开启，避免公网暴露流量规模；生产建议仅内网 / 反代白名单可达）。
 - **数据库备份**：仓库根 `scripts/backup.sh` 做 MySQL 逻辑备份（`docker exec mysqldump --single-transaction` → gzip → 按 `KEEP_DAYS` 轮转），可入 crontab；逻辑备份不含 binlog，需 PITR 时另行开启。
+- **GORM 日志脱敏（2026-11-03）**：`dbopen.Open` 统一给 GORM 配脱敏 logger，**SQL 日志永不出现绑定参数值**。两道防线缺一不可：
+  - `ParameterizedQueries: true`：callbacks 路径（Create/Updates/Find…）只打 `?`（gorm 靠 `ParamsFilter` 丢弃 vars）；
+  - `redactingLogger` 在 `Trace` 出口把字符串字面量再打码一遍——gorm v1.25 的 `DB.Scan`（`finisher_api.go`）有一条独立日志路径，用 `logger.Recorder` 记录**已内联参数**的 SQL，绕过 `ParamsFilter`，而项目里 `db.Raw(...).Scan(...)` 用得很多。
+  - 只打码引号内内容，标识符/数字保留（`LIMIT 10`、`id = 1` 是最常看的排查线索）。起因：`company_wx_app` 的 UPDATE 把 `app_secret` 明文写进日志（`dbopen/open.go` 注释有完整说明）。`cmd/devserver` 也改走 `dbopen`，与生产同一条打开路径（顺带补上 WAL/pragma）。
+  - 回归测试：`internal/dbopen/open_test.go` 的 `TestGormLoggerRedactsBindParams`（Scan 路径）、`TestGormLoggerRedactsUpdate`（callbacks 路径）、`TestRedactSQL`（转义/中文/标识符/截断边界）。
 
 ### 已知待加固项（需流程 / 基建配合，未在本仓库落地）
 - 小程序码 / access_token 等内存缓存多实例不共享，水平扩展需引入 Redis。
