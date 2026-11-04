@@ -30,6 +30,8 @@ export function saveCompanyProfile(p: {
   videoVid: string
   videoUrl: string
   videoFallbackUrl: boolean
+  // 腾讯视频插件 autoplay 默认 true（与原生 video 相反），必须显式下发
+  videoAutoplay: boolean
   cover: string
 }) {
   return http.put('/admin/company-profile', p).then((r: any) => r.data as any)

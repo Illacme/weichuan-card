@@ -93,6 +93,15 @@ const ElAlert = defineComponent({
   props: ['type', 'closable', 'showIcon'],
   template: `<div class="el-alert"><slot name="title" /></div>`,
 })
+// el-switch：腾讯视频档的「自动播放」开关。
+// 插件 autoplay **默认 true**，所以这里既要做「默认关」的断言，也要做「打开后真提交」的断言。
+const ElSwitch = defineComponent({
+  name: 'ElSwitch',
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template: `<div class="el-switch"><input type="checkbox" :checked="modelValue"
+    @change="$emit('update:modelValue', $event.target.checked)" /></div>`,
+})
 const UploadField = defineComponent({
   name: 'UploadField',
   props: ['modelValue', 'multiple', 'accept', 'listType', 'hideLibrary', 'maxMB', 'tip', 'libraryType'],
@@ -113,6 +122,7 @@ const mountOpts = {
       'el-option': ElOption,
       'el-checkbox': ElCheckbox,
       'el-alert': ElAlert,
+      'el-switch': ElSwitch,
       UploadField,
     },
     directives: { loading: {} },
@@ -316,7 +326,7 @@ describe('content/CompanyProfile', () => {
 
   // ---- 保存 payload ----
 
-  it('保存提交九个字段，不带 id', async () => {
+  it('保存提交十个字段，不带 id', async () => {
     const w = await mountPage()
 
     await saveButton(w).trigger('click')
@@ -326,6 +336,7 @@ describe('content/CompanyProfile', () => {
     expect(Object.keys(payload).sort()).toEqual([
       'cover',
       'introText',
+      'videoAutoplay',
       'videoChannelId',
       'videoFallbackUrl',
       'videoFeedId',
@@ -412,6 +423,52 @@ describe('content/CompanyProfile', () => {
     expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
       expect.objectContaining({ videoSource: 'tencent', videoVid: 'n0041aa087e' })
     )
+  })
+
+  // 自动播放：腾讯视频插件的 autoplay **默认 true**（与原生 video 相反），
+  // 所以「默认关」与「打开后真的提交 true」两件事都必须钉住——
+  // 只钉一件的话，漏掉的那一半表现是「开关在那儿摆着却不生效」，看不出异常。
+  it('腾讯视频档：自动播放默认关，打开后随保存提交', async () => {
+    const w = await mountPage(undefined, undefined, VCAP_ON)
+    await pickSource(w, 'tencent')
+    await byPlaceholder(w, VID_PLACEHOLDER).setValue('n0041aa087e')
+    await flush()
+
+    const sw = w.find('.el-switch input')
+    expect(sw.exists()).toBe(true)
+    expect((sw.element as HTMLInputElement).checked).toBe(false)
+
+    await sw.setValue(true)
+    await flush()
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ videoSource: 'tencent', videoAutoplay: true })
+    )
+  })
+
+  it('回填：后端说 videoAutoplay=true 时开关是打开的', async () => {
+    const w = await mountPage(
+      {
+        id: 1,
+        introText: '简介',
+        videoSource: 'tencent',
+        videoChannelId: '',
+        videoFeedId: '',
+        videoFeedToken: '',
+        videoVid: 'n0041aa087e',
+        videoUrl: '',
+        videoFallbackUrl: false,
+        videoAutoplay: true,
+        cover: '',
+      },
+      undefined,
+      VCAP_ON
+    )
+    await flush()
+
+    expect((w.find('.el-switch input').element as HTMLInputElement).checked).toBe(true)
   })
 
   it('能力探测失败：页面仍可用，且上传档给出可读原因', async () => {

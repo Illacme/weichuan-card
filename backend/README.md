@@ -338,6 +338,24 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - 界面留空（从未设置过）时回退部署环境变量 `MP_TENCENT_VIDEO`——这一路留给自动化部署 / 安装向导预设默认形态；界面一旦显式设过就以界面为准（与 `metrics_enabled` 同一套路）。
 - 关闭时：`GET /api/admin/video-capability` 返回 `tencentVideo:false` 与可执行原因，后台选项置灰；直接 `PUT videoSource=tencent` 也被服务端拒（前端置灰拦不住接口调用）。开启后 `videoVid` 必填（首尾空白会被剥掉）。
 
+### 自动播放（`company_profiles.video_autoplay`，迁移 0037）
+
+**腾讯视频插件的 `autoplay` 默认是 `true`**（官方参数表如此，与微信原生 `<video>` 的
+`false` 正好相反）。我们此前没显式传这个属性，于是「腾讯视频档」一进名片页就**带声音
+自己播起来**——2026-11-04 用户明确反馈这是负面体验。
+
+现在它是后台的一个开关：**管理后台 → 内容 → 公司简介 → 腾讯视频 → 自动播放**，
+对应 `PUT /api/admin/company-profile` 的 `videoAutoplay`，落库 `video_autoplay TINYINT(1)`，
+默认 `0`（不自动播放）。`/api/card` 的 `profile.videoAutoplay` 是小程序唯一的读取口径。
+
+- **这是一次有意的行为变更**：升级后腾讯视频档默认不再自动播放。要给客户恢复，
+  在后台把开关打开即可，无需改代码。
+- 字段是通用的（不叫 `tencent_autoplay`），但目前只接到腾讯视频档：`upload` / `url`
+  两档用原生 `<video>`，默认本来就不自动播，要放开时在小程序 `company-video` 的
+  mp4 分支绑同一个属性即可，不必再加列。
+- 详情页富文本里的腾讯视频块（`rich-video`）固定 `autoplay=false`：正文中间突然出声
+  比首页更糟，且富文本块没有逐块播放设置。
+
 小程序侧声明插件（改 `app.json` + `company-video/index.json`，可 `--off` 还原）：
 
 ```bash

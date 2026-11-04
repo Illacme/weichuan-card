@@ -89,6 +89,19 @@
             </span>
           </div>
         </el-form-item>
+        <!-- 自动播放：腾讯视频插件的 autoplay **默认是 true**（与微信原生 video 相反），
+             不显式关掉的话，访客一进名片页就带声音自己播起来。
+             默认关（数据库默认 0）：名片页是被动打开的落地页，突然出声是负面体验。 -->
+        <el-form-item v-if="vcap.tencentVideo" label="自动播放">
+          <el-switch v-model="form.videoAutoplay" />
+          <div class="hint">
+            打开后访客一进名片页就自动开始播放（<b>带声音</b>）。默认关闭，需要用户点一下播放按钮。
+            <span class="hint-warn">
+              这一档的自动播放是腾讯视频插件的默认行为（原生 video 默认不自动播），
+              所以我们这里必须显式关掉——改完保存，小程序重新进入即可生效。
+            </span>
+          </div>
+        </el-form-item>
       </template>
 
       <!-- 云存储上传档：复用通用上传组件（内部优先走直传预签名，失败回退普通上传） -->
@@ -168,6 +181,7 @@ const form = reactive({
   videoVid: '',
   videoUrl: '',
   videoFallbackUrl: false,
+  videoAutoplay: false,
   cover: '',
 })
 
@@ -203,6 +217,7 @@ async function load() {
         videoVid: '',
         videoUrl: '',
         videoFallbackUrl: false,
+        videoAutoplay: false,
       },
       d
     )
@@ -266,6 +281,7 @@ async function save() {
       videoVid: form.videoVid,
       videoUrl: form.videoUrl,
       videoFallbackUrl: form.videoFallbackUrl,
+      videoAutoplay: form.videoAutoplay,
       cover: form.cover,
     })
     ElMessage.success('已保存')

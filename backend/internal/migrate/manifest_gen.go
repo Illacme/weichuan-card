@@ -43,4 +43,5 @@ var expectedMigrations = []string{
 	"0034_company_mp_entry.sql",
 	"0035_company_wx_app_subscribe.sql",
 	"0036_richtext_mediumtext.sql",
+	"0037_company_profile_video_autoplay.sql",
 }

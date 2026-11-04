@@ -62,6 +62,7 @@
           vid="{{profile.videoVid}}"
           videoUrl="{{profile.videoUrl}}"
           fallback="{{profile.videoFallbackUrl}}"
+          autoplay="{{profile.videoAutoplay}}"
           cover="{{profile.cover}}"
           staffId="{{staffId}}"
         />

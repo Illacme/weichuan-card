@@ -251,6 +251,21 @@ node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
 已知形态（插件自带，界面改不了）：免费版片头有广告；`txv-video` 的 `z-index` 为 11，
 自定义浮层要压在它上面时记得抬高。
 
+### `autoplay` 必须显式写（2026-11-04）
+
+腾讯视频插件的 `autoplay` **默认是 `true`**（官方参数表），而微信原生 `<video>` 默认
+`false`。我们原来没写这个属性 = 继承插件默认 = 一进名片页就带声音自己播。
+
+现在两处渲染点都显式声明，且各自由来不同：
+
+| 位置 | 取值 | 为什么 |
+|---|---|---|
+| `components/company-video`（公司简介） | `{{autoplay}}`，来自 `profile.videoAutoplay` | 后台有开关（默认关），客户要自动播放可以自己打开 |
+| `components/rich-video`（详情页富文本块） | 固定 `false` | 正文中间突然出声比首页更糟；富文本块没有逐块播放设置 |
+
+`tests/company_video.spec.ts` 有一条静态守门扫这两个 wxml：**任何 `<txv-video>` 缺
+`autoplay=` 直接红**。删掉这个属性不报错、不变丑，只会悄悄自动播放，靠人眼 review 拦不住。
+
 ## 小程序码 + 海报生成
 - **海报页对访客是「只读预览」**（2026-10-28 起）：`canEdit` = 登录 && 页面 `staffId` 就是我自己
   （两个来源：员工接口回的 `staffId`，或登录时写进 `globalData.myStaffId` 的那份；

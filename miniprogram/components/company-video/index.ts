@@ -65,6 +65,10 @@ Component({
     vid: String,
     videoUrl: String,
     fallback: Boolean,
+    // 进页面就自动播放。**默认 false**，且必须显式下传到 <txv-video>：
+    // 腾讯视频插件的 autoplay 默认是 true（官方参数表如此，与微信原生 video 的
+    // false 相反）。不写这个属性 = 继承插件的默认值 = 一进名片页就带声音自己播。
+    autoplay: Boolean,
     cover: String,
     // 埋点归属：视频播放计到哪位员工的名片账上（首页透传）
     staffId: Number,

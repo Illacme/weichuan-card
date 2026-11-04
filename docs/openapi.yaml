@@ -4502,6 +4502,13 @@ components:
         videoFallbackUrl:
           type: boolean
           description: 主源（视频号/腾讯视频）播放失败时是否改用 videoUrl
+        videoAutoplay:
+          type: boolean
+          default: false
+          description: >-
+            进页面是否自动播放。腾讯视频插件的 autoplay 默认是 true（与原生 video 相反），
+            服务端会把此值原样下发给小程序，端上再显式写入 txv-video；
+            `/api/card` 的 profile 里同名字段是小程序唯一的读取口径。默认 false（不自动播放）
         cover:
           type: string
 
@@ -4525,6 +4532,9 @@ components:
           type: string
         videoFallbackUrl:
           type: boolean
+        videoAutoplay:
+          type: boolean
+          description: 是否自动播放；缺省（不传）按 false 处理
         cover:
           type: string
 

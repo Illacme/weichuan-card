@@ -135,7 +135,17 @@ type CompanyProfile struct {
 	VideoVid         string `gorm:"column:video_vid" json:"videoVid"`
 	VideoURL         string `gorm:"column:video_url" json:"videoUrl"`
 	VideoFallbackURL bool   `gorm:"column:video_fallback_url;default:false" json:"videoFallbackUrl"`
-	Cover            string `gorm:"column:cover" json:"cover"`
+	// VideoAutoplay 进页面就自动播放。**默认 false**（与微信原生 <video> 一致）。
+	//
+	// 为什么需要这个字段：腾讯视频插件的 <txv-video> **autoplay 默认是 true**
+	// （官方参数表如此，与原生 video 相反）。我们原来没显式传，于是腾讯视频档
+	// 一进名片页就带声音自己播——对「只想看一眼名片」的访客是负面体验。
+	// 现在由后台显式控制，默认不自动播放（迁移 0037）。
+	//
+	// 目前只作用于腾讯视频档；mp4 档（upload / url）本就默认不自动播放，
+	// 要放开时在 company-video 的 mp4 分支绑同一个属性即可，无需再加字段。
+	VideoAutoplay bool   `gorm:"column:video_autoplay;default:false" json:"videoAutoplay"`
+	Cover         string `gorm:"column:cover" json:"cover"`
 }
 
 // 视频来源枚举（company_profile.video_source）。

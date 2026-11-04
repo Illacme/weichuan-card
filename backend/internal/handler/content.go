@@ -115,7 +115,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			VideoVid         string `json:"videoVid"`
 			VideoURL         string `json:"videoUrl"`
 			VideoFallbackURL bool   `json:"videoFallbackUrl"`
-			Cover            string `json:"cover"`
+			// 是否自动播放。腾讯视频插件的 autoplay 默认 true，必须显式下传，
+			// 否则「后台关掉」在小程序端不生效（见 model.CompanyProfile.VideoAutoplay）。
+			VideoAutoplay bool   `json:"videoAutoplay"`
+			Cover         string `json:"cover"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -143,7 +146,25 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			req.VideoVid = strings.TrimSpace(req.VideoVid)
 		}
+		// 先判断有没有行，再把 req 落到结构体上。
+		//
+		// 为什么不沿用「Updates(fields) 后直接回 cp」：GORM 不会把 map 里的值写回
+		// 结构体，客户端拿到的是**改动前**的旧值。自动播放开关这种「保存后立刻看
+		// 开关状态」的场景，会被当成「保存没生效」而反复点。
 		var cp model.CompanyProfile
+		exists := db.First(&cp, "company_id = ?", cid).Error == nil
+		cp.CompanyID = cid
+		cp.IntroText = req.IntroText
+		cp.VideoSource = req.VideoSource
+		cp.VideoChannelID = req.VideoChannelID
+		cp.VideoFeedID = req.VideoFeedID
+		cp.VideoFeedToken = req.VideoFeedToken
+		cp.VideoVid = req.VideoVid
+		cp.VideoURL = req.VideoURL
+		cp.VideoFallbackURL = req.VideoFallbackURL
+		cp.VideoAutoplay = req.VideoAutoplay
+		cp.Cover = req.Cover
+
 		fields := map[string]interface{}{
 			"intro_text":         req.IntroText,
 			"video_source":       req.VideoSource,
@@ -153,24 +174,20 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"video_vid":          req.VideoVid,
 			"video_url":          req.VideoURL,
 			"video_fallback_url": req.VideoFallbackURL,
+			"video_autoplay":     req.VideoAutoplay,
 			"cover":              req.Cover,
 		}
-		if db.First(&cp, "company_id = ?", cid).Error != nil {
-			cp = model.CompanyProfile{
-				CompanyID:        cid,
-				IntroText:        req.IntroText,
-				VideoSource:      req.VideoSource,
-				VideoChannelID:   req.VideoChannelID,
-				VideoFeedID:      req.VideoFeedID,
-				VideoFeedToken:   req.VideoFeedToken,
-				VideoVid:         req.VideoVid,
-				VideoURL:         req.VideoURL,
-				VideoFallbackURL: req.VideoFallbackURL,
-				Cover:            req.Cover,
+		if exists {
+			// 不判 RowsAffected==0：重复点保存、值没变时 MySQL 返回 0 行受影响，
+			// 那不是「没找到」，当成失败会把一次幂等保存报成错误。
+			// 但 Error 必须判——否则写库失败也回 code:0，用户以为存上了。
+			if err := db.Model(&cp).Updates(fields).Error; err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
+				return
 			}
-			db.Create(&cp)
-		} else {
-			db.Model(&cp).Updates(fields)
+		} else if err := db.Create(&cp).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
+			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
 	})

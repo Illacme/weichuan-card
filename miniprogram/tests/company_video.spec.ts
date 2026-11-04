@@ -4,6 +4,10 @@
 // 视频号凭证的优先级一旦写反，表现是「配了却播不出来 / 拿错源播」，
 // 而客户侧只会说「视频坏了」——选档是纯函数，最适合用测试固定语义。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+// 静态守门（txv-video 必须显式写 autoplay）要直接读 wxml
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
@@ -248,5 +252,29 @@ describe('company-video 组件', () => {
     c.onVideoPlay()
 
     expect(mocks.request).not.toHaveBeenCalled()
+  })
+})
+
+// ---- 静态守门：每个 <txv-video> 都必须显式写 autoplay ----
+//
+// 腾讯视频插件的 autoplay **默认值是 true**（官方参数表；与微信原生 video 的
+// false 正好相反）。漏写这个属性不会报错、不会变丑，只会「一进页面就带声音
+// 自己播起来」——2026-11-04 用户反馈的正是这个。
+//
+// 两个渲染点都要钉：名片首页的公司简介视频（值来自后台开关），
+// 以及详情页富文本里的视频块（固定 false，正文里不该自动出声）。
+describe('txv-video 必须显式声明 autoplay', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const files = [
+    'components/company-video/index.wxml',
+    'components/rich-video/index.wxml',
+  ]
+
+  it.each(files)('%s 里的每个 <txv-video> 都写了 autoplay', (rel) => {
+    const wxml = readFileSync(resolve(root, rel), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+    const tags = [...wxml.matchAll(/<txv-video\b[^>]*\/?>/g)].map((m) => m[0])
+    // 至少扫到一个标签：否则正则失效时这条用例会「假通过」
+    expect(tags.length).toBeGreaterThanOrEqual(1)
+    expect(tags.filter((t) => !/\bautoplay=/.test(t))).toEqual([])
   })
 })

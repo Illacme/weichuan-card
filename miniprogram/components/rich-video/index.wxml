@@ -15,11 +15,15 @@
   <!-- 腾讯视频（type="tencent"）：插件 vid 取片，原位播放、无视频号角标。
        插件须在 app.json 静态声明（未声明时该标签渲染不出来，块静默消失——
        编辑器侧应提示客户「部署未开启腾讯视频档时勿用」，见组件 ts 文件头）。
-       playerid 固定即可：本组件不做手动播放控制，不存在跨实例取 TxvContext 的场景。 -->
+       playerid 固定即可：本组件不做手动播放控制，不存在跨实例取 TxvContext 的场景。
+       **autoplay 显式写 false**：插件这个属性默认是 true（与原生 video 相反），
+       不写就是「正文中间突然自己出声」。富文本块没有逐块的播放设置，
+       详情页里的视频一律让用户自己点——这是正文，不是视频专区。 -->
   <txv-video
     wx:elif="{{videoType === 'tencent' && vid}}"
     vid="{{vid}}"
     playerid="richVideo"
+    autoplay="{{false}}"
     class="rich-video"
     object-fit="contain"
     use-poster="{{true}}"

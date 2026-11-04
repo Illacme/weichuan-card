@@ -1058,6 +1058,60 @@ func TestCompanyProfileVideoSourceTencent(t *testing.T) {
 	})["code"])
 }
 
+// TestCompanyProfileVideoAutoplay 腾讯视频「自动播放」开关要一路传到小程序。
+//
+// 为什么必须单独钉一条：腾讯视频插件的 <txv-video> **autoplay 默认是 true**
+// （官方参数表如此，与微信原生 <video> 的 false 相反）。我们此前没显式传这个属性，
+// 于是「腾讯视频档」一进名片页就带声音自己播——用户明确反馈这是负面体验。
+// 这类问题的表现不是报错，而是「开关关了照样自动播」，任何一环漏字段都只能靠用例发现。
+//
+// 覆盖三段：① 保存后**立即回包新值**（GORM 的 map 更新不会写回结构体，曾回过旧值）；
+// ② 后台读回一致；③ `/api/card` 的 profile 带该字段——那是小程序唯一的读取口径。
+func TestCompanyProfileVideoAutoplay(t *testing.T) {
+	r := setupSQLiteEngine(t, func(c *config.Config) { c.TencentVideo = true })
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// /api/card 需要真实员工才给 profile；建一个本租户的员工
+	_, body := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "张三", "phone": "13700000031", "email": "z@a.com", "title": "经理",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	staffID := int64(body["staffId"].(float64))
+
+	put := func(autoplay bool) map[string]interface{} {
+		payload := map[string]interface{}{
+			"introText": "简介", "videoSource": "tencent", "videoVid": "n0041aa087e",
+			"videoAutoplay": autoplay, "cover": "c.png",
+		}
+		_, b := c.do("PUT", "/api/admin/company-profile", payload, adminToken)
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["data"].(map[string]interface{})
+	}
+	cardProfile := func() map[string]interface{} {
+		_, b := c.do("GET", fmt.Sprintf("/api/card?staffId=%d", staffID), nil, "")
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["profile"].(map[string]interface{})
+	}
+
+	// 打开：保存的回包里就得是新值，不能是「改动前」的旧值
+	require.EqualValues(t, true, put(true)["videoAutoplay"], "保存后回包应是新值")
+	_, gb := c.do("GET", "/api/admin/company-profile", nil, adminToken)
+	require.EqualValues(t, true, gb["data"].(map[string]interface{})["videoAutoplay"])
+	require.EqualValues(t, true, cardProfile()["videoAutoplay"], "/api/card 必须带上，否则小程序不知道要传 false")
+
+	// 关掉：插件默认 true，所以「能关掉」才是这个开关存在的意义
+	require.EqualValues(t, false, put(false)["videoAutoplay"])
+	require.EqualValues(t, false, cardProfile()["videoAutoplay"])
+
+	// 老前端不带该字段时按 false 处理（默认不自动播放），不能因为字段缺省就变成 true
+	_, b := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"videoSource": "tencent", "videoVid": "n0041aa087e",
+	}, adminToken)
+	require.EqualValues(t, 0, b["code"])
+	require.EqualValues(t, false, cardProfile()["videoAutoplay"])
+}
+
 // TestAPIFlowMySQL 生产契约 parity：连真实 MySQL、应用 migrations/*.sql，再跑同一套断言。
 // 本地无 TEST_MYSQL_DSN 时跳过；CI 中用 MySQL service 容器提供 DSN。
 func TestAPIFlowMySQL(t *testing.T) {
