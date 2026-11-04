@@ -103,6 +103,17 @@ backend/
   `[MIGRATE][FATAL]` 且不终止服务（保留「进后台查日志、修完重启自愈」的入口），
   代价是这条日志必须被看见——请把它纳入日志告警匹配词。
 - SQLite 部署不适用：表由启动时按模型 `AutoMigrate` 维护（`./server migrate` 会直接说明）。
+- **部署包完整性守门（2026-11-03 事故）**：`internal/migrate/manifest_gen.go` 由
+  `scripts/gen_migrations_manifest.py` 把本版本的迁移文件清单**编进二进制**。启动时比对
+  清单与磁盘目录，两个方向都报：
+  - **清单有、目录没有** → `[MIGRATE][FATAL] 部署包不完整：…缺 xxx.sql`，指明「把本版本的
+    migrations/ 与二进制一起部署」。这是**唯一**能识别「目录整体停留在旧版本」的检查——
+    此时记账表与目录自洽（都是旧文件），任何「两边对比」都会得出「已是最新」（事故形态：
+    缺 0035 的 `subscribe_tmpl_id`，运行期才 `Unknown column`，启动日志毫无异常）。
+  - 目录有、清单没有 → `[MIGRATE][WARN]`（二进制比目录旧，不阻断）。
+  - `WEICHUAN_MIGRATIONS_DIR` 显式指定目录时跳过守门（目录内容由调用方负责）。
+  - **新增 / 改名迁移后必须重跑** `python3 scripts/gen_migrations_manifest.py`；
+    CI 的 `TestManifestMatchesMigrationsDir` 双向比对，漏跑即红。
 
 ```bash
 # 手工跑一次（不启服务）

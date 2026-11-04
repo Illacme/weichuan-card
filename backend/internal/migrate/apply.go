@@ -46,6 +46,9 @@ const (
 	migrationsTable = "schema_migrations"
 	lockName        = "weichuan_migrate"
 	lockTimeoutSec  = 10
+	// envMigrationsDir 运维显式覆盖迁移目录的逃生门（见 migrationsDir）。
+	// 设置后跳过「清单完整性」守门：目录内容由调用方负责（测试也用它跑记账逻辑）。
+	envMigrationsDir = "WEICHUAN_MIGRATIONS_DIR"
 )
 
 // ignoredErrs 已应用过的迁移语句报的错（见包注释）：
@@ -67,7 +70,7 @@ var ignoredErrs = []string{"Duplicate column", "already exists", "Duplicate key 
 // MySQL 形态安装直接报「读取 migrations 目录失败」——「从未跑起来」的又一形态。
 func migrationsDir() (string, error) {
 	var cands []string
-	if v := strings.TrimSpace(os.Getenv("WEICHUAN_MIGRATIONS_DIR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv(envMigrationsDir)); v != "" {
 		cands = append(cands, v)
 	}
 	if exe, err := os.Executable(); err == nil {
@@ -132,6 +135,48 @@ func ApplyWithReport(db *gorm.DB) ([]string, error) {
 		return nil, err
 	}
 
+	// 守门 1（2026-11-03 事故的正面防线）：本版本**应该**带的迁移文件是否都在目录里。
+	//
+	// 清单 expectedMigrations 由 scripts/gen_migrations_manifest.py 从 migrations/
+	// 生成、编译进二进制。只有它才能识别「目录整个停留在旧版本」这种形态：
+	// 此时记账表与目录是**自洽**的（都是 0001..0034），任何基于「两边对比」的检查
+	// 都会得出「已是最新」——事故就是这样静默发生的（缺 0035 的 subscribe_tmpl_id，
+	// 运行期才报 Unknown column）。
+	//
+	// 跳过 WEICHUAN_MIGRATIONS_DIR 场景：那是运维/测试显式指定的目录，内容由调用方
+	// 负责（测试用 0001_a.sql 这类假文件跑记账逻辑，天然与清单不符）。
+	if os.Getenv(envMigrationsDir) == "" {
+		if missing := missingFromManifest(files); len(missing) > 0 {
+			return nil, fmt.Errorf(
+				"部署包不完整：本版本应带 %d 个迁移文件，migrations 目录（%s）缺 %d 个：%s。"+
+					"极可能升级时只替换了二进制、没同步 migrations/ 目录——"+
+					"把本版本的 migrations/ 与二进制一起部署后重启即可（已应用的不重放）",
+				len(expectedMigrations), dir, len(missing), strings.Join(missing, ", "))
+		}
+		// 反向：目录里有二进制不认识的迁移（旧二进制 + 新目录）。不阻断——
+		// 这一版可能仍能跑，但意味着二进制落后于目录，值得在日志里点出来。
+		if extra := unknownInDir(files); len(extra) > 0 {
+			log.Printf("[MIGRATE][WARN] migrations 目录里 %d 个文件不在本版本清单内：%s"+
+				"（二进制比目录旧？旧版本可能不认识这些迁移的内容）",
+				len(extra), strings.Join(extra, ", "))
+		}
+	}
+
+	// 守门 2：记账表里有、但 migrations 目录里已经没有的版本。
+	// 抓的是另一种形态——目录被换成了更旧的包（应用过的文件消失了）。
+	// 这不是「迁移失败」而是「部署包不对」，同样走 [MIGRATE][FATAL] 通道。
+	// 判据纯加法、不需要理解 SQL：两个集合对不上就是包不对。
+	//
+	// 放在 run 之前返回错误：此时目录已经不可信，继续应用「看起来待执行」的文件
+	// 多半是拿旧包去改新库。
+	if missing := missingVersions(done, files); len(missing) > 0 {
+		return nil, fmt.Errorf(
+			"部署包不完整：记账表里 %d 个已应用版本在 migrations 目录（%s）中不存在：%s。"+
+				"极可能升级时只替换了二进制、没同步 migrations/ 目录——"+
+				"请把本版本的 migrations/ 与二进制一起部署后重启（已应用的不会重放）",
+			len(missing), dir, strings.Join(missing, ", "))
+	}
+
 	var applied []string
 	run := func() error {
 		for _, name := range files {
@@ -153,6 +198,57 @@ func ApplyWithReport(db *gorm.DB) ([]string, error) {
 		return applied, err
 	}
 	return applied, nil
+}
+
+// missingFromManifest 返回「本版本清单里有、目录里没有」的文件（按清单顺序）。
+// 用于识别「目录整体停留在旧版本」（见 ApplyWithReport 守门 1）。
+func missingFromManifest(files []string) []string {
+	inDir := make(map[string]bool, len(files))
+	for _, f := range files {
+		inDir[f] = true
+	}
+	var missing []string
+	for _, name := range expectedMigrations {
+		if !inDir[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// unknownInDir 返回「目录里有、清单里没有」的文件（按字典序）。
+// 语义是「二进制落后于目录」，只告警不阻断（见 ApplyWithReport）。
+func unknownInDir(files []string) []string {
+	known := make(map[string]bool, len(expectedMigrations))
+	for _, name := range expectedMigrations {
+		known[name] = true
+	}
+	var extra []string
+	for _, f := range files {
+		if !known[f] {
+			extra = append(extra, f)
+		}
+	}
+	sort.Strings(extra)
+	return extra
+}
+
+// missingVersions 返回「记账表里有、目录里没有」的版本（按字典序）。
+// 用于部署包完整性守门（见 ApplyWithReport）。目录里多出的文件是正常的
+// （待应用的增量），只有反向缺失才说明包不对。
+func missingVersions(done map[string]bool, files []string) []string {
+	inDir := make(map[string]bool, len(files))
+	for _, f := range files {
+		inDir[f] = true
+	}
+	var missing []string
+	for v := range done {
+		if !inDir[v] {
+			missing = append(missing, v)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // applyFile 执行单个迁移文件的全部语句；任一句失败（非可忽略错误）即中止，

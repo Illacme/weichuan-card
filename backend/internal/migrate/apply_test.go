@@ -42,6 +42,44 @@ func TestMigrationsDirResolves(t *testing.T) {
 	}
 }
 
+// TestManifestMatchesMigrationsDir 清单必须与仓库里的 migrations/ 严格一致。
+//
+// manifest_gen.go 是 scripts/gen_migrations_manifest.py 的生成物，编进二进制供
+// 启动时做「部署包完整性」守门（见 ApplyWithReport 守门 1）。它一旦与实际目录脱节，
+// 守门就会变成两种坏结局：漏文件不报（事故照旧静默）或把正常部署判成不完整。
+// 因此「加了迁移但忘了重跑生成器」必须在这里拦下——这是唯一能自动发现的环节。
+func TestManifestMatchesMigrationsDir(t *testing.T) {
+	dir, err := migrationsDir()
+	if err != nil {
+		t.Fatalf("migrationsDir() 失败: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	var inDir []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+			inDir = append(inDir, e.Name())
+		}
+	}
+	if len(inDir) == 0 {
+		t.Fatalf("目录 %s 下没有 .sql", dir)
+	}
+
+	// 双向比对：漏的、多的都要报（清单多了会让正常部署被误判为不完整）
+	if missing := missingFromManifest(inDir); len(missing) > 0 {
+		t.Fatalf("清单里 %d 个文件在目录中不存在：%s\n"+
+			"→ 若是删掉了迁移文件，请重跑 python3 scripts/gen_migrations_manifest.py",
+			len(missing), strings.Join(missing, ", "))
+	}
+	if extra := unknownInDir(inDir); len(extra) > 0 {
+		t.Fatalf("目录里有 %d 个文件不在清单内：%s\n"+
+			"→ 新增迁移后忘了重跑 python3 scripts/gen_migrations_manifest.py（启动守门会误报）",
+			len(extra), strings.Join(extra, ", "))
+	}
+}
+
 // 环境变量逃生门：设了就必须用它的值（候选 1 优先级最高）。
 func TestMigrationsDirEnvOverride(t *testing.T) {
 	tmp := t.TempDir()

@@ -620,6 +620,29 @@ HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导
 > 迁移失败**不终止启动**是刻意的：管理员还能进后台查日志、也保留了修完重启自愈的入口。
 > 代价是必须靠日志暴露——请把 `[MIGRATE][FATAL]` 加进日志告警的匹配词。
 
+#### ⚠️ 二进制部署升级：`migrations/` 目录必须跟着换
+
+非 Docker（宝塔 / systemd 直接跑二进制）的升级，**替换二进制时必须把本版本的
+`migrations/` 目录一起同步到二进制同级**。只换二进制、留着旧目录，是 2026-11-03
+线上事故的成因：
+
+- 程序按「可执行文件同级 migrations/」找目录，看到的是旧目录，里面全是已记账的文件
+  → 启动日志打「数据库已是最新」，一切正常；
+- 本版本新增的迁移（当时是 `0035_company_wx_app_subscribe.sql`）根本没被发现，
+  运行期写库才报 `Unknown column 'subscribe_tmpl_id'`，用户侧只看到「保存失败」。
+
+自 `manifest_gen.go`（2026-11-04）起，这种情况会被守门拦住：
+
+```text
+[MIGRATE][FATAL] 应用数据库迁移失败：部署包不完整：本版本应带 35 个迁移文件，
+migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_app_subscribe.sql。
+极可能升级时只替换了二进制、没同步 migrations/ 目录——把本版本的 migrations/ 与二进制
+一起部署后重启即可（已应用的不重放）
+```
+
+看到它就是把目录补齐再重启，不需要手工跑 SQL。**升级检查清单加一条**：
+`ls <部署目录>/migrations/*.sql | wc -l` 应与本版本 `backend/migrations/` 的文件数一致。
+
 ### 想自己掌控：拆成流水线里的一步
 
 ```bash
