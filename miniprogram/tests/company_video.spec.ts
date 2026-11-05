@@ -722,3 +722,27 @@ describe('MP4 失败态的静态守门', () => {
     expect(z).toBeGreaterThan(11)
   })
 })
+
+// ---- 静态守门：MP4 的画幅填充方式必须和视频号一致 ----
+//
+// 容器是 width:100% + height:440rpx（约 1.52:1），上传的 MP4 绝大多数是 16:9。
+// 用 contain 会「宽度撑满、高度不足」，播放器底色 #000 就在上下各露一条黑边
+// （2026-11-05 真机反馈）。改回 contain 不会报错、不会有任何日志，只会悄悄变丑，
+// 所以只能靠静态守门钉住「两档同一个 object-fit」。
+describe('MP4 画幅的静态守门', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const wxml = readFileSync(resolve(root, 'components/company-video/index.wxml'), 'utf8').replace(
+    /<!--[\s\S]*?-->/g,
+    ''
+  )
+
+  it('原生 video 用 cover，与两个 channel-video 保持同一套满屏语义', () => {
+    const tag = /<video\b[^>]*\/?>/.exec(wxml)?.[0] || ''
+    expect(tag).toContain('object-fit="cover"')
+    expect(tag).not.toContain('object-fit="contain"')
+
+    const channels = [...wxml.matchAll(/<channel-video\b[^>]*\/?>/g)].map((m) => m[0])
+    expect(channels.length).toBeGreaterThan(0)
+    channels.forEach((c) => expect(c).toContain('object-fit="cover"'))
+  })
+})

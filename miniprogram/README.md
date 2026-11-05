@@ -240,6 +240,7 @@ miniprogram/
 - **失败不再沉默**：`upload` / `url` 以及「兜底切过来的 MP4」触发 `binderror` 时，`mp4Error` 置位，播放器上盖一层「视频加载失败 + 重新加载」。控制台同时打出 `src`——这类失败九成是地址本身在浏览器里就打不开（CDN 未启用 HTTPS / 证书主机名不匹配 / 对象不存在 / 私有桶没签名），光看 `errMsg` 定位不了。
 - **重试要真的重建播放器**：`src` 绑的是 `mp4Src` 而不是 `videoUrl`，`onRetryMp4` 先 `setData({mp4Src:''})` 再在回调里设回地址；对同一个 src 直接 `setData` 不会重新发请求。
 - 后台「公司简介」页会显示**最终播放地址**并允许点开验证；这里打不开，小程序里一定播不了。
+- **画幅：MP4 与视频号都用 `object-fit="cover"`**（2026-11-05）：容器是 `width:100%` + `height:440rpx`（约 1.52:1），上传的 MP4 多为 16:9。MP4 档早先误用 `contain`，画面等比缩到宽度撑满、高度不足，播放器底色 `#000` 就在上下各露一条黑边。实测 `854×480`（HEVC / 30fps）的视频放进 540px 高的容器，上下各约 39px 黑边；抽帧证实**源视频画面本身一点黑边都没有**——服务端 `ProcessUpload` 对 mp4 走 `default` 分支原样透传，**没有转码、分辨率也没变**。`cover` 按高度铺满并裁掉左右各约 7%，主体居中的宣传片可接受；若客户视频两侧有字幕/LOGO 不能裁，正确做法是把 `.cv-video` 容器改成 16:9 让 `contain` 也无黑边，**不要**把 MP4 档单独换回 `contain`，那会让同一位置三种来源看起来不一致。「原生 video 与两个 channel-video 同一个 object-fit」由 `tests/company_video.spec.ts` 的静态守门钉住。`<txv-video>` 的 `object-fit` 由插件内部解释，不作为本档参照。
 
 `tencent` 档依赖腾讯视频小程序插件（provider `wxa75efa648b60994b`），而插件必须**静态声明**：
 

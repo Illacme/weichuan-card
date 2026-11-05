@@ -85,10 +85,18 @@
        地址错（相对路径 / 证书失效 / 对象不存在）是这类失败的主因，
        所以给一块可重试的提示，并在控制台把 src 打出来供排查。 -->
   <view wx:elif="{{mode === 'mp4'}}" class="cv-mp4">
+    <!-- object-fit 必须和 channel-video 一样是 cover：容器是 width:100% + 440rpx 高
+         （约 1.52:1），而上传的 MP4 多是 16:9。contain 会把画面等比缩到宽度撑满、
+         高度不足，播放器底色 #000 就在上下各露一条黑边。2026-11-05 实测：854x480
+         的视频放进 540px 高的容器，上下各约 39px 黑边，而源视频抽帧本身一点黑边都没有
+         ——服务端对 mp4 只做原样透传，压根没转码。视频号档一直是 cover，
+         MP4 档早先误用了 contain，才出现「同一个位置、别的档满屏、MP4 有黑边」。
+         cover 按高度铺满并裁掉左右各约 7%（1.78 → 1.52），主体居中的宣传片可接受；
+         若客户视频两侧有字幕/LOGO 不能裁，应把容器改成 16:9 而不是把这里换回 contain。 -->
     <video
       src="{{mp4Src}}"
       class="cv-video"
-      object-fit="contain"
+      object-fit="cover"
       show-fullscreen-btn
       enable-progress-gesture
       bindplay="onVideoPlay"
