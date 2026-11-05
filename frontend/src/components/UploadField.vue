@@ -30,18 +30,27 @@
          不说原因就是「进度条莫名其妙倒退」。
          这里刻意不复用 el-upload 自带的进度：它只认一个百分比，表达不了「换了一条路」，
          两条进度条并排反而更乱。 -->
-    <div v-if="progress" class="uf-progress" :class="{ 'is-server': progress.phase === 'server' }">
+    <div
+      v-if="progress"
+      class="uf-progress"
+      :class="{
+        'is-server': progress.phase === 'server' || (progress.phase === 'finishing' && progress.via === 'server'),
+        'is-finishing': progress.phase === 'finishing',
+      }"
+    >
       <div class="uf-progress-label">
         <span>{{ phaseLabel }}</span>
-        <span v-if="progress.phase !== 'presign' && progress.total > 0" class="uf-progress-pct">
+        <!-- finishing 阶段没有百分比可涨：改显示已等待秒数，证明「还活着」 -->
+        <span v-if="progress.phase === 'finishing'" class="uf-progress-pct">已等待 {{ waitSec }}s</span>
+        <span v-else-if="progress.phase !== 'presign' && progress.total > 0" class="uf-progress-pct">
           {{ progress.percent }}%
         </span>
       </div>
       <div class="uf-progress-track">
         <div
           class="uf-progress-bar"
-          :class="{ 'is-waiting': progress.phase === 'presign' }"
-          :style="{ width: progress.phase === 'presign' ? '30%' : progress.percent + '%' }"
+          :class="{ 'is-waiting': progress.phase === 'presign' || progress.phase === 'finishing' }"
+          :style="{ width: barWidth }"
         ></div>
       </div>
     </div>
@@ -64,7 +73,7 @@
 <script setup>
 import { ElMessage } from 'element-plus'
 import { Picture } from '@element-plus/icons-vue'
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import AssetPicker from './AssetPicker.vue'
 import ImageViewer from './ImageViewer.vue'
 import { uploadFile } from '@/api/uploadFile'
@@ -132,18 +141,50 @@ const fileList = ref([])
 // 上传进度（null = 不在上传）。XHR 的 progress 事件很密，
 // 只在「阶段或百分比真的变了」时才写响应式状态，别每个 64KB 都触发一次渲染。
 const progress = ref(null)
+// finishing 阶段（字节发完、等服务端确认）可能持续几十秒：进度条没有百分比可涨，
+// 用一个每秒自增的计时器证明「还在等」，比僵在 99% 更像活着。
+const waitSec = ref(0)
+let waitTimer = null
+function stopWait() {
+  if (waitTimer) {
+    clearInterval(waitTimer)
+    waitTimer = null
+  }
+}
 function applyProgress(p) {
   const cur = progress.value
   if (cur && cur.phase === p.phase && cur.percent === p.percent) return
+  if (p.phase === 'finishing') {
+    if (!cur || cur.phase !== 'finishing') {
+      waitSec.value = 0
+      stopWait()
+      waitTimer = setInterval(() => { waitSec.value += 1 }, 1000)
+    }
+  } else {
+    stopWait()
+  }
   progress.value = p
 }
+onUnmounted(stopWait)
 const phaseLabel = computed(() => {
   const p = progress.value
   if (!p) return ''
   if (p.phase === 'presign') return '正在申请上传链接…'
   if (p.phase === 'direct') return '正在直传到云存储（不经应用服务器）…'
+  if (p.phase === 'finishing') {
+    // 中转路径下服务端还要把文件再写一次对象存储，这段最慢，必须说清原因
+    return p.via === 'server'
+      ? '已传到服务器，正在写入云存储…（大文件可能要几十秒）'
+      : '文件已发完，等待云存储确认…'
+  }
   // 这一句不能省：大文件走中转会明显变慢，用户有权知道是配置没配对
   return '直传不可用，已改用服务器中转（大文件会占服务器带宽）…'
+})
+const barWidth = computed(() => {
+  const p = progress.value
+  if (!p) return '0%'
+  if (p.phase === 'presign' || p.phase === 'finishing') return '30%'
+  return p.percent + '%'
 })
 
 // 外部值 → 内部 file-list（用于回显已保存 URL）
@@ -180,16 +221,19 @@ function beforeUpload(file) {
 // TypeError → 控制台一条 Uncaught (in promise)，却看不出是哪来的。
 // 返回 undefined 就只走我们自己这一条 onSuccess / onError。
 function customUpload(option) {
+  stopWait()
   progress.value = null
   uploadFile(option.file, {
     action: option.action || props.action,
     onProgress: applyProgress,
   }).then(
     (url) => {
+      stopWait()
       progress.value = null
       option.onSuccess({ code: 0, data: { urls: [url] } })
     },
     (e) => {
+      stopWait()
       progress.value = null
       ElMessage.error((e && e.message) || '上传失败')
       option.onError(e)

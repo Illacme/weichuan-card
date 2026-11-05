@@ -146,6 +146,39 @@ func TestMinioPresignAndSign(t *testing.T) {
 	require.Equal(t, 0, fake.hits, "签名是本地计算，不应发起请求")
 }
 
+// 七牛 S3 兼容端点把对象写在「<S3 空间名>/」目录下（控制台里是 aitel/xxx.mp4），
+// 于是「文件访问基址」必须填 https://cdn.example.com/aitel 这种带目录前缀的值。
+// 拼接只允许去掉末尾斜杠，不能取 host / 清洗路径——否则用户按文档改了配置仍然 404。
+// 三条返回公开地址的路径都要钉住：预签名直传 / multipart 回退(Save) / 覆盖写(SaveBytes)。
+func TestMinioBaseURLPathPrefix(t *testing.T) {
+	fake := &fakeS3{}
+	srv := fake.server(t)
+	defer srv.Close()
+	up := newTestMinioUploader(t, srv)
+	up.BaseURL = "http://cdn.example.com/aitel/" // 连末尾斜杠一起吃掉
+
+	_, directURL, err := up.PresignPut("direct/a.mp4", "video/mp4", 15*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "http://cdn.example.com/aitel/direct/a.mp4", directURL,
+		"预签名直传返回的公开地址必须保留基址里的目录前缀")
+
+	url, err := up.SaveBytes("wxacode/1.jpg", []byte("jpgbytes"), "image/jpeg")
+	require.NoError(t, err)
+	require.Equal(t, "http://cdn.example.com/aitel/wxacode/1.jpg", url,
+		"服务器中转/覆盖写返回的公开地址同样不能丢前缀")
+
+	// multipart 回退（直传被 CORS 拦下时）走的是 Save()，这条最容易被漏测：
+	// 它单独拼一次 BaseURL，改坏 TrimRight 后用户按文档填了前缀仍然 404。
+	// 对象名是随机 hash，从假 S3 记录的实际 PUT 路径里取，别把随机值写死。
+	hitsBefore := len(fake.paths)
+	saveURL, err := up.Save(makeFileHeader(t, "clip.jpg", jpgWithExif()))
+	require.NoError(t, err)
+	require.Greater(t, len(fake.paths), hitsBefore, "Save 应至少 PUT 一次原文件")
+	objName := strings.TrimPrefix(fake.paths[hitsBefore], "/weichuan/")
+	require.Equal(t, "http://cdn.example.com/aitel/"+objName, saveURL,
+		"multipart 回退（Save）返回的公开地址同样不能丢前缀")
+}
+
 func TestNewMinioUploaderInvalidEndpoint(t *testing.T) {
 	// 空 endpoint 应在构造期即报错（minio.New 对空 endpoint 返回错误）
 	_, err := NewMinioUploader("", "ak", "sk", "weichuan", "http://cdn.example.com", "", false, 10<<20, DefaultAllowExt)

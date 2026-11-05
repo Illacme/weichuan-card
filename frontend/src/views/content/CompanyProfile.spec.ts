@@ -806,5 +806,17 @@ describe('content/CompanyProfile', () => {
       expect(w.find('.video-url-check a').exists()).toBe(false)
       expect(w.find('.video-url-check').text()).toContain('javascript:alert(1)')
     })
+
+    // 七牛 S3 兼容把对象写在 <bucket>/ 目录下，用户最容易踩成「404 但控制台明明有文件」。
+    // 这条提示是排查入口，别在改版时当冗余文案删掉。
+    it('地址提示里给出「目录前缀 / 访问基址」排查指引', async () => {
+      const w = await mountPage(profile('url', 'https://cdn.example.com/a.mp4'), MP4_CAP)
+      await flush()
+
+      const hint = w.find('.video-url-check .hint').text()
+      expect(hint).toContain('目录前缀')
+      expect(hint).toContain('文件访问基址')
+      expect(hint).toContain('重新上传')
+    })
   })
 })

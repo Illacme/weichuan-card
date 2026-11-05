@@ -24,6 +24,9 @@ export type UploadPhase =
   | 'presign' // 正在申请直传链接（还没开始传字节）
   | 'direct' // 浏览器直接 PUT 到对象存储
   | 'server' // 直传不可用，改走应用服务器中转
+  | 'finishing' // 请求体已全部发出，正在等对方确认/落盘（没有任何进度事件）
+
+export type UploadVia = 'direct' | 'server'
 
 export interface UploadProgress {
   phase: UploadPhase
@@ -31,6 +34,8 @@ export interface UploadProgress {
   percent: number
   loaded: number
   total: number
+  /** finishing 阶段：这批字节是从哪条链路发出去的，UI 据此说明为什么还要等 */
+  via?: UploadVia
 }
 
 export interface UploadFileOptions {
@@ -63,6 +68,17 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
   const onXhrProgress = (phase: UploadPhase): ProgressFn | undefined =>
     opts.onProgress ? (loaded, total) => report(phase, loaded, total) : undefined
 
+  // 「请求体发完」到「收到响应」之间是一段没有 progress 事件的静默期：
+  //   direct：等对象存储返回 2xx（通常很快）；
+  //   server：服务端收完 multipart 后还要**再 PUT 一次对象存储**，15~100MB
+  //           的视频走跨境链路可能几十秒——这正是用户看到的「99% 卡很久」。
+  // 用 xhr.upload.onload（上传流结束）单独报一个 finishing 阶段，让 UI
+  // 明确显示「还在等」并计时，而不是把 99% 僵在那里。
+  const onUploaded = (via: UploadVia): (() => void) | undefined =>
+    opts.onProgress
+      ? () => opts.onProgress!({ phase: 'finishing', percent: 99, loaded: file.size, total: file.size, via })
+      : undefined
+
   report('presign')
 
   // 1) 预签名直传：任何一步不顺（接口 404、code!=0、PUT 失败）都落到回退，
@@ -70,7 +86,7 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
   try {
     const p = await presign(presignAction, ext, contentType, file.size)
     if (p && p.code === 0 && p.data && p.data.putUrl) {
-      await putDirect(p.data.putUrl, file, contentType, onXhrProgress('direct'))
+      await putDirect(p.data.putUrl, file, contentType, onXhrProgress('direct'), onUploaded('direct'))
       report('direct', file.size, file.size, true)
       return p.data.url
     }
@@ -81,8 +97,12 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
   // 2) 回退。先报一次 phase='server' 且 0%，调用方据此把进度条重置并
   //    给出「已改用服务器中转」的原因，而不是让进度莫名其妙倒退。
   report('server', 0)
-  return serverUpload(action, file, onXhrProgress('server'), () =>
-    report('server', file.size, file.size, true)
+  return serverUpload(
+    action,
+    file,
+    onXhrProgress('server'),
+    () => report('server', file.size, file.size, true),
+    onUploaded('server')
   )
 }
 
@@ -103,21 +123,27 @@ async function presign(url: string, ext: string, contentType: string, size: numb
 
 type ProgressFn = (loaded: number, total: number) => void
 
-/** 给 xhr.upload 挂进度监听。跨域 PUT 也能收到 progress 事件（不读响应体）。 */
-function bindProgress(xhr: XMLHttpRequest, onProgress?: ProgressFn): void {
-  if (!onProgress || !xhr.upload) return
-  xhr.upload.onprogress = (e) => {
-    // lengthComputable 为 false 时 total 是 0，别拿它算百分比（会得到 NaN）
-    if (e.lengthComputable && e.total > 0) onProgress(e.loaded, e.total)
+/** 给 xhr.upload 挂进度监听。跨域 PUT 也能收到 progress 事件（不读响应体）。
+ *  onUploaded 挂在 upload.onload 上：它在请求体发完时触发，早于 xhr.onload，
+ *  两者之间就是纯粹的「等服务端」时间。progress 的最后一个事件不保证
+ *  loaded === total，所以不能靠 progress 判断「发完了」。 */
+function bindProgress(xhr: XMLHttpRequest, onProgress?: ProgressFn, onUploaded?: () => void): void {
+  if ((!onProgress && !onUploaded) || !xhr.upload) return
+  if (onProgress) {
+    xhr.upload.onprogress = (e) => {
+      // lengthComputable 为 false 时 total 是 0，别拿它算百分比（会得到 NaN）
+      if (e.lengthComputable && e.total > 0) onProgress(e.loaded, e.total)
+    }
   }
+  if (onUploaded) xhr.upload.onload = onUploaded
 }
 
-function putDirect(putUrl: string, file: File, contentType: string, onProgress?: ProgressFn): Promise<void> {
+function putDirect(putUrl: string, file: File, contentType: string, onProgress?: ProgressFn, onUploaded?: () => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', putUrl)
     xhr.setRequestHeader('Content-Type', contentType)
-    bindProgress(xhr, onProgress)
+    bindProgress(xhr, onProgress, onUploaded)
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve()
       else reject(new Error('直传失败（HTTP ' + xhr.status + '）'))
@@ -127,13 +153,13 @@ function putDirect(putUrl: string, file: File, contentType: string, onProgress?:
   })
 }
 
-function serverUpload(action: string, file: File, onProgress?: ProgressFn, onDone?: () => void): Promise<string> {
+function serverUpload(action: string, file: File, onProgress?: ProgressFn, onDone?: () => void, onUploaded?: () => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const form = new FormData()
     form.append('file', file)
     const xhr = new XMLHttpRequest()
     xhr.open('POST', action)
-    bindProgress(xhr, onProgress)
+    bindProgress(xhr, onProgress, onUploaded)
     xhr.onload = () => {
       let body: any
       try {

@@ -8,6 +8,8 @@ import { uploadFile } from './uploadFile'
 // XHR 用最小假实现（记录 open/send，手动 finish），不引入 mock 库：
 // 我们的调用只用到 open/setRequestHeader/send/onload/onerror 五个面。
 // upload.onprogress 是新增的第六个面——进度条全靠它，必须能手动触发。
+// upload.onload 是第七个面：请求体发完时触发，早于 XHR 自己的 onload，
+// 用来钉住「字节发完 → 等服务端确认」这段没有进度事件的静默期。
 class FakeXHR {
   static instances: FakeXHR[] = []
   method = ''
@@ -18,10 +20,17 @@ class FakeXHR {
   sent: any = null
   onload: (() => void) | null = null
   onerror: (() => void) | null = null
-  upload: { onprogress: ((e: any) => void) | null } = { onprogress: null }
+  upload: { onprogress: ((e: any) => void) | null; onload: (() => void) | null } = {
+    onprogress: null,
+    onload: null,
+  }
 
   progress(loaded: number, total: number, lengthComputable = true) {
     this.upload.onprogress?.({ lengthComputable, loaded, total })
+  }
+
+  uploaded() {
+    this.upload.onload?.()
   }
 
   open(method: string, url: string) {
@@ -258,14 +267,83 @@ describe('uploadFile', () => {
       await p
     })
 
-    it('未传 onProgress 时不挂 upload.onprogress（老调用方零影响）', async () => {
+    it('未传 onProgress 时不挂 upload.onprogress / upload.onload（老调用方零影响）', async () => {
       mockPresign({ code: 1 })
       const p = uploadFile(file())
       await flush()
 
       expect(FakeXHR.instances[0].upload.onprogress).toBe(null)
+      expect(FakeXHR.instances[0].upload.onload).toBe(null)
       FakeXHR.instances[0].finish(200, okMultipart())
       await p
+    })
+
+    // 「99% 停很久」的根因：进度条只量了请求体发送，字节发完后还有一段
+    // 完全没有 progress 事件的等待（中转时服务端要再写一次对象存储）。
+    // 这段必须由 upload.onload 单独报出来，否则 UI 只能僵在 99%。
+    describe('字节发完后的等待态', () => {
+      it('直传：upload.onload 后报 finishing(via=direct)，响应回来才补 100', async () => {
+        mockPresign({ code: 0, data: { putUrl: 'https://oss/put', url: 'https://cdn/x.png' } })
+        const seen: any[] = []
+        const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+        await flush()
+
+        const xhr = FakeXHR.instances[0]
+        // 故意让最后一个 progress 停在 96%：不能靠 loaded===total 判断「发完了」
+        xhr.progress(96, 100)
+        xhr.uploaded()
+        expect(seen.at(-1)).toMatchObject({ phase: 'finishing', via: 'direct', percent: 99 })
+        expect(seen.at(-1).loaded).toBe(3) // file.size，不是 100
+
+        xhr.finish(200)
+        await expect(p).resolves.toBe('https://cdn/x.png')
+        expect(seen.at(-1)).toMatchObject({ phase: 'direct', percent: 100 })
+      })
+
+      it('回退中转：finishing 带 via=server，UI 才能说明为什么特别慢', async () => {
+        mockPresign({ code: 1 })
+        const seen: any[] = []
+        const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+        await flush()
+
+        const xhr = FakeXHR.instances[0]
+        xhr.progress(99, 100)
+        xhr.uploaded()
+        expect(seen.at(-1)).toMatchObject({ phase: 'finishing', via: 'server', percent: 99 })
+
+        xhr.finish(200, okMultipart())
+        await p
+        expect(seen.at(-1)).toMatchObject({ phase: 'server', percent: 100 })
+      })
+
+      it('没有 progress 事件也要能进入 finishing（小文件/事件被合并）', async () => {
+        mockPresign({ code: 1 })
+        const seen: any[] = []
+        const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+        await flush()
+
+        FakeXHR.instances[0].uploaded()
+        expect(seen.at(-1).phase).toBe('finishing')
+
+        FakeXHR.instances[0].finish(200, okMultipart())
+        await p
+      })
+
+      it('PUT 失败回退：失败的直传不该留下 finishing 100% 的假成功', async () => {
+        mockPresign({ code: 0, data: { putUrl: 'https://oss/put', url: 'https://cdn/x.png' } })
+        const seen: any[] = []
+        const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+        await flush()
+
+        FakeXHR.instances[0].uploaded()
+        FakeXHR.instances[0].finish(500)
+        await flush()
+        expect(seen.some((x) => x.phase === 'direct' && x.percent === 100)).toBe(false)
+        expect(seen.at(-1)).toMatchObject({ phase: 'server', percent: 0 })
+
+        FakeXHR.instances[1].finish(200, okMultipart())
+        await p
+      })
     })
 
     it('lengthComputable=false 时不产生 NaN 百分比', async () => {

@@ -155,6 +155,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now weichuan
 
 1. 安装 MySQL 8.0（`apt install mysql-server` 或 yum），建库 `weichuan`，手动应用迁移（命令见第 4 节，与 Docker 无关完全适用）。
 2. `go build -o weichuan-server ./cmd/server`，环境变量：`DB_DSN` / `JWT_KEY` / `ADMIN_USER` / `ADMIN_PASS` / `UPLOAD_BASE_URL` / `COOKIE_SECURE=true`。  
+   **`UPLOAD_BASE_URL` 填对外访问基址，不是 S3 端点**：七牛 S3 兼容端点写入的对象会落在 `<S3 空间名>/` 目录下（控制台里是 `aitel/xxx.mp4`），基址必须带同一层（`https://<CDN域名>/aitel`），只填裸域名会拼出 404 的播放地址。自测：对同一个已上传对象分别 `curl -I http://<CDN域名>/<对象名>` 和 `curl -I http://<CDN域名>/aitel/<对象名>`，哪个 200 就按哪个填；同时确认该 CDN 域名已启用 HTTPS（未启用时 `https://` 返回 `403` + `X-Error-Info: httpsDisabled`，小程序里表现为视频黑屏 00:00）。**改完重启只影响新上传**，已入库的完整 URL 要重新上传或改库记录。详见 `backend/README.md` 存储章节。
    **更省事的替代**：`DB_DSN` / `JWT_KEY` / `ADMIN_PASS` 全留空，首次访问走安装向导（§2.2，二进制路径的前置与坑都在那里）。
 3. systemd 常驻（unit 同 B，`ExecStart` 换二进制、补 `Environment=` 行）。
 4. nginx 反代（同 B）+ HTTPS：前置 Caddy 自动证书（配置见第 5 节）。

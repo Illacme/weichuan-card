@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
 import UploadField from './UploadField.vue'
 
@@ -223,6 +223,71 @@ describe('UploadField', () => {
       expect(w.find('.uf-progress').text()).toContain('已改用服务器中转')
       expect(w.find('.uf-progress').text()).toContain('大文件会占服务器带宽')
       expect(w.find('.uf-progress-pct').text()).toContain('0%')
+    })
+
+    // 用户反馈「进度条总在 99% 停很久」：那段时间字节已经发完，
+    // 只是还在等服务端（中转时服务端要再把文件写一次对象存储）。
+    // 必须显示「还在等」+ 计时 + 动画，不能把 99% 僵在那里。
+    it('字节发完进入 finishing：不显示 99%，改显示等待秒数与滑动动画', async () => {
+      const w = mountField()
+      const u = startUpload(w)
+
+      u.progress({ phase: 'direct', percent: 99, loaded: 99, total: 100 })
+      u.progress({ phase: 'finishing', percent: 99, loaded: 100, total: 100, via: 'direct' })
+      await nextTick()
+
+      expect(w.find('.uf-progress.is-finishing').exists()).toBe(true)
+      expect(w.find('.uf-progress').text()).toContain('等待云存储确认')
+      expect(w.find('.uf-progress-pct').text()).toContain('已等待 0s')
+      expect(w.find('.uf-progress-pct').text()).not.toContain('99%')
+      expect(w.find('.uf-progress-bar.is-waiting').exists()).toBe(true)
+      expect(w.find('.uf-progress-bar').attributes('style')).toContain('30%')
+
+      u.done('https://cdn/x.mp4')
+      await flushPromises()
+      expect(w.find('.uf-progress').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('中转路径的 finishing：保留警示配色并说明「正在写入云存储」', async () => {
+      const w = mountField()
+      const u = startUpload(w)
+
+      u.progress({ phase: 'server', percent: 90, loaded: 90, total: 100 })
+      u.progress({ phase: 'finishing', percent: 99, loaded: 100, total: 100, via: 'server' })
+      await nextTick()
+
+      expect(w.find('.uf-progress.is-server').exists()).toBe(true)
+      expect(w.find('.uf-progress').text()).toContain('正在写入云存储')
+      expect(w.find('.uf-progress').text()).toContain('大文件可能要几十秒')
+
+      u.done('/uploads/x.mp4')
+      await flushPromises()
+      w.unmount()
+    })
+
+    it('等待计时每秒走动，上传完成后不残留计时器', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = mountField()
+        const u = startUpload(w)
+        u.progress({ phase: 'server', percent: 90, loaded: 90, total: 100 })
+        u.progress({ phase: 'finishing', percent: 99, loaded: 100, total: 100, via: 'server' })
+        await nextTick()
+
+        expect(w.find('.uf-progress-pct').text()).toContain('已等待 0s')
+        vi.advanceTimersByTime(3000)
+        await nextTick()
+        expect(w.find('.uf-progress-pct').text()).toContain('已等待 3s')
+
+        u.done('/uploads/x.mp4')
+        await flushPromises()
+        expect(w.find('.uf-progress').exists()).toBe(false)
+        expect(vi.getTimerCount()).toBe(0)
+        w.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('上传成功：进度条消失，onSuccess 拿到 {code:0,data:{urls}} 信封', async () => {
