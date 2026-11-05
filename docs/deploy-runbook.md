@@ -663,6 +663,14 @@ migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_ap
 看到它就是把目录补齐再重启，不需要手工跑 SQL。**升级检查清单加一条**：
 `ls <部署目录>/migrations/*.sql | wc -l` 应与本版本 `backend/migrations/` 的文件数一致。
 
+> **已经漏了怎么认出来**：运行期表现是后台某个保存接口只弹一句「保存失败」，
+> 实际是 MySQL `Unknown column`，而 `[MIGRATE][FATAL]` 早在启动日志里。
+> 2026-11-05 的 `0038_company_profile_video_backup_url.sql`（公司简介备用视频地址）
+> 又踩了一次：写库错误从该版起会打 `[CONTENT][ERROR] 保存公司简介失败…err=…`，
+> 不再只留一句无信息的红条。补齐目录后**不必重启服务**，`./server migrate`
+> 手工跑一次即可让列立即生效；完整自查与修复命令见 `backend/README.md`
+> 「自托管 MP4 的兜底地址 → 升级必做」。
+
 ### 想自己掌控：拆成流水线里的一步
 
 ```bash

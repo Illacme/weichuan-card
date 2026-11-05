@@ -393,6 +393,53 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 - **小程序端**：主 MP4 `binderror` 时自动切一次到备用地址（先清空 `src` 销毁播放器再设回），备用也失败才显示「视频加载失败」，提示会点明两个地址都挂了；`videoBackupUrl` 与主源一样过 `assetUrl` 补成绝对地址。建议备用地址用**与主源不同的域名 / 不同 CDN**——同一个域名挂了两边都挂，等于没兜底。
 - **接口**：`GET/PUT /api/admin/company-profile` 与 `/api/card` 均透出 `videoBackupUrl`，契约见 `docs/openapi.yaml`；后台「公司简介」页里备用地址可点开验证。
 
+### ⚠️ 升级必做：migrations/ 目录要跟着二进制一起换
+
+非 Docker（宝塔 / systemd）升级时**只替换二进制、留着旧 `migrations/` 目录，新列就加不上**。
+程序按「可执行文件同级 migrations/」找目录，看到的全是已记账的旧文件；清单守门会打
+
+```text
+[MIGRATE][FATAL] 部署包不完整：本版本应带 38 个迁移文件，migrations 目录（…）缺 1 个：
+0038_company_profile_video_backup_url.sql …
+```
+
+但**迁移失败刻意不终止启动**（管理员还能进后台查日志），故障于是藏到运行期：
+`PUT /api/admin/company-profile` 的 `fields` 带 `video_backup_url`，MySQL 报
+`Unknown column 'video_backup_url' in 'field list'`，前端只弹一句「保存失败」。
+2026-11-03 的 0035 事故是同一形态。现在这两个写库失败分支都会打
+
+```text
+[CONTENT][ERROR] 保存公司简介失败（更新）company=1 err=Error 1054 (42S22): Unknown column …
+```
+
+自查（服务器上，路径按实际部署目录替换）：
+
+```bash
+ls -1 <部署目录>/migrations/*.sql | wc -l    # 应为 38
+ls <部署目录>/migrations/0038*               # 应存在
+grep -E '\[MIGRATE\]|\[CONTENT\]\[ERROR\]' <后端日志> | tail -20
+mysql -uroot -p weichuan -e "SHOW COLUMNS FROM company_profiles LIKE 'video_backup_url';"
+```
+
+修复（前提：后端二进制已是本版本、清单里含 0038）。**不必重启服务**——列一加上，运行中的进程立刻能写成功：
+
+```bash
+# 推荐：把本版本 migrations/ 全量同步到二进制同级，再手工跑一次迁移子命令（不启服务、不监听端口）
+rsync -av backend/migrations/ root@<服务器>:<部署目录>/migrations/
+cd <部署目录> && ./server migrate     # DB_DSN 从现有 env / data/runtime.env 读，无需另填
+```
+
+应急也可以只补这一列（之后重启时 0038 会因 `Duplicate column` 被幂等忽略并记账）：
+
+```bash
+mysql -uroot -p weichuan -e "ALTER TABLE company_profiles ADD COLUMN video_backup_url VARCHAR(512) NOT NULL DEFAULT '' AFTER video_url;"
+```
+
+> 另一个独立坑：备用地址若按裸域名拼（`http://<CDN 域名>/video-xxx.mp4`），
+> 而七牛 S3 的对象名实际带 `aitel/` 前缀，即使保存成功，兜底也会 404。
+> 「文件访问基址」必须写 `http://<CDN 域名>/aitel`（详见上传章节）；
+> 后台「备用地址」那一栏可以点开直接验证是不是 200。
+
 ## 开源素材库（内置，随二进制分发）
 
 后台所有需要图片的位置（分类/服务图标、项目封面、公司简介封面、公司信息 LOGO、员工头像、**小程序首页背景**）都支持从**内置开源素材库**直接选用，无需再去各处找图、抠图、调尺寸。

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -186,11 +187,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 不判 RowsAffected==0：重复点保存、值没变时 MySQL 返回 0 行受影响，
 			// 那不是「没找到」，当成失败会把一次幂等保存报成错误。
 			// 但 Error 必须判——否则写库失败也回 code:0，用户以为存上了。
+			//
+			// err 必须落日志：前端只能看到一句「保存失败」，而最常见的真实原因是
+			// **升级时漏同步 migrations/ 目录导致新列不存在**（2026-11-03 的 0035、
+			// 2026-11-05 的 0038 都栽在这），MySQL 报 Unknown column。不打出来，
+			// 用户和运维只能对着红条猜；msg 保持不回显原始 SQL 错误（不泄露表结构）。
 			if err := db.Model(&cp).Updates(fields).Error; err != nil {
+				log.Printf("[CONTENT][ERROR] 保存公司简介失败（更新）company=%d err=%v", cid, err)
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
 				return
 			}
 		} else if err := db.Create(&cp).Error; err != nil {
+			log.Printf("[CONTENT][ERROR] 保存公司简介失败（新建）company=%d err=%v", cid, err)
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
 			return
 		}

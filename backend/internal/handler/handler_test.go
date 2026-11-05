@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1037,6 +1038,26 @@ func TestCompanyProfileVideoBackupURL(t *testing.T) {
 	require.Equal(t, "https://cdn-a.example.com/only-main.mp4", d["videoUrl"])
 	require.Equal(t, "", d["videoBackupUrl"])
 	require.EqualValues(t, false, d["videoFallbackUrl"])
+}
+
+// TestCompanyProfileSaveFailureIsLogged 钉住「写库失败必须留下可排查的日志」。
+//
+// 2026-11-05 线上：升级只换了二进制、没同步 migrations/0038，表里缺
+// video_backup_url，PUT 返回 code:1「保存失败」。前端只弹这句红条，而后端
+// 当时一行日志都没打——MySQL 的 Unknown column 被整个吞掉，运维无从下手
+// （2026-11-03 的 0035 事故同款）。msg 不回显 SQL 错误是对的（不泄露表结构），
+// 但 err 必须进日志，否则「没人报错时用户是否无从察觉」这一关过不去。
+func TestCompanyProfileSaveFailureIsLogged(t *testing.T) {
+	src, err := os.ReadFile("content.go")
+	require.NoError(t, err)
+	// 源码守门先剥注释：注释里写了故障背景，不能把它当成实现
+	clean := regexp.MustCompile(`(?m)//[^\n]*`).ReplaceAllString(string(src), "")
+	for _, branch := range []string{"（更新）", "（新建）"} {
+		require.Contains(t, clean,
+			`log.Printf("[CONTENT][ERROR] 保存公司简介失败`+branch,
+			"保存失败分支必须把 err 打进日志，否则线上只剩一句无信息的红条")
+	}
+	require.Equal(t, 2, strings.Count(clean, `"保存失败"`), "两个写库失败分支都要返回 code:1")
 }
 
 // TestCompanyProfileVideoSourceTencent 钉死腾讯视频档的「系统设置开关 + vid 必填」语义。
