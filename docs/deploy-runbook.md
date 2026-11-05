@@ -544,6 +544,14 @@ HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导
 
 # 连构建一起（等价于 npm run build && 上面那条）
 ./scripts/deploy_frontend.sh --build
+
+# 无人值守：把 ssh 口令交给脚本，全程不再提示输入密码
+# ① 推荐：环境变量，口令不进 shell history / ps
+DEPLOY_PASSWORD='服务器 root 口令' ./scripts/deploy_frontend.sh --build
+# ② 也能写成参数（会留在 shell history / ps，临时用可以，别写进脚本/CI 日志）
+./scripts/deploy_frontend.sh --build --password '服务器 root 口令'
+# ③ 最稳妥的长期方案仍是免密，之后连口令都不用带
+ssh-copy-id root@123.56.154.49
 ```
 
 脚本做了五件手拖做不到的事：
@@ -584,12 +592,23 @@ HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导
 > 脚本只用两边都支持的最小参数集，权限靠 `umask 022` 保证（目录 755 / 文件 644，nginx 能读）。
 > 需要指定属主就 `brew install rsync` 后用 `DEPLOY_CHOWN=www:www`。
 
-> **密码只输一次**：脚本用 ssh 连接复用（`ControlMaster` + `ControlPersist`），
-> 探测 / 上传 / 清理 / 自检共用一条连接。彻底免密就 `ssh-copy-id root@<服务器IP>`。
+> **密码只输一次 / 或者一次都不输**：脚本用 ssh 连接复用（`ControlMaster` +
+> `ControlPersist`），探测 / 上传 / 清理 / 自检共用一条连接，手工发版只会问一次密码。
+> 设了 `DEPLOY_PASSWORD` 或 `--password` 就**一次都不问**：OpenSSH >= 8.4 走自带的
+> `SSH_ASKPASS_REQUIRE=force`（零额外依赖，口令只经环境变量交给 ssh，不写文件、不进
+> 命令行参数、不进日志）；老版本 OpenSSH 且装了 `sshpass` 时自动改用 `sshpass -e`；
+> 两者都没有会**直接报错退出**，不会静默退化成交互提示把无人值守卡死。
+> 口令不对时 `ssh` 只试一次就报「多半是口令不对」，不会连问三遍。
+>
+> 安全上请注意：`--password 'xxx'` 的口令会留在 shell history 和 `ps` 里，**优先用
+> `DEPLOY_PASSWORD` 环境变量**（例如从密码管理器取，或 `read -rs DEPLOY_PASSWORD` 交互读入），
+> 更彻底的是 `ssh-copy-id root@<服务器IP>` 配免密。口令不会被脚本打印、不会写进
+> 临时文件；临时生成的 askpass/wrapper 只含「读环境变量」一行且退出即删除。
+> 这条链路有 `scripts/selftest_deploy_frontend.sh` 守门（CI 的「发版脚本自检」job）。
 
 其它可用环境变量见 `./scripts/deploy_frontend.sh -h`（`DEPLOY_PORT` / `DEPLOY_PATH` /
-`DEPLOY_URL` / `DIST_DIR`）。没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守
-「先 assets 后 index.html」**。
+`DEPLOY_URL` / `DEPLOY_PASSWORD` / `DIST_DIR`）；`--password` 会覆盖 `DEPLOY_PASSWORD`。
+没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守「先 assets 后 index.html」**。
 
 
 ## 4. 数据库迁移（升级时）
@@ -1659,6 +1678,7 @@ LOG_FORMAT=json          # .env 里设置；容器形态 compose 已留好变量
 | 现象 | 原因 / 处理 |
 |---|---|
 | 安装向导「测试连接」报 403（界面只显示 `Request failed with status code 403`） | **反代没透传 Host**，与数据库账号密码无关。nginx 的 `proxy_set_header` 默认值是 `$proxy_host`，后端收到的 Host 变成 `127.0.0.1:8080`，跟浏览器 Origin 里的域名对不上，被安装接口的同源检查（挡 CSRF）拒掉。修法：反代 `/api` 的 location 加 `proxy_set_header Host $host;`，然后 `nginx -s reload`；前面还有 CDN / 负载均衡时再加 `proxy_set_header X-Forwarded-Host $host;`。新后端的 403 响应体会直接写明「浏览器来源 X / 后端收到的 Host Y」和这句改法，照着改就行 |
+| 发版脚本又要输密码 / 无人值守发版卡住不动 | 没带口令时本来就会问一次（`ControlMaster` 复用后整程只问这一次）；要完全非交互用 `DEPLOY_PASSWORD='...' ./scripts/deploy_frontend.sh --build`，别把口令写成 `--password '...'` 塞进脚本或 CI 日志（会留进 history / ps）。带了口令仍弹，看输出里的「== 非交互口令 ==」：写 `SSH_ASKPASS` 是走 OpenSSH >= 8.4 通道，写 `sshpass` 是老版本回退；两条通道都不具备时脚本会**直接报错**并给出升级 / 装 sshpass / `ssh-copy-id` 三条出路，不会静默卡住。口令不对时只试一次就报「多半是口令不对」。链路可用 `bash scripts/selftest_deploy_frontend.sh` 离线自检（不连服务器） |
 | backend 反复重启 | 已配置模式下多是数据库连不上：`docker compose logs backend` 看 DB_DSN 与实际库状态（SQLite 形态确认 `data_data` 卷还在；MySQL 形态确认启动时带了 `--profile mysql`）。安装模式（未配置）下 backend 健康判据已放宽为「进程活着」，不属于此项 |
 | 登录后立刻 401 循环 | `COOKIE_SECURE` 与协议不匹配——http 访问却设了 `true`（或反之） |
 | 上传报 413 | 请求体超限：`frontend/nginx.conf` 已设 50m；前置 Caddy 默认不限 |

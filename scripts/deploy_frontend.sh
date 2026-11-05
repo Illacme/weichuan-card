@@ -11,6 +11,8 @@
 # 用法：
 #   ./scripts/deploy_frontend.sh                      # 发到默认服务器（root@123.56.154.49）
 #   ./scripts/deploy_frontend.sh --build             # 先构建再发
+#   DEPLOY_PASSWORD='服务器口令' ./scripts/deploy_frontend.sh --build   # 推荐：非交互，口令不进命令行
+#   ./scripts/deploy_frontend.sh --password '服务器口令' --build        # 也能用，但口令会留在 shell history / ps
 #   ./scripts/deploy_frontend.sh -n                  # 只看要做什么（dry-run）
 #   DEPLOY_HOST=root@其它服务器 ./scripts/deploy_frontend.sh   # 覆盖到别的服务器
 #   DEPLOY_HOST= ./scripts/deploy_frontend.sh -n     # 显式置空 = 本地自测模式（不连服务器）
@@ -26,10 +28,13 @@
 #   DEPLOY_SSH_OPTS 可选，追加 ssh 参数
 #   DEPLOY_TRANSFER 可选，rsync（增量，默认）/ tar（全量）。远端没装 rsync 会自动用 tar
 #   DIST_DIR        可选，默认 ../frontend/dist
+#   DEPLOY_PASSWORD 可选，ssh 登录口令。设了就全程非交互，不再提示输密码；
+#                   --password 优先于它。**优先用环境变量**：命令行参数会进 shell history / ps。
 #
 # 选项：
 #   -n, --dry-run   只打印要做的事，不改任何文件
 #   --build         先跑 npm run build 再发
+#   --password PWD  ssh 登录口令，也可写 --password=PWD；用于无人值守发版
 #   --no-verify     跳过发版后的自检
 #   --prune[=N]     清理 N 天前的旧 assets（默认 7）；只列出，需输入 yes 才真删
 #   -y, --yes       跳过 --prune 的确认（CI 用）
@@ -42,6 +47,12 @@
 # 传输方式自动选：远端有 rsync 走增量（只传变化的文件）；没有就降级 tar（全量，
 # 宝塔的 CentOS 最小镜像通常不带 rsync）。tar 分支用 ssh 连接复用，密码只输一次。
 # 想彻底免密：ssh-copy-id root@<服务器IP>，之后不再提示。
+#
+# 给了 DEPLOY_PASSWORD / --password 时全程不提示：优先用 OpenSSH >= 8.4 自带的
+# SSH_ASKPASS_REQUIRE=force（零依赖，口令只经环境变量交给 ssh，不写文件、不进 argv、
+# 不进日志）；老版本 OpenSSH 且装了 sshpass 时自动改走 sshpass，两者都没有会直接报错，
+# 绝不静默卡在交互提示上。ControlMaster 仍生效，探测/上传/自检共用一条连接。
+# 注意：**命令行上的口令会留在 shell history 和 ps 里**，日常请用环境变量或免密。
 #
 set -euo pipefail
 
@@ -56,6 +67,8 @@ DEPLOY_PATH=${DEPLOY_PATH:-/www/wwwroot/weichuan.ziyuanxingqiu.cn/frontend}
 DEPLOY_URL=${DEPLOY_URL-https://weichuan.ziyuanxingqiu.cn}
 DEPLOY_CHOWN=${DEPLOY_CHOWN:-}
 DEPLOY_SSH_OPTS=${DEPLOY_SSH_OPTS:-}
+DEPLOY_PASSWORD=${DEPLOY_PASSWORD:-}
+PASSWORD_FROM_CLI=0
 
 DRY_RUN=0
 DO_BUILD=0
@@ -76,12 +89,26 @@ while [ $# -gt 0 ]; do
         --no-verify)  DO_VERIFY=0 ;;
         --prune)      PRUNE_DAYS=7 ;;
         --prune=*)    PRUNE_DAYS=${1#*=} ;;
+        --password)   shift
+                      [ $# -gt 0 ] || { echo "✗ --password 后面要跟口令（-h 看用法）" >&2; exit 2; }
+                      DEPLOY_PASSWORD=$1; PASSWORD_FROM_CLI=1 ;;
+        --password=*) DEPLOY_PASSWORD=${1#*=}; PASSWORD_FROM_CLI=1 ;;
         -y|--yes)     ASSUME_YES=1 ;;
         -h|--help)    usage 0 ;;
-        *) echo "未知参数：$1（-h 看用法）" >&2; exit 2 ;;
+        *) echo "未知参数：${1}（-h 看用法）" >&2; exit 2 ;;
     esac
     shift
 done
+
+# --password 的值若没写、或误把下一个选项吃成口令，都会变成「看似传了、其实卡在交互」，
+# 所以在这里就拦掉，别等到连服务器时才发现。
+if [ "$PASSWORD_FROM_CLI" = 1 ]; then
+    [ -n "$DEPLOY_PASSWORD" ] || { echo "✗ --password 不能为空（-h 看用法）" >&2; exit 2; }
+    case "$DEPLOY_PASSWORD" in
+        --build|--no-verify|--dry-run|-n|--prune|--prune=*|-y|--yes|-h|--help|--password*)
+            echo "✗ --password 后面像是漏了口令，却把 $DEPLOY_PASSWORD 当成了口令" >&2; exit 2 ;;
+    esac
+fi
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 DIST_DIR=${DIST_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/frontend/dist}
@@ -92,7 +119,7 @@ die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---------- 0. 前置检查 ----------
 
-[ -d "$DIST_DIR" ] || die "找不到构建产物：$DIST_DIR（先跑 npm run build，或加 --build）"
+[ -d "$DIST_DIR" ] || die "找不到构建产物：${DIST_DIR}（先跑 npm run build，或加 --build）"
 
 if [ "$DO_BUILD" = 1 ]; then
     say "== 构建 =="
@@ -145,12 +172,69 @@ if [ -n "$DEPLOY_SSH_OPTS" ]; then
     SSH_OPTS+=($DEPLOY_SSH_OPTS)
 fi
 
+# ---------- 非交互口令：把 ssh 的密码提示变成「不问人」 ----------
+# ssh 的口令只从 tty / askpass 读，管道喂不进去。两条通道：
+#   ① OpenSSH >= 8.4：SSH_ASKPASS_REQUIRE=force + 一个只打印环境变量的小程序。
+#      口令全程只在环境变量里，不写文件、不进 argv、不进日志；所有 ssh / rsync
+#      子进程都继承，配合 ControlMaster 一次认证、整程免输。
+#   ② 老版本且装了 sshpass：生成一个 ssh wrapper，用 SSHPASS 环境变量喂口令。
+# 两者都不具备时明确报错——绝不能静默退化成交互提示，让人以为脚本卡死了。
+SSH_BIN=ssh
+ASKPASS_FILE=""
+cleanup_askpass() {
+    if [ -n "$ASKPASS_FILE" ]; then rm -f "$ASKPASS_FILE" || true; fi
+    return 0
+}
+trap cleanup_askpass EXIT
+
+if [ -n "$DEPLOY_PASSWORD" ]; then
+    if [ -z "$DEPLOY_HOST" ]; then
+        warn "⚠️  本地模式（DEPLOY_HOST 为空）用不到 ssh 口令，已忽略"
+        DEPLOY_PASSWORD=""
+    else
+        say "== 非交互口令 =="
+        SSH_VER=$(ssh -V 2>&1 | sed -n 's/.*OpenSSH_\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' || true)
+        SSH_MAJOR=${SSH_VER%% *}
+        SSH_MINOR=${SSH_VER##* }
+        case "$SSH_MAJOR" in ''|*[!0-9]*) SSH_MAJOR=0; SSH_MINOR=0 ;; esac
+        case "$SSH_MINOR" in ''|*[!0-9]*) SSH_MINOR=0 ;; esac
+
+        if [ "$SSH_MAJOR" -gt 8 ] || { [ "$SSH_MAJOR" -eq 8 ] && [ "$SSH_MINOR" -ge 4 ]; }; then
+            ASKPASS_FILE="${TMPDIR:-/tmp}/weichuan-askpass-$$"
+            # 文件里只有「读环境变量」这一行，没有口令本身；700 只让它可执行。
+            printf '#!/bin/sh\nprintf "%%s\\n" "$WEICHUAN_DEPLOY_PASSWORD"\n' > "$ASKPASS_FILE"
+            chmod 700 "$ASKPASS_FILE"
+            export WEICHUAN_DEPLOY_PASSWORD="$DEPLOY_PASSWORD"
+            export SSH_ASKPASS="$ASKPASS_FILE"
+            export SSH_ASKPASS_REQUIRE=force
+            echo "  方式：SSH_ASKPASS（OpenSSH ${SSH_MAJOR}.${SSH_MINOR}，零额外依赖）"
+        elif command -v sshpass >/dev/null 2>&1; then
+            ASKPASS_FILE="${TMPDIR:-/tmp}/weichuan-sshwrap-$$"
+            printf '#!/bin/sh\nexec sshpass -e ssh "$@"\n' > "$ASKPASS_FILE"
+            chmod 700 "$ASKPASS_FILE"
+            export SSHPASS="$DEPLOY_PASSWORD"
+            SSH_BIN="$ASKPASS_FILE"
+            echo "  方式：sshpass（OpenSSH ${SSH_MAJOR}.${SSH_MINOR} < 8.4）"
+        else
+            die "本机 OpenSSH ${SSH_MAJOR}.${SSH_MINOR} 不支持 SSH_ASKPASS_REQUIRE（需 >= 8.4），也没装 sshpass，无法非交互输入口令。
+    三选一：① 升级 OpenSSH；② 装 sshpass（macOS: brew install hudochenkov/sshpass/sshpass；Linux: apt/yum install sshpass）；
+    ③ ssh-copy-id $DEPLOY_HOST 配免密，之后不带口令直接发版。"
+        fi
+        # 口令错时别让 ssh 连问三次（每次都要走一遍 askpass），一次就够。
+        SSH_OPTS+=(-o NumberOfPasswordPrompts=1)
+        if [ "$PASSWORD_FROM_CLI" = 1 ]; then
+            warn "  ⚠️  口令来自命令行参数，会留在 shell history / ps。下次改用 DEPLOY_PASSWORD=... 环境变量。"
+        fi
+    fi
+fi
+
 if [ -n "$DEPLOY_HOST" ]; then
-    SSH_CMD=(ssh -p "$DEPLOY_PORT" "${SSH_OPTS[@]}")
+    SSH_CMD=("$SSH_BIN" -p "$DEPLOY_PORT" "${SSH_OPTS[@]}")
     remote() { "${SSH_CMD[@]}" "$DEPLOY_HOST" "$@"; }
     TARGET="$DEPLOY_HOST:$DEPLOY_PATH"
-    # rsync 的 -e 只收一个字符串，这里把数组拼回去
-    SSH_STR="ssh -p $DEPLOY_PORT"
+    # rsync 的 -e 只收一个字符串，这里把数组拼回去。
+    # sshpass 通道里 $SSH_BIN 是临时 wrapper 的绝对路径（由本脚本生成，不含空格/口令）。
+    SSH_STR="$SSH_BIN -p $DEPLOY_PORT"
     for _o in "${SSH_OPTS[@]}"; do SSH_STR="$SSH_STR $_o"; done
     RSYNC_E=(-e "$SSH_STR")
 else
@@ -177,7 +261,10 @@ if [ -n "$DEPLOY_HOST" ]; then
     rc=0
     remote 'command -v rsync >/dev/null 2>&1' || rc=$?
     if [ "$rc" -eq 255 ]; then
-        die "ssh 连不上 $DEPLOY_HOST（端口 $DEPLOY_PORT）"
+        if [ -n "$DEPLOY_PASSWORD" ]; then
+            die "ssh 连不上 ${DEPLOY_HOST}（端口 ${DEPLOY_PORT}）；网络正常的话多半是口令不对（口令不会被打印）"
+        fi
+        die "ssh 连不上 ${DEPLOY_HOST}（端口 ${DEPLOY_PORT}）"
     fi
     # 这条连接会建立 ControlMaster 的 socket。紧接着的下一条若抢在 socket
     # 就绪之前发起，会退化成直连、再问一次密码（实测确实多问了一次），

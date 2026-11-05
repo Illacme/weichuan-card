@@ -241,6 +241,21 @@ jobs:
       - name: 运行 scripts/selftest_backup.sh
         run: bash scripts/selftest_backup.sh
 
+  # ───────── 发版脚本自检：口令注入退化成「又去问密码」平时不会叫（门禁） ─────────
+  # deploy_frontend.sh 只在发版那天跑一次，最坏的失败形态不是报错而是静默卡在交互提示，
+  # 无人值守/CI 发版会永远挂着。自检用假 ssh / 假 sshpass 顶替 PATH，不连任何服务器，
+  # 钉住三条入口、口令不泄漏、临时文件清理、老 OpenSSH 回退、缺能力时明确报错。
+  deploy-selftest:
+    name: 发版脚本自检
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 运行 scripts/selftest_deploy_frontend.sh
+        run: bash scripts/selftest_deploy_frontend.sh
+
   # ───────── 密钥扫描：防止真实凭据被提交进仓库（门禁） ─────────
   # 为什么单列一个 job：密钥一旦进 git 历史就极难彻底清除，必须在合并前用 CI 拦住。
   # 测试 fixture / 文档里的伪密钥（明显是占位、非真实凭据）已在 .gitleaks.toml 的
