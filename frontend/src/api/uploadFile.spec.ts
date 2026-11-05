@@ -7,7 +7,7 @@ import { uploadFile } from './uploadFile'
 //
 // XHR 用最小假实现（记录 open/send，手动 finish），不引入 mock 库：
 // 我们的调用只用到 open/setRequestHeader/send/onload/onerror 五个面。
-
+// upload.onprogress 是新增的第六个面——进度条全靠它，必须能手动触发。
 class FakeXHR {
   static instances: FakeXHR[] = []
   method = ''
@@ -18,6 +18,11 @@ class FakeXHR {
   sent: any = null
   onload: (() => void) | null = null
   onerror: (() => void) | null = null
+  upload: { onprogress: ((e: any) => void) | null } = { onprogress: null }
+
+  progress(loaded: number, total: number, lengthComputable = true) {
+    this.upload.onprogress?.({ lengthComputable, loaded, total })
+  }
 
   open(method: string, url: string) {
     this.method = method
@@ -187,5 +192,92 @@ describe('uploadFile', () => {
     FakeXHR.instances[0].finish(200, JSON.stringify({ code: 0, data: { urls: [] } }))
 
     await expect(p).rejects.toThrow('未返回文件地址')
+  })
+
+  // ---- 上传进度 ----
+  //
+  // 大视频点完「选择文件」没有任何反馈，用户只会以为页面卡死。
+  // 更麻烦的是**直传失败会静默回退**：那一刻进度必然从头开始，
+  // 不把阶段一起报出来，用户看到的就是「进度条倒退」这个说不通的现象。
+  describe('上传进度', () => {
+    const okMultipart = () =>
+      JSON.stringify({ code: 0, data: { urls: ['/uploads/done.png'] } })
+
+    it('直传：先报申请链接，再报 direct 进度，成功补到 100', async () => {
+      mockPresign({ code: 0, data: { putUrl: 'https://oss/put', url: 'https://cdn/x.png' } })
+      const seen: any[] = []
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+
+      expect(seen[0]).toMatchObject({ phase: 'presign', percent: 0 })
+      await flush()
+      const xhr = FakeXHR.instances[0]
+      expect(xhr.method).toBe('PUT')
+      xhr.progress(25, 100)
+      xhr.progress(60, 100)
+      expect(seen.at(-1)).toMatchObject({ phase: 'direct', percent: 60, loaded: 60, total: 100 })
+
+      xhr.finish(200)
+      await expect(p).resolves.toBe('https://cdn/x.png')
+      expect(seen.at(-1)).toMatchObject({ phase: 'direct', percent: 100 })
+    })
+
+    it('预签名不可用回退：阶段切成 server 且进度从 0 重新计', async () => {
+      mockPresign({ code: 1 })
+      const seen: any[] = []
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+      await flush()
+
+      const xhr = FakeXHR.instances[0]
+      expect(xhr.method).toBe('POST')
+      expect(seen.at(-1)).toMatchObject({ phase: 'server', percent: 0 })
+      xhr.progress(50, 100)
+      expect(seen.at(-1)).toMatchObject({ phase: 'server', percent: 50 })
+      xhr.finish(200, okMultipart())
+
+      await p
+      expect(seen.at(-1)).toMatchObject({ phase: 'server', percent: 100 })
+    })
+
+    it('PUT 失败后回退：direct 阶段不能谎报 100%，随后切 server', async () => {
+      mockPresign({ code: 0, data: { putUrl: 'https://oss/put', url: 'https://cdn/x.png' } })
+      const seen: any[] = []
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+      await flush()
+
+      const put = FakeXHR.instances[0]
+      put.progress(80, 100)
+      expect(seen.some((x) => x.phase === 'direct' && x.percent === 100)).toBe(false)
+      put.finish(500)
+      await flush()
+
+      const phases = seen.map((x) => x.phase)
+      expect(phases).toEqual(expect.arrayContaining(['presign', 'direct', 'server']))
+      const firstServer = seen.find((x) => x.phase === 'server')
+      expect(firstServer.percent).toBe(0)
+      FakeXHR.instances[1].finish(200, okMultipart())
+      await p
+    })
+
+    it('未传 onProgress 时不挂 upload.onprogress（老调用方零影响）', async () => {
+      mockPresign({ code: 1 })
+      const p = uploadFile(file())
+      await flush()
+
+      expect(FakeXHR.instances[0].upload.onprogress).toBe(null)
+      FakeXHR.instances[0].finish(200, okMultipart())
+      await p
+    })
+
+    it('lengthComputable=false 时不产生 NaN 百分比', async () => {
+      mockPresign({ code: 1 })
+      const seen: any[] = []
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+      await flush()
+
+      FakeXHR.instances[0].progress(0, 0, false)
+      expect(seen.every((x) => Number.isFinite(x.percent))).toBe(true)
+      FakeXHR.instances[0].finish(200, okMultipart())
+      await p
+    })
   })
 })

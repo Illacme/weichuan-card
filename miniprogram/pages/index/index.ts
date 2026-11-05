@@ -1,6 +1,7 @@
 import { request, assetUrl } from '../../utils/request'
 import { thumbnailURL, onImgFail } from '../../utils/thumb'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
+import { clearEntryStaff } from '../../utils/entry'
 import { track, deriveSource } from '../../utils/track'
 import { FALLBACK_BRAND } from '../../utils/brand'
 
@@ -53,6 +54,11 @@ Page({
     source: '',
   },
   onLoad(query: any) {
+    // 名片墙凭「本地缓存的默认入口」直接跳过来时会带这个标记。
+    // 它只服务一件事：万一那位员工已经不可用（停用 / 删除），
+    // 本页负责清缓存并把访客送回名片墙，而不是让人停在一句「员工不存在」上。
+    ;(this as any)._fromEntryCache = String((query && query.fromEntryCache) || '') === '1'
+
     // 自定义顶栏：先按设备状态栏高度算出避让高度，避免内容被刘海/状态栏遮挡
     let sb = 20
     try {
@@ -106,6 +112,52 @@ Page({
       this.setData({ loading: false })
       wx.reLaunch({ url: '/pages/team/team' })
     }
+  },
+  // 凭「默认入口缓存」跳进来时，用**后台此刻的配置**核对一遍。
+  //
+  // 缓存只负责「省掉名片墙那一次往返」，谁的名片该被打开始终由后台说了算。
+  // /api/card 的 company 里本来就有 mpEntryMode / mpEntryStaffId（后台
+  // 「企业管理」里配的那两个字段），所以核对**不需要额外请求，也不用改后端**。
+  //
+  // 三种不一致，全部当场纠正（都先清缓存，否则下次冷启动又是同样错法）：
+  //   1. 那位员工已不存在 / 已停用（card 拿不到 employee）→ 回名片墙
+  //   2. 后台把默认员工换成了别人 → 直接去后台现在指定的那位
+  //   3. 后台取消了默认入口 → 回名片墙
+  //
+  // 返回是否已接手跳转：调用方据此决定「还要不要弹员工不存在 / 要不要继续渲染」。
+  // 只在 fromEntryCache 为真时生效——扫码进来看某个人（staffId 明显不是默认入口）
+  // 时绝不能把人纠正走。
+  reconcileEntry(company: any): boolean {
+    if (!(this as any)._fromEntryCache) return false
+    // 一次性：后面 onShow 之类的路径不要再判
+    ;(this as any)._fromEntryCache = false
+
+    const cur = Number(this.data.staffId) || 0
+    const mode = String((company && company.mpEntryMode) || '')
+    const want = Number(company && company.mpEntryStaffId) || 0
+    // 后台仍然认当前这一位：什么都不用做，正常渲染
+    if (mode === 'staff' && want > 0 && want === cur) return false
+
+    // 以下都是「缓存与后台不一致」：缓存作废
+    clearEntryStaff(getCompanyId())
+
+    const cid =
+      Number(company && company.companyId) ||
+      Number(company && company.id) ||
+      this.data.companyId ||
+      getCompanyId()
+
+    if (mode === 'staff' && want > 0) {
+      // 换了人：直接去后台现在指定的那位，别让访客在旧名片上停留
+      wx.reLaunch({
+        url: '/pages/index/index?staffId=' + want + (cid > 0 ? '&companyId=' + cid : ''),
+      })
+      return true
+    }
+    // 取消了默认入口，或那位员工已经不可用：回名片墙按最新配置重新决定。
+    // skipEntryCache=1 让名片墙这一次不走缓存、也不再改道（见 pages/team/team.ts）。
+    wx.reLaunch({ url: '/pages/team/team?skipEntryCache=1' })
+    return true
   },
   onShow() {
     // 埋点挂 onShow（首页文档 §4 明确要求）：名片每次显示记一次访问
@@ -175,6 +227,7 @@ Page({
       // 停用：后端返回 code=2（无 employee）
       if (card.code === 2) {
         this.setData({ disabled: true, loading: false })
+        this.reconcileEntry((card as any).company)
         return
       }
       // 不存在：后端返回 code=1（无 employee）。
@@ -183,6 +236,9 @@ Page({
       // 切勿误读成 card.data.* / ach.data.* / layout.data.*（此前 bug：卡片页恒走 notFound）。
       if (card.code === 1 || !card.employee) {
         this.setData({ notFound: true, loading: false })
+        // 凭「默认入口缓存」跳进来的：静默纠正回名片墙，不弹「员工不存在」——
+        // 访客根本没输过任何编号，跟他说编号有问题只会更困惑。
+        if (this.reconcileEntry((card as any).company)) return
         wx.showToast({ title: '员工不存在', icon: 'none' })
         return
       }
@@ -190,9 +246,20 @@ Page({
       // 必须在端上拼绝对——统一经 assetUrl 修正后再下发（employee-card /
       // featured-projects / achievement-grid / service-grid / company-video 组件直接消费）。
       const cardData = card as any
+      // 凭「默认入口缓存」跳进来的：后台此刻的配置说了算（见 reconcileEntry）。
+      // 必须放在 setData 之前——否则访客会先看到一张「后台已经不认」的旧名片再被跳走。
+      if (this.reconcileEntry(cardData.company)) return
       if (cardData.employee) cardData.employee.avatar = assetUrl(cardData.employee.avatar)
       if (cardData.company) cardData.company.logo = assetUrl(cardData.company.logo)
-      if (cardData.profile) cardData.profile.cover = assetUrl(cardData.profile.cover)
+      if (cardData.profile) {
+        cardData.profile.cover = assetUrl(cardData.profile.cover)
+        // 视频地址也要绝对化。后端对「上传到云存储」可能返回 /uploads/xxx.mp4
+        // 这样的相对路径（直传失败、回退成 multipart 时尤其常见），
+        // 小程序 <video src> 不认相对路径——表现就是一块黑屏 + 00:00，
+        // 没有弹窗、没有提示，访客和后台都看不出是地址错了。
+        // 主源与「兜底 MP4」共用这一列，一处处理即可。
+        cardData.profile.videoUrl = assetUrl(cardData.profile.videoUrl)
+      }
       // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
       const categories = (ach.categories || []).map((c: any) => {
         const icon = assetUrl(c.icon)

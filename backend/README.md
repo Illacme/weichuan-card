@@ -271,7 +271,13 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   - `local`（默认）：写本地 `UPLOAD_DIR` 并由 `/uploads` 静态路由托管，适用于开发/单机。
   - `minio`：写入 MinIO（或任意 S3 兼容对象存储，含阿里云 OSS 的 S3 兼容端点），需 `MINIO_*` 环境变量；`UPLOAD_BASE_URL` 设为 bucket 的公开访问基址或 CDN 域名。
   - `oss`：写入阿里云 OSS，需 `OSS_*` 环境变量；`UPLOAD_BASE_URL` 设为 bucket 公网域名或绑定的自定义域名/CDN。
+  - `s3`：与 `minio` 共用同一套实现与字段，只表达「这是一朵 S3 兼容云」（COS / OBS / 七牛 / AWS S3 / R2）。**七牛的端点按空间所在区域分域名**：`s3.<区域>.qiniucs.com`（如 `s3.cn-south-1.qiniucs.com`），区域只能从控制台存储空间概览的「S3 域名」弹窗里看——匿名探测在所有区域都只回 `NotSupportAnonymous`，探不出来。填错时报的是 S3 错误码（签名不匹配 / NoSuchBucket），看着像密钥错，实际是端点点错了。`UPLOAD_BASE_URL` 要填**存储空间自己绑定的 CDN 域名**，不是这个 S3 端点。
+    - **访问域名先自测再填**：`curl -I https://<CDN域名>/<一个已上传对象>` 必须是 `200` 且 `Content-Type` 为 `video/mp4`。七牛 CDN 域名如果没在控制台启用 HTTPS，会返回 `403` + `X-Error-Info: httpsDisabled`，而 443 端口上挂的是 CDN 厂商的默认证书（主机名不匹配）；此时 `http://` 能取到对象、`https://` 一律取不到。表现是**图片可能还看得见（走了别的域名）、视频却是一块黑屏 + 00:00**，且小程序不会弹任何错误。
+    - 对象存储还要配**跨域规则允许 `PUT`**：直传是浏览器直接 PUT，没配会被拦下并静默回退成经应用服务器中转（大视频占服务器带宽）。后台上传进度条会明确显示「已改用服务器中转」。
 - 三种实现都做了**统一的大小 / 类型白名单校验**（`checkFile`），对象命名布局一致（用户上传放 `uploads/<rand>`，小程序码放 `wxacode/<staffId>.jpg`），便于从本地平滑迁移到对象存储。
+- **大小上限按扩展名分流**：图片走 `upload_max_mb`（默认 10），视频（`mp4`）走 `upload_video_max_mb`（默认 100）。分流必须在 `UploadLimitBytes` 之后判——那一条会把上限重置成图片值。
+  两条链路都要认这个值：直传预签名由对象存储直接收文件、服务端看不到内容，只受前端预校验约束；而**直传失败回退成 multipart 时**由 `checkFile` 把关。
+  早先只做了前半段，出现过后台填 100MB、界面写「≤100MB」、用户选完文件却被服务端按 10MB 拒掉的情况（提示「文件过大，上限 10 MB」），`storage_test.go` 的 `TestCheckFileVideoLimit` 从三个方向钉住它（mp4 不被图片上限拦 / 图片不被视频上限放开 / 超限时提示的是视频那个数）。
 - **小程序码**也走同一抽象（`SaveBytes`），写入当前驱动并带内存 TTL 缓存（按 `WXACODE_TTL_HOURS`），到期自动重新生成；不再依赖本地文件系统 ModTime。
 - 前置要求：bucket 需设为**公开读**（或经 CDN 回源公开），这样返回的 URL 才能被小程序/H5 直接访问。
 - 依赖：`github.com/minio/minio-go/v7`、`github.com/aliyun/aliyun-oss-go-sdk`。因 SDK 要求，**项目 Go 版本需 ≥ 1.26**（见 `go.mod` 与 `Dockerfile` 的 `golang:1.26-alpine`）。
@@ -318,7 +324,13 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 
 ## 腾讯视频档（系统设置 → 功能开关）
 
-公司简介的「视频来源」支持五档，`tencent`（腾讯视频插件）是唯一需要**先开开关**的一档：
+公司简介的「视频来源」在库里支持五档，`tencent`（腾讯视频插件）是唯一需要**先开开关**的一档。
+
+> **后台界面只显示四档**：`upload` 与 `url` 已合并为「自托管 MP4（上传或直链）」。
+> 两者在小程序端是**同一个分支**（`company-video` 里 `(source === 'upload' || source === 'url') && url`
+> 就返回 `mp4`），都渲染原生 `<video src>`，访客看不出任何区别；差别只在「文件怎么放上去」。
+> **库里取值不变**（仍分别写 `upload` / `url`），历史数据、开放接口、小程序组件一律不受影响，
+> 合并只发生在后台这一层（`IsValidVideoSource` 仍不认 `mp4`，把界面值提交上来会被拒）。
 
 | 档位 | 播放形态 | 存储/流量 | 播放埋点 | 门槛 |
 |---|---|---|---|---|

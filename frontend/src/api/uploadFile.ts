@@ -15,11 +15,31 @@
 //   POST /api/admin/upload（multipart，字段名 file）
 //        → { code: 0, data: { urls: [url] } }
 // 鉴权靠同源 httpOnly Cookie，**不拼 Bearer**（localStorage 里没有 token）。
+//
+// 进度：两条 XHR 都接 upload.onprogress，并把「当前走哪条路」一起报出去。
+// 大视频几十上百 MB，用户点完「选择文件」如果什么都没有，只会以为页面卡死；
+// 而直传失败会**静默回退**成经服务器中转，那一刻进度必然从头开始——
+// 不把阶段说出来，用户看到的就是「进度条倒退」这个说不通的现象。
+export type UploadPhase =
+  | 'presign' // 正在申请直传链接（还没开始传字节）
+  | 'direct' // 浏览器直接 PUT 到对象存储
+  | 'server' // 直传不可用，改走应用服务器中转
+
+export interface UploadProgress {
+  phase: UploadPhase
+  /** 0~100。同一阶段内只前进；换阶段会重新从 0 计（见上）。 */
+  percent: number
+  loaded: number
+  total: number
+}
+
 export interface UploadFileOptions {
   /** 普通上传地址，缺省 /api/admin/upload */
   action?: string
   /** 预签名地址，缺省由 action 推导（/upload → /upload/presign） */
   presignAction?: string
+  /** 进度回调；不传则完全不碰 XHR 的 upload 对象（老调用方零影响）。 */
+  onProgress?: (p: UploadProgress) => void
 }
 
 /** 上传单个文件，返回可长期访问的 URL；失败抛错（message 可直接展示给用户）。 */
@@ -29,19 +49,41 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
   const ext = (file.name.split('.').pop() || '').toLowerCase()
   const contentType = file.type || 'application/octet-stream'
 
+  // 进度只在有订阅者时计算，避免给每个调用方平白添一次回调开销。
+  const report = (phase: UploadPhase, loaded = 0, total = file.size, done = false) => {
+    if (!opts.onProgress) return
+    const t = total > 0 ? total : file.size
+    // 完成前封顶 99：XHR 的 progress 事件可能先于服务端落盘完成，
+    // 100% 只能在 onload 之后给，否则会出现「显示传完了却还不返回」。
+    const percent = done ? 100 : t > 0 ? Math.max(0, Math.min(99, Math.round((loaded / t) * 100))) : 0
+    opts.onProgress({ phase, percent, loaded, total: t })
+  }
+  // 没订阅进度就别生成回调，bindProgress 也就不会往 xhr.upload 上挂东西：
+  // 富文本编辑器等老调用方不该因为这次改动多一个空监听器。
+  const onXhrProgress = (phase: UploadPhase): ProgressFn | undefined =>
+    opts.onProgress ? (loaded, total) => report(phase, loaded, total) : undefined
+
+  report('presign')
+
   // 1) 预签名直传：任何一步不顺（接口 404、code!=0、PUT 失败）都落到回退，
   //    绝不因为「直传不可用」让上传整体失败——本地磁盘驱动就是这种部署。
   try {
     const p = await presign(presignAction, ext, contentType, file.size)
     if (p && p.code === 0 && p.data && p.data.putUrl) {
-      await putDirect(p.data.putUrl, file, contentType)
+      await putDirect(p.data.putUrl, file, contentType, onXhrProgress('direct'))
+      report('direct', file.size, file.size, true)
       return p.data.url
     }
   } catch {
     /* 预签名不可用：继续走普通上传 */
   }
 
-  return serverUpload(action, file)
+  // 2) 回退。先报一次 phase='server' 且 0%，调用方据此把进度条重置并
+  //    给出「已改用服务器中转」的原因，而不是让进度莫名其妙倒退。
+  report('server', 0)
+  return serverUpload(action, file, onXhrProgress('server'), () =>
+    report('server', file.size, file.size, true)
+  )
 }
 
 async function presign(url: string, ext: string, contentType: string, size: number): Promise<any> {
@@ -59,11 +101,23 @@ async function presign(url: string, ext: string, contentType: string, size: numb
   return resp.json()
 }
 
-function putDirect(putUrl: string, file: File, contentType: string): Promise<void> {
+type ProgressFn = (loaded: number, total: number) => void
+
+/** 给 xhr.upload 挂进度监听。跨域 PUT 也能收到 progress 事件（不读响应体）。 */
+function bindProgress(xhr: XMLHttpRequest, onProgress?: ProgressFn): void {
+  if (!onProgress || !xhr.upload) return
+  xhr.upload.onprogress = (e) => {
+    // lengthComputable 为 false 时 total 是 0，别拿它算百分比（会得到 NaN）
+    if (e.lengthComputable && e.total > 0) onProgress(e.loaded, e.total)
+  }
+}
+
+function putDirect(putUrl: string, file: File, contentType: string, onProgress?: ProgressFn): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', putUrl)
     xhr.setRequestHeader('Content-Type', contentType)
+    bindProgress(xhr, onProgress)
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve()
       else reject(new Error('直传失败（HTTP ' + xhr.status + '）'))
@@ -73,12 +127,13 @@ function putDirect(putUrl: string, file: File, contentType: string): Promise<voi
   })
 }
 
-function serverUpload(action: string, file: File): Promise<string> {
+function serverUpload(action: string, file: File, onProgress?: ProgressFn, onDone?: () => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const form = new FormData()
     form.append('file', file)
     const xhr = new XMLHttpRequest()
     xhr.open('POST', action)
+    bindProgress(xhr, onProgress)
     xhr.onload = () => {
       let body: any
       try {
@@ -97,6 +152,7 @@ function serverUpload(action: string, file: File): Promise<string> {
         reject(new Error('上传失败：服务端未返回文件地址'))
         return
       }
+      onDone?.()
       resolve(url)
     }
     xhr.onerror = () => reject(new Error('上传网络错误'))

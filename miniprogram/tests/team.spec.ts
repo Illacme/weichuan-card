@@ -36,12 +36,14 @@ vi.mock('../utils/request', () => ({
 }))
 
 let wxStub: any
+let storage: Map<string, any>
 
 beforeEach(() => {
   vi.resetModules()
   installPageCapture()
   const installed = installWx()
   wxStub = installed.wx
+  storage = installed.storage
   installApp({ myStaffId: 0 })
   mocks.request.mockClear()
 })
@@ -275,6 +277,134 @@ describe('名片墙 · 企业配置的默认入口', () => {
 
     expect(wxStub.reLaunch).not.toHaveBeenCalled()
     expect(p.data.list).toHaveLength(2)
+  })
+})
+
+describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () => {
+  // 背景：企业配了「默认进某位员工名片」时，这一页只是个中转站。
+  // 原来每一轮冷启动都得先等 /api/team 往返（弱网 1~3 秒），
+  // 访客盯着「微传名片 + 加载中」看半天才被 reLaunch 走。
+  // 记住上次的结果，下次直接跳。
+
+  const cacheKey = 'entryStaff:0' // companyId=0（未绑定租户）
+
+  it('缓存还在有效期内：直接跳名片页，一次请求都不发', async () => {
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
+
+    const p = await page()
+
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({
+      url: '/pages/index/index?staffId=11&fromEntryCache=1',
+    })
+    // 跳转中整页不渲染，否则会先闪一下名片墙
+    expect(p.data.redirecting).toBe(true)
+  })
+
+  // fromEntryCache=1 是给名片页的自愈线索：那位员工要是已经停用了，
+  // 名片页负责清缓存并把访客送回来。这一格漏了，缓存就会把人锁死在死名片上。
+  it('凭缓存跳转时必须带上 fromEntryCache 标记', async () => {
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
+
+    await page()
+
+    const url = wxStub.reLaunch.mock.calls[0][0].url
+    expect(url).toContain('fromEntryCache=1')
+  })
+
+  it('缓存已过期：照常请求后端，不跳', async () => {
+    // at=1 → 1970 年，必然过期
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: 1 }))
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    const p = await page()
+
+    expect(mocks.request).toHaveBeenCalled()
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(p.data.list).toHaveLength(2)
+  })
+
+  it('带关键字进入（搜索）：不凭缓存跳，直接查', async () => {
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    const p = await page({ keyword: '张' })
+
+    expect(mocks.request).toHaveBeenCalled()
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    // 关键字要带回搜索框，不能因为跳转逻辑把它吃掉
+    expect(p.data.activeKeyword).toBe('张')
+  })
+
+  it('后端确认要改道：把结果记进缓存，下次才能直接跳', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 11 } }))
+
+    await page()
+
+    const rec = JSON.parse(wxStub.getStorageSync(cacheKey))
+    expect(rec.staffId).toBe(11)
+  })
+
+  // 管理员取消「默认入口」后，旧缓存必须清掉——不清的话访客还会被默默跳到那位员工
+  it('后端说不需要改道：清掉残留的旧缓存', async () => {
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 99, at: 1 })) // 已过期，会走网络
+    mocks.request.mockResolvedValueOnce(teamResp()) // entry.mode = wall
+
+    await page()
+
+    expect(wxStub.getStorageSync(cacheKey)).toBe('')
+  })
+
+  // 读写必须落在同一个键上。这条踩过一次：读用 query 的 companyId、
+  // 写用 getCompanyId()，两者不同时缓存「写得进、读不到」，而且完全不报错。
+  it('query 带 companyId 时按它分键写入', async () => {
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 11 } }))
+
+    await page({ companyId: '7' })
+
+    // 分开断言：键写错时 getStorageSync 回空串，直接 JSON.parse 只会抛
+    // 「Unexpected end of JSON input」，看不出是哪儿错了
+    const raw = wxStub.getStorageSync('entryStaff:7')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(raw).staffId).toBe(11)
+    expect(wxStub.getStorageSync('entryStaff:0')).toBe('')
+  })
+
+  it('下次带同一个 companyId 裸启动：命中同一份缓存直接跳', async () => {
+    wxStub.setStorageSync('entryStaff:7', JSON.stringify({ staffId: 11, at: Date.now() }))
+
+    await page({ companyId: '7' })
+
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({
+      url: '/pages/index/index?staffId=11&companyId=7&fromEntryCache=1',
+    })
+  })
+
+  // 缓存按租户分键，A 企业的默认员工不会被套到 B 企业头上
+  it('别的租户的缓存不会串过来', async () => {
+    wxStub.setStorageSync('entryStaff:7', JSON.stringify({ staffId: 11, at: Date.now() }))
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'wall', staffId: 0 } }))
+
+    const p = await page({ companyId: '8' })
+
+    expect(mocks.request).toHaveBeenCalled()
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(p.data.list).toHaveLength(2)
+  })
+
+  // 名片页发现缓存里的员工已失效，会带 skipEntryCache=1 把人送回来。
+  // 这一次必须清缓存 + 老实走网络 + 不再改道，否则会两边来回跳成死循环。
+  it('skipEntryCache：清缓存、走网络、这次不再改道', async () => {
+    wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
+    // 后端仍然说「要改道」——正是这种矛盾才会形成死循环
+    mocks.request.mockResolvedValueOnce(teamResp({ entry: { mode: 'staff', staffId: 11 } }))
+
+    const p = await page({ skipEntryCache: '1' })
+
+    expect(wxStub.getStorageSync(cacheKey)).toBe('') // 缓存已清
+    expect(mocks.request).toHaveBeenCalled()
+    expect(wxStub.reLaunch).not.toHaveBeenCalled() // 不再跳
   })
 })
 

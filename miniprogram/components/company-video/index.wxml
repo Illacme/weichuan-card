@@ -23,34 +23,83 @@
        显示腾讯视频按 vid 取到的默认海报，避免一块黑底。
        **autoplay 必须显式写**：插件这个属性的默认值是 true（与原生 video 相反），
        不写就等于「一进页面就带声音自己播」。值来自后台「自动播放」开关，默认关。
-       bindplay 接播放埋点：插件透传了 video 的完整事件，这是视频号档给不了的。 -->
-  <txv-video
-    wx:elif="{{mode === 'txv'}}"
-    vid="{{vid}}"
-    playerid="companyVideo"
-    autoplay="{{autoplay}}"
-    class="cv-video"
-    object-fit="contain"
-    use-poster="{{true}}"
-    controls="{{true}}"
-    bindplay="onVideoPlay"
-    binderror="onVideoError"
-  />
+       bindplay 接播放埋点：插件透传了 video 的完整事件，这是视频号档给不了的。
+
+       **play-btn-position="center"**：播放键默认在左下角（bottom），又小又偏，访客根本
+       找不到——暂停之后想继续，只能去角落里翻。挪到中央后，暂停态一眼就知道点哪儿。
+       **enable-play-gesture**：插件原生支持双击播放/暂停，默认关，必须显式打开。
+       这两个都是插件自带能力，比自己盖遮罩靠谱：遮罩会挡住底部进度条、全屏键，
+       以及免费版片头的「跳过广告」按钮。
+
+       外面这层 .cv-txv 与遮罩只负责「第一次启动」：点画面任意处即 play()。
+       播起来之后遮罩立刻消失，控制权全交回插件（进度条、暂停键、双击手势都在）。
+       暂停时中央会再出现一个小遮罩，把点击区域放大到 240rpx，比点准插件那个按钮容易。
+       **遮罩是普通 view，靠 video 同层渲染才盖得住原生组件**：盖不住时不显示也点不到，
+       界面自动退回插件原来的按钮——是渐进增强，不是必需依赖。 -->
+  <view wx:elif="{{mode === 'txv'}}" class="cv-txv">
+    <txv-video
+      vid="{{vid}}"
+      playerid="companyVideo"
+      autoplay="{{autoplay}}"
+      play-btn-position="center"
+      enable-play-gesture="{{true}}"
+      class="cv-video"
+      object-fit="contain"
+      use-poster="{{true}}"
+      controls="{{true}}"
+      bindplay="onVideoPlay"
+      bindpause="onVideoPause"
+      bindended="onVideoEnded"
+      binderror="onVideoError"
+    />
+    <!-- ① 首次启动：全屏可点。
+         只在「还没播过、且后台没开自动播放」时出现，播起来就撤（见上面注释）。 -->
+    <view
+      wx:if="{{!txvStarted && !autoplay && !txvMaskOff}}"
+      class="cv-tapstart"
+      hover-class="cv-tapstart-down"
+      bindtap="onTapTxvPlay"
+    >
+      <view wx:if="{{txvStarting}}" class="cv-tapstart-loading"></view>
+      <view wx:else class="cv-tapstart-btn"></view>
+    </view>
+    <!-- ② 暂停 / 播完：一块透明热区，把点击范围放大到 240rpx。
+         **不画按钮**——插件已经把播放键挪到中央（play-btn-position="center"），
+         再画一个就是两个按钮叠在一起。这里只负责「点它周围也算点到」。
+         **不铺满全屏**：暂停态用户最常见的动作就是拖进度，铺满会把进度条挡死。 -->
+    <view
+      wx:elif="{{txvStarted && !txvPlaying && !autoplay && !txvMaskOff}}"
+      class="cv-tapresume"
+      bindtap="onTapTxvPlay"
+    ></view>
+  </view>
+
 
   <!-- 云存储上传 / 外部直链 / 兜底：三者共用同一个 videoUrl，走标准 video 播放。
        注意：txv-video 依赖 app.json 声明插件，未声明时该标签是未注册组件（渲染不出来），
        所以 tencent 档由部署方显式开启后才可能出现（见 scripts/enable-tencent-video.mjs）。
-       bindplay 接播放埋点（video_play）：channel-video 官方无播放事件，只有 video 有。 -->
-  <video
-    wx:elif="{{mode === 'mp4'}}"
-    src="{{videoUrl}}"
-    class="cv-video"
-    object-fit="contain"
-    show-fullscreen-btn
-    enable-progress-gesture
-    bindplay="onVideoPlay"
-    binderror="onVideoError"
-  />
+       bindplay 接播放埋点（video_play）：channel-video 官方无播放事件，只有 video 有。
+
+       **外面这层 .cv-mp4 是为了承载失败态**：以前 binderror 只打一行 console.warn，
+       访客看到的是黑屏 + 00:00（2026-11-05 真实反馈），既不知道失败也没法恢复。
+       地址错（相对路径 / 证书失效 / 对象不存在）是这类失败的主因，
+       所以给一块可重试的提示，并在控制台把 src 打出来供排查。 -->
+  <view wx:elif="{{mode === 'mp4'}}" class="cv-mp4">
+    <video
+      src="{{mp4Src}}"
+      class="cv-video"
+      object-fit="contain"
+      show-fullscreen-btn
+      enable-progress-gesture
+      bindplay="onVideoPlay"
+      binderror="onVideoError"
+    />
+    <view wx:if="{{mp4Error}}" class="cv-mp4err">
+      <view class="cv-mp4err-title">视频加载失败</view>
+      <view class="cv-mp4err-tip">请确认后台填的视频地址能在浏览器直接打开</view>
+      <view class="cv-mp4err-btn" hover-class="cv-mp4err-btn-down" bindtap="onRetryMp4">重新加载</view>
+    </view>
+  </view>
 
   <!-- 无视频：封面图左上角叠白色「公司简介」标题；无封面时显示同风格占位（自带标题）。
        封面挂了 binderror：封面丢了就退到同风格的蓝底占位，别留一块空白或裂图——

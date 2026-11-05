@@ -23,6 +23,8 @@ import { request, assetUrl } from '../../utils/request'
 import { thumbnailURL, onThumbError, onImgFail } from '../../utils/thumb'
 import { FALLBACK_BRAND, applyBrandTitle } from '../../utils/brand'
 import { mapTeamList, teamParams, hasMoreOf } from '../../utils/team'
+import { readEntryStaff, writeEntryStaff, clearEntryStaff } from '../../utils/entry'
+import { getCompanyId } from '../../utils/tenant'
 
 Page({
   data: {
@@ -37,14 +39,25 @@ Page({
     // 已提交给接口的关键字：与 keyword 分开，避免用户边打字边发请求
     // （输入框里正在输入的字符还没确认，不该触发网络请求）
     activeKeyword: '',
-    // 企业抬头：企业信息还没填时后端给空串，标题回落品牌名
-    title: FALLBACK_BRAND,
+    // 企业抬头：**初始为空，等接口回来再填**。
+    //
+    // 这里原来写的是 FALLBACK_BRAND（产品名「微传名片」）。问题在于：企业配了
+    // 「默认进某位员工名片」时，这一页只是个中转站，弱网下会停 1~3 秒，
+    // 访客看到的就是「微传名片 + 加载中」——自家公司的小程序顶着平台名，
+    // 既莫名其妙，也像是没配置好（2026-11-04 反馈）。
+    // 空串时 WXML 整块不渲染（见 team.wxml 的 wx:if），加载期只剩一个干净的加载提示。
+    // 真拿不到企业名时的兜底仍然保留，在 load() 里——那时至少是「加载完了但没有名字」，
+    // 和「还没加载完」是两回事。
+    title: '',
     logo: '',
     // LOGO 加载失败的地址：WXML 用 `logo && logoFail !== logo` 判断是否还画它
     // （见 utils/thumb.ts onImgFail——记 URL 而不是布尔标记，换 LOGO 自动重试）
     logoFail: '',
     companyId: 0,
     loading: true,
+    // 正在按「上次记住的默认入口」改道去名片页：整页不渲染任何内容，
+    // 否则会先闪一下名片墙（甚至闪一句「还没有可展示的名片」）再跳走。
+    redirecting: false,
     error: false,
     // 企业不存在 / 已停用（后端 code=1），与「公司暂时没有员工」区分开
     unavailable: false,
@@ -60,11 +73,60 @@ Page({
     // 从「查看全部」返回时把关键字带回来，否则用户会以为自己搜的东西丢了
     if (kw) patch.keyword = patch.activeKeyword = kw
     if (Object.keys(patch).length) this.setData(patch)
+
+    // 本次生效的租户，贯穿整页生命周期（见 entryKey()）。
+    // query 显式带的 companyId 最权威（扫码 / 分享链），否则用本机粘滞值。
+    ;(this as any)._entryKey = cid > 0 ? cid : getCompanyId()
+
+    // 名片页发现「缓存里的默认员工已经不可用」时会带这个标记把人送回来：
+    // 清掉缓存，并且这一次老老实实走网络、直接渲染名片墙，**不再改道**——
+    // 否则后端仍认为那位员工有效时会和名片页来回跳，跳成死循环。
+    if (String((query && query.skipEntryCache) || '') === '1') {
+      clearEntryStaff(this.entryKey())
+      this.load({ noRedirect: true })
+      return
+    }
+
+    // 上次已经知道「这家企业默认进某位员工的名片」：直接跳，不再等这次 /api/team。
+    // 弱网下省掉的正是整个中转页停留（原来要等完一次往返才 reLaunch）。
+    // 搜索态不跳：用户是来找人的，被弹进某人的名片会觉得「我搜的人呢」。
+    const cached = kw ? 0 : readEntryStaff(this.entryKey())
+    if (cached > 0) {
+      const target = cid > 0 ? cid : getCompanyId()
+      this.setData({ redirecting: true, loading: false })
+      wx.reLaunch({
+        url:
+          '/pages/index/index?staffId=' +
+          cached +
+          (target > 0 ? '&companyId=' + target : '') +
+          // 告诉名片页这次是「凭缓存跳过来的」：万一那位员工已被停用 / 删除，
+          // 它负责清缓存并把访客送回名片墙（见 pages/index/index.ts）。
+          '&fromEntryCache=1',
+      })
+      return
+    }
+
     this.load()
   },
 
+  // 「默认入口」缓存的租户键。
+  //
+  // 为什么不能每处自己算一次：读的时候用 query 的 companyId、写的时候用
+  // getCompanyId()，两者不同就会「写得进、读不到」——缓存看着有，实际永不命中，
+  // 而且不报错。所以 onLoad 里算一次存下，全程只认它。
+  entryKey(): number {
+    const k = (this as any)._entryKey
+    return typeof k === 'number' ? k : getCompanyId()
+  },
+
   // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
-  async load(opts?: { silent?: boolean }) {
+  //
+  // noRedirect（2026-11-04）：本次即使后端说「该进某位员工的名片」也不改道。
+  // 只有一种调用方——名片页发现缓存里的默认员工已失效、把人送回来时（skipEntryCache）。
+  // 少了这个开关就会死循环：这里清掉缓存 → 又按后端结果写回去并 reLaunch →
+  // 名片页又说「员工不存在」→ 再送回来…… 来回跳。
+  async load(opts?: { silent?: boolean; noRedirect?: boolean }) {
+    const noRedirect = !!(opts && opts.noRedirect)
     const patch: Record<string, unknown> = { error: false, unavailable: false }
     if (!opts || !opts.silent) patch.loading = true
     this.setData(patch)
@@ -87,7 +149,11 @@ Page({
       // 会觉得「我搜的人呢」。
       const entry = r.entry || {}
       const entryStaff = Number(entry.staffId) || 0
-      if (entry.mode === 'staff' && entryStaff > 0 && !this.data.activeKeyword) {
+      if (entry.mode === 'staff' && entryStaff > 0 && !this.data.activeKeyword && !noRedirect) {
+        // 记住这次结果：下次裸启动直接进名片页，不必再等这一趟往返（见 utils/entry.ts）。
+        // 键用 entryKey()——必须与 onLoad 里读缓存时**同一个键**，
+        // 否则「写得进、读不到」，缓存等于没有。
+        writeEntryStaff(this.entryKey(), entryStaff)
         const cid = Number(comp.id) || this.data.companyId
         wx.reLaunch({
           url:
@@ -97,6 +163,10 @@ Page({
         })
         return
       }
+      // 没配默认入口（或后端已回落成名片墙）：把可能残留的旧缓存清掉。
+      // 不清的话，管理员取消这个配置之后，访客还会一直被默默跳到那位员工的名片。
+      // 搜索态不碰缓存：搜索结果与「企业默认入口」是两回事。
+      if (!this.data.activeKeyword) clearEntryStaff(this.entryKey())
       const list = mapTeamList(r.data)
       const total = Number(r.total) || 0
       const title = comp.shortName || comp.fullName || FALLBACK_BRAND

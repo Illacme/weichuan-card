@@ -248,6 +248,11 @@ func main() {
 	storage.UploadLimitBytes = func() int64 {
 		return int64(setting.GetInt("upload_max_mb", 10)) * 1024 * 1024
 	}
+	// 视频单独一条线（见 storage.VideoUploadLimitBytes 注释）：不注入的话，
+	// 直传失败回退到 multipart 时视频会被图片上限拦下，后台填的 100MB 等于没用。
+	storage.VideoUploadLimitBytes = func() int64 {
+		return int64(setting.GetInt("upload_video_max_mb", 100)) * 1024 * 1024
+	}
 	storage.AllowExtProvider = func() map[string]bool {
 		sl := setting.GetStringSlice("upload_allow_ext", nil)
 		if len(sl) == 0 {

@@ -1,22 +1,30 @@
 <!-- 名片墙：小程序裸启动（扫体验版二维码 / 直接打开）时的落地页。
      访客在这里先看到「这家公司有谁」，点某人进名片。
-     五种状态必须分开画，混在一起会让访客误以为系统坏了：
-       loading / error（网络）/ unavailable（企业不存在或停用）/ empty（公司还没人）/ 搜不到 -->
-<view class="team-hero">
+     各状态必须分开画，混在一起会让访客误以为系统坏了：
+       redirecting（正按缓存的默认入口改道）/ loading / error（网络）/
+       unavailable（企业不存在或停用）/ empty（公司还没人）/ 搜不到 -->
+<!-- 抬头：企业信息回来之前**整块不渲染**。
+     原来这里不管有没有数据都画，而 title 的初始值是产品名「微传名片」——
+     企业配了「默认进某位员工名片」时这一页只是中转站，弱网下要停 1~3 秒，
+     访客看到的就是「微传名片 + 加载中」：自家小程序顶着平台名，像没配置好
+     （2026-11-04 反馈）。title 为空时连 LOGO 也没有，整块收掉最干净。 -->
+<view class="team-hero" wx:if="{{!redirecting && (title || logo)}}">
   <!-- 企业 LOGO 挂了 binderror：LOGO 丢了就整块收掉（留白），
        否则页头正中会挂一块裂图，比没有 LOGO 更难看 -->
   <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo && logoFail !== logo}}"
     binderror="onImgFail" data-fail="logoFail" data-src="{{logo}}" />
-  <view class="team-name">{{title}}</view>
+  <view class="team-name" wx:if="{{title}}">{{title}}</view>
   <view class="team-sub" wx:if="{{!loading && !error && !unavailable && total > 0}}">
     <block wx:if="{{activeKeyword}}">找到 {{total}} 位匹配的同事</block>
     <block wx:else>共 {{total}} 位同事，点击查看名片</block>
   </view>
 </view>
 
-<!-- 搜索框：只在企业可用时出现。输入不发请求，按「搜索」键才查——
-     每敲一个字打一次接口既费流量，也会让宫格不停闪烁。 -->
-<view class="team-search" wx:if="{{!unavailable}}">
+<!-- 搜索框：只在企业可用**且已加载完**时出现。加载中给一个还搜不了的输入框，
+     并不能帮上忙，反而诱使访客去点（2026-11-04）。
+     输入不发请求，按「搜索」键才查——每敲一个字打一次接口既费流量，
+     也会让宫格不停闪烁。 -->
+<view class="team-search" wx:if="{{!unavailable && !loading}}">
   <input
     class="team-search-input"
     value="{{keyword}}"
@@ -29,7 +37,7 @@
   <view class="team-search-clear" wx:if="{{keyword}}" catchtap="onClearSearch">✕</view>
 </view>
 
-<view wx:if="{{loading}}" class="loading">加载中…</view>
+<view wx:if="{{!redirecting && loading}}" class="loading">加载中…</view>
 
 <view wx:elif="{{error}}" class="error-box">
   <view class="error-text">网络异常，加载失败</view>
@@ -42,7 +50,9 @@
   <button class="retry-btn" bindtap="load">重试</button>
 </view>
 
-<view wx:else>
+<!-- 这里是 elif 而不是 else：改道中（redirecting）必须**什么都不画**，
+     否则会在跳走前闪一下「还没有可展示的名片」。 -->
+<view wx:elif="{{!redirecting}}">
   <!-- 宫格：三列，头像 + 姓名 + 职位 -->
   <view class="team-grid" wx:if="{{list.length}}">
     <view

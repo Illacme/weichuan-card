@@ -2377,3 +2377,175 @@ describe('poster.wxml · 背景条懒加载', () => {
     expect(tags.filter((t) => !/\blazy-load\b/.test(t))).toEqual([])
   })
 })
+
+// ---- 首屏「两波并行」守门 ----
+//
+// 这一页的耗时是**两波串行**：
+//   Wave1  4 个接口并行（名片 / 小程序码 / 背景清单 / 偏好设置）
+//   Wave2  背景 + 头像 + 二维码三张图并行（preload 三张齐了才开画）
+// Wave2 必须等 Wave1 回来才知道地址，两波相加就是用户感知的全部等待。
+//
+// 实测（同一连接复用，已排除握手）：头像 3.4KB 要 0.78s、背景 29.6KB 要 1.10s
+// ——耗时由「一次网络往返」决定，与体积几乎无关。所以压缩素材 / 把图打进
+// 小程序包都治不了它（59 张原图 2136KB 超主包 2MB 上限，缩略图 320×460 喂
+// 640×920 的画布必然糊）。唯一有效的办法是**让 Wave2 不必等 Wave1**：
+// 用上次留下的地址快照在 onLoad 就起跑。
+//
+// 这一组用例钉的就是「起跑得够早」和「预热失败不能反噬」两件事——
+// 两者删掉都不会报错、不会变丑，只会悄悄变慢 / 偶尔白块。
+describe('poster 页 · 图片预热（把两波压成一波）', () => {
+  const SNAP_BG = 'https://cdn.example.com/api/assets/file/posters/poster-brand.jpg'
+  const SNAP_AV = 'https://cdn.example.com/uploads/a.png'
+  const SNAP_QR = 'https://cdn.example.com/uploads/wxacode/42.jpg'
+
+  // 离屏 canvas 桩：给 src 赋值即记录并同步回调（onload 或 onerror 由用例决定）
+  function stubOffscreen(fail = false) {
+    const srcs: string[] = []
+    const canvas: any = {
+      createImage() {
+        const img: any = {}
+        Object.defineProperty(img, 'src', {
+          set(v: string) {
+            srcs.push(v)
+            if (fail) {
+              if (img.onerror) img.onerror()
+            } else if (img.onload) img.onload()
+          },
+          get() {
+            return ''
+          },
+        })
+        return img
+      },
+    }
+    ;(globalThis as any).wx.createOffscreenCanvas = vi.fn(() => canvas)
+    return srcs
+  }
+
+  function snapStorage(extra: Record<string, string> = {}) {
+    return {
+      ...extra,
+      'posterSnap:42': JSON.stringify({ bg: SNAP_BG, avatar: SNAP_AV, qr: SNAP_QR, at: Date.now() }),
+    }
+  }
+
+  it('有快照：onLoad 当场起跑三张图，不等接口返回', async () => {
+    const opts = await loadPage()
+    const srcs = stubOffscreen()
+    stubStorage(snapStorage())
+    // 接口**永不返回**：只要图还在等接口，srcs 就是空的
+    mocks.request.mockImplementation(() => new Promise(() => {}))
+
+    const page = instance(opts)
+    page.onLoad({ staffId: '42' })
+
+    // onLoad 是同步返回的：此刻 prepare() 的 Promise 还没 settle，
+    // 但三张图必须已经开始下载了——这正是「压成一波」的全部意义
+    expect(srcs).toEqual([SNAP_BG, SNAP_AV, SNAP_QR])
+  })
+
+  it('没有快照：不建离屏 canvas（行为与改造前一致）', async () => {
+    const opts = await loadPage()
+    stubStorage({})
+    ;(globalThis as any).wx.createOffscreenCanvas = vi.fn()
+    mockApis()
+
+    const page = instance(opts)
+    page.onLoad({ staffId: '42' })
+
+    expect((globalThis as any).wx.createOffscreenCanvas).not.toHaveBeenCalled()
+  })
+
+  it('基础库不支持离屏 canvas：不抛，主流程照常', async () => {
+    const opts = await loadPage()
+    stubStorage(snapStorage())
+    delete (globalThis as any).wx.createOffscreenCanvas
+    mockApis()
+
+    const page = instance(opts)
+    expect(() => page.onLoad({ staffId: '42' })).not.toThrow()
+  })
+
+  // ↓ 这条是防「反噬」的：loadCached 对失败会写 3 秒失败锁（本来是为了
+  //   拖动时每帧重试不打网络）。预热失败若占了这把锁，draw() 半秒后
+  //   就会跳过同一地址，整张海报的背景变成白块——比不预热更糟。
+  it('预热失败不留 3 秒失败锁：draw() 仍会重新加载', async () => {
+    const opts = await loadPage()
+    stubOffscreen(true) // 三张全部 onerror
+    stubStorage(snapStorage())
+    mocks.request.mockImplementation(() => new Promise(() => {}))
+
+    const page = instance(opts)
+    page.onLoad({ staffId: '42' })
+
+    expect(page._imgFails[SNAP_BG]).toBeUndefined()
+    expect(page._imgFails[SNAP_AV]).toBeUndefined()
+    expect(page._imgFails[SNAP_QR]).toBeUndefined()
+  })
+
+  it('出图成功后把三个地址存成快照，供下次提前起跑', async () => {
+    const opts = await loadPage()
+    stubStorage({})
+    // 显式指定背景（exists=true）：不显式指定时页面会「没选过 → 按当天节日/节气
+    // 自动挑一张」，用例就只在非节日日成立——本项目踩过这种「只在写它那天绿」的坑。
+    mockApis(undefined, '/uploads/wxacode/42.jpg', { code: 0, data: { items: POSTER_LIST } }, null, {
+      code: 0,
+      data: { exists: true, staffId: 42, bgId: 'poster-lichun' },
+    })
+    stubCanvasNode()
+
+    const page = instance(opts)
+    await page.onLoad({ staffId: '42' })
+    await new Promise((r) => setTimeout(r, 0))
+
+    const call = (globalThis as any).wx.setStorageSync.mock.calls.find(
+      (c: any[]) => c[0] === 'posterSnap:42'
+    )
+    expect(call).toBeTruthy()
+    const rec = JSON.parse(call[1])
+    // 选中的那张背景 + 头像 + 海报码
+    expect(rec.bg).toBe('https://cdn.example.com/api/assets/file/posters/poster-lichun.jpg')
+    expect(rec.avatar).toBe(SNAP_AV)
+    expect(rec.qr).toBe(SNAP_QR)
+  })
+
+  it('换背景后快照跟着换成新背景（否则下次预热的是旧图）', async () => {
+    const opts = await loadPage()
+    stubStorage({})
+    mockApis(undefined, '/uploads/wxacode/42.jpg', { code: 0, data: { items: POSTER_LIST } })
+    stubCanvasNode()
+
+    const page = instance(opts)
+    await page.onLoad({ staffId: '42' })
+    await new Promise((r) => setTimeout(r, 0))
+    // 换到「当前没选中的那一张」：不写死 id，避免用例变成「只在非节日日成立」
+    const next = page.data.bgId === 'poster-brand' ? 'poster-lichun' : 'poster-brand'
+    ;(globalThis as any).wx.setStorageSync.mockClear()
+
+    page.pickBg({ currentTarget: { dataset: { id: next } } })
+
+    const call = (globalThis as any).wx.setStorageSync.mock.calls.find(
+      (c: any[]) => c[0] === 'posterSnap:42'
+    )
+    expect(call).toBeTruthy()
+    expect(JSON.parse(call[1]).bg).toBe(
+      'https://cdn.example.com/api/assets/file/posters/' + next + '.jpg'
+    )
+  })
+
+  // 静态守门：起跑必须发生在 prepare() **之前**。顺序反了不会报错，
+  // 但图片请求会排在四个接口后面出门，等于白做——这种「看起来改了其实没用」
+  // 的退化必须钉住。
+  it('onLoad 里 warmFromSnap() 必须排在 prepare() 之前', () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '../pages/poster/poster.ts'),
+      'utf8'
+    )
+    const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const at = body.indexOf('warmFromSnap()')
+    const prep = body.indexOf('this.prepare()')
+    expect(at).toBeGreaterThan(-1)
+    expect(prep).toBeGreaterThan(-1)
+    expect(at).toBeLessThan(prep)
+  })
+})

@@ -25,6 +25,26 @@
         </template>
       </el-upload>
     </div>
+    <!-- 上传进度条。大视频几十上百 MB，点完「选择文件」没有反馈只会被当成页面卡死。
+         阶段也要写出来：直传失败会**静默回退**成经服务器中转，那一刻进度从头开始，
+         不说原因就是「进度条莫名其妙倒退」。
+         这里刻意不复用 el-upload 自带的进度：它只认一个百分比，表达不了「换了一条路」，
+         两条进度条并排反而更乱。 -->
+    <div v-if="progress" class="uf-progress" :class="{ 'is-server': progress.phase === 'server' }">
+      <div class="uf-progress-label">
+        <span>{{ phaseLabel }}</span>
+        <span v-if="progress.phase !== 'presign' && progress.total > 0" class="uf-progress-pct">
+          {{ progress.percent }}%
+        </span>
+      </div>
+      <div class="uf-progress-track">
+        <div
+          class="uf-progress-bar"
+          :class="{ 'is-waiting': progress.phase === 'presign' }"
+          :style="{ width: progress.phase === 'presign' ? '30%' : progress.percent + '%' }"
+        ></div>
+      </div>
+    </div>
     <!-- 编辑页大图确认：点击已回显/已上传的文件打开全屏查看器（带分辨率与文件大小） -->
     <ImageViewer v-if="viewerUrl" :url-list="[viewerUrl]" @close="viewerUrl = ''" />
     <div v-if="!hideLibrary" class="library-entry">
@@ -44,7 +64,7 @@
 <script setup>
 import { ElMessage } from 'element-plus'
 import { Picture } from '@element-plus/icons-vue'
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import AssetPicker from './AssetPicker.vue'
 import ImageViewer from './ImageViewer.vue'
 import { uploadFile } from '@/api/uploadFile'
@@ -109,6 +129,23 @@ function onLibraryPicked(picked) {
 
 const fileList = ref([])
 
+// 上传进度（null = 不在上传）。XHR 的 progress 事件很密，
+// 只在「阶段或百分比真的变了」时才写响应式状态，别每个 64KB 都触发一次渲染。
+const progress = ref(null)
+function applyProgress(p) {
+  const cur = progress.value
+  if (cur && cur.phase === p.phase && cur.percent === p.percent) return
+  progress.value = p
+}
+const phaseLabel = computed(() => {
+  const p = progress.value
+  if (!p) return ''
+  if (p.phase === 'presign') return '正在申请上传链接…'
+  if (p.phase === 'direct') return '正在直传到云存储（不经应用服务器）…'
+  // 这一句不能省：大文件走中转会明显变慢，用户有权知道是配置没配对
+  return '直传不可用，已改用服务器中转（大文件会占服务器带宽）…'
+})
+
 // 外部值 → 内部 file-list（用于回显已保存 URL）
 watch(
   () => props.modelValue,
@@ -120,9 +157,15 @@ watch(
 )
 
 function beforeUpload(file) {
-  const ok = file.size / 1024 / 1024 < props.maxMB
-  if (!ok) ElMessage.error(`文件不能超过 ${props.maxMB}MB`)
-  return ok
+  // 用 <= 而不是 <：提示文案写的是「≤N MB」，服务端 checkFile 也是 size > max 才拒，
+  // 两边对「正好 N MB」的判断必须一致，否则卡在边界上的文件会出现
+  // 「界面说不能超过、后端其实收」的矛盾提示。
+  // maxMB<=0 视为「不限制」：设置项被写坏时不能反过来把所有文件都拒掉。
+  if (props.maxMB > 0 && file.size / 1024 / 1024 > props.maxMB) {
+    ElMessage.error(`文件不能超过 ${props.maxMB}MB`)
+    return false
+  }
+  return true
 }
 
 // 自定义上传：实现细节（预签名直传 → 回退 multipart）抽在 api/uploadFile.ts，
@@ -130,14 +173,28 @@ function beforeUpload(file) {
 // （此前就出现过「这里能把图传上去、编辑器里传不上去」）。
 // el-upload 的成功契约是 onSuccess 收一个 { code, data } 信封，这里把拿到的 URL 包回去，
 // 就仍由下面的 onSuccess 统一处理多选追加 / 单选替换。
-async function customUpload(option) {
-  try {
-    const url = await uploadFile(option.file, { action: props.action })
-    option.onSuccess({ code: 0, data: { urls: [url] } })
-  } catch (e) {
-    ElMessage.error(e?.message || '上传失败')
-    option.onError(e)
-  }
+//
+// **故意不写成 async**：el-upload 对「返回 Promise 的 http-request」会再接一次
+// `request.then(options.onSuccess, options.onError)`（见 upload-content），于是
+// 成功回调跑两遍，第二遍拿到 undefined，我们的 onSuccess 读 res.code 直接抛
+// TypeError → 控制台一条 Uncaught (in promise)，却看不出是哪来的。
+// 返回 undefined 就只走我们自己这一条 onSuccess / onError。
+function customUpload(option) {
+  progress.value = null
+  uploadFile(option.file, {
+    action: option.action || props.action,
+    onProgress: applyProgress,
+  }).then(
+    (url) => {
+      progress.value = null
+      option.onSuccess({ code: 0, data: { urls: [url] } })
+    },
+    (e) => {
+      progress.value = null
+      ElMessage.error((e && e.message) || '上传失败')
+      option.onError(e)
+    }
+  )
 }
 
 function onSuccess(res) {
@@ -171,6 +228,56 @@ function onExceed() {
 </script>
 
 <style scoped>
+/* 上传进度：置于文件列表与素材库入口之间，避免把「选择文件」按钮推得跳动 */
+.uf-progress {
+  margin: 8px 0 2px;
+  max-width: 420px;
+}
+.uf-progress-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+}
+.uf-progress.is-server .uf-progress-label {
+  color: #b8820a;
+}
+.uf-progress-pct {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: #409eff;
+}
+.uf-progress.is-server .uf-progress-pct {
+  color: #b8820a;
+}
+.uf-progress-track {
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: #ebeef5;
+  overflow: hidden;
+}
+.uf-progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: #409eff;
+  transition: width 0.15s linear;
+}
+.uf-progress.is-server .uf-progress-bar {
+  background: #e6a23c;
+}
+/* 申请签名这步没有字节进度，用一条来回滑动的短条表示「还在动」 */
+.uf-progress-bar.is-waiting {
+  animation: uf-wait 1.2s ease-in-out infinite;
+}
+@keyframes uf-wait {
+  0% { transform: translateX(-60%); }
+  50% { transform: translateX(180%); }
+  100% { transform: translateX(-60%); }
+}
 /* 缩略图可点开大图（事件委托在 .uf-list 上），指针提示 + 避免被当成普通图片 */
 .uf-list :deep(.el-upload-list__item-thumbnail) {
   cursor: zoom-in;

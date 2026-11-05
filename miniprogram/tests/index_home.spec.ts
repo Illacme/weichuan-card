@@ -59,8 +59,19 @@ async function page(query: any = { staffId: '42' }) {
 const card = (extra: any = {}) => ({
   code: 0,
   employee: { staffId: 42, name: '张伟', avatar: '/uploads/a.png', title: '工程师' },
-  company: { name: '朗汇机电有限公司', shortName: '朗汇机电', logo: '/uploads/logo.png' },
-  profile: { cover: '/uploads/cover.png' },
+  // mpEntryMode / mpEntryStaffId 是后台「企业管理」里配的默认入口，
+  // 名片页拿它核对「本地缓存有没有偏离后台」（见 reconcileEntry）。
+  // 默认值与 page() 的 staffId=42 一致 = 后台认可当前这位。
+  company: {
+    id: 7,
+    companyId: 7,
+    name: '朗汇机电有限公司',
+    shortName: '朗汇机电',
+    logo: '/uploads/logo.png',
+    mpEntryMode: 'staff',
+    mpEntryStaffId: 42,
+  },
+  profile: { cover: '/uploads/cover.png', videoUrl: '/uploads/intro.mp4' },
   ...extra,
 })
 
@@ -160,10 +171,33 @@ describe('index 首页', () => {
     expect(p.data.employee.avatar).toBe('https://cdn.test/uploads/a.png')
     expect(p.data.company.logo).toBe('https://cdn.test/uploads/logo.png')
     expect(p.data.profile.cover).toBe('https://cdn.test/uploads/cover.png')
+    expect(p.data.profile.videoUrl).toBe('https://cdn.test/uploads/intro.mp4')
     expect(p.data.categories[0].icon).toBe('https://cdn.test/uploads/c1.png')
     expect(p.data.featured[0].cover).toBe('https://cdn.test/uploads/p9.jpg')
     expect(p.data.services[0].icon).toBe('https://cdn.test/uploads/s3.png')
     expect(p.data.loading).toBe(false)
+  })
+
+  // 视频地址漏了 assetUrl 是真实的线上故障：上传直传失败回退 multipart 时
+  // 后端会返回 /uploads/xxx.mp4 相对路径，小程序 <video src> 不认，
+  // 表现就是一块黑屏 + 00:00，没有任何报错弹窗（2026-11-05 用户截图）。
+  it('视频地址补成绝对 URL；已经是外链的保持原样', async () => {
+    mockApis()
+    const p1 = await page({ staffId: '42' })
+    expect(p1.data.profile.videoUrl).toBe('https://cdn.test/uploads/intro.mp4')
+
+    mockApis({
+      card: card({
+        profile: {
+          cover: '/uploads/cover.png',
+          videoSource: 'url',
+          videoUrl: 'https://other.cdn.example.com/a.mp4',
+        },
+      }),
+    })
+    const p2 = await page({ staffId: '42' })
+    // 外链不能被拼到我们自己的服务域名下，否则必然 404
+    expect(p2.data.profile.videoUrl).toBe('https://other.cdn.example.com/a.mp4')
   })
 
   it('首页布局：order 生效，背景图与遮罩浓度换算成 0~1', async () => {
@@ -443,5 +477,103 @@ describe('index 首页', () => {
 
     p.onPageScroll({ scrollTop: 45 }) // 0.511，超过死区
     expect(p.data.navMask).toBeCloseTo(0.511, 3)
+  })
+})
+
+// ---- 默认入口缓存失效的自愈（2026-11-04）----
+//
+// 名片墙会凭「本地缓存的默认入口」直接跳进名片页（省掉一次 /api/team 往返）。
+// 代价是缓存可能指向一个已经不可用的员工。这条路径必须自己收尾：
+// 清缓存 + 退回名片墙，名片墙带 skipEntryCache=1 重新问后端。
+//
+// 没有它的话有两个后果，都很糟：
+//   1. 访客停在一句「员工不存在」上，而这页没有返回入口；
+//   2. 下次冷启动还会跳到同一张死名片——永远出不来。
+describe('index 首页 · 默认入口缓存失效的自愈', () => {
+  const cacheKey = 'entryStaff:0' // mocks.companyId = 0
+
+  it('缓存指向的员工已不存在：清缓存并退回名片墙，且不弹「员工不存在」', async () => {
+    storage.set(cacheKey, JSON.stringify({ staffId: 42, at: Date.now() }))
+    mockApis({ card: { code: 1 } })
+
+    await page({ staffId: '42', fromEntryCache: '1' })
+
+    expect(storage.get(cacheKey)).toBeUndefined()
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/team/team?skipEntryCache=1' })
+    // 访客从没输过编号，跟他说「员工不存在」只会更困惑
+    expect(wxStub.showToast).not.toHaveBeenCalled()
+  })
+
+  it('缓存指向的员工已被停用（code=2）：同样自愈', async () => {
+    storage.set(cacheKey, JSON.stringify({ staffId: 42, at: Date.now() }))
+    mockApis({ card: { code: 2 } })
+
+    await page({ staffId: '42', fromEntryCache: '1' })
+
+    expect(storage.get(cacheKey)).toBeUndefined()
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/team/team?skipEntryCache=1' })
+  })
+
+  // 不是凭缓存跳进来的（扫码 / 分享链接指到一个失效员工）：保持原样，
+  // 不碰缓存、不跳走——那张缓存可能是另一条路径存的，不该被这条路径清掉。
+  it('没有 fromEntryCache 标记：保持原有行为，不动缓存也不跳走', async () => {
+    storage.set(cacheKey, JSON.stringify({ staffId: 42, at: Date.now() }))
+    mockApis({ card: { code: 1 } })
+
+    await page({ staffId: '42' })
+
+    expect(storage.get(cacheKey)).toBeDefined()
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(wxStub.showToast).toHaveBeenCalledWith({ title: '员工不存在', icon: 'none' })
+  })
+
+  // ---- 以后台配置为准 ----
+  //
+  // 缓存只负责省掉名片墙那一次往返；**谁的名片该被打开始终由后台说了算**。
+  // 权威答案就在 /api/card 的 company.mpEntryMode / mpEntryStaffId 里，
+  // 所以核对既不用额外请求，也不用改后端。
+
+  it('后台仍认可当前这位：不跳，正常渲染', async () => {
+    mockApis() // company.mpEntryMode=staff, mpEntryStaffId=42，与当前 staffId 一致
+
+    const p = await page({ staffId: '42', fromEntryCache: '1' })
+
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(p.data.employee.name).toBe('张伟')
+  })
+
+  // 管理员把默认员工换成了别人：缓存里是旧的，必须纠正到后台现在指定的那位
+  it('后台把默认员工换成了别人：改道到新的那位，并清缓存', async () => {
+    storage.set(cacheKey, JSON.stringify({ staffId: 42, at: Date.now() }))
+    mockApis({ card: card({ company: { ...card().company, mpEntryStaffId: 99 } }) })
+
+    await page({ staffId: '42', fromEntryCache: '1' })
+
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({
+      url: '/pages/index/index?staffId=99&companyId=7',
+    })
+    expect(storage.get(cacheKey)).toBeUndefined()
+  })
+
+  // 管理员关掉了「默认进某位员工的名片」：访客该看到名片墙，而不是被旧缓存按在某人名片上
+  it('后台取消了默认入口：回名片墙', async () => {
+    storage.set(cacheKey, JSON.stringify({ staffId: 42, at: Date.now() }))
+    mockApis({ card: card({ company: { ...card().company, mpEntryMode: 'wall', mpEntryStaffId: 0 } }) })
+
+    await page({ staffId: '42', fromEntryCache: '1' })
+
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/team/team?skipEntryCache=1' })
+    expect(storage.get(cacheKey)).toBeUndefined()
+  })
+
+  // 扫码进来直接看某个人（staffId 明显不是默认入口）：绝不能把人纠正走。
+  // 这条是上一条的反面——核对只在 fromEntryCache 为真时生效。
+  it('扫码看指定员工：即使与后台默认入口不同也不纠正', async () => {
+    mockApis({ card: card({ company: { ...card().company, mpEntryStaffId: 99 } }) })
+
+    const p = await page({ staffId: '42' })
+
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+    expect(p.data.employee.name).toBe('张伟')
   })
 })

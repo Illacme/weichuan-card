@@ -140,8 +140,12 @@ var registry = []def{
 	// 视频单独一个上限：图片 10MB 够用，视频动辄几十上百 MB。
 	// 若复用 upload_max_mb，为迁就视频把上限拉到 100MB，等于把图片的限制一起放开
 	// （误传超大图片、占满磁盘都更难收场），故两条线分开。
-	// 注意：本值只约束「前端选文件时的预校验」——直传预签名由对象存储直接收文件，
-	// 应用服务器看不到内容，无法在服务端强拦；要真正封顶需在对象存储侧配 Post Policy。
+	//
+	// 两条链路都要认这个值：直传预签名由对象存储直接收文件，服务端看不到内容，
+	// 只能靠前端预校验；而**直传失败回退成 multipart 时**，服务端
+	// storage.checkFile 会按扩展名改用这个上限（VideoUploadLimitBytes）。
+	// 早先只做了前半段，结果后台填 100MB、界面也写「≤100MB」，
+	// 用户选完文件却被服务端按图片的 10MB 拒掉，提示「文件过大，上限 10 MB」。
 	{Key: "upload_video_max_mb", Group: "upload", Type: "int", Value: "100",
 		Name:     "单个视频大小上限",
 		Validate: intRange(1, 2048),
@@ -270,7 +274,11 @@ var registry = []def{
 		Desc: "图片和视频存到哪里：local=服务器本地磁盘，minio=MinIO 或自建 S3 兼容服务，oss=阿里云 OSS，s3=S3 兼容云存储（腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2 等）。留空则使用部署环境里配置的值。改完要重启服务才生效。"},
 	{Key: "storage_endpoint", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_ENDPOINT",
 		Name: "存储服务端点",
-		Desc: "对象存储的服务地址，只填域名或 IP:端口，不要带 http://（例：127.0.0.1:9000）。MinIO 和阿里云 OSS 共用这一项。改完要重启服务才生效。"},
+		// 七牛云必须给例子：它的端点不是「厂商主域名」，而是按**空间所在区域**分的
+		// s3.<区域>.qiniucs.com，填错了报的是 S3 错误码（签名不匹配 / NoSuchBucket），
+		// 看上去像密钥错，实际是端点点错了。区域只能从控制台存储空间概览的
+		// 「S3 域名」弹窗里看——匿名探测在所有区域都只回 NotSupportAnonymous，探不出来。
+		Desc: "对象存储的服务地址，只填域名或 IP:端口，不要带 http://（例：127.0.0.1:9000）。MinIO / 阿里云 OSS / 各类 S3 兼容云共用这一项；七牛云按空间所在区域填 s3.<区域>.qiniucs.com，例：s3.cn-south-1.qiniucs.com（区域在控制台存储空间概览的「S3 域名」里看，不是空间绑定的 CDN 域名）。改完要重启服务才生效。"},
 	{Key: "storage_bucket", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_BUCKET",
 		Name: "存储空间名称",
 		Desc: "对象存储里存放文件的桶名（MinIO 与阿里云 OSS 都叫 bucket）。上传的文件都会存进这个桶。改完要重启服务才生效。"},
@@ -306,7 +314,7 @@ var registry = []def{
 		// 端上自行拼基址（浏览器按页面源、小程序用 miniprogram_base_url），
 		// 这一项不参与——早期文案说「小程序和后台都用它拼」对 local 是误导，
 		// 界面联动也已按 minio / oss / s3 专属过滤（2026-10-22 全量核查统一口径）。
-		Desc: "已上传文件对外访问的根地址（仅 minio / oss / s3 需要），必须是 http:// 或 https:// 开头的完整地址（例：https://cdn.example.com）。小程序和后台都用它拼出完整的图片链接，填错的话所有图片都会打不开；本地存储用相对地址，不经过这项。改完要重启服务才生效。"},
+		Desc: "已上传文件对外访问的根地址（仅 minio / oss / s3 需要），必须是 http:// 或 https:// 开头的完整地址（例：https://cdn.example.com）。小程序和后台都用它拼出完整链接，填错的话所有图片都会打不开；本地存储用相对地址，不经过这项。**视频对这个值最敏感**：请确认拼出来的 mp4 地址能在浏览器里直接播放（HTTPS 证书有效、对象可公开读），证书失效或只填了裸域名时，图片可能还看得见、视频却是一块黑屏 + 00:00。七牛云填空间绑定的 CDN 域名，不是 s3.<区域>.qiniucs.com 那个 S3 端点。改完要重启服务才生效。"},
 	{Key: "cdn_enabled", Group: "storage", Type: "bool", Restart: true, EnvVar: "CDN_ENABLED",
 		Name: "启用 CDN 刷新",
 		// 2026-10-23：从「只支持阿里云」扩到五家（阿里云 / 腾讯云 / 七牛云 /

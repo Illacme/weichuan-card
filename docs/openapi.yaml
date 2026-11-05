@@ -2591,7 +2591,10 @@ paths:
                         description: 视频上传档是否可用（driver 非 local 且 presign）
                       videoMaxMb:
                         type: integer
-                        description: 视频上传上限，来自系统设置 upload_video_max_mb
+                        description: >-
+                          视频上传上限，来自系统设置 upload_video_max_mb。前端据此在选文件时预校验，
+                          并在提示里显示同一个数字；直传失败回退成 multipart 时服务端也按这个值把关
+                          （在此之前服务端只认图片的 upload_max_mb，导致「界面说 100MB、实际按 10MB 拒」）。
                       reason:
                         type: string
                         description: 不可用时给用户的中文原因，可用时为空串
@@ -4480,7 +4483,10 @@ components:
             url 外部 MP4 直链（流量与资质由客户承担）；
             tencent 腾讯视频插件（txv-video vid：原位播放、无视频号角标、能记播放埋点；
             默认不可选，需先在系统设置「功能开关」开启「腾讯视频档」——该档依赖小程序
-            侧静态声明插件，未授权会让整个小程序编译失败。开启后 videoVid 必填）
+            侧静态声明插件，未授权会让整个小程序编译失败。开启后 videoVid 必填）。
+            **upload 与 url 在小程序端是同一个分支**（都渲染原生 video），后台界面已把
+            两者合并成「自托管 MP4（上传或直链）」一档供选择，但**接口取值不变**：
+            仍分别提交 upload / url，本枚举不接受 mp4。
         videoChannelId:
           type: string
           description: 视频号 ID，sph 开头（留档用；定位具体视频靠 videoFeedId）

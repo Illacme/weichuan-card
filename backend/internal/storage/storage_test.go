@@ -51,6 +51,81 @@ func TestCheckFileSizeAndExt(t *testing.T) {
 	})
 }
 
+// withLimits 临时注入两条上传上限，测试结束自动还原。
+// 包级变量是「后台改设置即时生效」的实现方式，测试之间必须还原，
+// 否则后面任何一个上传用例都会莫名其妙按这里的数字算。
+func withLimits(t *testing.T, img, video int64) {
+	t.Helper()
+	oldImg, oldVid := UploadLimitBytes, VideoUploadLimitBytes
+	t.Cleanup(func() { UploadLimitBytes, VideoUploadLimitBytes = oldImg, oldVid })
+	UploadLimitBytes = func() int64 { return img }
+	VideoUploadLimitBytes = func() int64 { return video }
+}
+
+// mp4Bytes 造一段「嗅探能过」的 mp4：文件头是真实 ftyp box，后面填充到指定大小。
+func mp4Bytes(size int) []byte {
+	head := []byte("\x00\x00\x00\x1cftypmp42")
+	if size < len(head) {
+		size = len(head)
+	}
+	b := make([]byte, size)
+	copy(b, head)
+	return b
+}
+
+// TestCheckFileVideoLimit 钉住「视频按视频上限、图片仍按图片上限」。
+//
+// 这条 bug 真实发生过：后台把「单个视频大小上限」填成 100MB，界面照实显示
+// 「单文件 ≤100MB」，用户选完文件却被服务端按图片的 upload_max_mb=10MB 拒掉，
+// 提示「文件过大，上限 10 MB」。配置项形同虚设，且界面上完全看不出原因。
+//
+// 三个方向都要钉，少一个就会出现「修一半」：
+//   - mp4 不被图片上限拦（原 bug 本身）
+//   - png 不被视频上限顺带放开（反向越权，比原 bug 更危险）
+//   - 超视频上限时报的是视频那个数（提示不能指向错的值，否则用户按提示改还是传不上）
+func TestCheckFileVideoLimit(t *testing.T) {
+	const imgLimit, vidLimit = 1 << 20, 3 << 20 // 图片 1MB / 视频 3MB
+	allow := DefaultAllowExt
+
+	t.Run("mp4 走视频上限，不被图片上限拦下", func(t *testing.T) {
+		withLimits(t, imgLimit, vidLimit)
+		fh := makeFileHeader(t, "a.mp4", mp4Bytes(2<<20)) // 2MB：超图片、不超视频
+		require.NoError(t, checkFile(fh, imgLimit, allow))
+	})
+
+	t.Run("图片仍受图片上限约束，不被视频上限放开", func(t *testing.T) {
+		withLimits(t, imgLimit, vidLimit)
+		fh := makeFileHeader(t, "a.png", append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 2<<20)...))
+		err := checkFile(fh, imgLimit, allow)
+		require.Error(t, err, "2MB 的 png 超了图片上限 1MB，必须拒")
+		require.Contains(t, err.Error(), "上限 1 MB", "提示里的数字必须是图片上限")
+	})
+
+	t.Run("超视频上限：报的是视频上限而不是图片上限", func(t *testing.T) {
+		withLimits(t, imgLimit, vidLimit)
+		fh := makeFileHeader(t, "b.mp4", mp4Bytes(4<<20)) // 4MB：超视频上限 3MB
+		err := checkFile(fh, imgLimit, allow)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "上限 3 MB")
+	})
+
+	// 未注入（老部署、命令行回填等没走 main 的路径）时不能变成「视频无限大」，
+	// 也不能变成「视频直接放行」——退化为与图片同限，保持修复前的行为
+	t.Run("没注入视频上限时退化为与图片同限", func(t *testing.T) {
+		withLimits(t, imgLimit, vidLimit)
+		VideoUploadLimitBytes = nil
+		fh := makeFileHeader(t, "c.mp4", mp4Bytes(2<<20))
+		require.Error(t, checkFile(fh, imgLimit, allow))
+	})
+
+	// 注入的函数返回 0 / 负数（设置项被写坏）时不能被当成「上限 0 字节」把所有视频都拒掉
+	t.Run("视频上限返回 0 时忽略该注入", func(t *testing.T) {
+		withLimits(t, imgLimit, 0)
+		fh := makeFileHeader(t, "d.mp4", mp4Bytes(512<<10)) // 0.5MB：不超图片上限
+		require.NoError(t, checkFile(fh, imgLimit, allow))
+	})
+}
+
 // TestSniffExt 直接对文件头字节做内容嗅探，避免 multipart 短内容解析的边界问题。
 func TestSniffExt(t *testing.T) {
 	cases := []struct {

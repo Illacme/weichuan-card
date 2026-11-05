@@ -232,8 +232,8 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `src/views/ApplyOpen.spec.ts`（16 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功。
 - `src/views/ApplyModify.spec.ts`（18 例）：名片修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端隐藏员工ID/提交时间列；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
-- `src/api/uploadFile.spec.ts`（10 例）：上传两条链路的**回退矩阵**——直传成功、预签名 `code!=0` / 接口 404 回退、PUT 5xx 回退、业务失败抛后端 `msg`、非 JSON 抛 `HTTP 502`、回包无 `urls` 抛错；另有 `size` 随预签名上报（配额计量的唯一来源）与「action 自带查询串时用 `&` 续接」。XHR 用最小假实现（不用 mock 库），六类失败全是静默降级，写错只表现为「偶尔有人说图传不上去」。
-- `src/components/UploadField.spec.ts`：上传组件用例——素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断（直传/回退分支已下沉到 `api/uploadFile.spec.ts`）。
+- `src/api/uploadFile.spec.ts`（15 例）：上传两条链路的**回退矩阵**——直传成功、预签名 `code!=0` / 接口 404 回退、PUT 5xx 回退、业务失败抛后端 `msg`、非 JSON 抛 `HTTP 502`、回包无 `urls` 抛错；另有 `size` 随预签名上报（配额计量的唯一来源）与「action 自带查询串时用 `&` 续接」。XHR 用最小假实现（不用 mock 库），六类失败全是静默降级，写错只表现为「偶尔有人说图传不上去」。**上传进度 5 例**：两条 XHR 都报 `phase`（`presign`/`direct`/`server`）+ 百分比、直传失败不能谎报 100%、回退时进度从 0 重新计、无订阅者不挂 `upload.onprogress`、`lengthComputable=false` 不产生 NaN。
+- `src/components/UploadField.spec.ts`（17 例）：上传组件用例——素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断（直传/回退分支已下沉到 `api/uploadFile.spec.ts`）；**选文件时的大小预校验**与服务端 `checkFile` 对齐——正好等于上限放行、超 1 字节拦下、`maxMB` 被写成 0 时按「不限制」处理（不能反过来把所有文件都拒掉）；**进度条 5 例**：阶段文案与百分比、回退换警示色并说明原因、成功/失败都收掉进度条、`http-request` 不返回 Promise（el-upload 会二次触发 `onSuccess(undefined)` → 我们的 `onSuccess` 读 `res.code` 抛 TypeError）。
 - `src/api/mpRelease.spec.ts`（10 例）：版本发布接口契约——路径拼装（租户维度列表 / 登记 vs 记录维度四个动作）、`undo-audit` 必须带 `confirm:true`、审核状态回包 `wxStatus/changed` 解包、`mpReleaseTagType` 六态映射（含未知值回落 info）、**上传与探活两条路径**（`/releases/upload` 带版本号+备注、`/releases/upload-readiness` 把 `data` 摊平且缺字段兜底）。
 - `src/components/MPReleaseDialog.spec.ts`（12 例）：版本弹窗——打开即按企业拉列表、**每个状态出哪些按钮**（draft 只有提交审核 / auditing 查状态+撤回 / audit_passed 发布 / released 终态无动作）、驳回原因渲染与「重新提审」、撤回与发布的二次确认（含用户取消时不调接口）、**上传链路**（打开即探活并逐条列出缺失项 / 就绪提示 / **环境不齐时点「开始上传」不发请求** / 就绪后提交并刷新列表）。`el-dialog` 桩认 `modelValue`，否则嵌套的登记弹窗会把「取消 / 登记」混进行内按钮断言；`el-button` 桩要把 `disabled` 声明成 prop，否则它以 attr 落到真 `<button>` 上，VTU 的 `trigger` 会直接跳过点击，那道 guard 就永远测不到。
 - `src/views/Companies.spec.ts`（凭据部分）：租户小程序凭据 + **平台代发开关** + **上传密钥**——缺省允许、关掉后随保存提交 `releaseEnabled:false`、回包 `releaseEnabled:false` 时显示关闭态；上传密钥填了随保存提交、**原本已配置却留空时确认文案同时点名 AppSecret 与上传密钥**（一次说清要清掉什么，不连弹两窗）；以及原先的列表标签 / 回填 / Secret 留空二次确认 / AppID 前缀校验。
@@ -242,7 +242,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `src/views/content/` 六个企业内容页全覆盖：
   - `Categories.spec.ts`（10 例）：列表与锁定态、关键字过滤、**首行上移 / 末行下移禁用条件**、下移后按新顺序批量持久化 sort、新增校验不通过不提交、编辑走 update、删除二次确认、列表失败不崩。
   - `CompanyInfo.spec.ts`（7 例）：回填、**保存只提交 5 个可编辑字段（不带 id）**、LOGO 随保存提交、成功提示、失败不误报成功。
-  - `CompanyProfile.spec.ts`（22 例）：视频来源五档的动态字段、**存储不支持视频时上传档禁用并给原因**、保存前三道拦截（视频号档缺 feedId/feedToken、直链档缺地址、开了兜底却没填地址）、payload 恰好十字段、**腾讯视频「自动播放」默认关且打开后真的随保存提交**（插件 autoplay 默认 true，漏传就是白开关）、能力探测失败降级且**不漏 unhandled rejection**。
+  - `CompanyProfile.spec.ts`（38 例）：视频来源在**界面上四档**（`upload` 与 `url` 已合并为「自托管 MP4」，库里取值不变）的动态字段、**存储不支持视频时上传项禁用 + 给出原因 + 默认落到直链**、保存前三道拦截（视频号档缺 feedId/feedToken、自托管 MP4 缺地址/缺文件、开了兜底却没填地址）、payload 恰好十字段、**腾讯视频「自动播放」默认关且打开后真的随保存提交**（插件 autoplay 默认 true，漏传就是白开关）、能力探测失败降级且**不漏 unhandled rejection**；**合并语义单列一组**：历史 `upload`/`url` 都能回显成合成档、子选择停在原来那一项、**保存时写的仍是 `upload`/`url`（`mp4` 绝不泄漏进请求体）**、切走再切回不残留假取值；**上传槽与直链槽互不串味**单列一组（2026-11-05 用户反馈的两个现象）：三个来源曾共用 `form.videoUrl`，导致「从直链切到上传」时上传组件把外部链接当成**已选中的文件**回显（`UploadField` 的 watch 会把 `modelValue` 映射成 file-list，文件名取 URL 末段）、以及保存时取错槽存下旧地址；用例要求「改过值再保存」才有判别力（只回显不修改时错取的槽恰好也等于原值，反向验证时才发现），并钉住**容量提示与校验上限同源**（`cap.videoMaxMb` 同时驱动 `maxMB` 与「≤N MB」文案，不得硬编码 10）；**「最终播放地址」**可点开验证，展示值与 `save()` 写库值由同一个 `videoUrlToSave()` 取（两处各写一遍三元表达式，改一处漏一处就是「显示的和存的不是一回事」），非自托管档不把兜底地址冒充主视频源；只给 `http(s)://` 与站内相对路径生成可点链接（`javascript:` 之类只作纯文本）。
   - `HomeLayout.spec.ts`（12 例）：板块顺序与「当前顺序」联动、**保存提交完整顺序数组**、无背景图时滑块禁用且不显示预览、**清除背景要把遮罩一起归零**、预览放大与关闭、拉取失败保留默认布局。
   - `Projects.spec.ts`（12 例）：分类名反查（分类被删显示占位）、精选/上架标签、分类与关键字过滤、**payload 恰好九字段**、**编辑回填相册是拷贝（改表单不污染列表行）**、删除确认、加载失败不崩。
   - `Services.spec.ts`（13 例）：摘要去 HTML 并截断（空内容显示「（空）」）、首末行禁用与批量持久化、新增/编辑/删除、校验不通过不提交、加载失败不崩。
@@ -260,18 +260,24 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 
 - `miniprogram/tests/richtext.spec.ts`：`<wx-video>` 富文本拆分（自闭合 / 成对 / 属性顺序无关）、无视频号时整体走 `rich-text` 等；以及 `constrainImages` 的图片宽度收口（无 style / 空 style / 自闭合 / 合并已有 style / 幂等 / 值里含 `$` 不被替换模式吞掉）。
 - `miniprogram/tests/request.spec.ts`：`wx.request` 封装的 token 注入、`code=401` 静默 refresh 重试一次、失败清 token 等。
-- `miniprogram/tests/poster.spec.ts`（114 例）：分享海报页。桩掉全局 `Page` 捕获页面选项，再手工驱动 `onLoad`，
+- `miniprogram/tests/poster.spec.ts`（121 例）：分享海报页。桩掉全局 `Page` 捕获页面选项，再手工驱动 `onLoad`，
   覆盖「带 staffId 进入」「**扫码 scene 解析**（含混参 / 无参归 0）」「头像与小程序码转绝对 URL」
   「小程序码接口无 data 时不崩」「**保存成功才计 poster_save（失败 / 未生成不计）**」
   「**分享图片计 share + 低版本降级 + 用户取消不计**」
   「**取数失败 / 取不到 canvas 节点 / 导出失败三态与重试（重试先清旧图）**」
   「**三张图并行预载**（串行实现下只发起 1 个请求，用例直接红）」「背景条每张图都带 `lazy-load`」（静态扫 wxml）。
+  「**图片预热把两波压成一波**」：`onLoad` 当场拿快照起跑三张图（接口永不返回时也断言已发起）、
+  调用顺序早于 `prepare()`（静态守门，顺序反了不报错只是白做）、无快照不建离屏 canvas、
+  基础库不支持不抛、**预热失败不留 3 秒失败锁**（留了会让 `draw()` 半秒后跳过同一地址 → 白块）、
+  出图后写快照、换背景后快照跟着换。
   选它是因为 scene 解析只在真机扫码才走得到，本地开发永远复现不了。
 
-其余 11 个 spec（共 151 例）用同一套手法，公共桩在 `miniprogram/tests/helpers/harness.ts`
+其余 spec 用同一套手法，公共桩在 `miniprogram/tests/helpers/harness.ts`
 （`installPageCapture` / `makeInstance` / `installWx` / `installApp` / `flush`）：
 
-- `index_home.spec.ts`（33 例）：scene 与 `globalData.myStaffId` 解析、自定义顶栏避让、四次并行请求的**根级**字段拼装、停用/不存在/异常三态、**访问埋点去重**、**分享埋点（多次分享各计一次）**、查看案例「滚动 or 跳转」、分享标题与路径、顶部遮罩渐变与 0.01 死区。
+- `index_home.spec.ts`（39 例）：scene 与 `globalData.myStaffId` 解析、自定义顶栏避让、四次并行请求的**根级**字段拼装、停用/不存在/异常三态、**访问埋点去重**、**分享埋点（多次分享各计一次）**、查看案例「滚动或跳转」、分享标题与路径、顶部遮罩渐变与 0.01 死区；带 `fromEntryCache=1` 时**以后台 `mpEntryMode`/`mpEntryStaffId` 为准核对**——换了人改道到新的那位、取消默认入口回名片墙、员工已失效回名片墙、一致则不动；不带该标记时一律不核对（扫码看指定员工不能被纠正走）；**`profile.videoUrl` 必须过 `assetUrl`**（直传失败回退 multipart 时后端返回相对路径，小程序 `<video src>` 不认 → 黑屏 00:00），已是外链的原样保留。
+- `entry.spec.ts`（11 例）：「默认入口」本地缓存的边界——**按租户分键**（不分键会把 A 企业的默认员工套到 B 企业）、TTL 边界（等于 TTL 仍有效、超过才过期）、**本机时钟回拨按过期处理**、坏数据不抛异常、`staffId<=0` 不写入。时间全部走可注入的 `now`/`at`，不依赖真实时钟。
+- `postersnap.spec.ts`（12 例）：海报页图片地址快照的边界——**按员工分键**、TTL 边界、**时钟回拨按过期**、**只认 http(s) 绝对地址**（相对路径会让 `createImage` 静默失败却占住失败锁）、三项全空不落库、`staffId<=0` 不读不写、脏数据与 `at` 缺失当没有、`clear` 自愈、写存储抛异常不影响调用方。同样全部走可注入的 `now`/`at`。
 - `apply_open.spec.ts`（17 例）：企业名简称回落、头像上传三种响应（成功 / 业务错误 / 非 JSON）、昵称授权、提交校验与 `saving` 复位、返回兜底。
 - `employee_me.spec.ts`（14 例）：未登录与失效回退、头像绝对化 + `globalData` 回写、改密三条校验、**改密成功后延时静默登出**、退出清两个令牌。
 - `employee_edit.spec.ts`（13 例）：回填与头像绝对化、备用手机号**收起即清空**、上传三条支线、提交待审。
@@ -279,7 +285,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `project_detail.spec.ts`（16 例）/ `service_detail.spec.ts`（11 例）：绝对 URL、富文本片段、时间格式化、空态文案、分享回带 `companyId`、相册预览、**加载成功上报 view 埋点（失败/不存在不上报）**、**分享上报 share 且带 targetId**。
 - `employee_login.spec.ts`（9 例）/ `employee_stat.spec.ts`（6 例）：空值校验、成功/失败/401 分流、`submitting` 复位。
 - `track.spec.ts`（5 例）：埋点统一入口——带 targetId、**targetId 为 0 时省略字段（保持老载荷形状）**、staffId=0 丢弃、白名单外丢弃、请求失败静默。
-- `company_video.spec.ts`（12 例）：视频档位选择六例 + **video_play 去重上报** + staffId 缺失时丢弃。
+- `company_video.spec.ts`（51 例）：视频档位选择六例 + **video_play 去重上报** + staffId 缺失时丢弃；腾讯视频档「能播、能停、能继续」15 例——重点是 **`bindpause` 后 `txvPlaying` 必须复位**（少接这个回调，遮罩就退回「一次性」，暂停后再也点不动，这是 2026-11-04 第二轮反馈的根因）+ 三条**退化路径**（取不到 `TxvContext` / 插件未声明 / `play()` 抛错，都必须永久撤遮罩）+ 播完再点先 `seek(0)`；另有八条静态守门（`autoplay` 显式声明、`playerid` 与常量一致、插件名与 `app.json` 一致、`play-btn-position="center"`、`enable-play-gesture`、pause/ended 绑了且实现了、两张遮罩的出现条件、遮罩 `z-index` > 插件自己的 11）；**MP4 加载失败态 10 例**（2026-11-05 黑屏 00:00 反馈）：`upload`/`url` 与「兜底切过来的 MP4」失败都要显态、报错日志带 `src`（地址错才是主因）、主源回落规则不受影响、重试走「先清空 `mp4Src` 再设回」真正重建播放器；另有三条静态守门（`src` 绑 `mp4Src`、错误层绑 `onRetryMp4`、`z-index` 压得住原生 video）。
 
 **视图层 spec 的 Element Plus 桩统一在 `src/test/elStubs.ts`**（`mountOpts` / `flush` / `paged` / `rowOf` / `btnIn` / `dlgOf`），新增列表页 spec 直接复用，别再各写一套。文件头写了三条必须遵守的约定，改动前先读：
 

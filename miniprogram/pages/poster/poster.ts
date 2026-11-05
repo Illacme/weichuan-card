@@ -5,6 +5,7 @@ import { festivalOfDate, festivalFirst, type Festival } from '../../utils/festiv
 import { ensurePrivacy } from '../../utils/privacy'
 import { applyBrandTitle } from '../../utils/brand'
 import { onImgFail } from '../../utils/thumb'
+import { readPosterSnap, writePosterSnap } from '../../utils/postersnap'
 
 // 默认海报背景：节气会过时（立春的图在十月发很怪），商务款才能一直用。
 // 取不到清单或清单里没有这张时退回白底（BG_NONE）。
@@ -272,7 +273,51 @@ Page({
       if (m) staffId = parseInt(m[1], 10)
     }
     this.setData({ staffId, canUpload: !!wx.getStorageSync('empToken') })
+    // 先起跑图片预热，与下面的接口请求**并行**（顺序有意义：预热是同步发请求，
+    // 放前面能让三张图的首字节更早出网络）。拿不到快照时它什么也不做，
+    // 行为与改造前一模一样。
+    this.warmFromSnap()
     this.prepare()
+  },
+  // 预热：用本地快照里的三个地址先把图下载进 loadCached 的内存缓存，
+  // 不等接口回来。这样 prepare() 拿到新数据后 draw() 直接从缓存取图，
+  // 原本串行的「等图」那一波被吸收掉（实测省 0.7~1.1 秒，见 utils/postersnap.ts）。
+  //
+  // 离屏 canvas 只是拿一个能 createImage 的壳，不画任何东西；基础库太低
+  // （< 2.16.1）或机型不支持时静默跳过——那些环境只是没变快，不会变慢。
+  warmFromSnap() {
+    const snap = readPosterSnap(this.data.staffId)
+    if (!snap) return
+    let canvas: any = null
+    try {
+      canvas = typeof wx.createOffscreenCanvas === 'function'
+        ? wx.createOffscreenCanvas({ type: '2d', width: 1, height: 1 } as any)
+        : null
+    } catch (e) {
+      canvas = null
+    }
+    if (!canvas || typeof canvas.createImage !== 'function') return
+    const that = this
+    const urls = [snap.bg, snap.avatar, snap.qr]
+    urls.forEach((u: string) => {
+      if (!u) return
+      that.loadCached(canvas, u, (img: any) => {
+        // 预热失败**不能**留着 3 秒失败锁：draw() 会在半秒后用到同一个地址，
+        // 一次网络抖动就会让整张海报的背景变成白块。失败锁本来是给「拖动时
+        // 每帧重试」兜底的，预热这一次不该占坑。
+        if (!img && that._imgFails) delete that._imgFails[u]
+      })
+    })
+  },
+  // 把这次出图用到的三个图片地址存进本地快照。下次进页面靠它提前起跑。
+  // 只记地址、不记内容：真正的数据永远以接口返回为准，快照错了最多白跑一次下载。
+  saveSnap() {
+    const bg = this.currentBg()
+    writePosterSnap(this.data.staffId, {
+      bg: (bg && bg.fileUrl) || '',
+      avatar: empAvatar(this.data.card),
+      qr: this.data.qrUrl || '',
+    })
   },
   async prepare() {
     const sid = this.data.staffId
@@ -312,6 +357,9 @@ Page({
       const cardAny = card as any
       if (cardAny.employee) cardAny.employee.avatar = assetUrl(cardAny.employee.avatar)
       this.setData({ card, qrUrl, qrError: !qrUrl, qrMsg, ...this.buildState(posters, prefs, cardAny) })
+      // setData 之后再存：saveSnap 从 this.data 里取「这一版最终选中的背景」，
+      // 放在前面会存到上一版的 bgId。
+      this.saveSnap()
       // 导航栏标题按**员工所属企业**设置（海报在这里是替企业做的营销物料）。
       // 全局标题只有产品名，不覆盖就永远是「微传名片」——多租户下等于没品牌。
       // 放在 setData 之后：企业信息随 card 一起回来，此时才拿得到简称。
@@ -338,6 +386,9 @@ Page({
         that._imgs = {}
         that._imgFails = {}
         that.setData({ qrUrl: url, qrError: false, qrMsg: '', tempFilePath: '' })
+        // 码的地址可能换了（见上面清缓存那段注释）：快照跟着更新，
+        // 否则下次进页面预热的还是那张旧码，白跑一次下载。
+        that.saveSnap()
         that.draw()
       })
       .catch(() => that.setData({ qrError: true, qrMsg: '网络异常，小程序码获取失败' }))
@@ -509,6 +560,7 @@ Page({
     if (id === this.data.bgId) return
     this.setData({ bgId: id, bgAuto: false, loading: true, error: false, tempFilePath: '' })
     this.saveBg(id)
+    this.saveSnap()
     this.syncPrefs()
     this.draw()
   },
@@ -593,6 +645,7 @@ Page({
     // 跳走会让他以为自己点错了
     this.setData({ customs, bgId: id, bgAuto: false, tool: 'bg', loading: true, error: false, tempFilePath: '' })
     this.saveBg(id)
+    this.saveSnap()
     this.syncPrefs()
     this.draw()
     wx.showToast({ title: '已添加背景' })

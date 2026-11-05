@@ -11,11 +11,10 @@
       </el-form-item>
 
       <el-form-item label="视频来源">
-        <el-select v-model="form.videoSource" style="width: 280px">
+        <el-select v-model="sourceUi" style="width: 280px">
           <el-option label="不展示视频（显示封面）" value="none" />
           <el-option label="微信视频号（推荐）" value="channels" />
-          <el-option label="云存储上传" value="upload" :disabled="!cap.videoUpload" />
-          <el-option label="外部 MP4 直链" value="url" />
+          <el-option label="自托管 MP4（上传或直链）" value="mp4" />
           <el-option label="腾讯视频（插件）" value="tencent" :disabled="!vcap.tencentVideo" />
         </el-select>
         <div v-if="form.videoSource === 'channels'" class="hint hint-good">
@@ -23,8 +22,8 @@
           <span class="hint-warn">
             形态说明（微信组件固定行为，均无开关可改）：封面自带<b>视频号名称与推荐角标</b>，无法隐藏；
             跨主体（feed-token）点击播放会<b>拉起视频号页面</b>播放，只有同主体（feedId）才能在原位自动播放。
-            要求「原位播放、画面干净」请用<b>外部 MP4 直链</b>（任意 https mp4 地址，与存储驱动无关）；
-            云存储上传档仅当存储配置为对象存储时可用，本地磁盘存储下会被禁用。
+            要求「原位播放、画面干净」请用<b>自托管 MP4</b>（上传文件，或直接填任意 https mp4 地址）；
+            其中「上传到云存储」仅当存储配置为对象存储时可用，本地磁盘存储下只能填直链。
           </span>
         </div>
         <div v-else-if="form.videoSource === 'tencent'" class="hint hint-good">
@@ -38,11 +37,11 @@
             创作号上传分类别选「文化 / 历史」可能放不全片（有用户反馈），建议选「企业 / 商业」类。
           </span>
         </div>
-        <div v-else-if="form.videoSource === 'upload'" class="hint">
-          文件上传到已配置的对象存储（OSS / COS / MinIO），<b>直传不经应用服务器</b>，费用记在您自己的云账号上。
-        </div>
-        <div v-else-if="form.videoSource === 'url'" class="hint">
-          填写现成的 MP4 地址即可，我们不保存文件。<b>流量费由您的存储服务商收取，视听类目资质需自行具备。</b>
+        <div v-else-if="isMp4" class="hint">
+          视频由您自己托管，小程序里<b>原位播放、画面干净</b>，也不占微信与腾讯视频的资源。
+          <span class="hint-warn">
+            存储与流量费用记在您自己的云账号上（视频是名片页里最费流量的资源），视听类目资质需自行具备。
+          </span>
         </div>
       </el-form-item>
 
@@ -104,14 +103,31 @@
         </el-form-item>
       </template>
 
-      <!-- 云存储上传档：复用通用上传组件（内部优先走直传预签名，失败回退普通上传） -->
-      <template v-else-if="form.videoSource === 'upload'">
-        <el-alert v-if="!cap.videoUpload" type="warning" :closable="false" show-icon class="cap-alert">
+      <!-- 自托管 MP4 档：「上传到云存储」与「填写直链」在**小程序端完全等价**——
+           company-video 里两者是同一个分支，都渲染原生 <video src>，访客看不出区别。
+           差别只在「文件怎么放上去」，所以合成一档、内部二选一，
+           不再让客户对着两个效果一样的选项猜。存库时仍分别写 upload / url。 -->
+      <template v-else-if="isMp4">
+        <!-- 历史配置落在不可用环境（以前配了 upload，现在存储退回本地磁盘）：
+            不能静默改档，否则一保存就把客户的配置换掉了，只提示并让他自己选。 -->
+        <el-alert v-if="mp4Mode === 'upload' && !cap.videoUpload" type="warning" :closable="false" show-icon class="cap-alert">
           <template #title>{{ cap.reason || '当前存储配置不支持视频上传' }}</template>
         </el-alert>
-        <el-form-item v-if="cap.videoUpload" label="视频文件">
+
+        <el-form-item label="交付方式">
+          <el-radio-group v-model="mp4Mode">
+            <el-radio value="upload" :disabled="!cap.videoUpload">上传到云存储</el-radio>
+            <el-radio value="url">填写 MP4 地址</el-radio>
+          </el-radio-group>
+          <div v-if="!cap.videoUpload" class="hint hint-warn">
+            {{ cap.reason || '当前存储配置不支持视频上传' }}
+          </div>
+        </el-form-item>
+
+        <!-- 复用通用上传组件（内部优先走直传预签名，失败回退普通上传） -->
+        <el-form-item v-if="mp4Mode === 'upload' && cap.videoUpload" label="视频文件">
           <UploadField
-            v-model="form.videoUrl"
+            v-model="uploadUrl"
             :multiple="false"
             accept="video/mp4"
             list-type="text"
@@ -119,13 +135,33 @@
             :max-m-b="cap.videoMaxMb"
             :tip="`仅支持 mp4，单文件 ≤${cap.videoMaxMb}MB`"
           />
+          <div class="hint">
+            直传到已配置的对象存储（OSS / COS / MinIO），<b>不经应用服务器</b>，费用记在您自己的云账号上。
+            <span class="hint-warn">
+              直传由浏览器直接 PUT 到对象存储，属于跨域请求：若对象存储没配跨域规则，会被浏览器拦下并
+              <b>回退成经应用服务器中转</b>（大视频会占用服务器带宽）。配置方法见部署文档。
+            </span>
+          </div>
         </el-form-item>
-      </template>
 
-      <!-- 外部直链档 -->
-      <template v-else-if="form.videoSource === 'url'">
-        <el-form-item label="MP4 地址">
-          <el-input v-model="form.videoUrl" placeholder="https:// 开头的 mp4 地址" />
+        <el-form-item v-if="mp4Mode === 'url'" label="MP4 地址">
+          <el-input v-model="externalUrl" placeholder="https:// 开头的 mp4 地址" />
+          <div class="hint">我们不保存文件。流量费由您的存储服务商收取，视听类目资质需自行具备。</div>
+        </el-form-item>
+
+        <!-- 把最终要写进库的地址摆出来，并允许点开验证。
+             小程序播不出来时，九成是这个地址本身在浏览器里就打不开
+             （CDN 证书失效 / 对象不存在 / 相对路径没拼绝对 / 私有桶没签名）。
+             不给这一行，客户只能对着小程序的黑屏 00:00 猜。 -->
+        <el-form-item v-if="activeVideoUrl" label="最终播放地址">
+          <div class="video-url-check">
+            <a v-if="canOpenVideoUrl" :href="activeVideoUrl" target="_blank" rel="noopener noreferrer">{{ activeVideoUrl }}</a>
+            <span v-else>{{ activeVideoUrl }}</span>
+            <div class="hint">
+              点开应当能直接播放。这里打不开，小程序里也一定播不了（先在浏览器排除证书与地址问题）。
+              相对路径会在小程序端自动拼上服务域名，请确认该域名下确实有这个文件。
+            </div>
+          </div>
         </el-form-item>
       </template>
 
@@ -185,6 +221,20 @@ const form = reactive({
   cover: '',
 })
 
+// 「自托管 MP4」两种交付方式各自的值，**不能共用一个字段**。
+//
+// 踩过的坑：upload 与 url 曾经共用 form.videoUrl，于是从「填写 MP4 地址」
+// 切到「上传到云存储」时，上传组件把那个外部链接当成「已选中的视频文件」
+// 显示出来（`video-langhui....mp4` + 一个绿色对勾）——看起来像已经上传好了，
+// 实际那个文件根本不在云存储里。反过来也成立：上传得到的地址会跑进直链输入框。
+//
+// 三个来源各占一个槽，切换交付方式时谁都不动，只按当前档位取用：
+//   uploadUrl    云存储上传得到的地址
+//   externalUrl  手填的外部直链
+//   form.videoUrl 视频号 / 腾讯视频档的「兜底 MP4」（后端只有这一个字段装它）
+const uploadUrl = ref('')
+const externalUrl = ref('')
+
 // 存储能力：决定「云存储上传」档可选与否。探测失败按不可用处理（界面禁用并给出原因）。
 const cap = ref<UploadCapability>({
   driver: 'unknown',
@@ -202,6 +252,62 @@ const vcap = ref<VideoCapability>({ tencentVideo: false, tencentReason: '' })
 const needFallback = computed(
   () => form.videoSource === 'channels' || form.videoSource === 'tencent'
 )
+
+// ---- 自托管 MP4：把 upload 与 url 合成一档 ----
+//
+// 为什么合：小程序端 company-video 里两者是**同一个分支**
+// （`if ((source === 'upload' || source === 'url') && url) return 'mp4'`），
+// 都渲染原生 <video src>，访客看到的一模一样。差别只在「文件怎么放上去」：
+//   upload 我们帮客户传到已配置的对象存储（客户不必自己有存储）
+//   url    客户填一个现成的 https mp4
+// 并列成两个平级选项，客户只能对着两个效果相同的选项猜「到底选哪个」。
+//
+// 存库时仍分别写 upload / url：后端取值、历史数据、开放接口、小程序组件全都不动，
+// 合并只发生在后台这一层。所以「videoSource === 'upload' || 'url'」这个判断是
+// 存量的兼容点——历史配置回显也靠它。
+const isMp4 = computed(() => form.videoSource === 'upload' || form.videoSource === 'url')
+
+// 下拉的界面值：mp4 ←→ upload/url 的映射。写回时只改 videoSource，不新增字段。
+const sourceUi = computed({
+  get: () => (isMp4.value ? 'mp4' : form.videoSource),
+  set: (v: string) => {
+    if (v !== 'mp4') {
+      form.videoSource = v
+      return
+    }
+    // 从别的档切进来：能上传就默认上传（客户最省事），
+    // 不能上传就直接落到直链——否则一进来就看到一个灰掉的单选项。
+    form.videoSource = cap.value.videoUpload ? 'upload' : 'url'
+  },
+})
+
+// 子选择。它就是 videoSource 本身，不另存一份状态：
+// 两份状态一旦不同步，界面显示「上传」而库里存的是 url，保存后视频就没了。
+const mp4Mode = computed({
+  get: () => (form.videoSource === 'url' ? 'url' : 'upload'),
+  set: (v: string) => {
+    form.videoSource = v === 'url' ? 'url' : 'upload'
+  },
+})
+
+// 当前会写进库、也最终交给小程序 <video src> 的那个地址。
+// 保存与「最终播放地址」展示必须取同一个值，所以抽成一份：
+// 两处各写一遍三元表达式，改一处漏一处就是「显示的和存的不是一回事」。
+function videoUrlToSave(): string {
+  return form.videoSource === 'upload'
+    ? uploadUrl.value
+    : form.videoSource === 'url'
+      ? externalUrl.value
+      : form.videoUrl
+}
+
+// 只在「自托管 MP4」档展示：其余档位下这一列装的是兜底地址，
+// 它已经有自己的输入框，再摆一遍只会让人分不清哪个才是主视频源。
+const activeVideoUrl = computed(() => (isMp4.value ? videoUrlToSave() : ''))
+// 只有 http(s) 绝对地址与站内相对路径才允许变成可点链接。
+// videoUrl 是后台自由文本，直接绑 href 的话 `javascript:` 之类会变成可点链接；
+// 非预期格式只作纯文本展示（仍能看出填了什么，便于排查）。
+const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.value))
 
 async function load() {
   loading.value = true
@@ -223,6 +329,12 @@ async function load() {
     )
     // 该列是后加的，历史行可能为空串
     form.videoSource = d.videoSource || 'none'
+    // 后端只有一个 videoUrl，分不清它当初是「上传得到的」还是「手填的」——
+    // 按 videoSource 归位即可：upload / url 是主视频源，其余档位下它是兜底地址
+    // （兜底输入框直接绑 form.videoUrl，见模板）。
+    const vurl = d.videoUrl || ''
+    uploadUrl.value = form.videoSource === 'upload' ? vurl : ''
+    externalUrl.value = form.videoSource === 'url' ? vurl : ''
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -261,7 +373,14 @@ async function save() {
     ElMessage.warning('视频号档需要填写 feedId（同主体）或 feed-token（跨主体）')
     return
   }
-  if (form.videoSource === 'url' && !form.videoUrl.trim()) {
+  // 「自托管 MP4」两个子模式各自的空值拦截：选了档却没有一个能播的地址，
+  // 存下去就是一张永远播不出视频的名片，而界面上看不出任何异常。
+  // 注意各查各的槽：查 form.videoUrl 会误判——它是「兜底地址」，这两个档位下根本不参与。
+  if (form.videoSource === 'upload' && !uploadUrl.value.trim()) {
+    ElMessage.warning('请先上传视频文件，或改用「填写 MP4 地址」')
+    return
+  }
+  if (form.videoSource === 'url' && !externalUrl.value.trim()) {
     ElMessage.warning('请填写 MP4 地址')
     return
   }
@@ -279,7 +398,8 @@ async function save() {
       videoFeedId: form.videoFeedId,
       videoFeedToken: form.videoFeedToken,
       videoVid: form.videoVid,
-      videoUrl: form.videoUrl,
+      // 取值规则见 videoUrlToSave()（与「最终播放地址」展示同源）
+      videoUrl: videoUrlToSave(),
       videoFallbackUrl: form.videoFallbackUrl,
       videoAutoplay: form.videoAutoplay,
       cover: form.cover,
@@ -300,6 +420,15 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.video-url-check {
+  max-width: 620px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.video-url-check a {
+  color: #409eff;
+  text-decoration: none;
+}
 .page-bar {
   display: flex;
   align-items: center;

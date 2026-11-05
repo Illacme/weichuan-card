@@ -93,6 +93,10 @@ func main() {
 	storage.UploadLimitBytes = func() int64 {
 		return int64(setting.GetInt("upload_max_mb", 10)) * 1024 * 1024
 	}
+	// 与生产同款：视频走单独上限，否则联调时视频上传的行为与线上不一致
+	storage.VideoUploadLimitBytes = func() int64 {
+		return int64(setting.GetInt("upload_video_max_mb", 100)) * 1024 * 1024
+	}
 	storage.AllowExtProvider = func() map[string]bool {
 		sl := setting.GetStringSlice("upload_allow_ext", nil)
 		if len(sl) == 0 {
