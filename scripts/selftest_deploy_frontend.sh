@@ -98,6 +98,18 @@ FAKE_SSHPASS
 
 chmod 700 "$ROOT/bin/ssh" "$ROOT/bin-pass/sshpass"
 
+# 第 6 组要造「两条通道都没有」的环境，而 CI 的 ubuntu runner 自带 /usr/bin/sshpass。
+# 光把 PATH 写窄仍会搜到它，所以另建一个完全受控的 minbin：把被测脚本需要的外部命令
+# 逐个软链进来，唯独不放 sshpass。假 ssh 放最前面，挡住系统真 ssh。
+# bash / env 也要链：脚本 shebang 是 `#!/usr/bin/env bash`，env 会按这个 PATH 找 bash。
+mkdir -p "$ROOT/minbin"
+for c in bash env dirname sed awk grep tar cat cp rm ls tr sort head wc find du cut date chmod mkdir python3 stat mktemp uniq sleep; do
+    p=$(command -v "$c" 2>/dev/null || true)
+    case "$p" in /*) ln -s "$p" "$ROOT/minbin/$c" 2>/dev/null || true ;; esac
+done
+cp "$ROOT/bin/ssh" "$ROOT/minbin/ssh"
+chmod 700 "$ROOT/minbin/ssh"
+
 # 公共环境：DEPLOY_HOST 非空才走 ssh 通道；tar 模式免掉 rsync 依赖；
 # DEPLOY_URL 空 + --no-verify 跳过联网自检；TMPDIR 收进 ROOT 便于统一清理。
 COMMON=(env
@@ -285,13 +297,16 @@ if no_stale_tmp; then ok "sshpass wrapper 退出后已清理"; else bad "sshpass
 # ─────────────────────────────────────────────────────────────
 head_ "6. 两条通道都不可用：明确报错，不静默卡交互"
 reset_probe
-# 用窄 PATH 把系统里可能装过的 sshpass 也排除掉，确保真的「两条通道都没有」
-"${COMMON[@]}" "PATH=$ROOT/bin:/usr/bin:/bin" "FAKE_SSH_VERSION=7.9p1" \
+# 用完全受控的 minbin 把系统里可能装过的 sshpass 也排除掉，确保真的「两条通道都没有」。
+# 注意 `command -v` 是 shell 内建，不能写成 `env PATH=... command -v ...`（env 会去找
+# 一个叫 command 的外部程序，永远返回失败，检测就成了假通过）。
+if PATH="$ROOT/minbin" command -v sshpass >/dev/null 2>&1; then
+    bad "minbin 里意外出现了可执行的 sshpass，本用例无效"
+fi
+"${COMMON[@]}" "PATH=$ROOT/minbin" "FAKE_SSH_VERSION=7.9p1" \
     "$DEPLOY" -n --no-verify --password "$FAKE_PW" > "$OUT" 2>&1
 RC=$?
-if env PATH="$ROOT/bin:/usr/bin:/bin" command -v sshpass >/dev/null 2>&1; then
-    bad "测试夹具没能把系统 sshpass 排除掉，本用例无效"
-elif [ "$RC" -ne 0 ] && has "$OUT" 'sshpass' && has "$OUT" 'ssh-copy-id'; then
+if [ "$RC" -ne 0 ] && has "$OUT" 'sshpass' && has "$OUT" 'ssh-copy-id'; then
     ok "缺能力时直接报错并给出三条出路"
 else
     bad "缺能力时没有明确报错（rc=${RC}）"
