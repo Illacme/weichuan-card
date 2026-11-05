@@ -32,6 +32,10 @@ export interface CompanyProfile {
   videoVid: string
   videoUrl: string
   videoFallbackUrl: boolean
+  // 自托管 MP4（upload / url）档的备用地址：主 MP4 加载失败时自动切换。
+  // 与 videoUrl 分开存——那一条既是这两档的主源，又是视频号/腾讯视频档的兜底源。
+  // 可选：升级前部署的后端不会下发这一列，缺字段不能让类型检查或老缓存崩掉。
+  videoBackupUrl?: string
   cover: string
 }
 

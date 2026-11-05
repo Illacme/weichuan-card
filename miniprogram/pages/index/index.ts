@@ -257,8 +257,12 @@ Page({
         // 这样的相对路径（直传失败、回退成 multipart 时尤其常见），
         // 小程序 <video src> 不认相对路径——表现就是一块黑屏 + 00:00，
         // 没有弹窗、没有提示，访客和后台都看不出是地址错了。
-        // 主源与「兜底 MP4」共用这一列，一处处理即可。
+        // 主源与「channels / tencent 档的兜底 MP4」共用这一列，一处处理即可。
         cardData.profile.videoUrl = assetUrl(cardData.profile.videoUrl)
+        // 自托管 MP4 档的备用地址同样要绝对化。它只在主源失败那一刻才会被请求，
+        // 等到那时才发现是相对路径，表现就是「兜底也黑屏」，比没有兜底更迷惑。
+        // 外链保持原样（assetUrl 只处理相对路径），空值返回空串不会凭空造出地址。
+        cardData.profile.videoBackupUrl = assetUrl(cardData.profile.videoBackupUrl)
       }
       // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
       const categories = (ach.categories || []).map((c: any) => {

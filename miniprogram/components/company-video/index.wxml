@@ -75,7 +75,9 @@
   </view>
 
 
-  <!-- 云存储上传 / 外部直链 / 兜底：三者共用同一个 videoUrl，走标准 video 播放。
+  <!-- 云存储上传 / 外部直链 / 兜底：主地址走 videoUrl，标准 video 播放。
+       自托管 MP4 档另有 backupUrl：主源 binderror 时自动切过去一次（见 index.ts），
+       两条地址都由首页 assetUrl 绝对化过，相对路径喂给 <video src> 只会黑屏。
        注意：txv-video 依赖 app.json 声明插件，未声明时该标签是未注册组件（渲染不出来），
        所以 tencent 档由部署方显式开启后才可能出现（见 scripts/enable-tencent-video.mjs）。
        bindplay 接播放埋点（video_play）：channel-video 官方无播放事件，只有 video 有。
@@ -104,7 +106,10 @@
     />
     <view wx:if="{{mp4Error}}" class="cv-mp4err">
       <view class="cv-mp4err-title">视频加载失败</view>
-      <view class="cv-mp4err-tip">请确认后台填的视频地址能在浏览器直接打开</view>
+      <!-- 切过备用仍失败：提示里要点明「两个地址都挂了」，否则管理员只查主源，
+           永远不会去看那个填错的备用域名 -->
+      <view wx:if="{{mp4FallbackUsed}}" class="cv-mp4err-tip">主视频与备用地址都无法加载，请检查后台填写的两个地址</view>
+      <view wx:else class="cv-mp4err-tip">请确认后台填的视频地址能在浏览器直接打开</view>
       <view class="cv-mp4err-btn" hover-class="cv-mp4err-btn-down" bindtap="onRetryMp4">重新加载</view>
     </view>
   </view>

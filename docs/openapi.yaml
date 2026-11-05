@@ -4504,10 +4504,19 @@ components:
           description: 腾讯视频 vid（预留字段，当前不可选）
         videoUrl:
           type: string
-          description: MP4 地址，由 upload 与 url 两档共用，也是开启兜底时的回落源
+          description: >-
+            MP4 地址：upload / url 两档作为主视频源；channels / tencent 两档开启兜底时作为回落源。
+            小程序端会自动补成绝对地址。
+        videoBackupUrl:
+          type: string
+          description: >-
+            自托管 MP4（upload / url）档的备用地址：主 MP4 加载失败且开启兜底时自动切换。
+            与 videoUrl 分开存，避免保存主源时把备用地址覆盖掉。channels / tencent 两档不使用此字段。
         videoFallbackUrl:
           type: boolean
-          description: 主源（视频号/腾讯视频）播放失败时是否改用 videoUrl
+          description: >-
+            是否启用兜底：channels / tencent 档主源失败时改用 videoUrl；
+            upload / url 档主 MP4 失败时改用 videoBackupUrl。
         videoAutoplay:
           type: boolean
           default: false
@@ -4536,6 +4545,9 @@ components:
           type: string
         videoUrl:
           type: string
+        videoBackupUrl:
+          type: string
+          description: 自托管 MP4 档的备用地址；不传按空串处理，存量行不受影响
         videoFallbackUrl:
           type: boolean
         videoAutoplay:

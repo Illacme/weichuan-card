@@ -122,6 +122,8 @@ func NormalizeMpEntryMode(mode string) string {
 //	         故由 config.TencentVideo（MP_TENCENT_VIDEO）显式开启，默认关。
 //
 // videoUrl 由 upload / url 两档共用，同时充当 channels / tencent 开启 videoFallbackUrl 时的兜底源。
+// videoBackupUrl 只服务 upload / url 两档：主 MP4 加载失败时切换的备用地址。
+// 两者不能共用一列——否则后台填的备用地址会在保存主视频源时被覆盖。
 type CompanyProfile struct {
 	ID             int64  `gorm:"primaryKey;column:id" json:"id"`
 	CompanyID      int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
@@ -135,6 +137,11 @@ type CompanyProfile struct {
 	VideoVid         string `gorm:"column:video_vid" json:"videoVid"`
 	VideoURL         string `gorm:"column:video_url" json:"videoUrl"`
 	VideoFallbackURL bool   `gorm:"column:video_fallback_url;default:false" json:"videoFallbackUrl"`
+	// VideoBackupURL：自托管 MP4（upload / url）档的备用地址。
+	// videoUrl 是这一档的主视频源；channels / tencent 档反过来把 videoUrl 当兜底源。
+	// 启用与否统一由 VideoFallbackURL 控制。独立一列，避免主源与备用地址互相覆盖。
+	// 空串=没配备用；迁移 0038 只加列、默认空，升级不突变存量。
+	VideoBackupURL string `gorm:"column:video_backup_url" json:"videoBackupUrl"`
 	// VideoAutoplay 进页面就自动播放。**默认 false**（与微信原生 <video> 一致）。
 	//
 	// 为什么需要这个字段：腾讯视频插件的 <txv-video> **autoplay 默认是 true**

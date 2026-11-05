@@ -115,6 +115,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			VideoVid         string `json:"videoVid"`
 			VideoURL         string `json:"videoUrl"`
 			VideoFallbackURL bool   `json:"videoFallbackUrl"`
+			// 自托管 MP4 档的备用地址（主源失败时切换）。channels / tencent 档不用它，
+			// 那两档仍把 videoUrl 当兜底源——存量行为保持不变。
+			VideoBackupURL string `json:"videoBackupUrl"`
 			// 是否自动播放。腾讯视频插件的 autoplay 默认 true，必须显式下传，
 			// 否则「后台关掉」在小程序端不生效（见 model.CompanyProfile.VideoAutoplay）。
 			VideoAutoplay bool   `json:"videoAutoplay"`
@@ -162,6 +165,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		cp.VideoVid = req.VideoVid
 		cp.VideoURL = req.VideoURL
 		cp.VideoFallbackURL = req.VideoFallbackURL
+		cp.VideoBackupURL = req.VideoBackupURL
 		cp.VideoAutoplay = req.VideoAutoplay
 		cp.Cover = req.Cover
 
@@ -174,6 +178,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"video_vid":          req.VideoVid,
 			"video_url":          req.VideoURL,
 			"video_fallback_url": req.VideoFallbackURL,
+			"video_backup_url":   req.VideoBackupURL,
 			"video_autoplay":     req.VideoAutoplay,
 			"cover":              req.Cover,
 		}

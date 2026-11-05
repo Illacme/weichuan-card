@@ -61,6 +61,7 @@
           feedToken="{{profile.videoFeedToken}}"
           vid="{{profile.videoVid}}"
           videoUrl="{{profile.videoUrl}}"
+          backupUrl="{{profile.videoBackupUrl}}"
           fallback="{{profile.videoFallbackUrl}}"
           autoplay="{{profile.videoAutoplay}}"
           cover="{{profile.cover}}"

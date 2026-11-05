@@ -3,7 +3,7 @@
 // 选档为什么值得钉：后台五档配置（none/channels/upload/url/tencent）与两种
 // 视频号凭证的优先级一旦写反，表现是「配了却播不出来 / 拿错源播」，
 // 而客户侧只会说「视频坏了」——选档是纯函数，最适合用测试固定语义。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // 静态守门（txv-video 必须显式写 autoplay）要直接读 wxml
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -65,21 +65,22 @@ function instance(opts: any) {
     }
   }
   inst.observers = {}
-  const observerKey = 'videoSource, feedId, feedToken, vid, videoUrl, fallback'
+  const observerKey = 'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl'
   inst.observers[observerKey] = opts.observers[observerKey].bind(inst)
   // 简写：按真机入参顺序触发观察者。先把 properties 写进 data——
   // 真机框架会自动同步（组件的 properties 变化即落到 this.data），
   // 测试里手工补上，否则 onVideoError 读 this.data.videoSource 是 undefined。
-  // vid 放最后：既有用例都用不到它，加在末尾不用改一堆调用点。
+  // vid / backupUrl 放最后：既有用例都用不到它们，加在末尾不用改一堆调用点。
   inst.repick = (
     source: string,
     feedId: string,
     feedToken: string,
     videoUrl: string,
     fallback = false,
-    vid = ''
+    vid = '',
+    backupUrl = ''
   ) => {
-    inst.setData({ videoSource: source, feedId, feedToken, vid, videoUrl, fallback })
+    inst.setData({ videoSource: source, feedId, feedToken, vid, videoUrl, fallback, backupUrl })
     inst.observers[observerKey](source, feedId, feedToken, vid, videoUrl, fallback)
   }
   return inst
@@ -232,7 +233,9 @@ describe('company-video 组件', () => {
       expect(c.data.mp4Src).toBe('https://cdn.test/b.mp4')
     })
 
-    it.each(['upload', 'url'])('%s 档 binderror：显出失败态，档位不变也不回落', async (source) => {
+    // 没开兜底 / 没填备用地址时的老行为：直接给失败态，不能静默黑屏。
+    // 开了兜底且填了备用地址的分支见下面「自托管 MP4 的备用地址」组。
+    it.each(['upload', 'url'])('%s 档 binderror（无备用地址）：显出失败态，档位不变', async (source) => {
       const c = instance(await loadComponent())
       c.repick(source, '', '', 'https://cdn.test/a.mp4')
 
@@ -295,6 +298,145 @@ describe('company-video 组件', () => {
       expect(seen).toEqual(['', 'https://cdn.test/a.mp4'])
       expect(c.data.mp4Error).toBe(false)
       expect(c.data.mp4Src).toBe('https://cdn.test/a.mp4')
+    })
+  })
+
+  // ---- 自托管 MP4 的备用地址（videoBackupUrl） ----
+  //
+  // 视频号 / 腾讯视频档早就有「主源失败 → 改用 MP4」，自托管 MP4 档一直没有第二地址。
+  // 现在四档共用 fallback 开关，但地址槽分开：这两档主源失败时切 backupUrl，
+  // channels / tencent 仍切 videoUrl。最容易写错的地方是「切了但没生效」（直接换 src
+  // 部分机型不会重新发请求）和「来回切不停」，所以下面两组都钉得很死。
+  describe('自托管 MP4 的备用地址', () => {
+    const MAIN = 'https://cdn-a.test/main.mp4'
+    const BACKUP = 'https://cdn-b.test/backup.mp4'
+    // 切换路径会打两条 warn（组件报错 + 切到备用）。这是给真机排查用的，
+    // 但在测试输出里刷一屏；统一静音，日志断言用例复用同一个 spy。
+    let warnSpy: ReturnType<typeof vi.spyOn>
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      warnSpy.mockRestore()
+    })
+
+    // 记录 setData 里 mp4Src 的变化序列，用来验证「先清空销毁、再设回」这条路径
+    function watchSrc(c: any): string[] {
+      const seen: string[] = []
+      const original = c.setData.bind(c)
+      c.setData = (patch: any, cb?: () => void) => {
+        if ('mp4Src' in patch) seen.push(String(patch.mp4Src))
+        original(patch, cb)
+      }
+      return seen
+    }
+
+    it('主源失败且开了兜底：先清空 src 再切到备用地址，不当场显失败态', async () => {
+      const c = instance(await loadComponent())
+      c.repick('upload', '', '', MAIN, true, '', BACKUP)
+      const seen = watchSrc(c)
+
+      c.onVideoError()
+
+      expect(seen).toEqual(['', BACKUP])
+      expect(c.data.mp4Src).toBe(BACKUP)
+      expect(c.data.mp4FallbackUsed).toBe(true)
+      expect(c.data.mp4Error).toBe(false)
+      expect(c.data.mode).toBe('mp4')
+      // 不是视频号档那种「主源失败回落」，failed 标记不能跟着置位
+      expect(c.data.failed).toBe(false)
+    })
+
+    it.each(['url', 'upload'])('%s 档备用地址也失败：显失败态，不再切回主源', async (source) => {
+      const c = instance(await loadComponent())
+      c.repick(source, '', '', MAIN, true, '', BACKUP)
+
+      c.onVideoError() // 主源 → 备用
+      c.onVideoError() // 备用也失败
+
+      expect(c.data.mp4Error).toBe(true)
+      expect(c.data.mp4Src).toBe(BACKUP)
+      expect(c.data.mp4FallbackUsed).toBe(true)
+    })
+
+    it.each([
+      ['没开兜底', false, BACKUP],
+      ['没填备用地址', true, ''],
+    ])('%s：保持原行为，直接显失败态', async (_label, fallback, backupUrl) => {
+      const c = instance(await loadComponent())
+      c.repick('url', '', '', MAIN, fallback as boolean, '', backupUrl as string)
+
+      c.onVideoError()
+
+      expect(c.data.mp4Error).toBe(true)
+      expect(c.data.mp4FallbackUsed).toBe(false)
+      expect(c.data.mp4Src).toBe(MAIN)
+    })
+
+    it('备用地址和主源相同：不切，直接失败（避免白等一轮）', async () => {
+      const c = instance(await loadComponent())
+      c.repick('url', '', '', MAIN, true, '', MAIN)
+
+      c.onVideoError()
+
+      expect(c.data.mp4Error).toBe(true)
+      expect(c.data.mp4FallbackUsed).toBe(false)
+    })
+
+    it('视频号档仍用 videoUrl 兜底，不被 backupUrl 抢走；兜底 MP4 再失败也不切备用', async () => {
+      const c = instance(await loadComponent())
+      const FB = 'https://cdn.test/fb.mp4'
+      c.repick('channels', 'feed_1', '', FB, true, '', BACKUP)
+
+      c.onVideoError() // 主源失败 → videoUrl 兜底
+      expect(c.data.mode).toBe('mp4')
+      expect(c.data.mp4Src).toBe(FB)
+
+      c.onVideoError() // 兜底 MP4 也失败
+      expect(c.data.mp4Error).toBe(true)
+      expect(c.data.mp4Src).toBe(FB)
+      expect(c.data.mp4FallbackUsed).toBe(false)
+    })
+
+    it('换了地址就重置「已切过备用」，新主源还能再兜一次', async () => {
+      const c = instance(await loadComponent())
+      c.repick('url', '', '', MAIN, true, '', BACKUP)
+      c.onVideoError()
+      expect(c.data.mp4FallbackUsed).toBe(true)
+
+      c.repick('url', '', '', 'https://cdn-a.test/new.mp4', true, '', BACKUP)
+
+      expect(c.data.mp4FallbackUsed).toBe(false)
+      expect(c.data.mp4Src).toBe('https://cdn-a.test/new.mp4')
+      expect(c.data.mp4Error).toBe(false)
+    })
+
+    it('切到备用后点重新加载：重试备用，不跳回失败过的主源', async () => {
+      const c = instance(await loadComponent())
+      c.repick('upload', '', '', MAIN, true, '', BACKUP)
+      c.onVideoError()
+      c.onVideoError() // 备用失败 → 出现失败态
+      expect(c.data.mp4Error).toBe(true)
+
+      const seen = watchSrc(c)
+      c.onRetryMp4()
+
+      expect(seen).toEqual(['', BACKUP])
+      expect(c.data.mp4Error).toBe(false)
+      expect(c.data.mp4Src).toBe(BACKUP)
+    })
+
+    it('备用地址报错时日志打的是当前 src，不是主源地址', async () => {
+      const c = instance(await loadComponent())
+      c.repick('url', '', '', MAIN, true, '', BACKUP)
+      c.onVideoError() // 切备用
+      warnSpy.mockClear()
+      c.onVideoError() // 备用失败
+
+      const logged = warnSpy.mock.calls.flat().join(' ')
+      expect(logged).toContain(BACKUP)
+      expect(logged).toContain('(备用地址)')
+      expect(logged).not.toContain(MAIN)
     })
   })
 
@@ -744,5 +886,37 @@ describe('MP4 画幅的静态守门', () => {
     const channels = [...wxml.matchAll(/<channel-video\b[^>]*\/?>/g)].map((m) => m[0])
     expect(channels.length).toBeGreaterThan(0)
     channels.forEach((c) => expect(c).toContain('object-fit="cover"'))
+  })
+})
+
+// ---- 静态守门：备用地址的四段链路不能断在任何一环 ----
+//
+// 首页传参 → 组件 property → 失败时切换 → 失败态文案，任何一环漏了都不会报错，
+// 只会表现成「后台明明配了备用地址，主源挂了照样黑屏」，只能靠测试钉住。
+describe('自托管 MP4 备用地址的静态守门', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, '')
+  const indexWxml = strip(readFileSync(resolve(root, 'pages/index/index.wxml'), 'utf8'))
+  const compWxml = strip(readFileSync(resolve(root, 'components/company-video/index.wxml'), 'utf8'))
+  const compTs = readFileSync(resolve(root, 'components/company-video/index.ts'), 'utf8')
+  const indexTs = readFileSync(resolve(root, 'pages/index/index.ts'), 'utf8')
+
+  it('首页把 videoBackupUrl 传给组件的 backupUrl', () => {
+    const tag = /<company-video\b[^>]*\/?>/.exec(indexWxml)?.[0] || ''
+    expect(tag).toContain('backupUrl="{{profile.videoBackupUrl}}"')
+  })
+
+  it('组件声明 backupUrl，并把它放进 observer 的监听列表', () => {
+    expect(compTs).toContain('backupUrl: String')
+    expect(compTs).toContain("'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl'")
+  })
+
+  it('首页把备用地址也过 assetUrl（相对路径喂给 video 只会黑屏）', () => {
+    expect(indexTs).toContain('profile.videoBackupUrl = assetUrl(')
+  })
+
+  it('切过备用仍失败时，提示要点明两个地址都挂了', () => {
+    expect(compWxml).toContain('wx:if="{{mp4FallbackUsed}}"')
+    expect(compWxml).toContain('主视频与备用地址都无法加载')
   })
 })

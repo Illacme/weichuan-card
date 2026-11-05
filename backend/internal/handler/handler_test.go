@@ -986,6 +986,59 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	require.Equal(t, "none", get()["videoSource"])
 }
 
+// TestCompanyProfileVideoBackupURL 钉死「自托管 MP4 备用地址」是独立一列。
+//
+// videoFallbackUrl 四档共用，但地址分两槽：channels / tencent 用 video_url，
+// upload / url 用 video_backup_url。若 req 或 fields map 把两者写混，界面上
+// 两个输入框看着都有值，保存后主源会被备用地址覆盖（或备用地址被悄悄丢掉），
+// 属于没有任何报错的静默失效，只能靠读写往返钉住。
+func TestCompanyProfileVideoBackupURL(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+
+	put := func(m map[string]interface{}) {
+		_, body := c.do("PUT", "/api/admin/company-profile", m, tok)
+		require.EqualValues(t, 0, body["code"])
+	}
+	get := func() map[string]interface{} {
+		_, body := c.do("GET", "/api/admin/company-profile", nil, tok)
+		require.EqualValues(t, 0, body["code"])
+		return body["data"].(map[string]interface{})
+	}
+
+	// 1) 两个地址一起提交，各自落到自己的列
+	put(map[string]interface{}{
+		"videoSource":      "url",
+		"videoUrl":         "https://cdn-a.example.com/main.mp4",
+		"videoFallbackUrl": true,
+		"videoBackupUrl":   "https://cdn-b.example.com/backup.mp4",
+	})
+	d := get()
+	require.Equal(t, "https://cdn-a.example.com/main.mp4", d["videoUrl"])
+	require.Equal(t, "https://cdn-b.example.com/backup.mp4", d["videoBackupUrl"])
+	require.EqualValues(t, true, d["videoFallbackUrl"])
+
+	// 2) 只改备用地址，主源不能跟着变；只改主源，备用也不能被冲掉
+	put(map[string]interface{}{
+		"videoSource":      "upload",
+		"videoUrl":         "/uploads/main.mp4",
+		"videoFallbackUrl": true,
+		"videoBackupUrl":   "https://cdn-c.example.com/new-backup.mp4",
+	})
+	d = get()
+	require.Equal(t, "/uploads/main.mp4", d["videoUrl"])
+	require.Equal(t, "https://cdn-c.example.com/new-backup.mp4", d["videoBackupUrl"])
+
+	// 3) 升级前的老请求体不带这一列：按空串处理，不报错也不凭空造出地址。
+	//    迁移 0038 只加列、默认空，升级不突变存量行为。
+	put(map[string]interface{}{"videoSource": "url", "videoUrl": "https://cdn-a.example.com/only-main.mp4"})
+	d = get()
+	require.Equal(t, "https://cdn-a.example.com/only-main.mp4", d["videoUrl"])
+	require.Equal(t, "", d["videoBackupUrl"])
+	require.EqualValues(t, false, d["videoFallbackUrl"])
+}
+
 // TestCompanyProfileVideoSourceTencent 钉死腾讯视频档的「系统设置开关 + vid 必填」语义。
 //
 // 为什么单独一个用例：该档不是「配了就能播」——它依赖小程序侧静态声明插件，

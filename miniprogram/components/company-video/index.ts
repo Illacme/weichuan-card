@@ -1,5 +1,11 @@
 // 公司简介视频：按后端 videoSource 选档渲染，主源报错时（可选）回落到 MP4。
 //
+// 四档都能配兜底，但走的是两条不同的地址槽：
+//   channels / tencent 主源失败 → 用 videoUrl（这两档下它没有别的用途）
+//   upload / url       主 MP4 失败 → 用 backupUrl（videoUrl 是这一档的主源，
+//                      再加一个地址只能另开一列，见后端迁移 0038）
+// 开关统一是 fallback。自托管档只切一次，备用也失败才显失败态。
+//
 // 为什么不做单一来源：不同客户能接受的成本与资质条件不一样——
 //   channels 微信视频号：零存储零流量、官方无资质要求
 //   upload   云存储上传：落在客户自己的对象存储，直传不经我们的服务器
@@ -109,6 +115,10 @@ Component({
     // 声明插件并开启开关后这里才会收到非空 vid。
     vid: String,
     videoUrl: String,
+    // 自托管 MP4（upload / url）档的备用地址。与主源分开传：videoUrl 在这两档
+    // 是主视频源，在 channels / tencent 两档又兼作兜底源，一个槽装不下两种语义。
+    // 只有这两档的主 MP4 失败时才用它，且只切一次（见 onVideoError）。
+    backupUrl: String,
     fallback: Boolean,
     // 进页面就自动播放。**默认 false**，且必须显式下传到 <txv-video>：
     // 腾讯视频插件的 autoplay 默认是 true（官方参数表如此，与微信原生 video 的
@@ -148,11 +158,18 @@ Component({
     // 对同一个地址直接 setData 不会重新发请求。
     mp4Error: false,
     mp4Src: '',
+    // 自托管 MP4 档是否已经切过备用地址。只切一次：备用地址也失败就显示失败态，
+    // 否则主源与备用互相切会形成无限循环，且每次失败都重置出一块新的黑屏。
+    // 换档 / 换地址时由 observer 复位，等于一次全新尝试。
+    mp4FallbackUsed: false,
   },
   observers: {
     // 任一入参变化都重算档位（后台改配置后刷新即可生效，无需重新进入页面）。
     // 同时重置去重标记：档位变了等于换了一段视频，应当允许再计一次播放。
-    'videoSource, feedId, feedToken, vid, videoUrl, fallback': function (
+    // backupUrl 也进监听列表：后台改了备用地址就该把「已切过备用」的标记复位，
+    // 否则刷新后仍是旧状态，主源一失败直接显示失败态，新配置的备用地址根本没机会用。
+    // 回调不声明它——JS 允许少接参数，取值一律在 onVideoError 里读 this.data。
+    'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl': function (
       videoSource: string,
       feedId: string,
       feedToken: string,
@@ -165,6 +182,7 @@ Component({
         playTracked: false,
         // 换了档 / 换了地址就当是一次全新的尝试：清掉旧的失败态与播放器
         mp4Error: false,
+        mp4FallbackUsed: false,
         mp4Src: (videoUrl || '').trim(),
         mode: pickMode(
           videoSource || '',
@@ -264,19 +282,37 @@ Component({
     },
     onVideoError(e?: { detail?: Record<string, unknown> }) {
       const s: any = this.data
+      const currentSrc = (s.mp4Src || '').trim()
       // feed-token 无效、基础库不支持、vid 未过审、视频被删……官方只在 binderror 的
       // detail 里给原因。吞掉它，界面上永远只是「停在封面图」，排查只能靠猜——
-      // 打出来，体验版开调试即可见。MP4 档额外把 src 一起打：这类失败九成是
+      // 打出来，体验版开调试即可见。MP4 档额外把**当前** src 一起打：这类失败九成是
       // 地址不对（相对路径 / 证书 526 / 对象不存在），光看 errMsg 定位不了。
+      // 必须打 mp4Src 而不是 videoUrl：切到备用地址后再报错，打主源地址会把人带偏。
       console.warn(
         '[company-video] 视频组件报错',
         (e && e.detail) || e || '',
-        'src=', s.videoUrl || ''
+        'src=', s.mode === 'mp4' ? currentSrc : (s.videoUrl || ''),
+        s.mp4FallbackUsed ? '(备用地址)' : ''
       )
       // upload / url 两档本来就是 MP4，再回落没有意义；改显一个可操作的错误态。
       // 用 mode 判而不是只看 videoSource：视频号 / 腾讯视频兜底切过来的 MP4
       // （mode 已经是 mp4）再失败时，同样该让玩家看见而不是继续黑屏。
       if (s.mode === 'mp4' || s.videoSource === 'upload' || s.videoSource === 'url') {
+        // 自托管 MP4 档：主源失败时先切备用地址（视频号 / 腾讯视频档的 videoUrl
+        // 兜底不适用——它们本来就是「已经切过一次」了，再切只会来回打转）。
+        // 三个条件缺一不可：开了兜底、真填了备用地址、还没切过。
+        const selfHosted = s.videoSource === 'upload' || s.videoSource === 'url'
+        const backup = (s.backupUrl || '').trim()
+        if (selfHosted && !!s.fallback && backup && !s.mp4FallbackUsed && backup !== currentSrc) {
+          console.warn('[company-video] 主 MP4 加载失败，切换到备用地址', backup)
+          // 与重试同理：先清空 src 让 <video> 销毁，再在渲染完成回调里设回备用地址。
+          // 直接 setData 换 src，部分机型上不会重新发请求，表现是「切了但没生效」。
+          // mp4Error 一并清掉：此刻还没到该认输的时候，不要闪一下失败态。
+          this.setData({ mp4Error: false, mp4FallbackUsed: true, mp4Src: '' }, () => {
+            this.setData({ mp4Src: backup })
+          })
+          return
+        }
         this.setData({ mp4Error: true })
         return
       }
@@ -297,8 +333,10 @@ Component({
     // 重新加载 MP4：先把 src 清空让 <video> 销毁，再在 setData 回调里设回地址。
     // 用回调而不是固定 setTimeout——前者是微信官方的「渲染完成」语义，
     // 后者在慢机器上可能赶不上一次渲染，等于没重试。
+    // 重试的是**当前正在用的**地址：已经切到备用地址后再点「重新加载」，
+    // 应该重试备用，而不是跳回刚失败过的主源（那样兜底永远兜不住）。
     onRetryMp4() {
-      const url = ((this.data as any).videoUrl || '').trim()
+      const url = (((this.data as any).mp4Src || '') || ((this.data as any).videoUrl || '')).trim()
       this.setData({ mp4Error: false, mp4Src: '' }, () => {
         this.setData({ mp4Src: url })
       })

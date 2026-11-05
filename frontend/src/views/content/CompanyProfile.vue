@@ -167,17 +167,42 @@
         </el-form-item>
       </template>
 
-      <!-- 兜底：只有「主源可能播不出来」的档位才有意义（视频号 / 腾讯视频） -->
+      <!-- 兜底：四种视频档都可能播不出来，配置形态保持一致。
+           但两条地址各占一个槽：channels / tencent 用 form.videoUrl（该档下它没有别的用途），
+           upload / url 用 form.videoBackupUrl —— videoUrl 在主源保存时会被 videoUrlToSave()
+           覆盖，复用就会把用户填的备用地址悄悄丢掉。 -->
       <el-form-item v-if="needFallback" label="兜底 MP4">
-        <el-checkbox v-model="form.videoFallbackUrl">主源播放失败时改用 MP4</el-checkbox>
+        <el-checkbox v-model="form.videoFallbackUrl">
+          {{ isMp4 ? '主 MP4 加载失败时切换到备用地址' : '主源播放失败时改用 MP4' }}
+        </el-checkbox>
         <el-input
-          v-if="form.videoFallbackUrl"
+          v-if="form.videoFallbackUrl && isMp4"
+          v-model="form.videoBackupUrl"
+          class="fallback-input"
+          placeholder="备用 mp4 地址（建议与主源用不同域名 / CDN）"
+        />
+        <el-input
+          v-else-if="form.videoFallbackUrl"
           v-model="form.videoUrl"
           class="fallback-input"
           placeholder="兜底用的 mp4 地址（云存储或任意 CDN 均可）"
         />
         <div v-if="form.videoFallbackUrl" class="hint">
-          仅在视频号组件报错时切换，正常情况下不会用到。留空等于没开兜底。
+          <template v-if="isMp4">
+            主视频地址打不开时自动切换，只切一次；备用地址也失败才会显示「视频加载失败」。
+            <span class="hint-warn">
+              建议填与主源<b>不同域名或不同 CDN</b> 的地址：同一域名挂了两边都挂，等于没兜底。
+            </span>
+          </template>
+          <template v-else>
+            仅在视频号 / 腾讯视频主源报错时切换，正常情况下不会用到。留空等于没开兜底。
+          </template>
+        </div>
+        <!-- 备用地址也要能点开验证：填了个 404 的备用域名，兜底等于没有 -->
+        <div v-if="form.videoFallbackUrl && isMp4 && form.videoBackupUrl" class="video-url-check backup-url-check">
+          <span class="hint">备用地址：</span>
+          <a v-if="canOpenBackupUrl" :href="form.videoBackupUrl" target="_blank" rel="noopener noreferrer">{{ form.videoBackupUrl }}</a>
+          <span v-else>{{ form.videoBackupUrl }}</span>
         </div>
       </el-form-item>
 
@@ -219,6 +244,9 @@ const form = reactive({
   videoVid: '',
   videoUrl: '',
   videoFallbackUrl: false,
+  // 自托管 MP4 档的备用地址。与主源、与「视频号/腾讯视频的兜底地址」都分开存：
+  // 一个 videoUrl 装不下三条语义，共用就会在保存时互相覆盖。
+  videoBackupUrl: '',
   videoAutoplay: false,
   cover: '',
 })
@@ -230,10 +258,12 @@ const form = reactive({
 // 显示出来（`video-langhui....mp4` + 一个绿色对勾）——看起来像已经上传好了，
 // 实际那个文件根本不在云存储里。反过来也成立：上传得到的地址会跑进直链输入框。
 //
-// 三个来源各占一个槽，切换交付方式时谁都不动，只按当前档位取用：
-//   uploadUrl    云存储上传得到的地址
-//   externalUrl  手填的外部直链
-//   form.videoUrl 视频号 / 腾讯视频档的「兜底 MP4」（后端只有这一个字段装它）
+// 四个来源各占一个槽，切换交付方式时谁都不动，只按当前档位取用：
+//   uploadUrl          云存储上传得到的地址
+//   externalUrl        手填的外部直链
+//   form.videoUrl      视频号 / 腾讯视频档的「兜底 MP4」（后端只有这一个字段装它）
+//   form.videoBackupUrl 自托管 MP4 档的「备用 MP4」（主源失败时切换）
+// 后两个不能合并：自托管档保存时 videoUrl 会被主源覆盖。
 const uploadUrl = ref('')
 const externalUrl = ref('')
 
@@ -249,11 +279,15 @@ const cap = ref<UploadCapability>({
 // 视频来源能力：决定「腾讯视频」档可选与否（部署级开关，探测失败按不可用处理）。
 const vcap = ref<VideoCapability>({ tencentVideo: false, tencentReason: '' })
 
-// 兜底只对「主源可能失败」的档位开放：视频号（组件报错）、腾讯视频（插件未授权）。
-// upload / url 两档本身就是 MP4，兜底没有意义。
-const needFallback = computed(
-  () => form.videoSource === 'channels' || form.videoSource === 'tencent'
-)
+// 四种视频档都可能播不出来：视频号（组件报错 / feed-token 失效）、
+// 腾讯视频（插件未授权 / vid 未过审）、自托管 MP4（CDN 证书失效、对象被删、域名欠费）。
+// 所以四档都给同样的兜底配置，只有 none（本来就不展示视频）不需要。
+//
+// 但「兜底地址」不是同一个槽：
+//   channels / tencent → form.videoUrl（这两档下它没有别的用途）
+//   upload / url       → form.videoBackupUrl（videoUrl 在主源保存时会被 videoUrlToSave()
+//                        覆盖，复用就等于把用户填的备用地址悄悄丢掉）
+const needFallback = computed(() => form.videoSource !== 'none')
 
 // ---- 自托管 MP4：把 upload 与 url 合成一档 ----
 //
@@ -311,6 +345,14 @@ const activeVideoUrl = computed(() => (isMp4.value ? videoUrlToSave() : ''))
 // 非预期格式只作纯文本展示（仍能看出填了什么，便于排查）。
 const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.value))
 
+// 兜底地址：四档共用 videoFallbackUrl 这一个开关，但地址槽按档位分开。
+// 校验「开了兜底却没填地址」也必须按槽取值，否则 MP4 档会拿主源地址冒充备用地址，
+// 拦不住真正没填的情况（主源永远非空）。
+const fallbackUrlValue = computed(() => (isMp4.value ? form.videoBackupUrl : form.videoUrl))
+// 备用地址同样要能点开验证：填了个 404 的备用域名，兜底等于没有。
+// 与 canOpenVideoUrl 同一套白名单，只认 http(s) 绝对地址与站内相对路径。
+const canOpenBackupUrl = computed(() => /^(https?:\/\/|\/)/i.test(form.videoBackupUrl))
+
 async function load() {
   loading.value = true
   try {
@@ -325,6 +367,8 @@ async function load() {
         videoVid: '',
         videoUrl: '',
         videoFallbackUrl: false,
+        // 后加的列：历史行没有这一项，必须给默认值，否则切档时残留上一次的值
+        videoBackupUrl: '',
         videoAutoplay: false,
       },
       d
@@ -365,8 +409,10 @@ async function loadVideoCapability() {
 }
 
 async function save() {
-  // 开了兜底却不填地址，等于没兜底——直接拦住，避免存一个永远不生效的开关
-  if (needFallback.value && form.videoFallbackUrl && !form.videoUrl.trim()) {
+  // 开了兜底却不填地址，等于没兜底——直接拦住，避免存一个永远不生效的开关。
+  // 两档各查各的槽：查 form.videoUrl 在自托管 MP4 档会误判（主源永远非空，
+  // 拦不住「备用地址没填」），查 videoBackupUrl 在视频号档又永远为空。
+  if (needFallback.value && form.videoFallbackUrl && !fallbackUrlValue.value.trim()) {
     ElMessage.warning('已开启兜底，请填写兜底 MP4 地址')
     return
   }
@@ -403,6 +449,10 @@ async function save() {
       // 取值规则见 videoUrlToSave()（与「最终播放地址」展示同源）
       videoUrl: videoUrlToSave(),
       videoFallbackUrl: form.videoFallbackUrl,
+      // 自托管 MP4 档的备用地址。与 videoUrl 独立一列，服务端各存各的；
+      // 始终随表单提交（和 videoVid / videoChannelId 一样，不按档位裁剪），
+      // 切档再切回来时用户填过的值不会丢。
+      videoBackupUrl: form.videoBackupUrl,
       videoAutoplay: form.videoAutoplay,
       cover: form.cover,
     })

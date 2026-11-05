@@ -16,7 +16,8 @@ export function saveCompanyInfo(p: {
 
 // ===== 公司简介 + 视频（多来源） =====
 // videoSource 五档：none / channels（视频号）/ upload（云存储上传）/ url（外部直链）/ tencent（预留）
-// videoUrl 由 upload 与 url 两档共用，并作为 channels 开启 videoFallbackUrl 时的兜底源。
+// videoUrl 由 upload 与 url 两档共用，并作为 channels / tencent 开启 videoFallbackUrl 时的兜底源。
+// videoBackupUrl 是 upload / url 两档主 MP4 失败时的备用地址，独立一列，不与 videoUrl 共用。
 // channels 档：feedId（同主体，可自动播放）与 feedToken（跨主体，强制不能自动播放）二选一，feedId 优先。
 export function getCompanyProfile() {
   return http.get('/admin/company-profile').then((r: any) => (r.data ?? { id: 1 }) as any)
@@ -30,6 +31,8 @@ export function saveCompanyProfile(p: {
   videoVid: string
   videoUrl: string
   videoFallbackUrl: boolean
+  // 自托管 MP4 档的备用地址（主源加载失败时切换）；其余档位传空串即可
+  videoBackupUrl: string
   // 腾讯视频插件 autoplay 默认 true（与原生 video 相反），必须显式下发
   videoAutoplay: boolean
   cover: string

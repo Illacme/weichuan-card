@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     videoVid: '',
     videoUrl: '',
     videoFallbackUrl: false,
+    videoBackupUrl: '',
     cover: '/uploads/cover.png',
   })),
   saveCompanyProfile: vi.fn(async (_payload: any) => ({ code: 0 })),
@@ -192,6 +193,14 @@ function byPlaceholder(w: any, placeholder: string) {
   return el
 }
 
+// 读组件收到的 modelValue，而不是 DOM 的 value：本页最容易出的错就是「两个地址
+// 绑到了同一个槽」，DOM 上看着都有值，只有 props 能暴露它们其实指向同一个字段。
+function inputModel(w: any, placeholder: string) {
+  const c = w.findAllComponents(ElInput).find((i: any) => i.props('placeholder') === placeholder)
+  if (!c) throw new Error(`找不到输入框 ${placeholder}`)
+  return String(c.props('modelValue') || '')
+}
+
 function saveButton(w: any) {
   const btn = w.findAll('.el-button').find((b: any) => b.text() === '保存')
   if (!btn) throw new Error('找不到保存按钮')
@@ -230,6 +239,7 @@ function profile(videoSource: string, videoUrl: string) {
     videoVid: '',
     videoUrl,
     videoFallbackUrl: false,
+    videoBackupUrl: '',
     videoAutoplay: false,
     cover: '',
   }
@@ -311,23 +321,26 @@ describe('content/CompanyProfile', () => {
     expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').exists()).toBe(true)
   })
 
-  // 兜底只对「主源可能播不出来」的档位有意义：视频号（组件可能报错）与腾讯视频
-  // （插件可能未授权 / vid 未过审）；MP4 两档本身就是 MP4，不需要兜底
-  it('兜底开关只在视频号 / 腾讯视频档出现', async () => {
+  // 四种视频档都可能播不出来：视频号（feed-token 失效）、腾讯视频（vid 未过审）、
+  // 自托管 MP4（CDN 证书失效 / 对象被删 / 域名欠费）。所以四档都给兜底配置，
+  // 只有 none（本来就不展示视频）没有。两档文案要分开：地址槽不是同一个。
+  it('四种视频档都有兜底开关，只有不展示视频档没有', async () => {
     const w = await mountPage()
     expect(w.find('.el-checkbox').exists()).toBe(false)
 
     await pickSource(w, 'channels')
     expect(w.find('.el-checkbox').exists()).toBe(true)
+    expect(w.text()).toContain('主源播放失败时改用 MP4')
 
     await pickSource(w, 'tencent')
     expect(w.find('.el-checkbox').exists()).toBe(true)
 
     await pickSource(w, 'mp4')
-    expect(w.find('.el-checkbox').exists()).toBe(false)
+    expect(w.find('.el-checkbox').exists()).toBe(true)
+    expect(w.text()).toContain('主 MP4 加载失败时切换到备用地址')
 
     await pickMp4Mode(w, 'url')
-    expect(w.find('.el-checkbox').exists()).toBe(false)
+    expect(w.find('.el-checkbox').exists()).toBe(true)
   })
 
   // ---- 保存前的三道拦截 ----
@@ -405,9 +418,129 @@ describe('content/CompanyProfile', () => {
     )
   })
 
+  // ---- 自托管 MP4 的兜底：备用地址必须是独立槽 ----
+  //
+  // videoUrl 在 upload / url 两档是主视频源，又在 channels / tencent 两档兼作兜底源。
+  // 备用地址若复用它，保存时会被 videoUrlToSave() 覆盖——界面上填了、库里没有，
+  // 属于最难查的「配置了却不生效」。下面都按「改过值再保存」和「在组件 props 上
+  // 断言」来写：只回显时错取字段恰好等于原值，测试会误绿。
+  describe('自托管 MP4 档的兜底（备用地址）', () => {
+    const CAP = { driver: 'oss', presign: true, videoUpload: true, videoMaxMb: 200, reason: '' }
+    const MAIN = 'https://cdn-a.example.com/main.mp4'
+    const BACKUP = 'https://cdn-b.example.com/backup.mp4'
+    const BACKUP_PH = '备用 mp4 地址（建议与主源用不同域名 / CDN）'
+    const FALLBACK_PH = '兜底用的 mp4 地址（云存储或任意 CDN 均可）'
+    const MAIN_PH = 'https:// 开头的 mp4 地址'
+
+    const mp4Profile = (extra: any = {}) => ({
+      ...profile('url', MAIN),
+      videoFallbackUrl: true,
+      videoBackupUrl: BACKUP,
+      ...extra,
+    })
+
+    const hasPlaceholder = (w: any, ph: string) =>
+      w.findAll('.el-input').some((i: any) => i.attributes('placeholder') === ph)
+
+    it('主源与备用各回显到自己的输入框，MP4 档不显示视频号档的兜底框', async () => {
+      const w = await mountPage(mp4Profile(), CAP)
+      await flush()
+
+      expect(inputModel(w, MAIN_PH)).toBe(MAIN)
+      expect(inputModel(w, BACKUP_PH)).toBe(BACKUP)
+      expect(hasPlaceholder(w, FALLBACK_PH)).toBe(false)
+    })
+
+    it('改过备用地址再保存：写进 videoBackupUrl，主源 videoUrl 不受污染', async () => {
+      const w = await mountPage(mp4Profile(), CAP)
+      await flush()
+      await byPlaceholder(w, BACKUP_PH).setValue('https://cdn-b.example.com/new.mp4')
+      await flush()
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          videoSource: 'url',
+          videoUrl: MAIN,
+          videoBackupUrl: 'https://cdn-b.example.com/new.mp4',
+          videoFallbackUrl: true,
+        })
+      )
+    })
+
+    // 判别力：实现若错用 form.videoUrl 做空值校验，这里会放行——因为 url 档回显后
+    // form.videoUrl 就是非空的主源地址，「没填备用」根本拦不住。
+    it('开了兜底却没填备用地址：拦下且不提交', async () => {
+      const w = await mountPage(mp4Profile({ videoBackupUrl: '' }), CAP)
+      await flush()
+      expect(inputModel(w, BACKUP_PH)).toBe('')
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(ElMessage.warning).toHaveBeenCalledWith('已开启兜底，请填写兜底 MP4 地址')
+      expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+    })
+
+    it('两个地址互不串槽：改备用不污染视频号兜底，改视频号兜底不覆盖备用', async () => {
+      const w = await mountPage(mp4Profile(), CAP)
+      await flush()
+      await byPlaceholder(w, BACKUP_PH).setValue('https://cdn-b.example.com/new.mp4')
+      await flush()
+
+      await pickSource(w, 'channels')
+      expect(inputModel(w, FALLBACK_PH)).toBe(MAIN)
+
+      await byPlaceholder(w, FALLBACK_PH).setValue('https://cdn-c.example.com/ch.mp4')
+      await flush()
+      await pickSource(w, 'mp4')
+      await pickMp4Mode(w, 'url')
+
+      expect(inputModel(w, BACKUP_PH)).toBe('https://cdn-b.example.com/new.mp4')
+      expect(inputModel(w, MAIN_PH)).toBe(MAIN)
+    })
+
+    it('切到视频号档保存也带上备用地址，切回来填过的值不丢', async () => {
+      const w = await mountPage(mp4Profile(), CAP)
+      await flush()
+      await byPlaceholder(w, BACKUP_PH).setValue('https://cdn-b.example.com/keep.mp4')
+      await flush()
+      await pickSource(w, 'channels')
+      await byPlaceholder(w, '视频号助手 → 动态管理 → 复制 feedId').setValue('feed-1')
+      await flush()
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ videoSource: 'channels', videoBackupUrl: 'https://cdn-b.example.com/keep.mp4' })
+      )
+    })
+
+    it('提示说明只切一次、建议不同域名；备用地址可点开验证', async () => {
+      const w = await mountPage(mp4Profile(), CAP)
+      await flush()
+
+      expect(w.text()).toContain('只切一次')
+      expect(w.text()).toContain('不同域名')
+      expect(w.find('.backup-url-check a').attributes('href')).toBe(BACKUP)
+    })
+
+    it('备用地址不是 http(s)/站内路径时只作纯文本，不生成可点链接', async () => {
+      const w = await mountPage(mp4Profile({ videoBackupUrl: 'javascript:alert(1)' }), CAP)
+      await flush()
+
+      expect(w.find('.backup-url-check').exists()).toBe(true)
+      expect(w.find('.backup-url-check a').exists()).toBe(false)
+      expect(w.find('.backup-url-check').text()).toContain('javascript:alert(1)')
+    })
+  })
+
   // ---- 保存 payload ----
 
-  it('保存提交十个字段，不带 id', async () => {
+  it('保存提交十一个字段，不带 id', async () => {
     const w = await mountPage()
 
     await saveButton(w).trigger('click')
@@ -418,6 +551,7 @@ describe('content/CompanyProfile', () => {
       'cover',
       'introText',
       'videoAutoplay',
+      'videoBackupUrl',
       'videoChannelId',
       'videoFallbackUrl',
       'videoFeedId',

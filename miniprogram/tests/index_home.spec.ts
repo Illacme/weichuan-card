@@ -200,6 +200,44 @@ describe('index 首页', () => {
     expect(p2.data.profile.videoUrl).toBe('https://other.cdn.example.com/a.mp4')
   })
 
+  // 备用地址只在主源失败那一刻才被请求：那时才发现是相对路径，表现就是
+  // 「兜底也黑屏」，比没有兜底更迷惑。和主源同一套 assetUrl 规则。
+  it('备用兜底地址也补成绝对 URL，外链保持原样', async () => {
+    mockApis({
+      card: card({
+        profile: {
+          cover: '/uploads/cover.png',
+          videoSource: 'url',
+          videoUrl: 'https://cdn.test/uploads/main.mp4',
+          videoBackupUrl: '/uploads/backup.mp4',
+        },
+      }),
+    })
+    const p1 = await page({ staffId: '42' })
+    expect(p1.data.profile.videoBackupUrl).toBe('https://cdn.test/uploads/backup.mp4')
+
+    mockApis({
+      card: card({
+        profile: {
+          cover: '/uploads/cover.png',
+          videoSource: 'url',
+          videoUrl: 'https://cdn.test/uploads/main.mp4',
+          videoBackupUrl: 'https://other.cdn.example.com/backup.mp4',
+        },
+      }),
+    })
+    const p2 = await page({ staffId: '42' })
+    expect(p2.data.profile.videoBackupUrl).toBe('https://other.cdn.example.com/backup.mp4')
+  })
+
+  // 迁移 0038 之前部署的后端不下发这一列：缺字段要归一成空串，
+  // 不能把 undefined 塞进 WXML（组件会拿到字符串 "undefined" 之类的怪值）。
+  it('后端没下发备用地址时归一为空串', async () => {
+    mockApis()
+    const p = await page({ staffId: '42' })
+    expect(p.data.profile.videoBackupUrl).toBe('')
+  })
+
   it('首页布局：order 生效，背景图与遮罩浓度换算成 0~1', async () => {
     mockApis()
     const p = await page({ staffId: '42' })
