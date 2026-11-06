@@ -2038,6 +2038,69 @@ paths:
                         type: string
                         description: 不可选时的原因（可选时为空串）
 
+  /api/admin/url-probe:
+    post:
+      tags: [超管-内容管理]
+      summary: 测试地址可达性（受限 HEAD 探测）
+      description: >-
+        对管理员填写的 CDN / MP4 地址发一次 HEAD，回答「应用服务器能不能取到」。
+        用于排查小程序黑屏 00:00 且无报错的配置问题：CDN 未启用 HTTPS 时 https 回
+        403 httpsDisabled、对象缺目录前缀回 404、CDN 用 200 返回 text/html 错误页等。
+        **安全边界**：只接受 http/https 绝对地址，禁用户名密码与本机/内网/保留域名；
+        自行解析 DNS 并逐个排除私网/回环/链路本地/组播/保留段；把已校验 IP 固定进
+        DialContext（防 DNS rebinding）；Proxy 关闭、禁重定向、6s 超时、只发 HEAD
+        且不读响应体。相对路径与任何非公网地址一律拒绝。
+        鉴权为后台 Cookie，按 IP + staffId 限流 10 次/分钟（超限 code:429）；
+        每次调用（含被拦下的）记一条 url_probe.check 审计，只记 host 不记 query。
+        **能力边界**：只证明服务端可达，不等于用户手机一定能播；证书链、运营商策略
+        与微信客户端限制仍需在小程序真机验证。
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  description: 待探测的 http(s) 绝对地址
+                  example: https://cdn.example.com/aitel/demo.mp4
+      responses:
+        "200":
+          description: >-
+            code=0 探测完成（含 3xx/4xx，见 data.reachable）；code=1 参数错误或地址被安全策略拦下；
+            code=401 未登录；code=429 触发限流。HTTP 状态码恒为 200。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  msg:
+                    type: string
+                    description: code!=0 时的原因（可直接展示，不含内部拓扑）
+                  data:
+                    type: object
+                    properties:
+                      reachable:
+                        type: boolean
+                        description: 是否取到一个非网页的 2xx 响应
+                      status:
+                        type: integer
+                        description: HTTP 状态码
+                      contentType:
+                        type: string
+                      contentLength:
+                        type: integer
+                        format: int64
+                      message:
+                        type: string
+                        description: 面向运维的中文结论与排查建议
+
   /api/admin/categories:
     get:
       parameters:

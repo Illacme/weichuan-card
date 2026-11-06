@@ -21,6 +21,13 @@ const mocks = vi.hoisted(() => ({
     cover: '/uploads/cover.png',
   })),
   saveCompanyProfile: vi.fn(async (_payload: any) => ({ code: 0 })),
+  probeVideoUrl: vi.fn(async (_url: string): Promise<any> => ({
+    reachable: true,
+    status: 200,
+    contentType: 'video/mp4',
+    contentLength: 1024,
+    message: 'HTTP 200，地址可访问',
+  })),
   getUploadCapability: vi.fn(async (): Promise<any> => ({
     driver: 'oss',
     presign: true,
@@ -249,6 +256,7 @@ describe('content/CompanyProfile', () => {
   beforeEach(() => {
     mocks.getCompanyProfile.mockClear()
     mocks.saveCompanyProfile.mockClear()
+    mocks.probeVideoUrl.mockClear()
     mocks.getUploadCapability.mockClear()
     ;(ElMessage.success as any).mockClear()
     ;(ElMessage.warning as any).mockClear()
@@ -1029,6 +1037,163 @@ describe('content/CompanyProfile', () => {
       expect(hint).toContain('目录前缀')
       expect(hint).toContain('文件访问基址')
       expect(hint).toContain('重新上传')
+    })
+  })
+
+  // 「测试地址」按钮：最容易出错的不是按钮在不在，而是**测了哪个槽**。
+  // 主源取 videoUrlToSave()（按 upload/url 从两个 ref 里挑），兜底取 fallbackUrlValue
+  //（按 isMp4 从两个字段里挑），两处写错都不会报错，只会悄悄测了一个旧值/另一个字段。
+  // 所以每条取值用例都先把输入框改成新值再点按钮。
+  describe('测试地址', () => {
+    const CAP = { driver: 'oss', presign: true, videoUpload: true, videoMaxMb: 200, reason: '' }
+    const MAIN_INPUT = 'https:// 开头的 mp4 地址'
+    const BACKUP_INPUT = '备用 mp4 地址（建议与主源用不同域名 / CDN）'
+    const FALLBACK_INPUT = '兜底用的 mp4 地址（云存储或任意 CDN 均可）'
+
+    function probeButton(w: any, text: string) {
+      const btn = w.findAll('.el-button').find((b: any) => b.text() === text)
+      if (!btn) throw new Error(`找不到「${text}」按钮`)
+      return btn
+    }
+
+    it('主源按钮测的是「最终播放地址」，改过输入框的值后跟着变', async () => {
+      const w = await mountPage(profile('url', 'https://cdn.example.com/old.mp4'), CAP)
+      await flush()
+
+      await byPlaceholder(w, MAIN_INPUT).setValue('https://cdn.example.com/new.mp4')
+      await flush()
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+
+      expect(mocks.probeVideoUrl).toHaveBeenCalledTimes(1)
+      expect(mocks.probeVideoUrl).toHaveBeenCalledWith('https://cdn.example.com/new.mp4')
+      const r = w.find('.video-url-check .probe-result')
+      expect(r.classes()).toContain('is-ok')
+      expect(r.text()).toContain('地址可访问')
+    })
+
+    it('上传档主源按钮测 uploadUrl，不是已回显的旧直链', async () => {
+      const w = await mountPage(profile('upload', '/uploads/old.mp4'), CAP)
+      await flush()
+
+      videoUpload(w).vm.$emit('update:modelValue', 'https://cdn.example.com/uploaded.mp4')
+      await flush()
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+
+      expect(mocks.probeVideoUrl).toHaveBeenCalledWith('https://cdn.example.com/uploaded.mp4')
+    })
+
+    it('自托管 MP4 的兜底按钮测 videoBackupUrl，不串到主源槽', async () => {
+      const p = {
+        ...profile('url', 'https://cdn.example.com/main.mp4'),
+        videoFallbackUrl: true,
+        videoBackupUrl: 'https://backup.example.com/old.mp4',
+      }
+      const w = await mountPage(p, CAP)
+      await flush()
+
+      await byPlaceholder(w, BACKUP_INPUT).setValue('https://backup.example.com/new.mp4')
+      await flush()
+      await probeButton(w, '测试兜底地址').trigger('click')
+      await flush()
+
+      expect(mocks.probeVideoUrl).toHaveBeenCalledWith('https://backup.example.com/new.mp4')
+    })
+
+    it('视频号档的兜底按钮测 videoUrl 槽（四档共用开关、地址分槽）', async () => {
+      const p = {
+        ...profile('channels', 'https://cdn.example.com/fallback.mp4'),
+        videoFallbackUrl: true,
+        videoFeedId: 'feed-1',
+      }
+      const w = await mountPage(p, CAP)
+      await flush()
+
+      await byPlaceholder(w, FALLBACK_INPUT).setValue('https://cdn.example.com/new-fallback.mp4')
+      await flush()
+      await probeButton(w, '测试兜底地址').trigger('click')
+      await flush()
+
+      expect(mocks.probeVideoUrl).toHaveBeenCalledWith('https://cdn.example.com/new-fallback.mp4')
+      expect(w.find('.video-url-check').exists()).toBe(false)
+    })
+
+    it('探测不通：显示后端给的 HTTP 状态建议，标失败态', async () => {
+      mocks.probeVideoUrl.mockResolvedValueOnce({
+        reachable: false, status: 404, contentType: '', contentLength: 0,
+        message: 'HTTP 404 找不到对象：检查文件访问基址是否带上了对象存储里的目录前缀',
+      })
+      const w = await mountPage(profile('url', 'https://cdn.example.com/a.mp4'), CAP)
+      await flush()
+
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+
+      const r = w.find('.video-url-check .probe-result')
+      expect(r.classes()).toContain('is-bad')
+      expect(r.text()).toContain('目录前缀')
+    })
+
+    it('后端拦下 SSRF 地址时，拒绝原因落到行内失败态', async () => {
+      mocks.probeVideoUrl.mockRejectedValueOnce(new Error('不允许探测本机、内网或保留地址'))
+      const w = await mountPage(profile('url', 'http://127.0.0.1/a.mp4'), CAP)
+      await flush()
+
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+
+      const r = w.find('.video-url-check .probe-result')
+      expect(r.classes()).toContain('is-bad')
+      expect(r.text()).toContain('不允许探测')
+    })
+
+    it('站内相对路径禁用探测按钮，只给本地指引', async () => {
+      const w = await mountPage(profile('url', '/uploads/a.mp4'), CAP)
+      await flush()
+
+      // 真实 el-button 被 disabled 后 click 根本不会派发；桩组件走 $attrs 落到原生
+      // button 上，jsdom 同样不触发。这里连「按钮点不动」一起钉住。
+      const btn = probeButton(w, '测试地址')
+      expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      await btn.trigger('click')
+      await flush()
+
+      expect(mocks.probeVideoUrl).not.toHaveBeenCalled()
+      expect(w.find('.video-url-check .probe-result').exists()).toBe(false)
+      expect(w.find('.video-url-check').text()).toContain('服务端只测 http(s) 绝对地址')
+    })
+
+    it('地址一改就清掉上一次的探测结论，避免旧结论冒充新地址的验证', async () => {
+      const w = await mountPage(profile('url', 'https://cdn.example.com/a.mp4'), CAP)
+      await flush()
+
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+      expect(w.find('.video-url-check .probe-result').exists()).toBe(true)
+
+      await byPlaceholder(w, MAIN_INPUT).setValue('https://cdn.example.com/b.mp4')
+      await flush()
+      expect(w.find('.video-url-check .probe-result').exists()).toBe(false)
+    })
+
+    it('主源与兜底的结论各自独立，测主源不会把兜底结果顶掉', async () => {
+      const p = {
+        ...profile('url', 'https://cdn.example.com/main.mp4'),
+        videoFallbackUrl: true,
+        videoBackupUrl: 'https://backup.example.com/b.mp4',
+      }
+      const w = await mountPage(p, CAP)
+      await flush()
+
+      await probeButton(w, '测试兜底地址').trigger('click')
+      await flush()
+      expect(w.findAll('.probe-result')).toHaveLength(1)
+
+      await probeButton(w, '测试地址').trigger('click')
+      await flush()
+      expect(w.findAll('.probe-result')).toHaveLength(2)
+      expect(mocks.probeVideoUrl).toHaveBeenCalledTimes(2)
     })
   })
 })

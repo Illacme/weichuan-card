@@ -157,11 +157,23 @@
           <div class="video-url-check">
             <a v-if="canOpenVideoUrl" :href="activeVideoUrl" target="_blank" rel="noopener noreferrer">{{ activeVideoUrl }}</a>
             <span v-else>{{ activeVideoUrl }}</span>
+            <div class="probe-row">
+              <el-button size="small" :loading="probeLoading.main" :disabled="!canProbe(activeVideoUrl)" @click="testUrl('main')">
+                测试地址
+              </el-button>
+              <span v-if="!canProbe(activeVideoUrl)" class="hint">站内相对路径请点开上面的链接在浏览器里确认；服务端只测 http(s) 绝对地址</span>
+            </div>
+            <div v-if="probeResult.main" class="probe-result" :class="probeOk.main ? 'is-ok' : 'is-bad'">
+              {{ probeResult.main }}
+            </div>
             <div class="hint">
               点开应当能直接播放。这里打不开，小程序里也一定播不了（先在浏览器排除证书与地址问题）。
               相对路径会在小程序端自动拼上服务域名，请确认该域名下确实有这个文件。
               如果对象存储控制台里文件名带目录前缀（如 aitel/xxx.mp4），「文件访问基址」也必须带上同样的目录前缀，
               否则这里拼出的地址会少一层目录、直接 404；改完配置只影响新上传，已保存的地址要重新上传才会更新。
+              <span class="hint-warn">
+                「测试地址」是从应用服务器发一次 HEAD，能取到不代表手机一定能播；最终仍要在小程序真机确认。
+              </span>
             </div>
           </div>
         </el-form-item>
@@ -200,6 +212,14 @@
             仅在视频号 / 腾讯视频主源报错时切换，正常情况下不会用到。留空等于没开兜底。
           </template>
         </div>
+        <!-- 四档共用一个按钮，但测的是各自的地址槽（fallbackUrlValue）：
+             自托管 MP4 取 videoBackupUrl，视频号/腾讯视频取 videoUrl。别写成固定取某一列。 -->
+        <div v-if="form.videoFallbackUrl" class="probe-row">
+          <el-button size="small" :loading="probeLoading.backup" @click="testUrl('backup')">测试兜底地址</el-button>
+        </div>
+        <div v-if="form.videoFallbackUrl && probeResult.backup" class="probe-result" :class="probeOk.backup ? 'is-ok' : 'is-bad'">
+          {{ probeResult.backup }}
+        </div>
         <!-- 这里刻意不把备用地址再回显一遍（2026-11-06 用户反馈「为什么还显示个备用地址」）。
              上面的「最终播放地址」必须单列，因为它是 videoUrlToSave() 按档位算出来的，
              输入框里看到的未必是写库值；而 form.videoBackupUrl 原样写库、没有任何计算，
@@ -220,11 +240,12 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, watch, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import {
   getCompanyProfile,
   saveCompanyProfile,
+  probeVideoUrl,
   getUploadCapability,
   getVideoCapability,
   type UploadCapability,
@@ -349,6 +370,58 @@ const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.
 // 校验「开了兜底却没填地址」也必须按槽取值，否则 MP4 档会拿主源地址冒充备用地址，
 // 拦不住真正没填的情况（主源永远非空）。
 const fallbackUrlValue = computed(() => (isMp4.value ? form.videoBackupUrl : form.videoUrl))
+
+// ---- 「测试地址」：两个槽各自的结果，互不覆盖 ----
+// 之所以不共用一个 result：主源与兜底地址常常一好一坏，同时把结论摆出来才看得出
+// 「备用也挂了」还是「备用是好的、只是主源配错」。
+type ProbeKey = 'main' | 'backup'
+const probeLoading = reactive<Record<ProbeKey, boolean>>({ main: false, backup: false })
+const probeResult = reactive<Record<ProbeKey, string>>({ main: '', backup: '' })
+const probeOk = reactive<Record<ProbeKey, boolean>>({ main: false, backup: false })
+
+function clearProbe(key: ProbeKey) {
+  probeResult[key] = ''
+  probeOk[key] = false
+}
+
+// 地址一改，上一次的结论立刻作废。留着「✓ 可访问」却指向一个已经改过的地址，
+// 比不显示更危险——用户会以为新地址也验过了。多源 watch 分别比对新旧值，
+// 只清真正变了的那一侧，别把另一条刚测好的结果一起抹掉。
+watch([activeVideoUrl, fallbackUrlValue], ([newMain, newBackup], [oldMain, oldBackup]) => {
+  if (newMain !== oldMain) clearProbe('main')
+  if (newBackup !== oldBackup) clearProbe('backup')
+})
+
+// 服务端只接 http(s) 绝对地址；站内 /uploads/... 相对路径由浏览器点开链接自查，
+// 不能拿去让服务器探自己（那正是 SSRF 要挡的形态）。
+function canProbe(url: string): boolean {
+  return /^https?:\/\//i.test((url || '').trim())
+}
+
+async function testUrl(key: ProbeKey) {
+  const url = (key === 'main' ? activeVideoUrl.value : fallbackUrlValue.value).trim()
+  clearProbe(key)
+  if (!url) {
+    ElMessage.warning('请先填写地址')
+    return
+  }
+  if (!canProbe(url)) {
+    probeResult[key] = '站内相对路径请在浏览器里点开链接确认；服务端只测 http(s) 绝对地址'
+    return
+  }
+  probeLoading[key] = true
+  try {
+    const r = await probeVideoUrl(url)
+    probeOk[key] = !!r.reachable
+    probeResult[key] = r.message || (r.reachable ? '地址可访问' : '地址不可访问')
+  } catch (e: any) {
+    // 接口层用了 __silent，拦截器不弹红条，错误文案（含后端拦下的原因）在这里落地
+    probeOk[key] = false
+    probeResult[key] = e?.message || '探测失败，请稍后重试'
+  } finally {
+    probeLoading[key] = false
+  }
+}
 
 async function load() {
   loading.value = true
@@ -521,5 +594,31 @@ onMounted(() => {
 }
 .fallback-input {
   margin-top: 8px;
+}
+.probe-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.probe-row .hint {
+  margin-top: 0;
+}
+.probe-result {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.probe-result.is-ok {
+  color: #67c23a;
+  background: #f0f9eb;
+}
+.probe-result.is-bad {
+  color: #d03050;
+  background: #fef0f0;
 }
 </style>

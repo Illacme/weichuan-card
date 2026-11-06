@@ -98,6 +98,12 @@ const (
 	// 留痕后审计页能回答「清掉了多少条、按多少天的保留期清的」。
 	ActionAuditPurge = "audit.purge"
 
+	// ActionURLProbe 后台「测试地址」：服务端会按管理员填的 URL 发一次出向 HEAD。
+	// 按审计包「只读不记」的约定本不该留痕，但它能把服务器当代理访问任意主机，
+	// 是典型 SSRF 入口——谁在什么时候测过哪个 host、结果如何必须有据可查。
+	// 刻意只记 host，不记 path/query（常带签名 token）。
+	ActionURLProbe = "url_probe.check"
+
 	// ActionLicenseExpiring 授权临近到期 / 已到期（后台定时任务，见 license/remind.go）。
 	// 这条不是「谁做了什么」，而是**系统在什么时候提醒过谁**——它是「我们提醒了、
 	// 客户没续」与「我们根本没提醒就把他停服了」之间唯一的证据。

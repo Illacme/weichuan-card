@@ -1718,6 +1718,7 @@ LOG_FORMAT=json          # .env 里设置；容器形态 compose 已留好变量
 | 小程序码接口 code=1 | 未配 `WX_APPID/WX_APPSECRET`，联调期属预期；配了仍失败多为凭据不配对或调用 IP 不在白名单（`PREFLIGHT_WX_LIVE=1 scripts/preflight.sh` 可直接问微信接口） |
 | 启动日志出现 `[MIGRATE][FATAL]` | 迁移没应用完（表结构落后于代码版本）。看上面的报错处理，或 `AUTO_MIGRATE=0` + `docker exec weichuan-backend /app/server migrate` 单独跑（详见 §4）。服务不会因此终止，但功能可能报错 |
 | 发版时提示「远端 migrations 缺 N 个文件」 | 升级只换了产物、没同步迁移目录。按脚本打印的 `rsync -av backend/migrations/ …` 与 `./server migrate` 补齐即可，**不必重启服务**；CI 里加 `--require-migrations` 可让它在上传前直接失败。远端目录布局不是 `DEPLOY_PATH` 父目录下的 `migrations/` 时设 `DEPLOY_MIGRATIONS_DIR=...`，纯前端流水线（后端单独发）用 `DEPLOY_MIGRATIONS_DIR=` 显式跳过。注意脚本只比文件名，清单齐了但列仍没加上要看启动日志 |
+| 后台「测试地址」报 403 / 404 / 返回网页 | 这不是后端故障，是 CDN 地址本身取不到：403 多为该域名没启用 HTTPS（七牛回 `httpsDisabled`）或防盗链；404 多为「文件访问基址」漏了对象存储的目录前缀（如 `aitel/`）；200 但 `Content-Type: text/html` 是 CDN 的错误页。按钮的结论是从应用服务器发一次 HEAD 得来的，能取到也不代表手机一定能播，最终仍要小程序真机确认；站内相对路径不测（防 SSRF），请点开链接在浏览器确认 |
 | 版本升级后功能报错、表缺列 | 同上一行：确认 `schema_migrations` 里有没有最新那个迁移文件（§4 有查询 SQL） |
 | 视频号块空白 | 测试号 / 未绑视频号 / 模拟器——需真机 + 绑定视频号的正式 AppID |
 | 日志变成一行行 JSON 看不懂 | 部署环境里设了 `LOG_FORMAT=json`（集中日志用）。本地排查改回 `LOG_FORMAT=text` |

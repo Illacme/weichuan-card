@@ -40,6 +40,23 @@ export function saveCompanyProfile(p: {
   return http.put('/admin/company-profile', p).then((r: any) => r.data as any)
 }
 
+// 地址可达性探测：服务端发一次**受限** HEAD（协议白名单 / 私网拦截 / 禁重定向 /
+// 超时 / 不读响应体，见后端 internal/urlprobe），用于排查「填了 CDN 地址但小程序黑屏」。
+// __silent：不管通不通都由按钮旁的行内结果自己说明，别再弹一条全局红条。
+// 注意它只回答「应用服务器能不能取到」，不等于「用户手机一定能播」——真机仍要验。
+export interface UrlProbeResult {
+  reachable: boolean
+  status: number
+  contentType: string
+  contentLength: number
+  message: string
+}
+export function probeVideoUrl(url: string): Promise<UrlProbeResult> {
+  return http
+    .post('/admin/url-probe', { url }, { __silent: true } as any)
+    .then((r: any) => r.data as UrlProbeResult)
+}
+
 // 存储能力探测：决定「云存储上传」档能不能选。
 // videoUpload=false 时界面应禁用该档并展示 reason（本地磁盘存储 / 不支持预签名）。
 export interface UploadCapability {

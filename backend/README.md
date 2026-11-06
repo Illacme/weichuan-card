@@ -10,6 +10,7 @@ backend/
 ├── cmd/license/main.go          # 许可证签发工具（签发方专用，不随服务发布）：keygen / sign / show
 ├── internal/
 │   ├── config/config.go         # 环境变量注入（DB_DSN / PORT / JWT_KEY / 上传 / 小程序码 / 超管 / TTL / METRICS_ENABLED）
+│   ├── urlprobe/urlprobe.go     # 后台「测试地址」的 SSRF 安全 HEAD 探测（DNS 逐个校验 + 固定 IP 拨号 + 禁重定向）
 │   ├── model/models.go          # GORM 模型（员工/企业/租户/分类/项目/服务/布局/统计/管理员/两类申请/吊销会话）
 │   ├── repository/repository.go # 数据访问层（公开内容查询按 company_id 隔离）
 │   ├── repository/session.go    # 会话黑名单读写 + 过期清理（revoked_sessions）
@@ -444,7 +445,42 @@ mysql -uroot -p weichuan -e "ALTER TABLE company_profiles ADD COLUMN video_backu
 > 另一个独立坑：备用地址若按裸域名拼（`http://<CDN 域名>/video-xxx.mp4`），
 > 而七牛 S3 的对象名实际带 `aitel/` 前缀，即使保存成功，兜底也会 404。
 > 「文件访问基址」必须写 `http://<CDN 域名>/aitel`（详见上传章节）；
-> 后台「备用地址」那一栏可以点开直接验证是不是 200。
+> 后台「最终播放地址」与「兜底 MP4」旁的**「测试地址」/「测试兜底地址」**按钮可在保存前验一次（见下节）。
+>
+> ### 后台「测试地址」：`POST /api/admin/url-probe`
+>
+> 小程序视频黑屏 00:00 且**没有任何报错**时，最常见的原因是地址本身取不到：七牛 CDN 未启用
+> HTTPS 时 `https://` 回 `403` + `X-Error-Info: httpsDisabled`、对象名带 `aitel/` 前缀而基址没带
+> 导致 404、CDN 用 200 返回一个 `text/html` 错误页。这些在后台点开链接不一定看得出来，
+> 所以从**应用服务器**发一次 HEAD，把状态码与排查建议直接摆在输入框旁边。
+>
+> 这个接口的入参是管理员自由文本，等于把服务端变成可以打任意地址的代理，因此
+> `internal/urlprobe` 是全项目唯一一处完整的 SSRF 防线：
+>
+> 1. **URL 形态**：只 `http/https`、≤2048 字符、禁用户名密码、禁 `localhost` / `.local` /
+>    `.internal` / 保留 TLD / 单标签主机名 / `0x…` 与纯整数 IP 写法、端口 1–65535。
+> 2. **自己解析 DNS 并逐个校验**所有结果 IP：回环 / RFC1918 / 链路本地（含
+>    `169.254.169.254` 云元数据）/ CGNAT / TEST-NET / 组播 / 保留段 / IPv6 文档段一律拒绝；
+>    只要有一个结果落在非公网就整体拒绝，绝不「挑一个能用的」（那正是 rebinding 入口）。
+> 3. **把已校验 IP 固定进 `Transport.DialContext`**：请求里 dial 的永远是这个 IP，
+>    主机名只保留在 Host 头与 TLS SNI 里。后续 DNS 再怎么变都改不了目标。
+>    `Proxy=nil`（显式关代理，否则会绕过固定 IP）、`CheckRedirect` 返回
+>    `http.ErrUseLastResponse`（3xx 的 Location 可能指向内网）、6s 超时、**只发 HEAD
+>    且不读响应体**。
+> 4. **接入层**：后台 Cookie 鉴权（`AuthMiddleware(db,"admin")`）+ 按 `IP + staffId`
+>    双维度限流 10 次/分钟（`code:429`）+ 每次调用（含被拦下的）记一条
+>    `url_probe.check` 审计，**只记 host 不记 path/query**（OSS 签名常在 query 里）。
+>    对外错误文案是几个固定 sentinel，不含内部解析结果与底层 err，细节只进日志。
+>
+> 响应：`code=0` 时 `data = {reachable, status, contentType, contentLength, message}`；
+> 3xx/4xx 是「探测成功、地址不通」，不是 Go error，界面显示状态码与建议。
+> `code=1` 是参数错误或地址被安全策略拦下。契约见 `docs/openapi.yaml`。
+> `urlprobe_test.go`（60 个断言）用假 DNS / 假拨号 + httptest 覆盖私网字面量、
+> DNS rebinding、只发 HEAD、不跟随重定向、404/403/200-html 等分支，不联网。
+>
+> **能力边界**：它只证明「应用服务器能取到」，**不等于用户手机一定能播**——证书链在
+> 微信客户端的表现、运营商策略、真机网络仍要真机验证；站内 `/uploads/...` 相对路径
+> 服务端不测（那等于探测自己），界面禁用按钮并提示点开链接在浏览器确认。
 
 ## 开源素材库（内置，随二进制分发）
 

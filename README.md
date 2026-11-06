@@ -222,6 +222,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
   默认只警告；远端目录布局不同用 `DEPLOY_MIGRATIONS_DIR` 指定，纯前端流水线用
   `DEPLOY_MIGRATIONS_DIR=` 显式跳过。`scripts/selftest_deploy_frontend.sh` 离线守门（CI job
   「发版脚本自检」，50 条断言）。详见 `docs/deploy-runbook.md` §3.2。
+- **后台「测试地址」带完整 SSRF 防护**：`POST /api/admin/url-probe` 对管理员填的 CDN 地址发一次受限 HEAD，直接给出 403（CDN 未启用 HTTPS / 防盗链）、404（漏了对象目录前缀）、200 却是 `text/html` 错误页等结论，用来排查小程序黑屏 00:00 且无报错。防护在 `backend/internal/urlprobe`：协议/凭据/本机域名白名单 → 自解析 DNS 逐个排除私网、回环、链路本地、云元数据与保留段 → 把已校验 IP 固定进 `DialContext` 防 DNS rebinding → 关代理、禁重定向、6s 超时、只发 HEAD 不读响应体；接入层还有后台鉴权、10 次/分双维度限流与 `url_probe.check` 审计（只记 host）。它只证明服务端可达，**不等于真机能播**。契约见 `docs/openapi.yaml`，安全边界见 `backend/README.md`。
 - **备份与恢复**：`scripts/backup.sh` 按 `DB_DRIVER` 选形态——MySQL 走 `mysqldump --single-transaction`，
   SQLite 走二进制自带的 `server backup`（`VACUUM INTO` 在线快照，**不能直接 `cp` 库文件**：
   WAL 里还有未合并的页，cp 出来是坏库）。**一次产出三件套**：库备份 + `uploads-*.tar.gz`（图片）

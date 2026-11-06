@@ -21,6 +21,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,7 @@ import (
 	"weichuan/internal/model"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
+	"weichuan/internal/urlprobe"
 	"weichuan/internal/wechat"
 
 	"github.com/gin-gonic/gin"
@@ -162,6 +164,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
 	RegisterBackup(r, db, cfg)    // 备份与恢复面板（状态 / 立即备份 / 下载）
 	RegisterLicenseView(r, db)    // 授权到期视图（企业管理员看自己 / 平台超管看汇总）
+	RegisterUrlProbe(r, db)       // 后台「测试地址」：进 runAPIFlow 才会被 SQLite/MySQL parity 覆盖
 	// 海报个性化设置：GET/PUT /api/employee/poster-prefs + 公开快照 GET /api/poster-prefs。
 	// 原先这里没注册（只在两个 cmd/main.go 里注册），于是任何带 DB 的海报接口测试
 	// 都会拿到 gin 的 404 纯文本——JSON 解析报 "invalid character 'p' after top-level
@@ -915,6 +918,60 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 			"old": "wrong", "new": "admin123456",
 		}, adminToken)
 		require.EqualValues(t, 1, body["code"])
+	})
+
+	// ===== 10. 后台「测试地址」：SSRF 边界 + 信封 =====
+	// 这里全部用「不用联网就会被拦下」的输入：被拒的地址根本走不到拨号，
+	// SQLite / MySQL parity 两次跑都不会访问外网。成功分支用 urlProbeFn 打桩覆盖。
+	t.Run("地址探测的 SSRF 边界", func(t *testing.T) {
+		// 一条用例要连打 8 次，别让门禁自己把测试卡成 429。
+		oldLimit := urlProbeLimitFn
+		urlProbeLimitFn = func() int { return 1000 }
+		t.Cleanup(func() { urlProbeLimitFn = oldLimit })
+
+		// 未登录先被 AuthMiddleware 挡掉，限流分桶都不该计数
+		_, body := c.do("POST", "/api/admin/url-probe", map[string]interface{}{"url": "http://127.0.0.1/"}, "")
+		require.EqualValues(t, 401, body["code"])
+
+		cases := []struct {
+			name, url, msg string
+		}{
+			{"空地址", "", "请先填写地址"},
+			{"只支持 http/https", "javascript:alert(1)", "只支持"},
+			{"站内相对路径", "/uploads/a.mp4", "只支持"},
+			{"带用户名密码", "http://user:pass@cdn.example.com/a.mp4", "不能带用户名或密码"},
+			{"云元数据地址", "http://169.254.169.254/latest/meta-data/", "不允许探测"},
+			{"回环地址", "http://127.0.0.1:8080/admin", "不允许探测"},
+			{"内网地址", "http://10.0.0.5/", "不允许探测"},
+			{"localhost", "http://localhost/", "不允许探测"},
+		}
+		for _, tc := range cases {
+			_, body = c.do("POST", "/api/admin/url-probe", map[string]interface{}{"url": tc.url}, adminToken)
+			require.EqualValues(t, 1, body["code"], tc.name)
+			require.Contains(t, fmt.Sprint(body["msg"]), tc.msg, tc.name)
+		}
+	})
+
+	t.Run("地址探测成功信封", func(t *testing.T) {
+		old := urlProbeFn
+		urlProbeFn = func(_ context.Context, _ string) (urlprobe.Result, error) {
+			return urlprobe.Result{
+				Reachable: true, Status: 200, ContentType: "video/mp4",
+				ContentLength: 1234, Message: "HTTP 200，地址可访问",
+			}, nil
+		}
+		t.Cleanup(func() { urlProbeFn = old })
+
+		_, body := c.do("POST", "/api/admin/url-probe",
+			map[string]interface{}{"url": "https://cdn.example.com/aitel/a.mp4"}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		data, ok := body["data"].(map[string]interface{})
+		require.True(t, ok, "data 必须是对象")
+		require.EqualValues(t, true, data["reachable"])
+		require.EqualValues(t, 200, data["status"])
+		require.Equal(t, "video/mp4", data["contentType"])
+		require.EqualValues(t, 1234, data["contentLength"])
+		require.Contains(t, fmt.Sprint(data["message"]), "地址可访问")
 	})
 }
 
