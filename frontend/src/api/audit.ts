@@ -85,6 +85,8 @@ export const ACTION_LABELS: Record<string, string> = {
   // 后台「测试地址」：服务端按管理员填的 URL 发出向 HEAD。只读探测但属 SSRF 入口，
   // 必须留痕（谁测过哪个 host / 被拦下过几次）；审计里只记 host，不带签名 query。
   'url_probe.check': '测试视频地址可达性',
+  // 按保留期清理埋点原始数据（后台定时任务）。删统计原始数据不可逆，必须留痕
+  'stat.purge': '按保留期清理埋点数据',
 }
 
 // 审计日志只查不写：记录一旦可改就等于没有审计，因此不提供任何写接口。
