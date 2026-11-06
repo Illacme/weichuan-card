@@ -6,6 +6,11 @@
 //                      再加一个地址只能另开一列，见后端迁移 0038）
 // 开关统一是 fallback。自托管档只切一次，备用也失败才显失败态。
 //
+// 画幅（2026-11-05 二次修正）：原生 MP4 档**按源文件分辨率调整容器高度**，
+// 再用 object-fit="contain" 完整呈现。早先为了「满屏」把固定 440rpx 容器配上
+// cover，结果左右各裁掉约 7%，两侧字幕/LOGO 直接消失——裁内容不可接受。
+// 视频号 / 腾讯视频两档是各自的插件组件，没有 loadedmetadata 可用，仍按原样。
+//
 // 为什么不做单一来源：不同客户能接受的成本与资质条件不一样——
 //   channels 微信视频号：零存储零流量、官方无资质要求
 //   upload   云存储上传：落在客户自己的对象存储，直传不经我们的服务器
@@ -37,6 +42,26 @@ import { onImgFail } from '../../utils/thumb'
 // 腾讯视频插件注入到小程序的全局函数。本项目 tsconfig 没引 wx 的 typings，
 // 就近声明一次，免得 tsc 报 Cannot find name（模块内声明，不污染全局）。
 declare function requirePlugin(name: string): any
+// 同理声明量播放器宽度用的 wx.createSelectorQuery。声明不生成代码，
+// 真机上 wx 由小程序框架注入；单测里用 vi.stubGlobal 顶替。
+declare const wx: any
+
+// 画幅安全区间（height / width）。16:9=0.5625、4:3=0.75 都按原样；
+// 9:16 竖屏若真按 1.78 撑高，公司简介区会把整页顶下去，钳到 4/3 后
+// 由 contain 留左右黑边——仍不裁画面，属可接受的降级。
+const MIN_MP4_RATIO = 0.4
+const MAX_MP4_RATIO = 4 / 3
+
+// 由「容器实测宽度」与「视频原始宽高」算出播放器行内样式。
+// 返回空串 = 不覆盖 WXSS 的 440rpx 默认高度：最多留黑边，绝不裁切。
+// 抽成纯函数是为了能单测像素计算，不必把 wx 的链式查询造一遍。
+export function mp4BoxStyleFor(boxWidth: number, width: number, height: number): string {
+  if (!(boxWidth > 0) || !(width > 0) || !(height > 0)) return ''
+  const raw = height / width
+  if (!Number.isFinite(raw)) return ''
+  const ratio = Math.min(MAX_MP4_RATIO, Math.max(MIN_MP4_RATIO, raw))
+  return `height:${Math.round(boxWidth * ratio)}px`
+}
 
 // 必须与 index.wxml 里 <txv-video playerid="..."> 一字不差——
 // 两者对不上时 getTxvContext 返回 null，表现就是「点了没反应」这种静默失败。
@@ -158,6 +183,11 @@ Component({
     // 对同一个地址直接 setData 不会重新发请求。
     mp4Error: false,
     mp4Src: '',
+    // 播放器行内高度：bindloadedmetadata 拿到源文件宽高后按容器宽度算出，
+    // 覆盖 .cv-video 的 440rpx 默认高度，让窗口比例等于视频比例。
+    // 空串 = 还没拿到 metadata（或量不到宽度），此时保持默认 + contain，
+    // 只可能留黑边，不会裁内容。换地址/切备用/重试时都要复位。
+    mp4BoxStyle: '',
     // 自托管 MP4 档是否已经切过备用地址。只切一次：备用地址也失败就显示失败态，
     // 否则主源与备用互相切会形成无限循环，且每次失败都重置出一块新的黑屏。
     // 换档 / 换地址时由 observer 复位，等于一次全新尝试。
@@ -184,6 +214,8 @@ Component({
         mp4Error: false,
         mp4FallbackUsed: false,
         mp4Src: (videoUrl || '').trim(),
+        // 换了一段视频：旧视频算出来的高度不能沿用，等新 metadata 重算
+        mp4BoxStyle: '',
         mode: pickMode(
           videoSource || '',
           feedId || '',
@@ -280,6 +312,36 @@ Component({
       this.clearStartTimer()
       this.setData({ txvPlaying: false, txvStarting: false, txvEnded: true })
     },
+    // 按视频源文件分辨率调整播放窗口（2026-11-05 用户纠正 cover 裁切后）。
+    // 原生 video 的 loadedmetadata（基础库 2.7.0+）带 {width,height,duration}，
+    // 这是拿到真实宽高的唯一途径；容器宽度要现场量——首页卡片有左右内边距，
+    // 不同机型宽度不同，拿 750rpx 硬算会偏高，黑边又回来了。
+    // 算出高度写进行内 style，配合 object-fit="contain"：
+    // 容器比例 == 视频比例，既不裁切也不留黑边。
+    onVideoMeta(e?: { detail?: { width?: number; height?: number } }) {
+      const d = (e && e.detail) || {}
+      const w = Number(d.width) || 0
+      const h = Number(d.height) || 0
+      if (!(w > 0) || !(h > 0)) return
+      const that = this
+      try {
+        wx.createSelectorQuery()
+          .in(this)
+          .select('.cv-mp4')
+          .boundingClientRect((rect: any) => {
+            const bw = rect && Number(rect.width) > 0 ? Number(rect.width) : 0
+            const style = mp4BoxStyleFor(bw, w, h)
+            // 量不到宽度就维持默认高度（contain 留黑边），不猜、不裁；
+            // 同值不重复 setData，避免 metadata 多次回调引发无谓重渲染。
+            if (style && style !== (that.data as any).mp4BoxStyle) {
+              that.setData({ mp4BoxStyle: style })
+            }
+          })
+          .exec()
+      } catch (err) {
+        console.warn('[company-video] 读取播放器宽度失败，保持默认画幅', err)
+      }
+    },
     onVideoError(e?: { detail?: Record<string, unknown> }) {
       const s: any = this.data
       const currentSrc = (s.mp4Src || '').trim()
@@ -308,9 +370,13 @@ Component({
           // 与重试同理：先清空 src 让 <video> 销毁，再在渲染完成回调里设回备用地址。
           // 直接 setData 换 src，部分机型上不会重新发请求，表现是「切了但没生效」。
           // mp4Error 一并清掉：此刻还没到该认输的时候，不要闪一下失败态。
-          this.setData({ mp4Error: false, mp4FallbackUsed: true, mp4Src: '' }, () => {
-            this.setData({ mp4Src: backup })
-          })
+          // mp4BoxStyle 复位：备用视频可能有别的分辨率，旧高度先撤掉等新 metadata。
+          this.setData(
+            { mp4Error: false, mp4FallbackUsed: true, mp4Src: '', mp4BoxStyle: '' },
+            () => {
+              this.setData({ mp4Src: backup })
+            }
+          )
           return
         }
         this.setData({ mp4Error: true })
@@ -328,7 +394,14 @@ Component({
         !!s.fallback,
         true
       )
-      if (next !== s.mode) this.setData({ failed: true, mode: next, mp4Src: (s.videoUrl || '').trim() })
+      if (next !== s.mode) {
+        this.setData({
+          failed: true,
+          mode: next,
+          mp4Src: (s.videoUrl || '').trim(),
+          mp4BoxStyle: '',
+        })
+      }
     },
     // 重新加载 MP4：先把 src 清空让 <video> 销毁，再在 setData 回调里设回地址。
     // 用回调而不是固定 setTimeout——前者是微信官方的「渲染完成」语义，
@@ -337,7 +410,9 @@ Component({
     // 应该重试备用，而不是跳回刚失败过的主源（那样兜底永远兜不住）。
     onRetryMp4() {
       const url = (((this.data as any).mp4Src || '') || ((this.data as any).videoUrl || '')).trim()
-      this.setData({ mp4Error: false, mp4Src: '' }, () => {
+      // 重建播放器时把旧高度一起撤掉：同一地址重播不该沿用上一次算出的尺寸，
+      // 真机上 metadata 会再来一次并重算。
+      this.setData({ mp4Error: false, mp4Src: '', mp4BoxStyle: '' }, () => {
         this.setData({ mp4Src: url })
       })
     },

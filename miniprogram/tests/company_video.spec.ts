@@ -23,16 +23,42 @@ let captured: any = null
 // 之所以要能改写——「取不到上下文」本身就是要测的分支（插件未声明 / 组件未渲染完）。
 let requirePluginImpl: (name: string) => any = () => ({ getTxvContext: () => null })
 let playSpy: any
+// 画幅自适应要量 .cv-mp4 的实测宽度。用假的链式 selectorQuery 顶替 wx：
+// 默认 360px（约等于 iPhone 上带左右内边距的卡片），置 null 模拟量不到。
+let mp4BoxWidth: number | null = 360
+let querySelectors: string[] = []
 
 beforeEach(() => {
   captured = null
   playSpy = vi.fn()
   requirePluginImpl = () => ({ getTxvContext: () => ({ play: playSpy }) })
+  mp4BoxWidth = 360
+  querySelectors = []
   vi.resetModules()
   vi.stubGlobal('Component', (opts: any) => {
     captured = opts
   })
   vi.stubGlobal('requirePlugin', (name: string) => requirePluginImpl(name))
+  vi.stubGlobal('wx', {
+    createSelectorQuery: () => {
+      let rectCb: ((rect: any) => void) | null = null
+      const q: any = {
+        in: () => q,
+        select: (sel: string) => {
+          querySelectors.push(sel)
+          return q
+        },
+        boundingClientRect: (fn: any) => {
+          rectCb = fn
+          return q
+        },
+        exec: () => {
+          if (rectCb) rectCb(mp4BoxWidth === null ? null : { width: mp4BoxWidth })
+        },
+      }
+      return q
+    },
+  })
   mocks.request.mockClear()
 })
 
@@ -40,6 +66,14 @@ async function loadComponent() {
   await import('../components/company-video/index')
   if (!captured) throw new Error('组件未调用 Component() 注册')
   return captured
+}
+
+// 画幅用例既要组件实例（测 onVideoMeta），也要模块导出的纯函数
+// mp4BoxStyleFor（测像素计算边界），所以多返回一个 mod。
+async function loadVideoModule() {
+  const mod: any = await import('../components/company-video/index')
+  if (!captured) throw new Error('组件未调用 Component() 注册')
+  return { opts: captured, mod }
 }
 
 // 造组件实例：data 用组件声明初值。注意 Component 与 Page 的选项结构不同——
@@ -865,27 +899,182 @@ describe('MP4 失败态的静态守门', () => {
   })
 })
 
-// ---- 静态守门：MP4 的画幅填充方式必须和视频号一致 ----
+// ---- MP4 画幅：按源文件分辨率调整窗口（2026-11-05 用户纠正）----
 //
-// 容器是 width:100% + height:440rpx（约 1.52:1），上传的 MP4 绝大多数是 16:9。
-// 用 contain 会「宽度撑满、高度不足」，播放器底色 #000 就在上下各露一条黑边
-// （2026-11-05 真机反馈）。改回 contain 不会报错、不会有任何日志，只会悄悄变丑，
-// 所以只能靠静态守门钉住「两档同一个 object-fit」。
+// 上一版为了「像视频号一样满屏」把 MP4 档改成 object-fit="cover"，结果
+// 固定 440rpx（≈1.52:1）容器播 16:9 时左右各裁约 7%，两侧字幕 / LOGO 没了。
+// 用户明确要求「按文件分辨率呈现窗口大小」，不能靠裁内容凑满屏。
+// 现在：bindloadedmetadata 拿源文件宽高 → 现场量容器宽度 → 算高度写进行内
+// style → contain 完整呈现。下面把「算得对」和「没被改回 cover」都钉住。
+describe('MP4 画幅：按源分辨率调整窗口', () => {
+  const MAIN = 'https://cdn.test/a.mp4'
+
+  it('16:9 视频：窗口高度按容器宽度等比算出，不留黑边也不裁切', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+
+    // 360px * 480/854 = 202.34 → 202
+    expect(c.data.mp4BoxStyle).toBe('height:202px')
+    expect(querySelectors).toContain('.cv-mp4')
+  })
+
+  it('4:3 视频：按 0.75 算高度，不是写死 16:9', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('url', '', '', MAIN)
+
+    c.onVideoMeta({ detail: { width: 640, height: 480 } })
+
+    expect(c.data.mp4BoxStyle).toBe('height:270px')
+  })
+
+  it('容器宽度不同就跟着变：不能用 750rpx 硬算', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+    mp4BoxWidth = 320
+
+    c.onVideoMeta({ detail: { width: 1600, height: 900 } })
+
+    expect(c.data.mp4BoxStyle).toBe('height:180px')
+  })
+
+  it('极端竖屏 9:16：钳到 4/3，避免公司简介区把整页顶下去（仍不裁）', async () => {
+    const { opts, mod } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+
+    c.onVideoMeta({ detail: { width: 540, height: 960 } })
+
+    expect(c.data.mp4BoxStyle).toBe('height:480px')
+    // 纯函数边界：raw 比例确实被钳住，不是巧合算出来的
+    expect(mod.mp4BoxStyleFor(100, 540, 960)).toBe('height:133px')
+    expect(mod.mp4BoxStyleFor(100, 3000, 300)).toBe('height:40px')
+  })
+
+  it.each([
+    ['detail 缺失', undefined],
+    ['宽高为 0', { detail: { width: 0, height: 0 } }],
+    ['宽高是字符串垃圾', { detail: { width: 'x', height: 'y' } }],
+  ])('%s：不改样式，保持默认 440rpx + contain 降级', async (_label, e) => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+
+    expect(() => c.onVideoMeta(e as any)).not.toThrow()
+    expect(c.data.mp4BoxStyle).toBe('')
+  })
+
+  it('量不到容器宽度：不改样式（最多留黑边，绝不裁）', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+    mp4BoxWidth = null
+
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+
+    expect(c.data.mp4BoxStyle).toBe('')
+  })
+
+  it('createSelectorQuery 抛错：不冒泡、保持默认画幅', async () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      vi.stubGlobal('wx', {
+        createSelectorQuery: () => {
+          throw new Error('no selector query')
+        },
+      })
+      const { opts } = await loadVideoModule()
+      const c = instance(opts)
+      c.repick('upload', '', '', MAIN)
+
+      expect(() => c.onVideoMeta({ detail: { width: 854, height: 480 } })).not.toThrow()
+      expect(c.data.mp4BoxStyle).toBe('')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('换地址 / 换档：清掉旧视频算出的高度，等新 metadata 重算', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+    expect(c.data.mp4BoxStyle).toBe('height:202px')
+
+    c.repick('url', '', '', 'https://cdn.test/other.mp4')
+
+    expect(c.data.mp4BoxStyle).toBe('')
+  })
+
+  it('切备用地址与重试：同样复位高度，不让上一个视频的尺寸串过来', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN, true, '', 'https://cdn.test/backup.mp4')
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+
+    c.onVideoError()
+    expect(c.data.mp4BoxStyle).toBe('')
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+    expect(c.data.mp4BoxStyle).toBe('height:202px')
+
+    c.onRetryMp4()
+    expect(c.data.mp4BoxStyle).toBe('')
+  })
+
+  it('同一尺寸重复回调不重复 setData', async () => {
+    const { opts } = await loadVideoModule()
+    const c = instance(opts)
+    c.repick('upload', '', '', MAIN)
+    const spy = vi.spyOn(c, 'setData')
+
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+    c.onVideoMeta({ detail: { width: 854, height: 480 } })
+
+    expect(spy.mock.calls.filter((x: any[]) => 'mp4BoxStyle' in (x[0] || {}))).toHaveLength(1)
+  })
+})
+
+// ---- 静态守门：画幅方案不能被悄悄改回 cover ----
+//
+// cover 不会报错、不会变丑（画面看着还挺满），只会把两侧内容裁掉，
+// 只能靠读 WXML 钉住。行内 style / loadedmetadata 少一个同样是静默失效。
 describe('MP4 画幅的静态守门', () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-  const wxml = readFileSync(resolve(root, 'components/company-video/index.wxml'), 'utf8').replace(
-    /<!--[\s\S]*?-->/g,
-    ''
-  )
+  const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, '')
+  const wxml = strip(readFileSync(resolve(root, 'components/company-video/index.wxml'), 'utf8'))
+  const ts = readFileSync(resolve(root, 'components/company-video/index.ts'), 'utf8')
+  const wxss = readFileSync(resolve(root, 'app.wxss'), 'utf8')
 
-  it('原生 video 用 cover，与两个 channel-video 保持同一套满屏语义', () => {
+  it('原生 video 用 contain，绝不出现 cover', () => {
     const tag = /<video\b[^>]*\/?>/.exec(wxml)?.[0] || ''
-    expect(tag).toContain('object-fit="cover"')
-    expect(tag).not.toContain('object-fit="contain"')
+    expect(tag).toContain('object-fit="contain"')
+    expect(tag).not.toContain('object-fit="cover"')
+  })
 
+  it('绑定 loadedmetadata 与行内高度，代码里真的实现了', () => {
+    const tag = /<video\b[^>]*\/?>/.exec(wxml)?.[0] || ''
+    expect(tag).toContain('bindloadedmetadata="onVideoMeta"')
+    expect(tag).toContain('style="{{mp4BoxStyle}}"')
+    expect(ts).toContain('onVideoMeta(')
+    expect(ts).toContain('mp4BoxStyleFor(')
+    expect(ts).toContain("select('.cv-mp4')")
+  })
+
+  it('保留 440rpx 默认高度作为元数据未到时的降级', () => {
+    const block = /\.company-video \.cv-video \{([^}]*)\}/.exec(wxss)?.[1] || ''
+    expect(block).toMatch(/height:\s*440rpx/)
+  })
+
+  it('视频号 / 腾讯视频是插件组件，没有 loadedmetadata，各自保持原样', () => {
     const channels = [...wxml.matchAll(/<channel-video\b[^>]*\/?>/g)].map((m) => m[0])
-    expect(channels.length).toBeGreaterThan(0)
+    expect(channels.length).toBe(2)
     channels.forEach((c) => expect(c).toContain('object-fit="cover"'))
+    const txv = /<txv-video\b[^>]*\/?>/.exec(wxml)?.[0] || ''
+    expect(txv).toContain('object-fit="contain"')
   })
 })
 
