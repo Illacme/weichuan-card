@@ -23,6 +23,15 @@ type Config struct {
 // 两者都比不上把成功 / 失败 / errcode 重试这些支线在本地跑一遍。
 var apiBase = "https://api.weixin.qq.com"
 
+// wxHTTPTimeout 微信接口整体超时。本包原先直接调包级 http.Get/http.Post（走
+// http.DefaultClient，Timeout=0 即无超时）：jscode2session / 取 token 卡住时，依赖
+// token 的所有请求（订阅通知、小程序码、内容安全、手机号验证）会一并卡在 tokenMu
+// 上——微信偶发抖动就能让整站冻结。统一收口到带超时的 client 后，最坏只是这条
+// 请求失败并返回 err，不会再无限期占着锁。10s 给足网络抖动余量（微信正常 <2s）。
+const wxHTTPTimeout = 10 * time.Second
+
+var wxHTTPClient = &http.Client{Timeout: wxHTTPTimeout}
+
 // SetAPIBase 把微信接口基址指向测试服务，返回的函数用于恢复原值。
 //
 // 存在的理由：本包的测试在包内可以直接改 apiBase，但 handler 包的集成测试
@@ -72,7 +81,7 @@ func Code2Session(cfg Config, code string) (openid, sessionKey string, err error
 		"%s/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
 		apiBase, url.QueryEscape(cfg.AppID), url.QueryEscape(cfg.AppSecret), url.QueryEscape(code),
 	)
-	resp, err := http.Get(u)
+	resp, err := wxHTTPClient.Get(u)
 	if err != nil {
 		return "", "", err
 	}
@@ -118,7 +127,7 @@ func accessToken(cfg Config) (string, error) {
 		return "", fmt.Errorf("未配置 WX_APPID / WX_APPSECRET")
 	}
 	u := fmt.Sprintf("%s/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s", apiBase, cfg.AppID, cfg.AppSecret)
-	resp, err := http.Get(u)
+	resp, err := wxHTTPClient.Get(u)
 	if err != nil {
 		return "", err
 	}
@@ -232,7 +241,7 @@ func getWXACode(cfg Config, p WXACodeParams, retry bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := wxHTTPClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +323,7 @@ func postWX(path string, cfg Config, body any, retry bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.Post(apiBase+path+"?access_token="+tk, "application/json", bytes.NewReader(buf))
+	resp, err := wxHTTPClient.Post(apiBase+path+"?access_token="+tk, "application/json", bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}
