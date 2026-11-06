@@ -11,7 +11,9 @@
 #   4. OpenSSH >= 8.4 走 SSH_ASKPASS_REQUIRE=force；老版本自动回退 sshpass；
 #      两者都没有时**明确报错**，不静默退化成交互提示；
 #   5. 不带口令时完全不碰 askpass（配了免密的用户不能被影响）；
-#   6. --password 缺值 / 把下一个选项吃成口令时能立刻拦下。
+#   6. --password 缺值 / 把下一个选项吃成口令时能立刻拦下；
+#   7. 发版前比对远端 migrations/ 文件名清单：一致 / 缺文件 / 整目录缺失 /
+#      远端读不到（不许假报 38 个文件全缺）/ 严格模式拒绝发版 / 显式跳过 / 本地模式。
 #
 # 用法：bash scripts/selftest_deploy_frontend.sh   （CI 里跑这个，退出码非 0 即失败）
 # ─────────────────────────────────────────────────────────────
@@ -35,9 +37,19 @@ has() { grep -qF -- "$2" "$1" 2>/dev/null; }
 FAKE_PW='selftest-plain-pw'
 FAKE_PW2='another-plain-pw'
 
-mkdir -p "$ROOT/bin" "$ROOT/bin-pass" "$ROOT/tmp" "$ROOT/dist/assets"
+mkdir -p "$ROOT/bin" "$ROOT/bin-pass" "$ROOT/tmp" "$ROOT/dist/assets" \
+    "$ROOT/migrations" "$ROOT/partial-migrations" "$ROOT/target"
 printf '<script src="/assets/index-abc.js"></script>\n' > "$ROOT/dist/index.html"
 printf 'JS' > "$ROOT/dist/assets/index-abc.js"
+
+# 迁移清单：用仓库里真实的 backend/migrations 当「远端应有的清单」，
+# partial 版故意少一个文件，用来模拟 0035 / 0038 那种漏同步。
+MIG_SRC=$(cd "$SCRIPTS/../backend/migrations" && pwd)
+MIG_COUNT=$(ls -1 "$MIG_SRC"/*.sql | wc -l | tr -d ' ')
+HIDE_MIG=$(cd "$MIG_SRC" && ls -1 *.sql | tail -1)
+cp "$MIG_SRC"/*.sql "$ROOT/migrations/"
+cp "$MIG_SRC"/*.sql "$ROOT/partial-migrations/"
+rm -f "$ROOT/partial-migrations/$HIDE_MIG"
 
 FAKE_SSH_LOG="$ROOT/ssh.log"
 FAKE_PASS_LOG="$ROOT/sshpass.log"
@@ -81,6 +93,25 @@ done
 
 case "$*" in
     *'command -v rsync'*) exit 0 ;;
+    # 迁移清单探针：必须排在下面的 `if [ -d` 之前（探针命令里也有这串）。
+    *__WC_MIG_PROBE__*)
+        if [ "${FAKE_MIGRATIONS_UNKNOWN-0}" = 1 ]; then
+            echo 'SSH_WENT_WRONG'; exit 1
+        fi
+        if [ "${FAKE_MIGRATIONS_DIR_MISSING-0}" = 1 ]; then
+            echo MIG_DIR_MISSING; exit 0
+        fi
+        echo MIG_DIR_OK
+        if [ -n "${FAKE_MIGRATIONS_DIR-}" ] && [ -d "$FAKE_MIGRATIONS_DIR" ]; then
+            (cd "$FAKE_MIGRATIONS_DIR" && ls -1 *.sql 2>/dev/null) | while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                case " ${FAKE_MIGRATIONS_HIDE-} " in
+                    *" $f "*) ;;
+                    *) printf '%s\n' "$f" ;;
+                esac
+            done
+        fi
+        exit 0 ;;
     *'if [ -d'*) printf 'DIR_OK\n3\nindex-old.js\n'; exit 0 ;;
 esac
 cat >/dev/null 2>&1 || true
@@ -124,6 +155,7 @@ COMMON=(env
     "ASKPASS_COPY=$ASKPASS_COPY"
     "ASKPASS_MODE=$ASKPASS_MODE"
     "ASKPASS_OUTPUT=$ASKPASS_OUTPUT"
+    "FAKE_MIGRATIONS_DIR=$MIG_SRC"
     "OUT=$OUT")
 
 reset_probe() {
@@ -249,6 +281,15 @@ reset_probe
 RC=$?
 if [ "$RC" -ne 0 ] && has "$OUT" '不能为空'; then ok "--password= 空值被拦住"; else bad "空值没拦住（rc=${RC}）"; fi
 
+reset_probe
+"${COMMON[@]}" "$DEPLOY" --password --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" '漏了口令'; then
+    ok "--password 不会把新选项 --require-migrations 吃成口令"
+else
+    bad "新选项被误吃成口令（rc=${RC}）"
+fi
+
 # ─────────────────────────────────────────────────────────────
 head_ "4. 不带口令时不干扰免密用户（回归）"
 reset_probe
@@ -312,6 +353,120 @@ else
     bad "缺能力时没有明确报错（rc=${RC}）"
 fi
 if has "$OUT" "$FAKE_PW"; then bad "报错信息里泄漏了口令"; else ok "报错信息不含口令"; fi
+
+# ─────────────────────────────────────────────────────────────
+head_ "7. 发版前迁移清单完整性自检"
+if has "$ROOT/help.txt" '--require-migrations' && has "$ROOT/help.txt" 'DEPLOY_MIGRATIONS_DIR'; then
+    ok "-h 里有严格模式与远端迁移目录说明"
+else
+    bad "-h 缺少迁移清单相关说明"
+fi
+
+# 7.1 默认路径：清单一致，别误报事故
+reset_probe
+"${COMMON[@]}" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "migrations 清单一致（${MIG_COUNT} 个 .sql）"; then
+    ok "清单一致：退出 0 且打印真实文件数 ${MIG_COUNT}"
+else
+    bad "清单一致路径不对（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
+fi
+if has "$OUT" '部署包不完整'; then bad "清单一致却误报事故"; else ok "清单一致不误报事故"; fi
+
+# 7.2 远端缺 1 个文件：列出名字 + 事故说明 + 修复命令，默认只警告不阻断
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG"; then
+    ok "缺文件：列出具体文件名，默认不阻断发版"
+else
+    bad "缺文件没报出文件名或误阻断了（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
+fi
+if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av backend/migrations/' && has "$OUT" './server migrate'; then
+    ok "给出 0035/0038 事故说明与 rsync + 迁移修复命令"
+else
+    bad "事故说明或修复命令不全"
+fi
+if has "$OUT" '默认只警告、继续发版'; then ok "默认模式明确提示可加严格模式"; else bad "缺少严格模式引导"; fi
+
+# 7.3 严格模式：上传前就死
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" '严格模式：远端迁移清单不完整，拒绝发版'; then
+    ok "--require-migrations 直接拒绝发版"
+else
+    bad "严格模式没拦住（rc=${RC}）"
+fi
+if has "$OUT" '上传 assets'; then bad "严格模式仍进了上传步骤"; else ok "严格模式在上传前就退出"; fi
+
+reset_probe
+"${COMMON[@]}" "DEPLOY_REQUIRE_MIGRATIONS=1" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" \
+    "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" '拒绝发版'; then
+    ok "DEPLOY_REQUIRE_MIGRATIONS=1 等同 --require-migrations（CI 用）"
+else
+    bad "环境变量形式的严格模式没生效（rc=${RC}）"
+fi
+
+# 7.4 整目录缺失：不能只说一句「目录不存在」而不给清单
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR_MISSING=1" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '目录不存在' && has "$OUT" "      - $HIDE_MIG"; then
+    ok "整目录缺失：告警并列出应补齐的文件"
+else
+    bad "整目录缺失处理不对（rc=${RC}）"
+fi
+
+# 7.5 远端命令失败：绝不能把 38 个文件全报成「缺失」（假警报比不报更糟）
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_UNKNOWN=1" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '读不到远端迁移目录' && ! has "$OUT" '部署包不完整'; then
+    ok "远端读不到时单独告警，不假报整批文件缺失"
+else
+    bad "远端读不到被误判成缺文件（rc=${RC}）"
+fi
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_UNKNOWN=1" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" '迁移清单无法校验，拒绝发版'; then
+    ok "严格模式下「无法校验」同样拒绝发版"
+else
+    bad "严格模式放过了无法校验（rc=${RC}）"
+fi
+
+# 7.6 显式跳过：连严格模式也不该拦
+reset_probe
+"${COMMON[@]}" "DEPLOY_MIGRATIONS_DIR=" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" \
+    "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '已显式跳过'; then
+    ok "DEPLOY_MIGRATIONS_DIR= 显式跳过，严格模式也不拦"
+else
+    bad "显式跳过没生效（rc=${RC}）"
+fi
+
+# 7.7 本地模式：默认从 DEPLOY_PATH 父目录推导，修复命令也换成 cp 而非 rsync
+reset_probe
+"${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" 'migrations 清单一致'; then
+    ok "本地模式按父目录推导 migrations/ 并比对一致"
+else
+    bad "本地模式默认推导不对（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
+fi
+reset_probe
+"${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "DEPLOY_MIGRATIONS_DIR=$ROOT/partial-migrations" \
+    "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' && has "$OUT" 'cp -a backend/migrations/.'; then
+    ok "本地模式缺文件给出本地修复命令（先建目录，不写 ssh/rsync）"
+else
+    bad "本地模式缺文件提示不对（rc=${RC}）"
+fi
 
 # ─────────────────────────────────────────────────────────────
 echo

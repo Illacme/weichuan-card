@@ -14,6 +14,7 @@
 #   DEPLOY_PASSWORD='服务器口令' ./scripts/deploy_frontend.sh --build   # 推荐：非交互，口令不进命令行
 #   ./scripts/deploy_frontend.sh --password '服务器口令' --build        # 也能用，但口令会留在 shell history / ps
 #   ./scripts/deploy_frontend.sh -n                  # 只看要做什么（dry-run）
+#   ./scripts/deploy_frontend.sh --require-migrations  # 远端迁移清单不完整就拒绝发版（CI 用）
 #   DEPLOY_HOST=root@其它服务器 ./scripts/deploy_frontend.sh   # 覆盖到别的服务器
 #   DEPLOY_HOST= ./scripts/deploy_frontend.sh -n     # 显式置空 = 本地自测模式（不连服务器）
 #
@@ -23,6 +24,12 @@
 #                   设了就覆盖默认值，例如发到临时服务器。
 #   DEPLOY_PORT     ssh 端口，默认 22
 #   DEPLOY_PATH     远端站点目录，默认 /www/wwwroot/weichuan.ziyuanxingqiu.cn/frontend
+#   DEPLOY_MIGRATIONS_DIR
+#                   远端 migrations/ 目录，默认取 DEPLOY_PATH 父目录下的 migrations/
+#                   （后端二进制与 migrations/ 同级）。路径不同就显式指定；
+#                   **显式置空 = 跳过迁移清单比对**，只在你确定不需要这项检查时用。
+#   DEPLOY_REQUIRE_MIGRATIONS
+#                   设为 1 等同 --require-migrations，CI 里用环境变量更方便。
 #   DEPLOY_URL      发版后自检用的地址，默认 https://weichuan.ziyuanxingqiu.cn；留空跳过自检
 #   DEPLOY_CHOWN    可选，如 www:www。以 root 发版时建议设置，否则文件属主是 root
 #   DEPLOY_SSH_OPTS 可选，追加 ssh 参数
@@ -36,6 +43,9 @@
 #   --build         先跑 npm run build 再发
 #   --password PWD  ssh 登录口令，也可写 --password=PWD；用于无人值守发版
 #   --no-verify     跳过发版后的自检
+#   --require-migrations
+#                   远端 migrations/ 清单必须与本版本 backend/migrations/ 一致，
+#                   缺文件或读不到就**拒绝发版**（默认只警告、继续发）。
 #   --prune[=N]     清理 N 天前的旧 assets（默认 7）；只列出，需输入 yes 才真删
 #   -y, --yes       跳过 --prune 的确认（CI 用）
 #   -h, --help      显示本帮助
@@ -75,6 +85,10 @@ DO_BUILD=0
 DO_VERIFY=1
 PRUNE_DAYS=""
 ASSUME_YES=0
+# 迁移清单完整性只在 --require-migrations / 环境变量下变成硬门禁；默认只警告，
+# 免得「发前端的机器上没有后端源码」或「迁移由另一条流水线单独部署」被无谓卡住。
+REQUIRE_MIGRATIONS=${DEPLOY_REQUIRE_MIGRATIONS:-0}
+[ "$REQUIRE_MIGRATIONS" = 1 ] || REQUIRE_MIGRATIONS=0
 
 usage() {
     # 只打印文件顶部那段注释（到第一个非注释行为止），不把代码也打出来
@@ -87,6 +101,7 @@ while [ $# -gt 0 ]; do
         -n|--dry-run) DRY_RUN=1 ;;
         --build)      DO_BUILD=1 ;;
         --no-verify)  DO_VERIFY=0 ;;
+        --require-migrations) REQUIRE_MIGRATIONS=1 ;;
         --prune)      PRUNE_DAYS=7 ;;
         --prune=*)    PRUNE_DAYS=${1#*=} ;;
         --password)   shift
@@ -105,7 +120,7 @@ done
 if [ "$PASSWORD_FROM_CLI" = 1 ]; then
     [ -n "$DEPLOY_PASSWORD" ] || { echo "✗ --password 不能为空（-h 看用法）" >&2; exit 2; }
     case "$DEPLOY_PASSWORD" in
-        --build|--no-verify|--dry-run|-n|--prune|--prune=*|-y|--yes|-h|--help|--password*)
+        --build|--no-verify|--dry-run|-n|--prune|--prune=*|-y|--yes|-h|--help|--password*|--require-migrations)
             echo "✗ --password 后面像是漏了口令，却把 $DEPLOY_PASSWORD 当成了口令" >&2; exit 2 ;;
     esac
 fi
@@ -327,7 +342,119 @@ else
         [ "$ANSWER" = "yes" ] || die "已取消（用 DEPLOY_PATH=... 指定正确路径）"
     fi
 fi
-echo "  本地待发壳：$LOCAL_SHELL"
+echo "  本地待发壳：${LOCAL_SHELL}"
+
+# ---------- 1.5 迁移清单完整性（防「只换产物，漏同步 migrations/」） ----------
+#
+# 0035 / 0038 两次线上事故形态一样：升级只替换了产物，migrations/ 目录停在旧版本。
+# 后端启动的清单守门会打 [MIGRATE][FATAL] 部署包不完整，但**迁移失败刻意不终止启动**，
+# 故障于是藏到运行期：写库报 Unknown column，用户只看到一句「保存失败」。
+# 前端发版是升级链路的最后一棒，用一次远端命令把两份文件名清单比一次就够了。
+# 注意：这是**文件名**比对，不查 schema_migrations、不代替 ./server migrate；
+# 清单齐了但列没加上，还得看启动日志 / 手工跑迁移子命令。
+say "== 迁移清单完整性 =="
+
+MIGRATIONS_SKIP=0
+# ${VAR-__AUTO__} 用单横杠：完全没设才推导；DEPLOY_MIGRATIONS_DIR= 显式置空 = 跳过。
+case "${DEPLOY_MIGRATIONS_DIR-__AUTO__}" in
+    __AUTO__)
+        # 默认约定：站点目录（DEPLOY_PATH 的父目录）下，后端二进制与 migrations/ 同级。
+        _SITE_DIR=$(dirname "${DEPLOY_PATH%/}")
+        MIG_DIR="${_SITE_DIR}/migrations"
+        ;;
+    '') MIGRATIONS_SKIP=1; MIG_DIR='' ;;
+    *)  MIG_DIR=${DEPLOY_MIGRATIONS_DIR} ;;
+esac
+
+LOCAL_MIGRATIONS_DIR="${SCRIPT_DIR}/../backend/migrations"
+
+migrations_fix_hint() {
+    if [ -n "${DEPLOY_HOST}" ]; then
+        echo "    rsync -av backend/migrations/ ${DEPLOY_HOST}:${MIG_DIR}/"
+        echo "    ssh ${DEPLOY_HOST} 'cd $(dirname "${MIG_DIR}") && ./server migrate'"
+    else
+        echo "    mkdir -p ${MIG_DIR}/"
+        echo "    cp -a backend/migrations/. ${MIG_DIR}/"
+        echo "    (cd $(dirname "${MIG_DIR}") && ./server migrate)"
+    fi
+    echo "    不必重启服务；完整排查见 backend/README.md「升级必做」。"
+}
+
+if [ "${MIGRATIONS_SKIP}" = 1 ]; then
+    warn "  ⚠️  已显式跳过（DEPLOY_MIGRATIONS_DIR= 为空）；严格模式同样不会拦"
+elif [ ! -d "${LOCAL_MIGRATIONS_DIR}" ]; then
+    warn "  ⚠️  本地找不到 ${LOCAL_MIGRATIONS_DIR}，无法比对（发版包不含后端源码？）"
+    warn "      迁移由别的流水线部署时，可用 DEPLOY_MIGRATIONS_DIR= 显式跳过。"
+    if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
+else
+    LOCAL_MIG_LIST=$(cd "${LOCAL_MIGRATIONS_DIR}" && ls -1 2>/dev/null | grep '[.]sql$' | sort) || LOCAL_MIG_LIST=''
+    LOCAL_MIG_COUNT=$(printf '%s\n' "${LOCAL_MIG_LIST}" | grep -c . || true)
+    if [ "${LOCAL_MIG_COUNT}" -eq 0 ]; then
+        warn "  ⚠️  ${LOCAL_MIGRATIONS_DIR} 里没有 .sql 文件，无法比对"
+        if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
+    else
+        # 远端只回「状态行 + *.sql 文件名」，别把 ls 的报错、目录路径混进来。
+        # 首行注释是给离线自检用的探针标记，远端 sh 会当注释忽略。
+        MIG_RC=0
+        MIG_INFO=$(remote "# __WC_MIG_PROBE__
+if [ -d '${MIG_DIR}' ]; then
+    echo MIG_DIR_OK
+    (cd '${MIG_DIR}' && ls -1 *.sql 2>/dev/null) || true
+else
+    echo MIG_DIR_MISSING
+fi") || MIG_RC=$?
+        MIG_STATE=$(printf '%s\n' "${MIG_INFO}" | sed -n 1p)
+        case "${MIG_STATE}" in
+            MIG_DIR_OK)
+                REMOTE_MIG_LIST=$(printf '%s\n' "${MIG_INFO}" | sed -n '2,$p' | grep '[.]sql$' | sort) || REMOTE_MIG_LIST=''
+                MIG_DIR_EXISTS=1 ;;
+            MIG_DIR_MISSING)
+                REMOTE_MIG_LIST=''
+                MIG_DIR_EXISTS=0 ;;
+            *)
+                # ssh 断了、路径没权限、命令被截断都会走到这里。此时**不能**
+                # 把 38 个文件全报成「缺失」——那是假警报，会逼人去修根本没坏的东西。
+                REMOTE_MIG_LIST=''
+                MIG_DIR_EXISTS=-1 ;;
+        esac
+
+        MISSING_MIG=''
+        while IFS= read -r _f; do
+            [ -n "${_f}" ] || continue
+            if ! printf '%s\n' "${REMOTE_MIG_LIST}" | grep -Fqx -- "${_f}"; then
+                # 换行只插在两项之间、末尾不留：命令替换会吞掉尾部换行，
+                # 写成 $(printf '%s%s\n' ...) 会把 N 个文件名粘成一整行。
+                if [ -n "${MISSING_MIG}" ]; then MISSING_MIG="${MISSING_MIG}
+"; fi
+                MISSING_MIG="${MISSING_MIG}${_f}"
+            fi
+        done <<EOF
+${LOCAL_MIG_LIST}
+EOF
+        MISSING_MIG_COUNT=$(printf '%s\n' "${MISSING_MIG}" | grep -c . || true)
+
+        if [ "${MIG_DIR_EXISTS}" -lt 0 ]; then
+            warn "  ⚠️  读不到远端迁移目录 ${MIG_DIR}（远端命令返回 ${MIG_RC}），本次无法比对"
+            warn "      确认路径：DEPLOY_MIGRATIONS_DIR=<后端二进制同级>/migrations"
+            if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
+        elif [ "${MISSING_MIG_COUNT}" -eq 0 ]; then
+            echo "  ✓ 远端 migrations 清单一致（${LOCAL_MIG_COUNT} 个 .sql）"
+        else
+            if [ "${MIG_DIR_EXISTS}" = 0 ]; then
+                warn "  ✗ 远端 migrations 目录不存在：${MIG_DIR}"
+            else
+                warn "  ✗ 远端 migrations 缺 ${MISSING_MIG_COUNT} 个文件（本地共 ${LOCAL_MIG_COUNT} 个）"
+            fi
+            printf '%s\n' "${MISSING_MIG}" | sed 's/^/      - /'
+            warn "  这是 0035 / 0038 两次线上事故的形态：[MIGRATE][FATAL] 部署包不完整，"
+            warn "  但迁移失败不终止启动，运行期才报 Unknown column，用户只看到「保存失败」。"
+            warn "  修复："
+            migrations_fix_hint
+            if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：远端迁移清单不完整，拒绝发版"; fi
+            warn "  ⚠️  默认只警告、继续发版。CI / 流水线请加 --require-migrations 变成硬门禁。"
+        fi
+    fi
+fi
 
 if [ "$TRANSFER" = rsync ]; then
     command -v rsync >/dev/null 2>&1 || die "本机没有 rsync（macOS 自带，Linux 用 apt/yum 装）"

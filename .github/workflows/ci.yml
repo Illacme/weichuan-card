@@ -241,10 +241,11 @@ jobs:
       - name: 运行 scripts/selftest_backup.sh
         run: bash scripts/selftest_backup.sh
 
-  # ───────── 发版脚本自检：口令注入退化成「又去问密码」平时不会叫（门禁） ─────────
+  # ───────── 发版脚本自检：口令注入 + 迁移清单完整性（门禁） ─────────
   # deploy_frontend.sh 只在发版那天跑一次，最坏的失败形态不是报错而是静默卡在交互提示，
   # 无人值守/CI 发版会永远挂着。自检用假 ssh / 假 sshpass 顶替 PATH，不连任何服务器，
-  # 钉住三条入口、口令不泄漏、临时文件清理、老 OpenSSH 回退、缺能力时明确报错。
+  # 钉住三条入口、口令不泄漏、临时文件清理、老 OpenSSH 回退、缺能力时明确报错；
+  # 另外用假远端目录覆盖迁移清单的一致 / 缺文件 / 整目录缺失 / 读不到 / 严格模式。
   deploy-selftest:
     name: 发版脚本自检
     runs-on: ubuntu-latest

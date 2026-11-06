@@ -421,6 +421,12 @@ grep -E '\[MIGRATE\]|\[CONTENT\]\[ERROR\]' <后端日志> | tail -20
 mysql -uroot -p weichuan -e "SHOW COLUMNS FROM company_profiles LIKE 'video_backup_url';"
 ```
 
+> **不用每次人肉核对**：`scripts/deploy_frontend.sh` 发版前已自动比对本地
+> `backend/migrations/*.sql` 与远端 `migrations/` 的文件名清单，缺文件会直接列出名字
+> 并给出下面的修复命令；`--require-migrations` 把它变成硬门禁（默认只警告）。
+> 详见 `docs/deploy-runbook.md` §3.2 / §4。注意它只比文件名，不查 `schema_migrations`
+> ——清单齐了但列没加上，仍需跑 `./server migrate` 并看启动日志。
+
 修复（前提：后端二进制已是本版本、清单里含 0038）。**不必重启服务**——列一加上，运行中的进程立刻能写成功：
 
 ```bash

@@ -553,9 +553,12 @@ DEPLOY_PASSWORD='服务器 root 口令' ./scripts/deploy_frontend.sh --build
 ./scripts/deploy_frontend.sh --build --password '服务器 root 口令'
 # ③ 最稳妥的长期方案仍是免密，之后连口令都不用带
 ssh-copy-id root@123.56.154.49
+
+# CI / 升级发版：远端 migrations/ 清单不完整就直接拒绝发版（默认只警告）
+DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build --require-migrations
 ```
 
-脚本做了五件手拖做不到的事：
+脚本做了六件手拖做不到的事：
 
 1. **产物自洽性校验**：`index.html` 引用的每个 `/assets/...` 在本地必须存在。
    抓的是「改了代码忘了重新 build 就发版」——壳引用了已被删掉的旧 hash，发上去就是白屏。
@@ -564,11 +567,25 @@ ssh-copy-id root@123.56.154.49
    并把「线上当前壳」和「本地待发壳」两个 hash 并排打出来。路径写错时脚本会在别处
    悄悄建一棵新树、传满 2.6MB，而 nginx 永远不会读它——**这个事故 dry-run 看不出来**
    （dry-run 不碰服务器），只能靠这一步提前拦。目录不存在时会要求输入 `yes` 确认。
-3. **先 assets 后 index.html**（见上）。
-4. **不带 `--delete`**：旧 assets 故意留着。除了保证切换窗口安全，也是启用
+3. **迁移清单完整性**（见 §4「二进制部署升级」）：把本版本 `backend/migrations/*.sql`
+   的**文件名清单**与远端 `migrations/` 比一次，缺哪个就把名字列出来，并附上
+   `rsync` 与 `./server migrate` 的修复命令。这是 0035 / 0038 两次线上事故的自动化防线：
+   只换产物、漏同步迁移目录时，后端启动会打 `[MIGRATE][FATAL] 部署包不完整`，
+   但**迁移失败刻意不终止启动**，故障藏到运行期变成一句「保存失败」。
+   - 默认从 `DEPLOY_PATH` 的父目录推导远端 `migrations/`（二进制与迁移目录同级）。
+     布局不同就设 `DEPLOY_MIGRATIONS_DIR=/实际/路径/migrations`；
+     `DEPLOY_MIGRATIONS_DIR=` 显式置空 = 跳过。
+   - 默认**只警告、继续发版**（发前端的机器上可能没有后端源码，或迁移由另一条流水线部署）。
+     想变成硬门禁加 `--require-migrations`，等价环境变量 `DEPLOY_REQUIRE_MIGRATIONS=1`；
+     严格模式下「缺文件」「整目录缺失」「远端读不到」三种情况都在上传前退出。
+   - 远端命令失败时**不会**把 38 个文件全报成缺失（那是假警报），而是单独告警「无法比对」。
+   - 只比文件名，不查 `schema_migrations`、也不代替 `./server migrate`：清单齐了但列没加上，
+     仍要看启动日志 / 手工跑迁移子命令。
+4. **先 assets 后 index.html**（见上）。
+5. **不带 `--delete`**：旧 assets 故意留着。除了保证切换窗口安全，也是启用
    §5.3「HTML 边缘缓存」的前提——边缘可能还在发几十秒前的旧壳，旧壳引用的旧 hash
    必须还在。要清理用 `--prune=7`（默认只列出、要输入 `yes` 才删）。
-5. **发完自检**：带随机串拉一次线上首页，比对 hash 是否换过来了；再把首页引用的每个
+6. **发完自检**：带随机串拉一次线上首页，比对 hash 是否换过来了；再把首页引用的每个
    资源 HEAD 一遍，任何一个不是 200 就报错退出。这两步覆盖了「传错目录」和「白屏」。
 
 > **增量上传**：rsync 用 `-rltz`，未改动的文件按「大小 + mtime」跳过。
@@ -608,8 +625,12 @@ ssh-copy-id root@123.56.154.49
 > 这条链路有 `scripts/selftest_deploy_frontend.sh` 守门（CI 的「发版脚本自检」job）。
 
 其它可用环境变量见 `./scripts/deploy_frontend.sh -h`（`DEPLOY_PORT` / `DEPLOY_PATH` /
-`DEPLOY_URL` / `DEPLOY_PASSWORD` / `DIST_DIR`）；`--password` 会覆盖 `DEPLOY_PASSWORD`。
-没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守「先 assets 后 index.html」**。
+`DEPLOY_URL` / `DEPLOY_PASSWORD` / `DIST_DIR` / `DEPLOY_MIGRATIONS_DIR` /
+`DEPLOY_REQUIRE_MIGRATIONS`）；`--password` 会覆盖 `DEPLOY_PASSWORD`。
+这条脚本链路（口令注入 + 迁移清单）有 `scripts/selftest_deploy_frontend.sh` 守门，
+CI 的「发版脚本自检」job 每次都跑；目前 50 条断言，含缺文件 / 严格模式 / 远端读不到等分支。
+没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守「先 assets 后 index.html」**，
+并且自己按 §4 核对一次远端迁移目录。
 
 
 ## 4. 数据库迁移（升级时）
@@ -660,8 +681,11 @@ migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_ap
 一起部署后重启即可（已应用的不重放）
 ```
 
-看到它就是把目录补齐再重启，不需要手工跑 SQL。**升级检查清单加一条**：
-`ls <部署目录>/migrations/*.sql | wc -l` 应与本版本 `backend/migrations/` 的文件数一致。
+看到它就是把目录补齐再跑一次迁移，不需要手工执行 SQL（也**不必重启服务**）。
+**升级检查清单加一条**：`ls <部署目录>/migrations/*.sql | wc -l` 应与本版本
+`backend/migrations/` 的文件数一致。这一条现在由 `scripts/deploy_frontend.sh`
+在每次发版前自动比对（见 §3.2 第 3 项），加 `--require-migrations` 可变成硬门禁；
+`docs/deploy-runbook.md` 的这一节仍然是排查手册。
 
 > **已经漏了怎么认出来**：运行期表现是后台某个保存接口只弹一句「保存失败」，
 > 实际是 MySQL `Unknown column`，而 `[MIGRATE][FATAL]` 早在启动日志里。
@@ -1693,6 +1717,7 @@ LOG_FORMAT=json          # .env 里设置；容器形态 compose 已留好变量
 | 上传报 413 | 请求体超限：`frontend/nginx.conf` 已设 50m；前置 Caddy 默认不限 |
 | 小程序码接口 code=1 | 未配 `WX_APPID/WX_APPSECRET`，联调期属预期；配了仍失败多为凭据不配对或调用 IP 不在白名单（`PREFLIGHT_WX_LIVE=1 scripts/preflight.sh` 可直接问微信接口） |
 | 启动日志出现 `[MIGRATE][FATAL]` | 迁移没应用完（表结构落后于代码版本）。看上面的报错处理，或 `AUTO_MIGRATE=0` + `docker exec weichuan-backend /app/server migrate` 单独跑（详见 §4）。服务不会因此终止，但功能可能报错 |
+| 发版时提示「远端 migrations 缺 N 个文件」 | 升级只换了产物、没同步迁移目录。按脚本打印的 `rsync -av backend/migrations/ …` 与 `./server migrate` 补齐即可，**不必重启服务**；CI 里加 `--require-migrations` 可让它在上传前直接失败。远端目录布局不是 `DEPLOY_PATH` 父目录下的 `migrations/` 时设 `DEPLOY_MIGRATIONS_DIR=...`，纯前端流水线（后端单独发）用 `DEPLOY_MIGRATIONS_DIR=` 显式跳过。注意脚本只比文件名，清单齐了但列仍没加上要看启动日志 |
 | 版本升级后功能报错、表缺列 | 同上一行：确认 `schema_migrations` 里有没有最新那个迁移文件（§4 有查询 SQL） |
 | 视频号块空白 | 测试号 / 未绑视频号 / 模拟器——需真机 + 绑定视频号的正式 AppID |
 | 日志变成一行行 JSON 看不懂 | 部署环境里设了 `LOG_FORMAT=json`（集中日志用）。本地排查改回 `LOG_FORMAT=text` |
