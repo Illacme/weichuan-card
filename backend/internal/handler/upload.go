@@ -102,8 +102,9 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 			// （未配凭据 / 无 openid / 本地地址时自行跳过，见 mediachk.Plan）。
 			submitMediaCheck(db, cfg, c, u)
 		}
-		// 上传后触发 CDN 刷新（覆盖写场景使旧缓存失效），失败仅记录，不影响本次上传结果
-		refreshCDN(refresher, urls...)
+		// 上传后触发 CDN 刷新（覆盖写场景使旧缓存失效），失败仅记录，不影响本次上传结果。
+		// 异步刷：与内容安全送检（go recordMediaCheck）同思路——响应不必等 CDN 厂商抖动。
+		go refreshCDN(refresher, urls...)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"urls": urls}})
 	}
 }
