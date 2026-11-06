@@ -120,7 +120,7 @@ describe('列表与筛选', () => {
     mocks.adminRequest.mockResolvedValueOnce({
       code: 0,
       total: 1,
-      data: [{ id: 9, name: '李四', phone: '13800000000', email: 'l@a.com', title: '销售', status: 'pending', createdAt: '2026-11-06T09:05:00+08:00' }],
+      data: [{ id: 9, name: '李四', phone: '13800000000', email: 'l@a.com', title: '销售', status: 'pending', createdAt: '2026-11-06T09:05:00' }],
     })
     const p = await page()
     p.onShow()
@@ -132,6 +132,26 @@ describe('列表与筛选', () => {
     expect(row.lines).toEqual(['手机：13800000000', '邮箱：l@a.com', '职位：销售'])
     expect(row.statusText).toBe('待审核')
     expect(row.pending).toBe(true)
+  })
+
+  // 上一条刻意用「不带时区偏移」的 ISO：解析与渲染都走设备本地时间，本机与 CI 一致。
+  // 写成 2026-11-06T09:05:00+08:00 时，同一时刻在 UTC 的 runner 上会渲染成 01:05
+  //（fmtTime 用 getHours 等本地方法，这是对的——手机本来就是 +08:00），
+  // 断言写死钟点就等于要求 CI 也运行在 +08:00。
+  it('带时区偏移的时间只保证格式正确，不把原始 ISO 原样透出', async () => {
+    mocks.hasAdminToken.mockReturnValue(true)
+    mocks.adminRequest.mockResolvedValueOnce({
+      code: 0,
+      total: 1,
+      data: [{ id: 10, name: '赵六', status: 'pending', createdAt: '2026-11-06T09:05:00+08:00' }],
+    })
+    const p = await page()
+    p.onShow()
+    await flush()
+
+    // 具体钟点取决于运行时区，所以只钉格式：这段代码的价值是「ISO 进、YYYY-MM-DD HH:mm 出」，
+    // 而不是某个时区下的特定数字。
+    expect(p.data.list[0].time).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
   })
 
   it('修改申请卡片：snapshot 解析成可读行，头像不摊开对象键', async () => {
