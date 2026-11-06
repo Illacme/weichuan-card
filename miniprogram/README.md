@@ -19,11 +19,12 @@ miniprogram/
 │   ├── thumb.ts        # 图片兜底：thumbnailURL 派生 _thumb；onThumbError 退回原图；onImgFail 记失败 URL 换占位
 │   ├── subscribe.ts    # 审核结果订阅消息：预取模板 ID（loadAuditTemplate）+ 同步请求授权（requestAuditSubscribe）
 │   ├── postersnap.ts   # 海报页图片地址快照：上次的背景/头像/二维码地址，下次进页面提前起跑（见「首屏耗时」一节）
+│   ├── mp4box.ts       # MP4 画幅纯函数：按源分辨率算播放器行内高度（首页 / 详情页共用）
 │   └── track.ts        # 埋点上报：8 类事件统一入口（白名单就近丢弃，失败静默）
 ├── components/         # 8 个可复用组件（均开启 addGlobalClass）
 │   ├── employee-card / company-video / achievement-grid
 │   ├── featured-projects / service-grid / action-bar
-│   ├── rich-video      # 视频号渲染控件：有 feedId 用 <channel-video feed-id>，否则回退 finder-user-name
+│   ├── rich-video      # 富文本视频块：三来源（视频号 / 腾讯视频 / MP4）；MP4 按分辨率自适应画幅
 │   └── privacy-consent # 微信隐私授权弹窗（同意按钮用 open-type="agreePrivacyAuthorization"）
 ├── pages/
 │   ├── team/           # 名片墙（**裸启动落地页**）：公司抬头 + 搜索 + 首屏一页 60 + 「查看全部 N 位同事」；企业把默认入口配成「指定员工」时这里只做一次 reLaunch 改道
@@ -241,6 +242,7 @@ miniprogram/
 - **重试要真的重建播放器**：`src` 绑的是 `mp4Src` 而不是 `videoUrl`，`onRetryMp4` 先 `setData({mp4Src:''})` 再在回调里设回地址；对同一个 src 直接 `setData` 不会重新发请求。
 - 后台「公司简介」页会显示**最终播放地址**并允许点开验证；这里打不开，小程序里一定播不了。
 - **画幅：MP4 按源文件分辨率调整窗口，完整呈现**（2026-11-05 二次修正）：容器原本固定 `width:100%` + `height:440rpx`（约 1.52:1），上传的 MP4 多为 16:9。最早用 `object-fit="contain"` → 上下各约 39px 黑边；改成 `cover` 去凑「和视频号一样满屏」→ 画面按高度铺满、**左右各裁掉约 7%**，两侧字幕 / LOGO 直接消失，用户明确否掉了这个改法。实测 `854×480`（HEVC / 30fps）抽帧证实源片无黑条，服务端 `ProcessUpload` 对 mp4 原样透传，**黑边与转码、分辨率变化无关，纯粹是容器比例不匹配**。正解是 `bindloadedmetadata`（基础库 2.7.0+，`detail={width,height,duration}`）拿源文件宽高，`wx.createSelectorQuery().in(this).select('.cv-mp4')` 现场量容器宽度（首页卡片有左右内边距，不能用 750rpx 硬算），由 `mp4BoxStyleFor()` 算出高度写进 `<video style="{{mp4BoxStyle}}">`，行内样式覆盖 WXSS 的 440rpx，配 `object-fit="contain"`——容器比例 == 视频比例，既不裁切也不留黑边。metadata 未到 / 基础库低于 2.7.0 / 量不到宽度时退回 440rpx + contain：**最多留黑边，绝不裁内容**；极端竖屏（9:16）用 `MAX_MP4_RATIO=4/3` 钳高，避免公司简介区把整页顶下去。换档 / 换地址 / 切备用 / 重试时都会复位 `mp4BoxStyle`，等新 metadata 重算。视频号是 `channel-video` 插件、腾讯视频是 `txv-video` 插件，**都没有 loadedmetadata**，各自保持 `cover` / `contain`；不要为了「三档一致」牺牲画面内容。`<video>` 的 `contain` + `bindloadedmetadata` + `style="{{mp4BoxStyle}}"` 由 `tests/company_video.spec.ts` 静态守门钉住，误改回 `cover` 会直接红。
+- **详情页富文本 MP4 块同步（2026-11-06）**：`components/rich-video` 的 mp4 档原先固定 `360rpx` 高（内容区约 702rpx 宽，≈1.95:1），16:9 横屏 `contain` 会左右各留约 31rpx 黑边——方向恰好与首页早期的上下黑边相反，**留黑边而非裁内容**。现在 `bindloadedmetadata` 拿源宽高、`createSelectorQuery().in(this).select('.rich-video')` 现场量宽度，共用 `utils/mp4box.ts` 的 `mp4BoxStyleFor()` 写进行内高度；换块时清掉上一段视频算出的高度，量不到 / 低版本退回 360rpx + contain（最多留黑边）。`txv-video` / `channel-video` 是插件组件，**没有 loadedmetadata**，各自保持 `contain` / 不写 object-fit，不为「三档一致」改变插件行为。`tests/rich_video.spec.ts` 静态守门钉住这些边界。
 
 ### 自托管 MP4 的兜底备用地址（2026-11-05）
 
@@ -354,8 +356,12 @@ node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
 它不显示也不接事件，界面自动回到插件自己的按钮——**是渐进增强，不是必需依赖**，
 所以代码里没有任何「先探测再决定」的分支。
 
-> 顺带一句：`rich-video`（详情页富文本块）**没做**这套。富文本一页可能有多个视频块，
-> 而 `playerid` 必须全局唯一——现在它写死 `richVideo`，多块会互相串。
+> `rich-video`（详情页富文本块）的 **MP4 档**从 2026-11-06 起共用这套画幅算法
+> （见「MP4 档的地址与失败态」），插件两档仍按原样，不做「三档一致」。
+> 另外它有个独立的坑已一并修掉：腾讯视频插件的 `playerid` 要求同页全局唯一，
+> 原先写死 `richVideo`，富文本一页插多个腾讯视频块会互相串。现在 `attached`
+> 时用模块级自增序列生成实例唯一值；首次渲染仍给非空保底值，且 `autoplay=false`，
+> 属性变化发生在用户点播放之前，不会打断观看。`tests/rich_video.spec.ts` 有静态守门。
 
 ## 小程序码 + 海报生成
 - **海报页对访客是「只读预览」**（2026-10-28 起）：`canEdit` = 登录 && 页面 `staffId` 就是我自己
@@ -773,7 +779,7 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 > 接口约定：登录返回 `token` 在**根级**（`{code:0, token}`），`login.ts` 按 `r.token` 读取（与 PC 后台 `adminLogin` 一致）；其余资源在 `data` 下。视频号 `<channel-video>` 需真机 + 已绑定视频号的小程序 AppID 才能渲染，测试号下该块留空、`company-video` 自动回退封面/MP4；小程序码接口需配置 `WX_APPID/WX_APPSECRET` 才返回真实码，未配置时返回 `code:1`（联调预期内）。
 
 ## 技术要点
-- **视频号渲染控件 `rich-video`**：抽出的可复用组件，内部按优先级三分支渲染 `<channel-video>`——`feed-id`（同主体，可自动播放）→ `feed-token`（跨主体，强制不能自动播放）→ `finder-user-name`（兼容存量富文本，只展示视频号主页；历史块里只存了视频号 ID，直接丢弃会让内容整块消失）。详情页（`pages/project/detail`、`pages/service/detail`）在富文本分段后，遇到视频号段改用 `<rich-video feedId="{{item.feedId}}" channelId="{{item.channelId}}" />` 渲染，不再内联 `<channel-video>`，避免页面各自重复条件判断。
+- **富文本视频块组件 `rich-video`**：抽出的可复用组件，按 `type` 三来源渲染（视频号 `<channel-video>` / 腾讯视频 `<txv-video>` / MP4 直链 `<video>`，画幅与 playerid 见上）。视频号档内部按优先级三分支——`feed-id`（同主体，可自动播放）→ `feed-token`（跨主体，强制不能自动播放）→ `finder-user-name`（兼容存量富文本，只展示视频号主页；历史块里只存了视频号 ID，直接丢弃会让内容整块消失）。详情页（`pages/project/detail`、`pages/service/detail`）在富文本分段后，遇到视频号段改用 `<rich-video feedId="{{item.feedId}}" channelId="{{item.channelId}}" />` 渲染，不再内联 `<channel-video>`，避免页面各自重复条件判断。
 - **富文本 + 视频号混排**：`utils/richtext.ts` 用正则 `/<wx-video\s+([^>]*?)\/?>(\s*<\/wx-video>)?/g` 整段捕获属性后再按名提取 `feed-id` / `feed-token` / `channel-id`（属性不再写死进正则，顺序无关，**成对写法时闭合标签一并消费**，不会漏进后续 html 片段），拆分 `<wx-video feed-id="…" feed-token="…" channel-id="sph_…">`；三个属性都为空的标签不拆分，留给 `rich-text` 原样渲染。视频号段用 `rich-video` 组件、其余用 `rich-text`，保证图文/视频号位置正确（对应需求难点）。PC 富文本编辑器插入视频号时调用 `buildWxVideo(feedId, channelId, feedToken)` 统一输出 `<wx-video feed-id="${feedId}" feed-token="${feedToken}" channel-id="${channelId}"></wx-video>`（缺失属性省略），保证前后端片段规则一致。
 - **视频号 ID 语义**：视频号 ID 以 **`sph` 开头**（`gh_` 是公众号 ID，早期注释写错了，勿沿用）。`<channel-video>` 的 `finder-user-name` 只用于展示视频号主页，**播放指定视频必须用 `feed-id`**：公司简介档位 `channels` 的 `feedId` 来自视频号助手 → 动态管理 → 复制 feedId，且要求视频号与小程序**同主体**（跨主体需改用 `feed-token`，且强制不能自动播放）。
 - **公司简介视频多来源**：`components/company-video` 按后端 `profile.videoSource` 选档——`channels` 渲染 `<channel-video>`（**同主体用 `feed-id`、跨主体用 `feed-token`**，`feed-id` 优先）；`upload` / `url` 渲染 `<video src=videoUrl>`；其余回封面占位。选档是**显式的**（不做隐式自动降级链），只有视频号主源 `bind:error` 且后台开了 `videoFallbackUrl` 时才回落到 `videoUrl`。跨主体必须走 `feed-token`：官方明确 `feed-id`「仅同主体时生效」，平台模式下客户视频号与我们小程序必然不同主体，代价是强制 `autoplay=false`。`tencent`（腾讯视频插件）是预留档：插件必须在 `app.json` 静态声明，统一声明会让未通过插件授权的客户小程序直接报「插件未授权」，故默认既不声明也不渲染。

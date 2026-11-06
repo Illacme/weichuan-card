@@ -38,6 +38,7 @@
 // 打开开关后（app.json 声明插件 + 本组件 index.json 注册组件）才可用。
 import { track } from '../../utils/track'
 import { onImgFail } from '../../utils/thumb'
+import { mp4BoxStyleFor as boxStyleFor } from '../../utils/mp4box'
 
 // 腾讯视频插件注入到小程序的全局函数。本项目 tsconfig 没引 wx 的 typings，
 // 就近声明一次，免得 tsc 报 Cannot find name（模块内声明，不污染全局）。
@@ -46,21 +47,11 @@ declare function requirePlugin(name: string): any
 // 真机上 wx 由小程序框架注入；单测里用 vi.stubGlobal 顶替。
 declare const wx: any
 
-// 画幅安全区间（height / width）。16:9=0.5625、4:3=0.75 都按原样；
-// 9:16 竖屏若真按 1.78 撑高，公司简介区会把整页顶下去，钳到 4/3 后
-// 由 contain 留左右黑边——仍不裁画面，属可接受的降级。
-const MIN_MP4_RATIO = 0.4
-const MAX_MP4_RATIO = 4 / 3
-
-// 由「容器实测宽度」与「视频原始宽高」算出播放器行内样式。
-// 返回空串 = 不覆盖 WXSS 的 440rpx 默认高度：最多留黑边，绝不裁切。
-// 抽成纯函数是为了能单测像素计算，不必把 wx 的链式查询造一遍。
+// 画幅计算搬到 utils/mp4box.ts：详情页 rich-video 的 MP4 块要用同一套比例
+// 安全区间，两处不能各算各的。这里保留同名的导出函数做薄委托，是为了不改
+// 对外契约——单测通过 import 本模块拿 mp4BoxStyleFor 测像素边界，首页行为不变。
 export function mp4BoxStyleFor(boxWidth: number, width: number, height: number): string {
-  if (!(boxWidth > 0) || !(width > 0) || !(height > 0)) return ''
-  const raw = height / width
-  if (!Number.isFinite(raw)) return ''
-  const ratio = Math.min(MAX_MP4_RATIO, Math.max(MIN_MP4_RATIO, raw))
-  return `height:${Math.round(boxWidth * ratio)}px`
+  return boxStyleFor(boxWidth, width, height)
 }
 
 // 必须与 index.wxml 里 <txv-video playerid="..."> 一字不差——

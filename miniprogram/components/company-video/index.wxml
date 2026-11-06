@@ -97,7 +97,7 @@
          行内 style 覆盖 .cv-video 的 440rpx 默认高度；容器比例与视频一致时，
          contain 既不裁切也不留黑边。metadata 未到 / 基础库低于 2.7.0 时退回
          440rpx + contain——最多留黑边，绝不会裁掉画面。
-         极端竖屏的比例上限见 index.ts 的 MAX_MP4_RATIO（安全降级，仍不裁）。 -->
+         极端竖屏的比例上限见 utils/mp4box.ts 的 MAX_MP4_RATIO（安全降级，仍不裁）。 -->
     <video
       src="{{mp4Src}}"
       class="cv-video"
