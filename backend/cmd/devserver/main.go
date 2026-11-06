@@ -186,7 +186,7 @@ func main() {
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 	handler.RegisterBackup(r, db, cfg)    // 备份面板：状态 / 异步触发 / 下载（密钥包不提供下载）
 	handler.RegisterLicenseView(r, db)    // 授权到期视图：剩余天数 + 即将到期名单
-	handler.RegisterUrlProbe(r, db)       // 后台「测试地址」：与生产同一套 SSRF 受限 HEAD 探测
+	handler.RegisterURLProbe(r, db)       // 后台「测试地址」：与生产同一套 SSRF 受限 HEAD 探测
 
 	up := &storage.LocalUploader{
 		Dir:      cfg.UploadDir,

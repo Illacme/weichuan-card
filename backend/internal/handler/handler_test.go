@@ -164,7 +164,7 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
 	RegisterBackup(r, db, cfg)    // 备份与恢复面板（状态 / 立即备份 / 下载）
 	RegisterLicenseView(r, db)    // 授权到期视图（企业管理员看自己 / 平台超管看汇总）
-	RegisterUrlProbe(r, db)       // 后台「测试地址」：进 runAPIFlow 才会被 SQLite/MySQL parity 覆盖
+	RegisterURLProbe(r, db)       // 后台「测试地址」：进 runAPIFlow 才会被 SQLite/MySQL parity 覆盖
 	// 海报个性化设置：GET/PUT /api/employee/poster-prefs + 公开快照 GET /api/poster-prefs。
 	// 原先这里没注册（只在两个 cmd/main.go 里注册），于是任何带 DB 的海报接口测试
 	// 都会拿到 gin 的 404 纯文本——JSON 解析报 "invalid character 'p' after top-level

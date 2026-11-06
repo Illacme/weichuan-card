@@ -1066,7 +1066,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 - `internal/repository/ratelimit_test.go`：跨副本计数的窗口内累加、key 隔离、翻页重置、窗口边界对齐、过期行清理、stop 幂等。
 - `internal/handler/ratelimit_shared_test.go`：两个 engine 共用一个库，验证总阈值仍是 10 次（不是每副本 10 次）。
 
-CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
+CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
   - `backend`（**默认必跑，零外部依赖**）：`go build` + `go vet` + `go test ./...`。
     未设置 `TEST_MYSQL_DSN` 时，两个 MySQL 用例（`TestAPIFlowMySQL` / `TestMySQLMigrations`）自动 `t.Skip`，
     因此本 job **不需要任何数据库账号**，靠 SQLite 覆盖全部业务流程。
@@ -1080,6 +1080,21 @@ CI：见仓库根 `.github/workflows/ci.yml`，共五个 job：
     与当前依赖是否一致。它同时用 Go 和 Node：Go 取 `go list -deps ./...` 命中的模块，Node 侧读
     `frontend/node_modules/<pkg>/LICENSE` 的**正文**（不是 package.json 的 license 字段）。
     **改了 `go.mod` / 前端依赖后这个 job 会红**——跑一次生成脚本并提交新清单即可。
+  - `lint`（**阻塞门禁**）：`golangci-lint v2.15.0 run --timeout=5m`，配置在 `backend/.golangci.yml`。
+    **`go vet` 不包含 staticcheck 的 ST 系列检查**。2026-11-06 新增后台「测试地址」时把导出函数
+    写成 `RegisterUrlProbe`，本机 `go vet` / `go test ./...` 全绿，CI 却因
+    `ST1003: func RegisterUrlProbe should be RegisterURLProbe` 变红。改后端 Go 代码后推前
+    务必本地跑一次同版本 lint：
+
+    ```bash
+    # 一次性安装（显式 GOOS/GOARCH，避免 GOBIN 下的交叉编译报错）
+    env GOOS="$(go env GOOS)" GOARCH="$(go env GOARCH)" GOBIN=/tmp/wc-lint-bin \
+      go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+    cd backend && /tmp/wc-lint-bin/golangci-lint run --timeout=5m   # 期望 0 issues.
+    ```
+
+    配置里 ST1003 是刻意保留的：URL / HTTP / ID 全大写是 Go 事实标准，项目既有 `VideoURL` / `putURL`
+    也这么写，改名成本远低于放宽门禁。
 
 > **CI 红、本机绿时：在 Linux 容器里复现。**
 > CI 跑的是 `ubuntu-latest`，而开发机多为 macOS，两者在 goroutine 调度 / 时序上差异真实存在

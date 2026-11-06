@@ -30,7 +30,7 @@ var urlProbeFn func(context.Context, string) (urlprobe.Result, error) = urlprobe
 // 不能让「测试用例多写一条」就莫名其妙撞上 429。生产默认仍是 10/分钟。
 var urlProbeLimitFn = func() int { return urlProbeLimitPerMin }
 
-// RegisterUrlProbe 注册 POST /api/admin/url-probe。
+// RegisterURLProbe 注册 POST /api/admin/url-probe。
 //
 // 场景：管理员在「公司简介 → 视频来源」里填了 CDN 地址，点开链接未必能排除问题
 // （浏览器能开不等于服务端能取、更不等于小程序能播；反过来 403/404 在小程序里
@@ -41,7 +41,7 @@ var urlProbeLimitFn = func() int { return urlProbeLimitPerMin }
 // 私网/回环/链路本地/保留段 → 把已校验 IP 固定进 DialContext（防 DNS rebinding）
 // → 禁重定向、关代理、超时、只发 HEAD 不读响应体。本 handler 只负责鉴权、限流、
 // 审计和信封，不碰这些规则。
-func RegisterUrlProbe(r *gin.Engine, db *gorm.DB) {
+func RegisterURLProbe(r *gin.Engine, db *gorm.DB) {
 	limiter := middleware.NewRateLimiter(
 		func() int { return urlProbeLimitFn() }, urlProbeLimitPerMin, time.Minute,
 	).

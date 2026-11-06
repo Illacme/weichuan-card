@@ -345,7 +345,7 @@ func main() {
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
 	handler.RegisterBackup(r, db, cfg)    // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
 	handler.RegisterLicenseView(r, db)    // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
-	handler.RegisterUrlProbe(r, db)       // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
+	handler.RegisterURLProbe(r, db)       // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，
