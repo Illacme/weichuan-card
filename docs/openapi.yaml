@@ -778,6 +778,137 @@ paths:
                     type: integer
                     example: 900
 
+  /api/admin/login/mobile:
+    post:
+      tags: [鉴权]
+      summary: 管理员登录（小程序端，令牌进响应体）
+      description: |
+        与 `/api/admin/login` 同一套校验（bcrypt + 空账号烧等价时间 + 企业停用闸门 +
+        登录限流 10 次/分），唯一区别是**把 access / refresh 放进响应体**：
+        小程序没有 Cookie 容器，PC 的 httpOnly Cookie 流在那边不可用。
+
+        拿到的令牌用 `Authorization: Bearer` 调用 `/api/admin/*`（ExtractToken 优先读头），
+        六个 `/api/admin/apply/*` 审核端点因此无需任何改动。刷新走 `/api/refresh` 的 Body 流。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: |
+            code=0 成功（返回 token / refreshToken / expiresIn / companyId / companyName /
+            isPlatform / username / wechatBound）；
+            code=1 用户名或密码错误（与 PC 同样不区分「账号不存在」）；
+            code=2 所属企业已停用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  token:
+                    type: string
+                    description: access 令牌（Bearer）
+                  refreshToken:
+                    type: string
+                  expiresIn:
+                    type: integer
+                  companyId:
+                    type: integer
+                    format: int64
+                    description: 0 = 平台超管
+                  isPlatform:
+                    type: boolean
+                  username:
+                    type: string
+                  wechatBound:
+                    type: boolean
+                    description: 该管理员是否已绑定微信（决定能否免密进入）
+
+  /api/admin/login/wechat:
+    post:
+      tags: [鉴权]
+      summary: 管理员微信免密登录（小程序端）
+      description: |
+        `wx.login` 的 code → 服务端 jscode2session 换 openid → 找绑定了该 openid 的管理员
+        → 签发管理员令牌。openid 一律由服务端用小程序凭据换取，不信任入参。
+
+        平台模式下所有租户共用一个 appid，同一微信可能是多家企业的管理员：先用
+        `companyId` 收窄，收窄后仍多于一条则返回 code=3，绝不随便挑一个签发令牌
+        （登错公司 = 看到别家的待审申请）。限流与密码登录共用（10 次/分）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: wx.login 返回的一次性 code
+                companyId:
+                  type: integer
+                  format: int64
+                  description: 客户端所属租户（独立版固定值 / 平台模式粘滞值）
+      responses:
+        "200":
+          description: |
+            code=0 成功（响应体同 `/api/admin/login/mobile`）；
+            code=1 缺少 code / 未配置小程序凭据 / 微信侧失败；
+            code=2 所属企业已停用；
+            code=3 该微信未绑定管理员，或绑定了多个账号（改用账号密码登录）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  token:
+                    type: string
+                  refreshToken:
+                    type: string
+                  expiresIn:
+                    type: integer
+
+  /api/admin/wechat/bind:
+    post:
+      tags: [鉴权]
+      summary: 管理员绑定 / 换绑微信（免密登录的前提）
+      description: |
+        已登录后调用。凭据取管理员**自己企业**的小程序 appid，不取客户端传值——
+        绑定是已登录场景，身份确定，用错凭据会把别家小程序的 openid 绑进来。
+
+        覆盖写：换微信时重新绑定即可，旧 openid 从此匹配不到任何管理员，等同解绑。
+        同企业内一个 openid 只能绑一个管理员（否则两人会互相登进对方账号）。
+        动作记审计 `admin.wx_bind`。
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: code=0 成功；code=1 缺少 code / 未配置凭据 / 该微信已绑其他管理员；code=401 未登录
+
   /api/refresh:
     post:
       tags: [鉴权]
@@ -1222,6 +1353,7 @@ paths:
       tags: [超管-申请审核]
       summary: 开通申请列表（服务端分页）
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
@@ -1265,6 +1397,7 @@ paths:
       tags: [超管-申请审核]
       summary: 通过开通申请（自动建员工，返回初始密码）
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - name: id
@@ -1294,6 +1427,7 @@ paths:
       tags: [超管-申请审核]
       summary: 驳回开通申请
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - name: id
@@ -1321,6 +1455,7 @@ paths:
       summary: 名片修改申请列表（服务端分页）
       description: keyword 按**员工姓名**匹配（申请行只有 staff_id + 变更快照）。
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
@@ -1364,6 +1499,7 @@ paths:
       tags: [超管-申请审核]
       summary: 通过名片修改申请（字段覆盖到员工）
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - name: id
@@ -1381,6 +1517,7 @@ paths:
       tags: [超管-申请审核]
       summary: 驳回名片修改申请
       security:
+        - bearerAuth: []
         - cookieAuth: []
       parameters:
         - name: id

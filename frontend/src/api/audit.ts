@@ -38,6 +38,9 @@ export const ACTION_LABELS: Record<string, string> = {
   'login.success': '登录成功',
   logout: '登出',
   'password.change': '修改自己的密码',
+  // 小程序端管理员：令牌落在手机本地且可直接审批申请，绑定微信等于开一个管理员入口
+  'admin.mobile_login': '管理员小程序登录',
+  'admin.wx_bind': '管理员绑定微信',
   'admin.create': '新增平台超管',
   'admin.rename': '改管理员用户名',
   'admin.reset_password': '重置管理员密码',

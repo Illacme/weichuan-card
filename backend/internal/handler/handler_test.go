@@ -973,6 +973,13 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 1234, data["contentLength"])
 		require.Contains(t, fmt.Sprint(data["message"]), "地址可访问")
 	})
+
+	// 移动端管理员身份通路：放最后，因为它会往 sys_setting 写 wx_appid，
+	// 提前执行会让前面的开通申请误判「凭据已配」而触发内容安全分支。
+	// 进 runAPIFlow 才会被 TestAPIFlowMySQL 的 parity 一并覆盖。
+	t.Run("移动端管理员登录与审核", func(t *testing.T) {
+		runAdminMobileFlow(t, c, adminToken)
+	})
 }
 
 // TestAPIFlow 默认用 SQLite 跑完整接口流程（无需外部 MySQL）。

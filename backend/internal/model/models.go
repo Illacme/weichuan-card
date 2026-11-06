@@ -261,6 +261,10 @@ type Admin struct {
 	Username     string    `gorm:"column:username" json:"username"`
 	PasswordHash string    `gorm:"column:password_hash" json:"-"`
 	TokenVersion int       `gorm:"column:token_version;default:0" json:"-"` // 安全戳：改密自增，令旧令牌失效
+	// WXOpenID：小程序端管理员免密登录用的微信 openid。
+	// 与 Employee.OpenID 同构（明文列、覆盖写），但绝不出现在任何响应体里——
+	// 它是「持有这个微信号即可签发管理员令牌」的凭据，泄露等于口令泄露。
+	WXOpenID     string    `gorm:"column:wx_openid;index" json:"-"`
 	CreatedAt    time.Time `gorm:"column:created_at" json:"createdAt"`
 }
 

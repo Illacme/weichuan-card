@@ -357,6 +357,13 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			Remark:    "点开小程序即可微信一键登录",
 			Page:      "pages/employee/login/login",
 		}))
+		// 审批是不可逆的写操作（已建员工账号），必须留痕：小程序端新增了免密审核通路，
+		// 更要能回答「谁在什么时候用哪台设备通过了这份申请」。写库全部成功后再记。
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionApplyApprove, TargetType: "apply",
+			TargetID: strconv.FormatInt(id, 10),
+			Detail:  map[string]any{"kind": "open", "companyId": a.CompanyID},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
 
@@ -380,7 +387,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		res := db.Model(&model.OpenApply{}).Where("id = ? AND status = ?", id, "pending").
 			Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason})
-		if res.RowsAffected == 0 {
+		if res.Error != nil || res.RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
 			return
 		}
@@ -392,6 +399,11 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			Remark:    rejectRemark(body.Reason),
 			Page:      "pages/employee/login/login",
 		}))
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionApplyReject, TargetType: "apply",
+			TargetID: strconv.FormatInt(id, 10),
+			Detail:  map[string]any{"kind": "open", "companyId": a.CompanyID, "reason": body.Reason},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -466,7 +478,12 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		a.Status = "approved"
-		db.Save(&a)
+		// 申请单状态没落库就不能装作成功：否则它会一直留在 pending，
+		// 管理员看到「待审核」再点一次，同一份变更会被重复套用到员工资料上。
+		if err := db.Save(&a).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "资料已更新，但申请状态更新失败，请刷新确认"})
+			return
+		}
 		// 员工已绑定微信才有 openid；没绑的话 notifyAudit 会静默跳过
 		dispatch(notifyAudit(db, cfg, auditNotice{
 			CompanyID: e.CompanyID,
@@ -476,6 +493,11 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			Remark:    "新资料已生效",
 			Page:      "pages/employee/me/me",
 		}))
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionApplyApprove, TargetType: "apply",
+			TargetID: strconv.FormatInt(id, 10),
+			Detail:  map[string]any{"kind": "modify", "companyId": a.CompanyID},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -495,7 +517,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		res := db.Model(&model.CardModifyApply{}).Where("id = ? AND status = ?", id, "pending").
 			Updates(map[string]interface{}{"status": "rejected", "reject_reason": body.Reason})
-		if res.RowsAffected == 0 {
+		if res.Error != nil || res.RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到或已处理"})
 			return
 		}
@@ -512,6 +534,11 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				Page:      "pages/employee/me/me",
 			}))
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionApplyReject, TargetType: "apply",
+			TargetID: strconv.FormatInt(id, 10),
+			Detail:  map[string]any{"kind": "modify", "companyId": a.CompanyID, "reason": body.Reason},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 

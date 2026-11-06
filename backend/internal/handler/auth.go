@@ -134,6 +134,9 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	// 微信一键登录 / 绑定（见 login_wechat.go）：
 	// 复用上面的登录限流器——一键登录同样要打微信接口、同样能被脚本刷。
 	RegisterWechatLogin(r, db, cfg, loginLimiter.Handler())
+	// 小程序端企业管理员：同样复用登录限流器，三条端点都挂在 RegisterAuth 内，
+	// 三份装配清单（server / devserver / buildEngine）无需各自再加一行。
+	registerAdminMobile(r, db, cfg, loginLimiter.Handler())
 
 	// 超管登录（按用户名）——PC 后台，httpOnly Cookie 鉴权（token 不入响应体）
 	r.POST("/api/admin/login", loginLimiter.Handler(), func(c *gin.Context) {

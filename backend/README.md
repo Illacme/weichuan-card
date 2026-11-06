@@ -18,6 +18,7 @@ backend/
 │   ├── auth/password.go         # bcrypt 哈希 / 校验
 │   ├── handler/handler.go       # 首页相关 HTTP 接口（读，按租户：companyId 缺省落演示租户）
 │   ├── handler/auth.go          # 员工/管理员登录，签发 JWT + 刷新 + 登出（企业停用校验）
+│   ├── handler/admin_mobile.go  # 小程序端管理员身份：登录（令牌进 body）/ 绑定微信 / 免密登录
 │   ├── handler/apply.go         # 开通申请 / 名片修改审核 / 员工管理 / 统计（写 + 审核流，按租户隔离）
 │   ├── handler/stat.go          # 埋点统计共享件：track 限流+白名单 / targetId 校验 / 日期范围 / 按天趋势 / CSV 导出 / 明细列表 / TOP 榜
 │   ├── handler/content.go       # 企业内容管理（分类/项目/服务/简介…）按租户隔离 + 分类删除强校验
@@ -569,6 +570,24 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 > 「五个元素全关」的海报（用户发出去是一张只剩背景的白板），指针才能区分「没传」和「明确关掉」。
 
 
+## 小程序端管理员权限（移动端审核，迁移 0039）
+
+员工在手机上能改名片，但审核过去只能在电脑上做。这一版把审核搬进小程序，后端**只补了三件事**：
+
+**1）不需要改任何审核端点。** 六个 `/api/admin/apply/*` 挂的都是 `middleware.AuthMiddleware(db,"admin")`，而 `ExtractToken` 优先读 `Authorization: Bearer`、其次才读 `access_token` Cookie。所以只要签发 `role=admin` 的 JWT 并让小程序用 Bearer 带上，审核接口、租户隔离（`scopeCond` 按 JWT 的 `companyId`）、平台超管拦截全部原样生效。
+
+**2）PC 的 Cookie 流不能给小程序用。** `/api/admin/login` 刻意只下发 httpOnly Cookie，响应体不含 token（JS 读不到令牌，防 XSS 窃取）。于是在 `handler/admin_mobile.go` 另开三条端点，把令牌放进响应体——校验逻辑与 PC 完全一致（同样的 bcrypt、空账号烧等价 bcrypt 时间防账号枚举、企业停用闸门、同一个登录限流器）。
+
+**3）绑定信息落在 `admins.wx_openid`（迁移 0039）。** 与 `Employee.openid` 完全同构：明文列 + 普通索引、覆盖写（换微信重新绑定即等同解绑）、同企业内一个 openid 只允许绑一个管理员（否则两人会互相登进对方账号）。
+
+几条刻意的取舍：
+
+- **免密不是无认证。** openid 一律由服务端用小程序凭据 `jscode2session` 换取，绝不信任入参；`wx_appid` / `wx_appsecret` 未配置时明确报错而不是静默失败。
+- **企业停用照样拦。** openid 只证明「你是同一个微信」，证明不了「你还在这家公司」——密码登录、免密登录都要过 `companyEnabled`。
+- **平台模式下不猜身份。** 所有租户共用一个小程序时，同一微信可能绑了多家企业的管理员；先用 `companyId` 收窄，收窄后仍多于一条就返回 `code:3` 让用户输密码，**绝不随便挑一条签发令牌**（登错公司 = 看到别家的待审申请）。
+- **审批必须留痕。** 同时补上了四个审批接口的 `audit.Record`——`apply.approve` / `apply.reject` 两个常量早就有定义、前端也有中文名，但此前只发订阅消息、没有落审计。审计写在**所有写库都成功之后**，失败分支不留「成功」记录。
+- **升级零突变。** 0039 只加一列 + 一个普通索引，默认空、不搬迁任何存量数据；不需要回填、不需要停机。`./server migrate` 跑一次即可（不必重启）。
+
 ## 已实现接口
 
 > **多租户**：所有业务表带 `company_id`；1 号租户为内置演示租户。
@@ -601,6 +620,9 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/employee/login/wechat | 否 | **微信一键登录**：body `{code, companyId}` → 后端 jscode2session 换 openid → 找已绑定该 openid 的员工 → 发令牌。业务码：0 成功 / 1 参数或微信侧错误 / 2 账号或企业停用 / **3 该微信未绑定或绑定了多个账号**（前端据此引导去绑定或改用密码登录）。走登录限流器 |
 | POST | /api/employee/wechat/bind | employee | **绑定微信**（body `{code}`）→ 把当前员工与 openid 绑定，之后可一键登录。凭据取员工**自己企业**的 appid（不信客户端传值）；同一企业内一个微信只能绑一个账号；重复绑定是覆盖写（换微信时直接重绑，无需解绑接口） |
 | POST | /api/admin/login | 否 | 管理员登录（用户名+密码）→ 写 httpOnly Cookie，响应体仅 expiresIn + 身份（companyId/companyName/isPlatform） |
+| POST | /api/admin/login/mobile | 否 | **小程序端管理员登录**：与上一行同一套校验（bcrypt + 空账号烧等价时间 + 企业停用 + 同一登录限流器），区别是**把 access/refresh 放进响应体**（手机没有 Cookie 容器）。回 `token / refreshToken / expiresIn / companyId / companyName / isPlatform / username / wechatBound`。审计 `admin.mobile_login` |
+| POST | /api/admin/login/wechat | 否 | **管理员微信免密登录**：body `{code, companyId}` → jscode2session 换 openid → 找绑定了该 openid 的管理员。业务码同员工一键登录（0/1/2/**3**）。平台模式下同一微信可能是多家企业的管理员：先用 `companyId` 收窄，收窄后仍多于一条返回 3，**绝不随便挑一个签发令牌** |
+| POST | /api/admin/wechat/bind | admin | **管理员绑定 / 换绑微信**（body `{code}`）：覆盖写 `admins.wx_openid`，同企业内一个 openid 只绑一个管理员；凭据取管理员**自己企业**的 appid。审计 `admin.wx_bind` |
 | POST | /api/refresh | 否 | 换发新 access（PC 读 refresh Cookie；小程序 body 传 refreshToken） |
 | POST | /api/logout | 否 | 吊销当前会话 sid（单设备精确吊销）+ 清除 httpOnly 鉴权 Cookie（PC 后台登出） |
 | POST | /api/apply/open | 否 | 员工自助提交开通申请（pending；可含 landline / avatar / companyId，缺省落演示租户）。文字经内容安全检测，命中违规返回 code=1 且不落库 |
@@ -977,6 +999,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 ## 自动化接口测试
 接口层（`/api/*`）已配套 `httptest` 集成测试，覆盖读接口、登录鉴权、审核流、员工管理、分类/项目强校验、业务服务、企业内容、文件上传与存储增强、小程序码等全部主路径，并对「本地驱动不支持预签名→code:1」「CDN 未配置→code:1」「分类下有项目/锁定→删除拦截 code=1」等回退分支做了断言。
 
+- `internal/handler/admin_mobile_test.go`（移动端管理员身份，`TestAdminMobile*` / `TestAdminWXBind*` / `TestApplyApprovalAudit`）：钉住「小程序端能审核但不会登错人」。覆盖：账号不存在与密码错误**同文案**且都不下发令牌、登录成功令牌在响应体（`passwordHash` / `wxOpenid` 绝不出网）、Bearer 令牌可直接调六个审核端点、未绑定时 `code:3` 且文案说清「先用账号密码登录」、绑定必须已登录且 `admins.wx_openid` 真的落库、绑定后免密登录签发同样的管理员令牌、同企业同一 openid 绑第二个管理员被拒、跨企业同一 openid 用 `companyId` 精确定位而 `companyId=0` 返回 3、企业停用两条登录路径都给 `code:2`、登录与绑定各留一条审计、**通过/驳回各留一条 `apply.approve` / `apply.reject`**。这组用例同时被 `runAPIFlow` 末尾的「移动端管理员登录与审核」子测试复用，因此 SQLite 与 MySQL parity 都覆盖。
 - 测试文件：`internal/handler/handler_test.go`。入口：
   - `TestAPIFlow`（默认）：SQLite 跑完整流程，按「公开接口 → 超管登录 → 审核流 → 员工管理 → 强校验 → 服务 → 内容 → 上传存储 → 改密」分段执行。
   - `TestStorageEnhanceSuccess`：用 fake `Presigner`/`Signer`/`CDNRefresher` 覆盖存储增强**成功分支**（预签名返回 `putUrl/url/key`、私有签名返回 `signed` 映射、CDN 刷新被调用）。

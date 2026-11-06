@@ -28,6 +28,13 @@ const (
 	ActionLogin     = "login.success"
 	ActionLogout    = "logout"
 	ActionPassword  = "password.change"
+	// ActionAdminMobileLogin：管理员在小程序端登录（密码 / 微信免密）。
+	// 与 PC 的 Cookie 登录不同，这条通路签发的令牌落在手机本地，能直接审批申请，
+	// 属于「谁在什么时候拿到了管理员身份」的关键证据，必须留痕。
+	ActionAdminMobileLogin = "admin.mobile_login"
+	// ActionAdminWXBind：管理员把当前微信绑定到后台账号，之后可免密进审核。
+	// 绑定等于给这个微信号开通管理员入口，是特权动作。
+	ActionAdminWXBind = "admin.wx_bind"
 
 	ActionAdminCreate = "admin.create"
 	ActionAdminRename = "admin.rename"
