@@ -1,0 +1,61 @@
+<view class="apv">
+  <!-- 页签：开通申请 / 名片修改。两个队列互相独立，合并显示会让「先清谁」变得模糊 -->
+  <view class="apv-tabs">
+    <view class="apv-tab {{tab === 'open' ? 'on' : ''}}" data-tab="open" bindtap="onTabChange">开通申请</view>
+    <view class="apv-tab {{tab === 'modify' ? 'on' : ''}}" data-tab="modify" bindtap="onTabChange">名片修改</view>
+  </view>
+
+  <view class="apv-filters">
+    <view class="apv-chip {{status === 'pending' ? 'on' : ''}}" data-status="pending" bindtap="onStatusChange">待处理</view>
+    <view class="apv-chip {{status === 'all' ? 'on' : ''}}" data-status="all" bindtap="onStatusChange">全部</view>
+    <text class="apv-count">共 {{total}} 条</text>
+  </view>
+
+  <!-- 加载中：首次进入给骨架提示，避免白屏 -->
+  <view class="apv-state" wx:if="{{loading && !list.length}}">加载中…</view>
+
+  <!-- 错误态必须可重试：停在空列表会被误读成「没有待审」 -->
+  <view class="apv-state apv-error" wx:elif="{{error}}">
+    <text>{{error}}</text>
+    <button class="plain-btn" bindtap="onRetry">重试</button>
+  </view>
+
+  <view class="apv-state" wx:elif="{{!list.length}}">
+    {{status === 'pending' ? '没有待处理的申请' : '还没有申请记录'}}
+  </view>
+
+  <block wx:else>
+    <view class="apv-card" wx:for="{{list}}" wx:key="id">
+      <view class="apv-card-hd">
+        <text class="apv-name">{{item.name}}</text>
+        <text class="apv-status {{item.status}}">{{item.statusText}}</text>
+      </view>
+      <view class="apv-time">提交时间：{{item.time}}</view>
+      <view class="apv-line" wx:for="{{item.lines}}" wx:for-item="line" wx:key="*this">{{line}}</view>
+      <view class="apv-reason" wx:if="{{item.rejectReason}}">驳回理由：{{item.rejectReason}}</view>
+
+      <view class="apv-actions" wx:if="{{item.pending}}">
+        <button class="plain-btn apv-btn" data-id="{{item.id}}" disabled="{{acting === item.id}}" bindtap="onRejectTap">驳回</button>
+        <button class="primary-btn apv-btn" data-id="{{item.id}}" disabled="{{acting === item.id}}" bindtap="onApprove">通过</button>
+      </view>
+    </view>
+
+    <view class="apv-more" wx:if="{{moreError}}" bindtap="onRetryMore">{{moreError}}，点击重试</view>
+    <view class="apv-more" wx:elif="{{loadingMore}}">加载更多…</view>
+    <view class="apv-more" wx:elif="{{!hasMore}}">没有更多了</view>
+  </block>
+
+  <view class="apv-logout" bindtap="onLogout">退出管理员登录</view>
+
+  <!-- 驳回理由：页内输入框（wx.showModal 的 editable 要基础库 2.17.1，低版本会吞掉输入） -->
+  <view class="mask" wx:if="{{rejectVisible}}" bindtap="onRejectCancel"></view>
+  <view class="apv-dialog" wx:if="{{rejectVisible}}">
+    <view class="apv-dialog-title">驳回理由</view>
+    <textarea class="apv-textarea" value="{{rejectReason}}" maxlength="200" placeholder="选填，会随通知发给申请人"
+      bindinput="onRejectInput" />
+    <view class="apv-dialog-actions">
+      <button class="plain-btn apv-btn" bindtap="onRejectCancel">取消</button>
+      <button class="primary-btn apv-btn" loading="{{acting === rejectId}}" bindtap="onRejectConfirm">确认驳回</button>
+    </view>
+  </view>
+</view>

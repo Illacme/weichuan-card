@@ -1,0 +1,22 @@
+<view class="admlogin">
+  <view class="admlogin-hd">
+    <view class="admlogin-title">企业管理员登录</view>
+    <view class="admlogin-sub">用 PC 后台的账号密码登录，随时处理待审申请</view>
+  </view>
+
+  <view class="section cells">
+    <view class="form-item">
+      <text class="label">账号</text>
+      <input value="{{username}}" data-field="username" bindinput="onInput" placeholder="后台登录用户名" />
+    </view>
+    <view class="form-item">
+      <text class="label">密码</text>
+      <input value="{{password}}" data-field="password" bindinput="onInput" password placeholder="后台登录密码" />
+    </view>
+  </view>
+
+  <button class="primary-btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onSubmit">登录</button>
+  <button class="plain-btn" loading="{{wxSubmitting}}" disabled="{{wxSubmitting}}" bindtap="onWechatLogin">用当前微信免密进入</button>
+
+  <view class="admlogin-tip">{{tip}}</view>
+</view>

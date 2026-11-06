@@ -1,0 +1,181 @@
+/* 管理员审核页：类名统一 apv- 前缀（appraisal），页面级样式，
+   不进 app.wxss——新增全局类要跑 audit_class_collision.py，这里没必要。 */
+.apv {
+  padding-bottom: 40rpx;
+}
+
+.apv-tabs {
+  display: flex;
+  background: #fff;
+}
+
+.apv-tab {
+  flex: 1;
+  text-align: center;
+  padding: 26rpx 0;
+  font-size: 30rpx;
+  color: #666;
+  border-bottom: 4rpx solid transparent;
+}
+
+.apv-tab.on {
+  color: #1a8cff;
+  font-weight: 600;
+  border-bottom-color: #1a8cff;
+}
+
+.apv-filters {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 24rpx;
+}
+
+.apv-chip {
+  padding: 8rpx 26rpx;
+  margin-right: 16rpx;
+  border-radius: 28rpx;
+  background: #f0f2f5;
+  color: #666;
+  font-size: 26rpx;
+}
+
+.apv-chip.on {
+  background: #1a8cff;
+  color: #fff;
+}
+
+.apv-count {
+  margin-left: auto;
+  font-size: 24rpx;
+  color: #999;
+}
+
+.apv-state {
+  padding: 80rpx 32rpx;
+  text-align: center;
+  color: #999;
+  font-size: 28rpx;
+}
+
+.apv-error {
+  color: #e64340;
+}
+
+.apv-card {
+  background: #fff;
+  margin: 16rpx 24rpx;
+  padding: 24rpx;
+  border-radius: 16rpx;
+}
+
+.apv-card-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.apv-name {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.apv-status {
+  font-size: 24rpx;
+  color: #999;
+}
+
+.apv-status.pending {
+  color: #ff9500;
+}
+
+.apv-status.approved {
+  color: #07c160;
+}
+
+.apv-status.rejected {
+  color: #e64340;
+}
+
+.apv-time {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #999;
+}
+
+.apv-line {
+  margin-top: 8rpx;
+  font-size: 28rpx;
+  color: #444;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.apv-reason {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+  color: #e64340;
+  line-height: 1.5;
+}
+
+.apv-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20rpx;
+}
+
+.apv-btn {
+  min-width: 160rpx;
+  margin: 0 0 0 16rpx;
+  font-size: 28rpx;
+  line-height: 2.2;
+}
+
+.apv-more {
+  padding: 28rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: #999;
+}
+
+.apv-logout {
+  margin: 48rpx 24rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: #999;
+}
+
+.apv-dialog {
+  position: fixed;
+  left: 48rpx;
+  right: 48rpx;
+  top: 30%;
+  z-index: 11;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 32rpx;
+}
+
+.apv-dialog-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 20rpx;
+}
+
+.apv-textarea {
+  width: 100%;
+  height: 160rpx;
+  font-size: 28rpx;
+  line-height: 1.5;
+  background: #f7f8fa;
+  border-radius: 12rpx;
+  padding: 16rpx;
+  box-sizing: border-box;
+}
+
+.apv-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20rpx;
+}

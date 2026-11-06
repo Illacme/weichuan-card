@@ -9,6 +9,7 @@ miniprogram/
 ├── project.config.json / tsconfig.json / sitemap.json
 ├── utils/
 │   ├── request.ts      # wx.request 封装（自动注入 empToken、统一 code 处理）
+│   ├── adminRequest.ts # 管理员通道：注入 adminToken、401 用 adminRefreshToken 单飞刷新（与员工通道严格分离）
 │   ├── tenant.ts       # 多租户：企业独立版锁定（pinnedCompanyId）/ 平台模式扫码分发与粘滞
 │   ├── types.ts        # 与后端 JSON 对齐的 TS 类型
 │   ├── richtext.ts     # <wx-video> 富文本拆分（视频块三来源 ↔ rich-video：视频号/腾讯视频/MP4）
@@ -35,9 +36,43 @@ miniprogram/
 │   ├── service/detail/ # 服务详情（富文本+视频号拆分）
 │   ├── poster/         # 分享海报（canvas 合成 + 发送给好友 / 保存到相册）
 │   ├── privacy/        # 隐私政策页（应用内可查阅，审核硬性要求）
+│   ├── admin/          # 企业管理员审核：login（账号密码 + 首登绑微信）/ apply（待审列表 + 通过/驳回）
 │   └── employee/       # 员工登录 login + 名片修改 edit（提交审核）
-└── tests/              # 纯逻辑单元测试（richtext 拆分 / request 刷新重试 / 隐私授权编排）
+└── tests/              # 纯逻辑单元测试（richtext 拆分 / request 刷新重试 / 隐私授权编排 / 管理员通道与审核页）
 ```
+
+## 企业管理员审核（小程序端，2026-11-06）
+
+员工在手机上能改名片。但「谁通过了我的申请」过去只能在电脑上做——老板出门在外，审批就得等回办公室。这一版把审核搬到小程序：「我的」→「企业管理员 · 待审申请」。
+
+**身份通路（关键设计）**
+
+- 六个 `/api/admin/apply/*` 端点本来就挂 `middleware.AuthMiddleware(db,"admin")`，而 `ExtractToken` **优先读 `Authorization: Bearer`**、其次才读 Cookie。所以只要拿到 `role=admin` 的 JWT，**审核接口一行都不用改**。
+- PC 的 `/api/admin/login` 刻意只下发 httpOnly Cookie（JS 读不到令牌，防 XSS 窃取），小程序没有 Cookie 容器。于是新增三条端点，把令牌放进响应体：
+  - `POST /api/admin/login/mobile`：账号密码，校验与 PC 完全一致（bcrypt + 空账号烧等价时间 + 企业停用闸门 + 同一登录限流器）。
+  - `POST /api/admin/login/wechat`：`wx.login` 的 code → 服务端 `jscode2session` 换 openid → 找绑定了该 openid 的管理员。
+  - `POST /api/admin/wechat/bind`：已登录时绑定 / 换绑微信（覆盖写，同企业内一个 openid 只绑一个管理员）。
+- 绑定信息存 `admins.wx_openid`（迁移 0039），与 `Employee.openid` 完全同构：明文列、覆盖写、换微信重新绑定即等同解绑。
+- **免密不是无认证**：openid 由服务端用小程序凭据换取，绝不信任入参；企业停用照样拦；平台模式下同一微信可能是多家企业的管理员，先用 `companyId` 收窄，收窄后仍多于一条就返回 `code:3` 让用户走密码登录——绝不随便挑一个签发令牌（登错公司 = 看到别家的待审申请）。
+
+**请求通道**
+
+`utils/adminRequest.ts` 与员工通道 `utils/request.ts` **严格分离**：前者只注入 `adminToken`、401 时只认 `adminRefreshToken`，后者只认 `empToken`。混用会导致「员工刷新把管理员令牌冲掉」。刷新仍走 `/api/refresh` 的 Body 流（该端点按 `claims.Role` 签发，不区分身份）。
+
+**页面行为**
+
+- 「我的」页新增一组「企业管理员 · 待审申请」，**挂在员工登录态判断之外**——老板通常不建员工号，套在 `wx:if="{{me}}"` 里等于把入口藏起来。
+- 审核页 `onShow` 先看有没有令牌，没有就试一次微信免密登录，都不行才跳登录页：多数管理员第二次进来是零输入的。
+- 只做「待处理 / 全部」两档筛选，不做关键字搜索——手机打字慢，审核的动作是按时间清队列。
+- 通过开通申请后，后端会回员工编号与初始密码，**必须弹出来给人看清**，否则审核人根本没法把账号交给新员工。
+- 驳回理由用**页内 `textarea`**，不用 `wx.showModal` 的 `editable`（后者要基础库 2.17.1，低版本会静默变普通弹窗，理由根本填不进去）。
+- 列表失败必须落成**可重试的错误态**，绝不能停在空列表——空列表会被管理员读成「没有待审」，直接把工作漏掉。
+
+**审计**
+
+`admin.mobile_login`（手机端拿到管理员身份）与 `admin.wx_bind`（给某个微信号开管理员入口）都留痕；四个审批接口也补上了 `apply.approve` / `apply.reject`——这两个常量早就有定义，但此前只发订阅消息、没有落审计。
+
+用例见 `tests/admin_request.spec.ts`（6 例）、`tests/admin_apply.spec.ts`（18 例）、`tests/admin_login.spec.ts`（7 例），后端见 `admin_mobile_test.go`。
 
 ## 隐私合规（2026-10-26）
 
@@ -899,6 +934,9 @@ URL，错位只会让标记失效（多画一次图），不会把别的图误�
 - `tests/img_fallback.spec.ts`：**图片失败兜底**——扫全部 `.wxml` 断言每个 `<image>` 都挂了 `binderror`、且带 `data-fail` 或 `data-arr`（漏写会安静地留一块白）；`onImgFail` 的单图 / 图集 / `idx=0` / 缺参数 / 字段还不是数组五种形态；`onThumbError` 的「缩略图挂了改回原图」与「已在原图上不再 setData」（后者防的是 binderror 无限循环）。
 - `tests/subscribe.spec.ts`（9 例）：**审核结果订阅消息**——模板 ID 预取后缓存不重复请求、未配置时不弹窗、`tmplIds` 传数组、预取失败**不缓存空串**（缓存了会让整个会话都收不到通知且用户无从察觉）、用户拒绝不抛错不重试；**页面接线**：申请页「先请求订阅、再发提交请求」的顺序断言（顺序反了微信直接拒授权）、拒绝订阅提交照样发出、后端没配模板时既不弹窗也不拦提交、编辑页同样在提交前订阅。
 - `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、以及**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**。
+- `tests/admin_request.spec.ts`（6 例）：**管理员请求通道**——带的是 `adminToken` 而不是 `empToken`、GET 参数拼 query、**不自动注入 companyId**（租户隔离靠 JWT）、`401` 时用 `adminRefreshToken` 单飞刷新并重试一次（并发只刷一次）、刷新失败彻底清令牌并把 401 交回页面、网关兜底页（HTML）按网络错误 reject、`saveAdminAuth` 拒绝空令牌。
+- `tests/admin_apply.spec.ts`（18 例）：**企业审核页**——有令牌直接拉列表不碰微信登录、无令牌但微信已绑定则免密进入、未绑定跳登录页、列表 401 清令牌跳登录、开通申请卡片时间格式化与联系方式行、修改申请 snapshot 解析（头像显示「已更换」、清空显示「（清空）」）、切页签/切筛选重置到第一页并带对参数、`hasMore` 按 total 判定、接口失败落到可重试错误态而非空列表、通过开通申请必须把**员工编号与初始密码**弹出来、取消确认不发请求、驳回理由原样进请求体、驳回失败保留弹窗与理由；另有 5 条静态守门（两个页面已注册且 `entryPagePath` 未变、审核页只用 `adminRequest`、驳回用页内 `textarea` 不用 `editable`、登录页不写密码进 Storage/日志、「我的」页入口挂在登录态判断之外）。
+- `tests/admin_login.spec.ts`（7 例）：**管理员登录页**——空账号密码只提示不发请求、密码错误原样透出后端文案且不存令牌、登录成功存令牌→绑微信→进审核页、**绑定失败不阻断登录**（只提示下次仍需输密码）、免密登录成功存令牌并跳转、`code:3` 用 modal 说清先用账号密码登录、已有令牌进登录页直接跳审核页。
 - `tests/postersnap.spec.ts`（12 例）：**海报图片地址快照**——按员工分键、TTL 边界（等于 TTL 仍有效）、时钟回拨按过期、非绝对地址一律丢弃（相对路径会让 `createImage` 静默失败并占住失败锁）、三项全空时不落库、`staffId<=0` 不读不写、脏数据当没有、`at` 缺失当没有、`clear` 自愈、写存储抛异常不影响调用方；海报页侧的接线另有 7 例（`onLoad` 当场起跑且早于 `prepare()`、无快照不建离屏 canvas、基础库不支持不抛、**预热失败不留 3 秒失败锁**、出图后写快照、换背景后快照跟着换、静态守门钉住调用顺序）。
 
 ```bash

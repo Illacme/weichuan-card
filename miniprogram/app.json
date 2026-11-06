@@ -13,7 +13,9 @@
     "pages/employee/edit/edit",
     "pages/poster/poster",
     "pages/privacy/privacy",
-    "pages/mydata/mydata"
+    "pages/mydata/mydata",
+    "pages/admin/login/login",
+    "pages/admin/apply/apply"
   ],
   "entryPagePath": "pages/team/team",
   "window": {

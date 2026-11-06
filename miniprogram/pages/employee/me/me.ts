@@ -116,6 +116,10 @@ Page({
       fail: () => wx.reLaunch({ url: '/pages/index/index' }),
     })
   },
+  // 企业管理员审核入口：无管理员令牌时审核页会自己跳登录页，这里不用预判身份
+  goAdminApply() {
+    wx.navigateTo({ url: '/pages/admin/apply/apply' })
+  },
   // 生成海报（B9）：带本人编号进海报页，canvas 合成后存相册
   goPoster() {
     if (!this.data.me) return

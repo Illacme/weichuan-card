@@ -1,0 +1,35 @@
+/* 管理员登录页：类名统一带 admlogin- 前缀，避免与全局样式撞名
+   （新增全局类要跑 frontend/scripts/audit_class_collision.py，这里全部页面级）。 */
+.admlogin {
+  padding: 32rpx 0 48rpx;
+}
+
+.admlogin-hd {
+  padding: 24rpx 32rpx 8rpx;
+}
+
+.admlogin-title {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.admlogin-sub {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: #999;
+  line-height: 1.5;
+}
+
+.admlogin .primary-btn,
+.admlogin .plain-btn {
+  margin-left: 32rpx;
+  margin-right: 32rpx;
+}
+
+.admlogin-tip {
+  margin: 28rpx 32rpx 0;
+  font-size: 24rpx;
+  color: #b2b2b2;
+  line-height: 1.6;
+}

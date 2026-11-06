@@ -95,6 +95,17 @@
     </view>
   </block>
 
+  <!-- 企业管理员审核：管理员未必是员工（老板通常不建员工号），所以这一组放在
+       登录态判断之外——否则「没登录为员工」的人根本进不了审核入口。 -->
+  <view class="group-label">企业管理员</view>
+  <view class="section cells">
+    <view class="cell" bindtap="goAdminApply" hover-class="cell-hover">
+      <text class="cell-label">待审申请</text>
+      <text class="cell-value">快捷审核</text>
+      <text class="cell-arrow">›</text>
+    </view>
+  </view>
+
   <!-- 修改密码弹窗 -->
   <view class="mask" wx:if="{{pwdVisible}}" bindtap="closePwd"></view>
   <view class="pwd-dialog" wx:if="{{pwdVisible}}">
