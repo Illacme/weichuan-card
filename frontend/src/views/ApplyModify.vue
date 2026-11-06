@@ -16,6 +16,11 @@
       </div>
 
       <el-table :data="rows" v-loading="loading" border stripe>
+        <!-- 提交时间放第一列且始终可见：审核按 created_at desc 排，先判断谁等得久。
+             窄屏只隐藏员工ID，不能再把第一列藏掉（否则「第一列」在手机上没有意义）。 -->
+        <el-table-column prop="createdAt" label="提交时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column prop="staffId" label="员工ID" width="90" align="center" v-if="!isPhone" />
         <el-table-column label="变更摘要" min-width="240">
           <template #default="{ row }">
@@ -31,9 +36,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="rejectReason" label="驳回原因" min-width="160" show-overflow-tooltip />
-        <el-table-column label="提交时间" width="180" v-if="!isPhone">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
         <el-table-column label="操作" width="190" fixed="right" align="center">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">

@@ -21,6 +21,11 @@
         与 Employees 同款遮挡风险。改动列宽请按同一口径重算，宁紧勿松。
       -->
       <el-table v-if="!isPhone" :data="rows" v-loading="loading" border stripe>
+        <!-- 提交时间放第一列：列表按 created_at desc 排，审核先要看到「谁等得最久」。
+             手机端卡片没有「列」的概念，同样把这一行放到卡片最上面。 -->
+        <el-table-column prop="createdAt" label="提交时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column prop="name" label="姓名" width="100" />
         <!-- 副号并在主号下方（muted 小字）：不加列，沿用员工管理页同款写法 -->
         <el-table-column label="手机" width="120">
@@ -59,9 +64,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="rejectReason" label="驳回原因" min-width="130" show-overflow-tooltip />
-        <el-table-column label="提交时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
         <el-table-column label="操作" width="120" fixed="right" align="center">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">
@@ -76,6 +78,7 @@
       <!-- 手机端（<768）卡片列表：复用 rows 与 approve/openReject，桌面仍走 el-table -->
       <div v-else class="apply-cards" v-loading="loading">
         <div class="apply-card" v-for="row in rows" :key="row.id">
+          <div class="apply-card-row"><span class="apply-k">提交时间</span><span class="apply-v">{{ formatDateTime(row.createdAt) }}</span></div>
           <div class="apply-card-head">
             <div class="apply-card-id">
               <div class="apply-name">{{ row.name }}</div>

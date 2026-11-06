@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mountOpts, flush, paged, rowOf, btnIn, dlgOf } from '@/test/elStubs'
 import ApplyModify from './ApplyModify.vue'
 
@@ -32,7 +35,7 @@ vi.mock('@element-plus/icons-vue', () => ({
   Search: { render: () => null },
   Right: { render: () => null },
 }))
-// 桌面端为默认档；手机端单独一条用例翻 isPhone（员工ID 与提交时间两列会被隐藏）
+// 桌面端为默认档；手机端单独一条用例翻 isPhone（只隐藏员工ID，提交时间仍可见）
 const bp = vi.hoisted(() => ({ isPhone: null as any }))
 vi.mock('@/composables/useBreakpoint', async () => {
   const { ref } = await import('vue')
@@ -158,15 +161,17 @@ describe('名片修改审核 · 列表与变更摘要', () => {
     expect(mocks.listEmployees).toHaveBeenCalledWith({ staffIds: '7,8' })
   })
 
-  it('手机端隐藏员工ID与提交时间两列', async () => {
+  it('手机端只隐藏员工ID；提交时间是第一列，必须仍可见', async () => {
     bp.isPhone.value = true
     const w = await setup()
     expect(w.find('.el-table-column[data-prop="staffId"]').exists()).toBe(false)
-    expect(w.findAll('.el-table-column[data-prop="createdAt"]')).toHaveLength(0)
-    // 桌面端这两列在
+    // 旧版提交时间列没写 prop，findAll 恒为 0，那条「隐藏」断言其实是假绿。
+    // 现在补上 prop 且让它始终渲染，这里才真的测得到。
+    expect(w.findAll('.el-table-column[data-prop="createdAt"]').length).toBeGreaterThan(0)
     bp.isPhone.value = false
     await flush()
     expect(w.find('.el-table-column[data-prop="staffId"]').exists()).toBe(true)
+    expect(w.findAll('.el-table-column[data-prop="createdAt"]').length).toBeGreaterThan(0)
   })
 })
 
@@ -352,5 +357,27 @@ describe('名片修改审核 · 驳回（原因必填 + 防重入）', () => {
     expect(ElMessage.success).not.toHaveBeenCalled()
     // 失败后按钮必须恢复可点（rejecting 在 finally 里复位），否则弹窗就死了
     expect(okBtn(dlgOf(w, '驳回申请')).attributes('data-loading')).toBe('false')
+  })
+})
+
+// ---- 静态守门：提交时间必须是第一列，且窄屏不再隐藏 ----
+describe('提交时间必须是第一列（静态守门）', () => {
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'ApplyModify.vue'), 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '')
+  const table = /<el-table\s[^>]*>([\s\S]*?)<\/el-table>/.exec(src)?.[1] || ''
+  const cols = [...table.matchAll(/<el-table-column\b[^>]*>/g)].map((m) => m[0])
+
+  it('第一列是提交时间，取 createdAt，且没有 v-if', () => {
+    expect(cols.length).toBeGreaterThanOrEqual(3) // 正则失效时不能假绿
+    expect(cols[0]).toContain('label="提交时间"')
+    expect(cols[0]).toContain('prop="createdAt"')
+    expect(cols[0]).not.toContain('v-if')
+    expect(table).toContain('formatDateTime(row.createdAt)')
+  })
+
+  it('提交时间只出现一次；窄屏只隐藏员工ID', () => {
+    expect(cols.filter((c) => c.includes('label="提交时间"'))).toHaveLength(1)
+    expect(cols.find((c) => c.includes('prop="staffId"'))).toContain('v-if="!isPhone"')
+    expect(cols.at(-1)).toContain('label="操作"')
   })
 })

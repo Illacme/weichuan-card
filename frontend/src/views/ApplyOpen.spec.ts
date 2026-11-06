@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mountOpts, flush, paged, rowOf, btnIn, dlgOf } from '@/test/elStubs'
 import ApplyOpen from './ApplyOpen.vue'
 
@@ -135,6 +138,8 @@ describe('开通审核 · 列表与状态', () => {
     const cards = w.findAll('.apply-card')
     expect(cards).toHaveLength(3)
     expect(cards[0].text()).toContain('张三')
+    // 提交时间是列表第一列；卡片没有「列」，同样落到首行
+    expect(cards[0].find('.apply-k').text()).toBe('提交时间')
     expect(cards[0].findAll('button.el-button')).toHaveLength(2)
     // 已处理的一张：无按钮、有文案
     expect(cards[1].findAll('button.el-button')).toHaveLength(0)
@@ -287,5 +292,34 @@ describe('开通审核 · 驳回（原因必填）', () => {
     await flush()
     expect(dlgOf(w, '驳回申请').exists()).toBe(false)
     expect(mocks.rejectOpen).not.toHaveBeenCalled()
+  })
+})
+
+// ---- 静态守门：提交时间必须是第一列 ----
+//
+// 列顺序改坏了不报错、不变丑，只是审核时得横着扫到倒数第二列才看到「谁等得最久」。
+// 渲染桩能测行数据，测不出模板里列的先后，只能读源码钉住。
+describe('提交时间必须是第一列（静态守门）', () => {
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'ApplyOpen.vue'), 'utf8')
+    .replace(/<!--[\s\S]*?-->/g, '')
+  const table = /<el-table\s[^>]*>([\s\S]*?)<\/el-table>/.exec(src)?.[1] || ''
+  const cols = [...table.matchAll(/<el-table-column\b[^>]*>/g)].map((m) => m[0])
+
+  it('桌面表格第一列是提交时间，且取 createdAt', () => {
+    expect(cols.length).toBeGreaterThanOrEqual(3) // 正则失效时不能假绿
+    expect(cols[0]).toContain('label="提交时间"')
+    expect(cols[0]).toContain('prop="createdAt"')
+    expect(table).toContain('formatDateTime(row.createdAt)')
+  })
+
+  it('提交时间只出现一次，不再藏在倒数第二列', () => {
+    expect(cols.filter((c) => c.includes('label="提交时间"'))).toHaveLength(1)
+    expect(cols.at(-1)).toContain('label="操作"')
+  })
+
+  it('手机卡片把提交时间放在第一行', () => {
+    const card = /<div class="apply-card"[^>]*>([\s\S]*?)<div class="apply-card-head">/.exec(src)?.[1] || ''
+    expect(card).toContain('提交时间')
+    expect(card).toContain('formatDateTime(row.createdAt)')
   })
 })
