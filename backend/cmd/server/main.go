@@ -293,6 +293,15 @@ func main() {
 	stopAuditPurge := audit.StartAuditLogPurge(db, cfg.AuditPurgeInterval, auditKeepDays)
 	defer stopAuditPurge()
 
+	// 埋点原始表（stat_events）定期清理：只增不减，长期堆积拖慢统计聚合与 CSV 导出。
+	// 保留天数取自系统设置（默认 0 = 不清理，理由同上），传取值函数使后台改动即时生效。
+	statKeepDays := func() int {
+		return setting.GetInt("stat_retention_days", cfg.StatRetentionDays)
+	}
+	handler.RunStatPurgeOnce(db, statKeepDays)
+	stopStatPurge := handler.StartStatEventsPurge(db, cfg.StatPurgeInterval, statKeepDays)
+	defer stopStatPurge()
+
 	// 授权到期扫描（P0-3）：启动先扫一次（把停机期间跨过的阈值补上），之后每天一次。
 	//
 	// 它只做两件事：往日志里写 `[LICENSE][EXPIRING]`（由 alert_check.sh R5 推送），

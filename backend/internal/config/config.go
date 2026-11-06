@@ -104,6 +104,13 @@ type Config struct {
 	// 这是**界面未设置时的回落值**：后台「审计保留天数」一旦填了就以界面为准。
 	// 默认 0 的理由见 audit/purge.go——删审计日志不可逆，不能靠升级顺手清掉存量。
 	AuditRetentionDays int
+	// StatPurgeInterval 埋点原始表（stat_events）按保留期清理的检查间隔（STAT_PURGE_MINUTES，默认 12 小时）。
+	// 保留期以「天」计，检查频率高低没有业务差别，取低频即可。
+	StatPurgeInterval time.Duration
+	// StatRetentionDays 埋点数据保留天数（STAT_RETENTION_DAYS，默认 0 = 不清理）。
+	// 这是**界面未设置时的回落值**：后台「统计数据保留天数」一旦填了就以界面为准。
+	// 默认 0 的理由与审计保留一致——删统计原始数据不可逆，不能靠升级顺手清掉存量。
+	StatRetentionDays int
 	// LicenseRemindInterval 授权到期扫描间隔（LICENSE_REMIND_MINUTES，默认 1440 = 24 小时）。
 	// 到期是「天」级事件，扫得再勤也不会更早发现，只会每天多几条日志；
 	// 调小只为测试或演示（下限 1 分钟，避免 time.NewTicker panic）。
@@ -211,6 +218,8 @@ func Load() Config {
 		RatePurgeInterval:    time.Duration(atoi(getEnv("RATE_PURGE_MINUTES", "10"), 10)) * time.Minute,
 		AuditPurgeInterval:   time.Duration(atoi(getEnv("AUDIT_PURGE_MINUTES", "720"), 720)) * time.Minute,
 		AuditRetentionDays:   atoi(getEnv("AUDIT_RETENTION_DAYS", "0"), 0),
+		StatPurgeInterval:    time.Duration(atoi(getEnv("STAT_PURGE_MINUTES", "720"), 720)) * time.Minute,
+		StatRetentionDays:    atoi(getEnv("STAT_RETENTION_DAYS", "0"), 0),
 		// 默认 24 小时；下限 1 分钟（0/负数会让 time.NewTicker panic）
 		LicenseRemindInterval: remindInterval(getEnv("LICENSE_REMIND_MINUTES", "1440")),
 		LogFormat:             getEnv("LOG_FORMAT", "text"),

@@ -105,6 +105,11 @@ const (
 	// 留痕后审计页能回答「清掉了多少条、按多少天的保留期清的」。
 	ActionAuditPurge = "audit.purge"
 
+	// ActionStatPurge 按保留期清理埋点原始数据（后台定时任务，见 handler/stat_purge.go）。
+	// stat_events 只增不减，长期堆积会拖慢统计聚合与 CSV 导出；清理动作本身留痕，
+	// 使后台审计页能看到「什么时候、按多少天、清了多少条」。
+	ActionStatPurge = "stat.purge"
+
 	// ActionURLProbe 后台「测试地址」：服务端会按管理员填的 URL 发一次出向 HEAD。
 	// 按审计包「只读不记」的约定本不该留痕，但它能把服务器当代理访问任意主机，
 	// 是典型 SSRF 入口——谁在什么时候测过哪个 host、结果如何必须有据可查。
