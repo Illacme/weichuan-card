@@ -519,22 +519,100 @@ describe('content/CompanyProfile', () => {
       )
     })
 
-    it('提示说明只切一次、建议不同域名；备用地址可点开验证', async () => {
+    // 2026-11-06 截图：主源与备用都填了 http://qiniu.ziyuanxingqiu.cn/video-langhui.mp4。
+    // 小程序端 `backup !== currentSrc` 让切换分支永远不进，主源一失败直接显示
+    // 「视频加载失败」，兜底开关形同虚设；后台原来只拦「空」，这种配置能一路存进去。
+    describe('备用地址不能与主源相同', () => {
+      const SAME_HINT = '备用地址不能与主视频地址相同，请换用另一个域名或 CDN 的地址'
+
+      it('回显时就是同一个地址：拦下且不提交', async () => {
+        const w = await mountPage(mp4Profile({ videoBackupUrl: MAIN }), CAP)
+        await flush()
+        expect(inputModel(w, BACKUP_PH)).toBe(MAIN)
+        expect(inputModel(w, MAIN_PH)).toBe(MAIN)
+
+        await saveButton(w).trigger('click')
+        await flush()
+
+        expect(ElMessage.warning).toHaveBeenCalledWith(SAME_HINT)
+        expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+      })
+
+      it('首尾空格包住同一个地址也拦下（trim 后比较）', async () => {
+        const w = await mountPage(mp4Profile({ videoBackupUrl: `  ${MAIN}  ` }), CAP)
+        await flush()
+
+        await saveButton(w).trigger('click')
+        await flush()
+
+        expect(ElMessage.warning).toHaveBeenCalledWith(SAME_HINT)
+        expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+      })
+
+      it('改成不同地址后正常放行：不是一刀切拦死', async () => {
+        const w = await mountPage(mp4Profile({ videoBackupUrl: MAIN }), CAP)
+        await flush()
+        await byPlaceholder(w, BACKUP_PH).setValue(BACKUP)
+        await flush()
+
+        await saveButton(w).trigger('click')
+        await flush()
+
+        expect(ElMessage.warning).not.toHaveBeenCalled()
+        expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+          expect.objectContaining({ videoUrl: MAIN, videoBackupUrl: BACKUP })
+        )
+      })
+
+      it('没开兜底时不拦：开关关着，相同地址根本不会被用到', async () => {
+        const w = await mountPage(mp4Profile({ videoBackupUrl: MAIN, videoFallbackUrl: false }), CAP)
+        await flush()
+
+        await saveButton(w).trigger('click')
+        await flush()
+
+        expect(ElMessage.warning).not.toHaveBeenCalled()
+        expect(mocks.saveCompanyProfile).toHaveBeenCalled()
+      })
+
+      it('视频号档不受影响：主源是 feedId，兜底地址走 form.videoUrl', async () => {
+        const w = await mountPage(mp4Profile({ videoBackupUrl: MAIN }), CAP)
+        await flush()
+        await pickSource(w, 'channels')
+        await byPlaceholder(w, '视频号助手 → 动态管理 → 复制 feedId').setValue('feed-1')
+        await flush()
+
+        await saveButton(w).trigger('click')
+        await flush()
+
+        expect(ElMessage.warning).not.toHaveBeenCalled()
+        expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+          expect.objectContaining({ videoSource: 'channels', videoBackupUrl: MAIN })
+        )
+      })
+    })
+
+    it('提示说明只切一次、备用地址必须与主源不同；不再重复回显「备用地址：」', async () => {
       const w = await mountPage(mp4Profile(), CAP)
       await flush()
 
       expect(w.text()).toContain('只切一次')
-      expect(w.text()).toContain('不同域名')
-      expect(w.find('.backup-url-check a').attributes('href')).toBe(BACKUP)
+      expect(w.text()).toContain('不能与主视频地址相同')
+      // 用户反馈「为什么兜底下面还显示个备用地址」：form.videoBackupUrl 原样写库、
+      // 没有 videoUrlToSave() 那层计算，输入框里就是最终值，再摆一行纯属重复。
+      expect(w.find('.backup-url-check').exists()).toBe(false)
+      expect(w.text()).not.toContain('备用地址：')
+      expect(inputModel(w, BACKUP_PH)).toBe(BACKUP)
     })
 
-    it('备用地址不是 http(s)/站内路径时只作纯文本，不生成可点链接', async () => {
+    it('备用地址形如 javascript: 时也不再生成第二处可点链接', async () => {
       const w = await mountPage(mp4Profile({ videoBackupUrl: 'javascript:alert(1)' }), CAP)
       await flush()
 
-      expect(w.find('.backup-url-check').exists()).toBe(true)
-      expect(w.find('.backup-url-check a').exists()).toBe(false)
-      expect(w.find('.backup-url-check').text()).toContain('javascript:alert(1)')
+      expect(w.find('.backup-url-check').exists()).toBe(false)
+      // 页面里唯一的 .video-url-check 只服务「最终播放地址」，且展示的是主源
+      expect(w.findAll('.video-url-check')).toHaveLength(1)
+      expect(w.find('.video-url-check a').attributes('href')).toBe(MAIN)
     })
   })
 

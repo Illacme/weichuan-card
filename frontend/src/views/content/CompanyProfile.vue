@@ -191,19 +191,19 @@
           <template v-if="isMp4">
             主视频地址打不开时自动切换，只切一次；备用地址也失败才会显示「视频加载失败」。
             <span class="hint-warn">
-              建议填与主源<b>不同域名或不同 CDN</b> 的地址：同一域名挂了两边都挂，等于没兜底。
+              备用地址<b>不能与主视频地址相同</b>：填成同一个地址时切换不会触发，保存会被拦下。
+              建议用<b>不同域名或不同 CDN</b>，同一域名挂了两边都挂，等于没兜底。
+              填完请在浏览器里打开一次确认能播放。
             </span>
           </template>
           <template v-else>
             仅在视频号 / 腾讯视频主源报错时切换，正常情况下不会用到。留空等于没开兜底。
           </template>
         </div>
-        <!-- 备用地址也要能点开验证：填了个 404 的备用域名，兜底等于没有 -->
-        <div v-if="form.videoFallbackUrl && isMp4 && form.videoBackupUrl" class="video-url-check backup-url-check">
-          <span class="hint">备用地址：</span>
-          <a v-if="canOpenBackupUrl" :href="form.videoBackupUrl" target="_blank" rel="noopener noreferrer">{{ form.videoBackupUrl }}</a>
-          <span v-else>{{ form.videoBackupUrl }}</span>
-        </div>
+        <!-- 这里刻意不把备用地址再回显一遍（2026-11-06 用户反馈「为什么还显示个备用地址」）。
+             上面的「最终播放地址」必须单列，因为它是 videoUrlToSave() 按档位算出来的，
+             输入框里看到的未必是写库值；而 form.videoBackupUrl 原样写库、没有任何计算，
+             再摆一个「备用地址：」只是把输入框里的内容重复一遍，反而像存在第二份配置。 -->
       </el-form-item>
 
       <el-form-item label="封面 / 占位图">
@@ -349,9 +349,6 @@ const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.
 // 校验「开了兜底却没填地址」也必须按槽取值，否则 MP4 档会拿主源地址冒充备用地址，
 // 拦不住真正没填的情况（主源永远非空）。
 const fallbackUrlValue = computed(() => (isMp4.value ? form.videoBackupUrl : form.videoUrl))
-// 备用地址同样要能点开验证：填了个 404 的备用域名，兜底等于没有。
-// 与 canOpenVideoUrl 同一套白名单，只认 http(s) 绝对地址与站内相对路径。
-const canOpenBackupUrl = computed(() => /^(https?:\/\/|\/)/i.test(form.videoBackupUrl))
 
 async function load() {
   loading.value = true
@@ -414,6 +411,23 @@ async function save() {
   // 拦不住「备用地址没填」），查 videoBackupUrl 在视频号档又永远为空。
   if (needFallback.value && form.videoFallbackUrl && !fallbackUrlValue.value.trim()) {
     ElMessage.warning('已开启兜底，请填写兜底 MP4 地址')
+    return
+  }
+  // 备用地址与主源填成同一个 URL，同样是「存了也永远不生效」的配置：
+  // 小程序端切换条件是 `backup !== currentSrc`，地址相同就不切，主源一失败
+  // 直接显示「视频加载失败」，兜底开关形同虚设（2026-11-06 截图反馈：两个输入框
+  // 都是 http://qiniu.ziyuanxingqiu.cn/video-langhui.mp4）。
+  // 只对自托管 MP4 档比较：视频号 / 腾讯视频档的主源是 feedId / vid，不是 URL，
+  // 且其兜底地址在 form.videoUrl，拿它跟 videoBackupUrl 比没有意义。
+  // 主源取 videoUrlToSave() 而不是某个输入框，保证与真正写库的值同源。
+  if (
+    needFallback.value &&
+    form.videoFallbackUrl &&
+    isMp4.value &&
+    form.videoBackupUrl.trim() &&
+    form.videoBackupUrl.trim() === videoUrlToSave().trim()
+  ) {
+    ElMessage.warning('备用地址不能与主视频地址相同，请换用另一个域名或 CDN 的地址')
     return
   }
   // feedId（同主体）与 feed-token（跨主体）二选一，feedId 优先；两个都空则播不了任何东西

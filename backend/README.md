@@ -391,7 +391,7 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 - **为什么不复用 0001 的 `backup_mp4_url`**：0016 把它的值搬进 `video_url` 后没有清空，老库里残留的是旧版主视频地址。重新启用会让客户一打开开关就播一段早该下线的旧视频，属于静默的存量突变，比加一列危险得多。
 - **升级零突变**：迁移 0038 只加列、`NOT NULL DEFAULT ''`、不搬迁任何存量数据；升级后开关默认关。老前端请求体不带这一列时按空串处理，不报错也不凭空造出地址。
 - **小程序端**：主 MP4 `binderror` 时自动切一次到备用地址（先清空 `src` 销毁播放器再设回），备用也失败才显示「视频加载失败」，提示会点明两个地址都挂了；`videoBackupUrl` 与主源一样过 `assetUrl` 补成绝对地址。建议备用地址用**与主源不同的域名 / 不同 CDN**——同一个域名挂了两边都挂，等于没兜底。
-- **接口**：`GET/PUT /api/admin/company-profile` 与 `/api/card` 均透出 `videoBackupUrl`，契约见 `docs/openapi.yaml`；后台「公司简介」页里备用地址可点开验证。
+- **接口**：`GET/PUT /api/admin/company-profile` 与 `/api/card` 均透出 `videoBackupUrl`，契约见 `docs/openapi.yaml`；后台保存时会拦下「备用地址与主源相同」的配置（小程序端相同地址不会触发切换，等于没兜底）。
 
 ### ⚠️ 升级必做：migrations/ 目录要跟着二进制一起换
 
