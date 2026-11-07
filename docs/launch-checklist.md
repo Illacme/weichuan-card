@@ -39,6 +39,7 @@
 | 服务端时区 `TZ` | `docker-compose.yml` 默认 `Asia/Shanghai`；原生部署设 systemd `Environment=TZ=Asia/Shanghai` | 统计「今日」口径正确：`docker exec weichuan-backend date` 与北京时间一致。不设时 Go 读不到时区库会**静默按 UTC**——每天 00:00–08:00 的访问落到前一天，不报错、只是数字悄悄错位 | ❌ 需人工看一眼容器时间 |
 | CDN 刷新凭据 `CDN_*` | 同上「文件存储与 CDN」或环境变量 | 需刷新时选了厂商（`CDN_PROVIDER`，五家之一）并填全该厂商要求的凭据、开 `CDN_ENABLED` | ❌ 需人工确认 |
 | `MYSQL_ROOT_PASSWORD` | `docker-compose.yml` / 环境 | 仅 `--profile mysql` 形态必填；改强随机值（默认 SQLite 形态无所谓） | ✅ 查示例值 / 必填 |
+| **微信小程序服务器域名** | mp.weixin.qq.com → 开发管理 → 开发设置 → 服务器域名 | `request` / `uploadFile` / `downloadFile` **三类**都含 `https://<种子基址域名>`。少一类对应功能在真机上静默失败：上传头像走 `wx.uploadFile`，海报背景与小程序码走 `canvas.createImage()`；开发者工具勾「不校验合法域名」时**复现不出来**，只有真机会中招 | ❌ 需人工确认（逐项判据见 `docs/real-device-acceptance.md` §0.5） |
 
 ## 三、运行级（上线后看护）
 
