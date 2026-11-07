@@ -13,6 +13,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
+  goAdminArea: vi.fn(async () => {}),
 }))
 
 vi.mock('../utils/request', () => ({
@@ -21,6 +22,7 @@ vi.mock('../utils/request', () => ({
     u ? (/^https?:\/\//i.test(u) ? u : `https://cdn.test${u.startsWith('/') ? '' : '/'}${u}`) : '',
   apiBaseUrl: () => 'https://api.test',
 }))
+vi.mock('../utils/adminEntry', () => ({ goAdminArea: mocks.goAdminArea }))
 
 let wxStub: any
 let storage: Map<string, any>
@@ -34,6 +36,7 @@ beforeEach(() => {
   storage = installed.storage
   app = installApp({ myStaffId: 0 })
   mocks.request.mockClear()
+  mocks.goAdminArea.mockClear()
 })
 
 afterEach(() => {
@@ -125,6 +128,15 @@ describe('employee/me 页', () => {
     p.goMyCard()
 
     expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/index/index' })
+  })
+
+  // 目标页由 adminEntry 在导航前定好；本页绝不自己 navigateTo 审核页，
+  // 否则审核页会先渲染「待处理」列表再异步 redirectTo 登录页（真机闪一下）。
+  it('点「待审申请」交给 adminEntry 决策，本页不直接打开审核页', async () => {
+    const p = await page()
+    await p.goAdminApply()
+    expect(mocks.goAdminArea).toHaveBeenCalledTimes(1)
+    expect(wxStub.navigateTo).not.toHaveBeenCalled()
   })
 
   // ---- 改密 ----

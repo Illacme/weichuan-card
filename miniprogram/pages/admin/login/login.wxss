@@ -21,10 +21,23 @@
   line-height: 1.5;
 }
 
+/* 两个主按钮必须撑满内容区并居中、单行不折。
+   app.wxss 的 .primary-btn/.plain-btn 只给了配色和圆角，没给宽度/行高；
+   基础库 style v2 下 button 默认按内容收缩 + 左对齐，真机上就是「半屏宽、
+   贴左边」，且「用当前微信免密进入」10 个字被挤成两行（2026-11-07 反馈）。
+   750rpx 恒等于屏宽，686rpx = 屏宽 - 左右各 32rpx，比 calc() 兼容性更稳。 */
 .admlogin .primary-btn,
 .admlogin .plain-btn {
-  margin-left: 32rpx;
-  margin-right: 32rpx;
+  display: block;
+  box-sizing: border-box;
+  width: 686rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0 24rpx;
+  margin: 24rpx 32rpx 0;
+  font-size: 30rpx;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .admlogin-tip {

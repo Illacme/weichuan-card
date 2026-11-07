@@ -14,6 +14,24 @@ import { apiBaseUrl, type ApiResult } from './request'
 
 export const ADMIN_TOKEN_KEY = 'adminToken'
 export const ADMIN_REFRESH_KEY = 'adminRefreshToken'
+// 本机是否用微信免密登过管理员：静默免密的准入门槛。
+// 只在「免密登录成功」或「密码登录后绑定微信成功」时置位，显式退出管理员登录时清掉。
+// 没有这道门槛，纯访客 / 只登过员工的微信每点一次「待审申请」都会打一次登录接口，
+// 而它和账号密码登录共用 login:<IP> 限流桶（默认 10 次/分），办公网共享出口下很快 429
+// ——真机上表现为「我还没登录，却提示登录尝试过于频繁」。
+export const ADMIN_WX_BOUND_KEY = 'adminWxBound'
+
+export function markAdminWxBound(): void {
+  wx.setStorageSync(ADMIN_WX_BOUND_KEY, true)
+}
+
+export function hasAdminWxBound(): boolean {
+  return !!wx.getStorageSync(ADMIN_WX_BOUND_KEY)
+}
+
+export function clearAdminWxBound(): void {
+  wx.removeStorageSync(ADMIN_WX_BOUND_KEY)
+}
 
 // saveAdminAuth 保存登录响应里的令牌。刻意只在真的拿到 token 时返回 true：
 // 登录接口业务码非 0 时也带 code/msg，页面若只看 code 就存，会把空令牌写进 Storage，

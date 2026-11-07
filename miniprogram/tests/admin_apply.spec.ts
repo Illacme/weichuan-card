@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   clearAdminAuth: vi.fn(),
   wxLoginCode: vi.fn(async () => 'code-1'),
   companyId: 7,
+  endAdminSession: vi.fn(),
 }))
 
 vi.mock('../utils/adminRequest', () => ({
@@ -32,6 +33,10 @@ vi.mock('../utils/adminRequest', () => ({
 }))
 vi.mock('../utils/wechat', () => ({ wxLoginCode: mocks.wxLoginCode }))
 vi.mock('../utils/tenant', () => ({ getCompanyId: () => mocks.companyId }))
+vi.mock('../utils/adminEntry', () => ({
+  LOGIN_PAGE: '/pages/admin/login/login',
+  endAdminSession: mocks.endAdminSession,
+}))
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -54,6 +59,7 @@ beforeEach(() => {
   mocks.hasAdminToken.mockReset()
   mocks.hasAdminToken.mockReturnValue(false)
   mocks.clearAdminAuth.mockClear()
+  mocks.endAdminSession.mockClear()
   mocks.wxLoginCode.mockClear()
   mocks.wxLoginCode.mockResolvedValue('code-1')
   mocks.companyId = 7
@@ -65,40 +71,51 @@ async function page() {
 }
 
 describe('身份兜底', () => {
-  it('已有 adminToken：直接拉列表，不再走微信登录', async () => {
+  it('已有 adminToken：置 ready 后直接拉列表，不再走微信登录', async () => {
     mocks.hasAdminToken.mockReturnValue(true)
     mocks.adminRequest.mockResolvedValueOnce({ code: 0, data: [{ id: 1, name: '张三', status: 'pending', createdAt: '2026-11-06T10:00:00+08:00' }], total: 1 })
     const p = await page()
     p.onShow()
     await flush()
 
+    expect(p.data.ready).toBe(true)
     expect(mocks.wxLoginCode).not.toHaveBeenCalled()
     expect(mocks.adminRequest).toHaveBeenCalledWith('GET', '/api/admin/apply/open', { page: 1, size: 20, status: 'pending' })
     expect(p.data.list).toHaveLength(1)
   })
 
-  it('无令牌但微信已绑定：免密登录后自动进列表（管理员第二次进来零输入）', async () => {
-    mocks.adminRequest.mockImplementation(async (m: string, path: string) => {
-      if (path === '/api/admin/login/wechat') {
-        return { code: 0, token: 'tk-1', refreshToken: 'rt-1', username: 'boss' }
-      }
-      return { code: 0, data: [], total: 0 }
-    })
+  it('无令牌：当帧就回登录页，零请求、ready 保持 false（不再先闪一下待处理列表）', async () => {
     const p = await page()
     p.onShow()
     await flush()
 
-    expect(mocks.adminRequest).toHaveBeenCalledWith('POST', '/api/admin/login/wechat', { code: 'code-1', companyId: 7 })
-    expect(mocks.saveAdminAuth).toHaveBeenCalledWith({ token: 'tk-1', refreshToken: 'rt-1' })
-    expect(wxStub.redirectTo).not.toHaveBeenCalled()
+    expect(p.data.ready).toBe(false)
+    expect(p.data.list).toHaveLength(0)
+    expect(mocks.adminRequest).not.toHaveBeenCalled()
+    expect(mocks.wxLoginCode).not.toHaveBeenCalled()
+    expect(wxStub.redirectTo).toHaveBeenCalledWith({ url: '/pages/admin/login/login' })
   })
 
-  it('无令牌且未绑定：跳管理员登录页（不说「登录失败」就完事）', async () => {
-    mocks.adminRequest.mockResolvedValue({ code: 3, msg: '该微信还没有绑定管理员账号，请先用账号密码登录' })
+  it('审核页绝不消费微信登录响应：静默免密只在入口 adminEntry 发生', async () => {
+    // 即便把后端响应改成「登录成功」，本页也不该发登录请求、不该存令牌
+    mocks.adminRequest.mockResolvedValue({ code: 0, token: 'tk-1', refreshToken: 'rt-1' })
     const p = await page()
     p.onShow()
     await flush()
 
+    expect(mocks.adminRequest).not.toHaveBeenCalled()
+    expect(mocks.saveAdminAuth).not.toHaveBeenCalled()
+    expect(wxStub.redirectTo).toHaveBeenCalledWith({ url: '/pages/admin/login/login' })
+  })
+
+  it('退出管理员登录走 endAdminSession（连绑定标记一起清），不是只清令牌', async () => {
+    mocks.hasAdminToken.mockReturnValue(true)
+    const p = await page()
+    p.onShow()
+    await flush()
+
+    await p.onLogout()
+    expect(mocks.endAdminSession).toHaveBeenCalled()
     expect(wxStub.redirectTo).toHaveBeenCalledWith({ url: '/pages/admin/login/login' })
   })
 
@@ -296,10 +313,16 @@ describe('审批动作', () => {
 
 describe('静态守门', () => {
   const appJSON = JSON.parse(readFileSync(resolve(HERE, '../app.json'), 'utf8'))
-  const applyTS = readFileSync(resolve(HERE, '../pages/admin/apply/apply.ts'), 'utf8')
+  const applyTS = code(readFileSync(resolve(HERE, '../pages/admin/apply/apply.ts'), 'utf8'))
   const applyWXML = readFileSync(resolve(HERE, '../pages/admin/apply/apply.wxml'), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
-  const loginTS = readFileSync(resolve(HERE, '../pages/admin/login/login.ts'), 'utf8')
+  const loginTS = code(readFileSync(resolve(HERE, '../pages/admin/login/login.ts'), 'utf8'))
   const meWXML = readFileSync(resolve(HERE, '../pages/employee/me/me.wxml'), 'utf8')
+
+  // 源码守门先剥注释：注释里留有「旧版曾经在这里 POST xxx」的追溯说明，
+  // 不剥就会把解释性文字误判成现存实现。
+  function code(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  }
 
   it('两个新页面已注册，且默认入口没被改动', () => {
     expect(appJSON.pages).toContain('pages/admin/login/login')
@@ -311,6 +334,9 @@ describe('静态守门', () => {
     expect(applyTS).toContain("from '../../../utils/adminRequest'")
     expect(applyTS).not.toMatch(/from '\.\.\/\.\.\/\.\.\/utils\/request'/)
     expect(applyTS).toContain("'/api/admin/apply/'")
+    // 自动微信免密是限流误伤的根因，只能存在于 utils/adminEntry.ts
+    expect(applyTS).not.toContain('/api/admin/login/wechat')
+    expect(applyTS).not.toContain('wxLoginCode')
   })
 
   it('驳回理由用页内 textarea，不用 wx.showModal 的 editable（低版本会吞输入）', () => {

@@ -1,4 +1,6 @@
-<view class="apv">
+<!-- ready 未确认前绝不渲染「待处理」页签 / 计数 / 空态：
+     旧版 onShow 异步判身份，这些会先闪一下再被 redirectTo 登录页（真机反馈）。 -->
+<view class="apv" wx:if="{{ready}}">
   <!-- 页签：开通申请 / 名片修改。两个队列互相独立，合并显示会让「先清谁」变得模糊 -->
   <view class="apv-tabs">
     <view class="apv-tab {{tab === 'open' ? 'on' : ''}}" data-tab="open" bindtap="onTabChange">开通申请</view>
@@ -59,3 +61,4 @@
     </view>
   </view>
 </view>
+<view class="apv-state" wx:else>正在校验管理员身份…</view>

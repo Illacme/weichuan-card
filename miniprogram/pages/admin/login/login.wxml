@@ -15,8 +15,8 @@
     </view>
   </view>
 
-  <button class="primary-btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onSubmit">登录</button>
-  <button class="plain-btn" loading="{{wxSubmitting}}" disabled="{{wxSubmitting}}" bindtap="onWechatLogin">用当前微信免密进入</button>
+  <button class="primary-btn" loading="{{submitting}}" disabled="{{checking || submitting}}" bindtap="onSubmit">登录</button>
+  <button class="plain-btn" loading="{{wxSubmitting}}" disabled="{{checking || wxSubmitting}}" bindtap="onWechatLogin">用当前微信免密进入</button>
 
-  <view class="admlogin-tip">{{tip}}</view>
+  <view class="admlogin-tip">{{checking ? '正在验证管理员身份…' : tip}}</view>
 </view>

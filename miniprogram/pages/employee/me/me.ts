@@ -1,6 +1,7 @@
 import { request, assetUrl } from '../../../utils/request'
 import { onImgFail } from '../../../utils/thumb'
 import { wxLoginCode } from '../../../utils/wechat'
+import { goAdminArea } from '../../../utils/adminEntry'
 
 // 员工「我的」页（tabBar）：未登录给登录 / 申请开通入口，已登录给名片与账号操作。
 // 数据在 onShow 拉取而非 onLoad——从登录页 / 编辑页返回时需要刷新登录态与资料。
@@ -116,9 +117,12 @@ Page({
       fail: () => wx.reLaunch({ url: '/pages/index/index' }),
     })
   },
-  // 企业管理员审核入口：无管理员令牌时审核页会自己跳登录页，这里不用预判身份
-  goAdminApply() {
-    wx.navigateTo({ url: '/pages/admin/apply/apply' })
+  // 企业管理员审核入口：目标页由 adminEntry 在导航**之前**定好。
+  // 旧实现无条件 navigateTo 审核页，让审核页自己 onShow 异步判身份再 redirectTo 登录页，
+  // 真机上就是「先闪一下待处理列表」（2026-11-07 反馈）。本页也不发任何登录请求：
+  // empToken 是员工身份，不能拿它证明管理员身份，两套令牌通道严格分离。
+  async goAdminApply() {
+    await goAdminArea()
   },
   // 生成海报（B9）：带本人编号进海报页，canvas 合成后存相册
   goPoster() {

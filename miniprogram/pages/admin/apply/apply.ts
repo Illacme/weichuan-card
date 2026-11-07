@@ -1,7 +1,8 @@
 // 企业管理员审核页（小程序端）：开通申请 / 名片修改申请，就地通过或驳回。
 //
-// 身份：adminToken（见 utils/adminRequest.ts）。进页面先看有没有令牌，没有就试一次
-// 微信免密登录（openid 已绑定）；都不行才跳登录页——多数管理员第二次进来是零输入的。
+// 身份：adminToken（见 utils/adminRequest.ts）。目标页在「我的」页点入口时就已判定
+// （utils/adminEntry.ts）：本页只做同步令牌校验，无令牌立即回登录页，
+// **绝不在这里自动发微信免密登录请求**。
 //
 // 与 PC 后台的差异（刻意为之）：
 //   1) 只做「待处理 / 全部」两档筛选，不做关键字搜索——手机上打字慢，审核的动作是
@@ -10,11 +11,8 @@
 //      否则审核人根本没办法把账号交给新员工。
 //   3) 驳回理由用页内输入框而不是 wx.showModal 的 editable（后者要基础库 2.17.1，
 //      低版本会静默变普通弹窗，理由根本填不进去）。
-import { adminRequest, saveAdminAuth, hasAdminToken, clearAdminAuth } from '../../../utils/adminRequest'
-import { wxLoginCode } from '../../../utils/wechat'
-import { getCompanyId } from '../../../utils/tenant'
-
-const LOGIN_PAGE = '/pages/admin/login/login'
+import { adminRequest, hasAdminToken, clearAdminAuth } from '../../../utils/adminRequest'
+import { LOGIN_PAGE, endAdminSession } from '../../../utils/adminEntry'
 
 const STATUS_TEXT: Record<string, string> = {
   pending: '待审核',
@@ -97,6 +95,9 @@ export function decorateModify(row: any): any {
 
 Page({
   data: {
+    // 身份未确认前 WXML 不渲染任何审核内容。旧版 onShow 里异步试免密，
+    // 「待处理」页签 / 计数 / 空态会先画出来再被 redirectTo 踢走（真机闪一下）。
+    ready: false,
     tab: 'open', // open | modify
     status: 'pending', // pending | all
     list: [] as any[],
@@ -108,7 +109,6 @@ Page({
     loadingMore: false,
     error: '',
     moreError: '',
-    adminName: '',
     acting: 0, // 正在提交操作的行 id，用于禁用该行按钮
     rejectVisible: false,
     rejectReason: '',
@@ -119,28 +119,18 @@ Page({
     this.ensureAuth()
   },
 
-  // ensureAuth 有令牌就直接用；没有就试一次微信免密登录；都不行才去登录页。
-  async ensureAuth() {
-    if (hasAdminToken()) {
-      this.load(1, true)
-      return
-    }
-    let ok = false
-    try {
-      const code = await wxLoginCode()
-      const r = await adminRequest('POST', '/api/admin/login/wechat', {
-        code,
-        companyId: getCompanyId(),
-      })
-      ok = r.code === 0 && saveAdminAuth({ token: r.token, refreshToken: r.refreshToken } as any)
-      if (ok) this.setData({ adminName: (r as any).username || '' })
-    } catch (err) {
-      ok = false
-    }
-    if (!ok) {
+  // ensureAuth 是同步的：有令牌才 ready + 拉列表，没有就直接回登录页。
+  // 曾经这里会 wx.login → POST /api/admin/login/wechat，两个代价：
+  //  ① 异步期间 WXML 已渲染审核页 → 真机上「先闪一下列表再跳登录页」；
+  //  ② 每次 onShow 都消耗 login:<IP> 限流桶（与账号密码登录共用，10 次/分），
+  //     把用户主动点「用当前微信免密进入」时的额度挤没，弹出「登录尝试过于频繁」。
+  // 静默免密已移到入口 adminEntry.goAdminArea，且只在绑定过 + 过冷却窗口时做一次。
+  ensureAuth() {
+    if (!hasAdminToken()) {
       wx.redirectTo({ url: LOGIN_PAGE })
       return
     }
+    this.setData({ ready: true })
     this.load(1, true)
   },
 
@@ -300,7 +290,9 @@ Page({
       content: '退出后需要重新输入后台账号密码',
       success: (res: any) => {
         if (!res.confirm) return
-        clearAdminAuth()
+        // 主动退出要连「本机绑过管理员微信」一起清掉，否则下次又被静默免密带回审核页，
+        // 等于退出按钮失效。401 那条路径只清令牌，不清绑定标记。
+        endAdminSession()
         wx.redirectTo({ url: LOGIN_PAGE })
       },
     })

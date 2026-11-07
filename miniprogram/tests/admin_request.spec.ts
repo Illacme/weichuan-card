@@ -136,4 +136,23 @@ describe('管理员请求通道', () => {
     expect(hasAdminToken()).toBe(false)
     expect(storage.has('adminRefreshToken')).toBe(false)
   })
+
+  it('微信绑定标记独立于令牌：401 只清令牌，主动退出才清绑定', async () => {
+    const {
+      markAdminWxBound, hasAdminWxBound, clearAdminWxBound,
+      ADMIN_WX_BOUND_KEY, clearAdminAuth,
+    } = await mod()
+
+    expect(hasAdminWxBound()).toBe(false)
+    markAdminWxBound()
+    expect(storage.get(ADMIN_WX_BOUND_KEY)).toBe(true)
+    expect(hasAdminWxBound()).toBe(true)
+
+    // 令牌失效不能把「这台设备绑过管理员」抹掉，否则静默免密永远不再触发
+    clearAdminAuth()
+    expect(hasAdminWxBound()).toBe(true)
+
+    clearAdminWxBound()
+    expect(hasAdminWxBound()).toBe(false)
+  })
 })
