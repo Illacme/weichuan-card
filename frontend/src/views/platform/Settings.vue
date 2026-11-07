@@ -387,8 +387,9 @@ const GROUP_LABELS: Record<string, string> = {
   storage: '文件存储与 CDN',
   security: '安全与基础设施（只读）',
   feature: '功能开关',
+  stats: '数据统计',
 }
-const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'mpupload', 'auth', 'security', 'feature']
+const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'mpupload', 'auth', 'security', 'feature', 'stats']
 
 // 分组导语：每组一句话「管什么、什么时候该动」，降低首配心智负担。
 const GROUP_BLURBS: Record<string, string> = {
@@ -404,6 +405,7 @@ const GROUP_BLURBS: Record<string, string> = {
   auth: '后台登录凭证能用多久、防爆破的尝试次数。',
   security: '数据库连接、签名密钥等关键项，界面不能改，只展示可辨认的预览（隐去口令与密钥中段），必须到部署环境改环境变量或配置文件（默认 data/runtime.env）后重启——改错会把自己锁在系统外。',
   feature: '运营期功能开关，按需开启。',
+  stats: '埋点原始数据的保留与自动清理：长期堆积会拖慢统计聚合与导出，按保留期清掉超期数据。',
 }
 
 // 组内顺序：呈现顺序由前端显式掌控，不随后端 registry 的声明顺序漂移

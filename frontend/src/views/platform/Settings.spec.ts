@@ -80,6 +80,7 @@ const items: SettingItem[] = [
   { key: 'pii_enc_key', name: '个人信息加密密钥', group: 'security', type: 'string', value: '******', description: 'PII 密钥', secret: true, restart: true, readOnly: true, envVar: 'PII_ENC_KEY', configured: true },
   { key: 'independent_lock', name: '独立版企业锁定', group: 'feature', type: 'bool', value: 'false', description: '独立版锁定', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'metrics_enabled', name: '开放监控指标', group: 'feature', type: 'bool', value: '', description: '指标开关', secret: false, restart: false, readOnly: false, envVar: 'METRICS_ENABLED', configured: false },
+  { key: 'stat_retention_days', name: '统计数据保留天数', group: 'stats', type: 'int', value: '0', description: '埋点原始数据保留天数，超期自动清理。0=永不清理', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
 ]
 
 // 轻量 stub：仅渲染插槽 / 捕获 props，避免引入完整 Element Plus（jsdom 下过重易 OOM）。
@@ -281,6 +282,19 @@ describe('Settings 系统设置', () => {
     expect(rowOf(w, 'jwt_key').text()).toContain('敏感')
     // 环境变量名提示（只读项只告诉改法）
     expect(rowOf(w, 'db_dsn').text()).toContain('DB_DSN')
+  })
+
+  it('数据统计组渲染 stat_retention_days 为整数输入框（默认 0 = 永不清理）', async () => {
+    const { w } = await setup()
+    // 新增的「数据统计」分组与其导语都应出现
+    expect(w.text()).toContain('数据统计')
+    expect(w.text()).toContain('埋点原始数据的保留与自动清理')
+    // 该项为 int 类型，应渲染成 el-input-number，而非文本框
+    const num = numberInputOf(w, 'stat_retention_days')
+    expect(num.exists()).toBe(true)
+    expect((num.element as HTMLInputElement).value).toBe('0')
+    // 不渲染「需重启」标记（即时生效的配置项）
+    expect(rowOf(w, 'stat_retention_days').text()).not.toContain('需重启')
   })
 
   it('无修改时保存按钮禁用，不提交（含敏感项的掩码不被回传）', async () => {
@@ -501,8 +515,8 @@ describe('Settings 系统设置', () => {
     // 上传组导语要说清两条链接各自的适用条件：直传预签名公私桶都走，
     // 只有私有桶下载签名仅在公开访问关掉时才涉及（2026-10-22 核查 UploadField 总是先试预签名）
     expect(w.text()).toContain('公私桶都会走')
-    // 9 个分组各一条导语（新增「后台上传小程序代码」）
-    expect(w.findAll('.group-blurb')).toHaveLength(9)
+    // 10 个分组各一条导语（通用 / 存储 / 上传 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计）
+    expect(w.findAll('.group-blurb')).toHaveLength(10)
   })
 
   it('上线就绪清单默认收起为摘要条：点「查看详情」才展开，并记住选择', async () => {
@@ -774,6 +788,7 @@ describe('Settings 系统设置', () => {
       '登录与令牌',
       '安全与基础设施（只读）',
       '功能开关',
+      '数据统计',
     ])
   })
 
@@ -1249,7 +1264,7 @@ describe('Settings 系统设置', () => {
     // 清空搜索恢复全量
     await search.setValue('')
     await nextTick()
-    expect(w.findAll('.group-card')).toHaveLength(9)
+    expect(w.findAll('.group-card')).toHaveLength(10)
     expect(rowExists(w, 'brand_name')).toBe(true)
   })
 
