@@ -43,6 +43,21 @@
 ## 三、运行级（上线后看护）
 
 - **部署前跑一遍** `bash scripts/preflight.sh`：期望全 `PASS`；`PREFLIGHT_STRICT=1` 时 `WARN` 也返回退出码 1。
+  - **在哪跑很重要**：脚本只读「仓库根 `.env`（若存在）+ 当前进程环境变量」，**看不到**
+    后台「系统设置」里覆盖的值，也读不到服务器上的部署形态。在开发机裸跑，
+    `JWT_KEY` / `ADMIN_PASS` 两条 FAIL 往往只是「本机没有 `.env`」的假警报——
+    线上服务能正常返回 `/healthz/ready` 的 JSON，而 `InsecureGates` 会以默认凭据
+    **拒绝启动**，这本身就证明服务器已配好。**判据以在服务器上跑（或注入该部署的
+    环境变量后跑）的结果为准**，别拿本机输出去改服务器。
+  - 同理，`UPLOAD_BASE_URL` / `COOKIE_SECURE` / `WX_APPID`+`WX_APPSECRET` 三项 WARN
+    常是「已在后台系统设置里覆盖」而脚本读不到，需到后台人工核对，别照 WARN 重复改环境变量。
+- **上线后只读复核（无需登录，三条 curl 就能挡住「静默失效」）**：
+  `curl -sSI <域名>/healthz/ready` 必须是 **JSON** 而非 HTML（返回 HTML = 被 SPA 兜底接走，
+  后端已死也照样 200）；`curl -sSI <域名>/uploads/<不存在的名字>.png` 必须是
+  `404` + `cache-control: no-store`（若带 `immutable` 说明源站配置没更新，
+  缩略图回填会静默失效，见 `deploy-runbook.md` §5.2.5）；
+  `curl -sS <域名>/api/public/settings` 看 `miniprogram_base_url` 是否已按本部署填写
+  （留空时端上回落 `utils/config.ts` 的内置种子域名，换域名时两端都要改）。
 - **接最小告警** `scripts/alert_check.sh`（crontab 每分钟，五条规则）：healthz 本地探活 / 5xx / 备份新鲜度 /
   **外部拨测**（配 `EXTERNAL_URL`，覆盖反代 / 证书 / 防火墙这类本机探活看不见的故障）/ **授权到期**（R5，见下方授权条目）。
 - **备份任务进 crontab**：`BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh`（或 `DB_DRIVER=mysql`），每天一次。

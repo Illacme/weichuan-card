@@ -930,7 +930,7 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 | 线上 `/login` 返回 404 → SPA 兜底没上线 | **不成立**。是 curl 没带 `Accept: text/html`，命中 `@spa` 的 404 分支；线上兜底用的是「按 Accept 区分导航与扫描器」的更严格写法，行为正确 |
 | 小尺寸图也生成 `_thumb` 兄弟对象 → 浪费存储 | **不是缺陷**。种子素材 16 张 PNG 里 11 张 ≤480 边，缩略图边长 480 > 原图 200，本就不该缩；走「原样存」兜底是正确行为 |
 
-### 4. 仍然开放的项（本轮新增 1 条）
+### 4. 当时开放的项（本轮新增 1 条；该条已闭环，见下方订正）
 
 **`/uploads/` 的 404 被 Cloudflare 永久缓存**（实测 `cf-cache-status` MISS → HIT）。
 
@@ -945,6 +945,23 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 - **修法方向**：`/uploads/` 的 404 需要单独降级缓存。`add_header` 做不到按状态码区分，
   要用 `map $status $cache_control` 或让后端在 404 时返回正确的 `Cache-Control`。
   属于 nginx 侧改动，等确认要动线上配置时一并处理。
+
+> **✅ 后续订正（2026-11-07 复核：此条已闭环，不再是开放项）**
+>
+> 本条已于 2026-11-03 当日修复并上线，三处证据：
+> 1. `deploy/baota/nginx-site.live.conf` 头部新增 `map $status $uploads_cache`——
+>    200/206/304 仍是 `immutable` 一年，404/410/5xx 降为 `no-store`，其余 `no-cache`；
+>    `/uploads/` 改用 `add_header Cache-Control $uploads_cache always` 按状态码分流。
+> 2. 行为守门在 `tools/nginx-check/verify.sh`（两条断言：404 不带 `immutable`、
+>    200 仍是 `immutable`）；事故与修法全文见 `docs/deploy-runbook.md` §5.2.5
+>    「✅ 已修复：404 也曾被缓存一年」及 `tools/nginx-check` §3.6。
+> 3. 线上实测（2026-11-07，只读 HEAD 一个不存在的对象名）：`HTTP/2 404` +
+>    `cache-control: no-store` + `cf-cache-status: BYPASS`——404 已不再进 CF 边缘缓存，
+>    回填补上文件后客户端可立即取到。
+>
+> 另核实：`frontend/nginx.conf`（Docker 形态）与 `deploy/baota/nginx-site.conf`
+> （粘贴用简版参考模板）的 `/uploads/` **本就没有** `Cache-Control` 头，
+> 不存在同类雷，无需同步改动。**本轮真正待办的只有下面「其余开放项」列出的几条。**
 
 其余开放项沿用前几轮结论，本轮未变化：C4 水平扩展（需 Redis）、binlog 回放未演练、
 真机验收、备份演练的季度节奏、以及**代码外必须人工完成**的三项
