@@ -461,7 +461,7 @@ func takedownMediaCheck(db *gorm.DB, up storage.Uploader, refresher storage.CDNR
 		}
 		// 覆盖写之后必须刷 CDN：不刷的话边缘节点会继续吐旧图，
 		// 表现为「后台显示已下架，但用户看到的还是那张违规图」。
-		refreshCDN(refresher, row.URL)
+		refreshCDN(db, refresher, row.URL)
 
 		now := time.Now()
 		handlerID := c.GetInt64("staffId")

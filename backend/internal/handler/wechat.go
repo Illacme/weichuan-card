@@ -261,7 +261,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		wxacodePut(cacheKey, e)
 		// 固定对象名的覆盖写：刷新的是公开形态 URL（私有桶下返回的短期签名 URL 每次都变，
 		// 交给 CDN 刷也没有意义；私有桶本身也不该被 CDN 缓存）
-		refreshCDN(refresher, e.publicURL)
+		refreshCDN(db, refresher, e.publicURL)
 
 		url, err := resolveWxacodeURL(e, cfg, up)
 		if err != nil {

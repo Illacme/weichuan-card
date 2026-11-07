@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
 	"weichuan/internal/setting"
@@ -104,24 +105,33 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 		}
 		// 上传后触发 CDN 刷新（覆盖写场景使旧缓存失效），失败仅记录，不影响本次上传结果。
 		// 异步刷：与内容安全送检（go recordMediaCheck）同思路——响应不必等 CDN 厂商抖动。
-		go refreshCDN(refresher, urls...)
+		go refreshCDN(db, refresher, urls...)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"urls": urls}})
 	}
 }
 
 // refreshCDN 覆盖写之后让 CDN 边缘缓存失效；未启用（refresher==nil）或无 URL 时直接返回。
 //
-// 失败只记录日志，绝不回传错误：对象已经写成功了，CDN 刷新只是「让改动尽快可见」
+// 失败只记录日志 + 写一条审计，绝不回传错误：对象已经写成功了，CDN 刷新只是「让改动尽快可见」
 // 的增强——厂商接口抖动 / 凭据填错就把一次成功的操作报成失败，比多缓存几分钟糟得多，
 // 也会把「改错可自愈」的口子堵上（管理员要能进后台把凭据改回来）。
+// 审计只记 url_count，不写错误原文或具体 URL：刷新错误常带连接串 / 签名 token，
+// 审计表一旦泄密反而比不记更糟（与 ActionStatPurge / ActionMediaTakedown 同口径）。
 //
-// 三处调用点：普通上传（对象名随机，实际不覆盖）、素材采用与小程序码重生成
-// （这两处是真正覆盖同名对象的路径，2026-10-23 补接线前它们根本没触发刷新）。
-func refreshCDN(refresher storage.CDNRefresher, urls ...string) {
+// 调用点：普通上传（对象名随机，实际不覆盖）、素材采用、小程序码重生成、
+// 图片违规下架（这四处是真正覆盖同名对象的路径，2026-10-23 补接线前它们根本没触发刷新）。
+func refreshCDN(db *gorm.DB, refresher storage.CDNRefresher, urls ...string) {
 	if refresher == nil || len(urls) == 0 {
 		return
 	}
 	if err := refresher.Refresh(urls); err != nil {
 		log.Printf("[WARN] cdn refresh failed: %v", err)
+		audit.Record(db, nil, audit.Entry{
+			Action:     audit.ActionCDNRefresh,
+			ActorType:  audit.ActorSystem,
+			TargetType: "cdn",
+			Result:     audit.ResultFail,
+			Detail:     map[string]any{"url_count": len(urls)},
+		})
 	}
 }

@@ -110,6 +110,13 @@ const (
 	// 使后台审计页能看到「什么时候、按多少天、清了多少条」。
 	ActionStatPurge = "stat.purge"
 
+	// ActionCDNRefresh CDN 缓存刷新失败（覆盖写后让边缘旧缓存失效，见 handler.refreshCDN）。
+	// 这是异步 best-effort 动作，失败不阻断主流程——但「文件改了、CDN 却没刷」会表现为
+	// 线上仍是旧图，且只在下次换图那一刻才暴露。失败的告警单独留痕，事后才能回答
+	// 「这次刷新什么时候、对几个 URL 失败了」。Detail 只记 url_count，绝不写错误原文或 URL：
+	// 刷新错误常带连接串 / 签名 token，审计表一旦泄密反而比不记更糟。
+	ActionCDNRefresh = "cdn.refresh"
+
 	// ActionURLProbe 后台「测试地址」：服务端会按管理员填的 URL 发一次出向 HEAD。
 	// 按审计包「只读不记」的约定本不该留痕，但它能把服务器当代理访问任意主机，
 	// 是典型 SSRF 入口——谁在什么时候测过哪个 host、结果如何必须有据可查。

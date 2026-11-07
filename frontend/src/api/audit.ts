@@ -87,6 +87,9 @@ export const ACTION_LABELS: Record<string, string> = {
   'url_probe.check': '测试视频地址可达性',
   // 按保留期清理埋点原始数据（后台定时任务）。删统计原始数据不可逆，必须留痕
   'stat.purge': '按保留期清理埋点数据',
+  // CDN 缓存刷新失败（覆盖写后让边缘旧缓存失效）。异步 best-effort，失败不阻断主流程，
+  // 但「文件改了 CDN 却没刷」会让线上仍是旧图，故失败单独留痕；Detail 只记 url_count，不写错误原文或 URL
+  'cdn.refresh': 'CDN 缓存刷新失败',
 }
 
 // 审计日志只查不写：记录一旦可改就等于没有审计，因此不提供任何写接口。

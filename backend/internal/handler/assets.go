@@ -34,7 +34,7 @@ func RegisterAssets(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher s
 	r.GET("/api/assets/file/*path", assetFileHandler)
 	r.GET("/api/assets/posters", posterListHandler)
 	r.GET("/api/admin/assets/library", middleware.AuthMiddleware(db, "admin"), libraryListHandler)
-	r.POST("/api/admin/assets/adopt", middleware.AuthMiddleware(db, "admin"), assetAdoptHandler(up, refresher))
+	r.POST("/api/admin/assets/adopt", middleware.AuthMiddleware(db, "admin"), assetAdoptHandler(db, up, refresher))
 }
 
 // assetFileHandler 提供素材预览图（选择器缩略图 + 原图）。
@@ -132,7 +132,7 @@ func posterListHandler(c *gin.Context) {
 }
 
 // assetAdoptHandler 采用素材：复制进上传存储并返回 URL。
-func assetAdoptHandler(up storage.Uploader, refresher storage.CDNRefresher) gin.HandlerFunc {
+func assetAdoptHandler(db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			ID string `json:"id"`
@@ -160,7 +160,7 @@ func assetAdoptHandler(up storage.Uploader, refresher storage.CDNRefresher) gin.
 		}
 		// 固定对象名 = 覆盖写：这里才是「同名可能被换成新内容」的场景（素材库升级换图），
 		// 必须让 CDN 边缘失效，否则已经采用过该素材的页面会继续拿到旧图
-		refreshCDN(refresher, url)
+		refreshCDN(db, refresher, url)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"url": url,
 			"item": gin.H{
