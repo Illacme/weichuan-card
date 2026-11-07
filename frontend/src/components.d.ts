@@ -72,6 +72,7 @@ declare module 'vue' {
     StatDetail: typeof import('./components/StatDetail.vue')['default']
     StatTrend: typeof import('./components/StatTrend.vue')['default']
     UploadField: typeof import('./components/UploadField.vue')['default']
+    WechatBindingCell: typeof import('./components/WechatBindingCell.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']
