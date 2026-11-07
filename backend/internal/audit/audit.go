@@ -72,6 +72,12 @@ const (
 	// ActionEmployeeExportBatch 后台批量导出本租户全部员工 PII（CSV）。
 	// 只读但「一次性带走全租户 PII」风险更高，沿用 employee.export 的破例留痕约定。
 	ActionEmployeeExportBatch = "employee.export_batch"
+	// ActionEmployeeWXBind 员工本人在「我的」页把微信绑到账号（含换微信号的覆盖写）。
+	// 绑定等于给这个微信开了「免密进账号」的入口：手机丢失 / 微信号借人时，
+	// 事后要能回答「谁在什么时候把哪个微信绑到了哪个账号」。与 admin.wx_bind 同构，
+	// 差别是操作者为员工自己（actor_type=employee）。Detail 里绝不写 openid 或掩码——
+	// 掩码同样是可关联的标识碎片，见 handler/wechat_binding.go 的统一口径。
+	ActionEmployeeWXBind = "employee.wx_bind"
 
 	ActionApplyApprove = "apply.approve"
 	ActionApplyReject  = "apply.reject"

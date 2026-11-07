@@ -6,6 +6,9 @@ export interface PlatformAdmin {
   id: number
   username: string
   createdAt: string
+  /** 是否绑定了小程序端免密登录用的微信。后端只回布尔与掩码，绝不回 openid 原文 */
+  wechatBound?: boolean
+  wxOpenidMasked?: string
 }
 
 // 平台超管列表（服务端分页）

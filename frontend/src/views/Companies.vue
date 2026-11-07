@@ -186,7 +186,7 @@
     </el-dialog>
 
     <!-- 企业管理员管理 -->
-    <el-dialog v-model="adminsVisible" :title="`管理员管理 - ${currentCompany?.name || ''}`" width="560px">
+    <el-dialog v-model="adminsVisible" :title="`管理员管理 - ${currentCompany?.name || ''}`" width="680px">
       <div class="admin-add-bar">
         <el-input v-model="newAdmin.username" placeholder="用户名" style="width: 180px" clearable />
         <el-input v-model="newAdmin.password" placeholder="密码" style="width: 180px" clearable />
@@ -202,6 +202,13 @@
       <el-table :data="admins" v-loading="adminsLoading" border stripe max-height="360">
         <el-table-column prop="id" label="编号" width="70" align="center" />
         <el-table-column prop="username" label="用户名" min-width="160" show-overflow-tooltip />
+        <!-- 微信绑定本来在后台完全看不见（admins.wx_openid 是 json:"-"），
+             企业管理员能不能用小程序免密审批，全靠这一列回答。窄弹窗只露状态标签。 -->
+        <el-table-column prop="wechatBound" label="微信绑定" width="110" align="center">
+          <template #default="{ row }">
+            <WechatBindingCell :bound="!!row.wechatBound" :masked="row.wxOpenidMasked" compact />
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
@@ -440,6 +447,7 @@ import {
   type CompanyLicense,
 } from '@/api/tenants'
 import MPReleaseDialog from '@/components/MPReleaseDialog.vue'
+import WechatBindingCell from '@/components/WechatBindingCell.vue'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/store/auth'
 import { useBreakpoint } from '@/composables/useBreakpoint'

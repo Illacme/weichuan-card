@@ -740,6 +740,129 @@ paths:
                     type: integer
                     example: 900
 
+  /api/employee/login/wechat:
+    post:
+      tags: [鉴权]
+      summary: 员工微信一键登录（小程序端）
+      description: |
+        `wx.login` 的 code → 服务端 jscode2session 换 openid → 找绑定了该 openid 的员工
+        → 签发员工令牌。openid 一律由服务端换取，不信任客户端传入的值。
+
+        绑定有两条来源：自助申请开通（审批通过时把申请单里的 openid 写进员工记录）、
+        或已用手机号密码登录后调 `/api/employee/wechat/bind`。
+        刻意不做「首次微信登录自动建号」——员工账号是审核出来的，自动建号等于
+        任何人点一下就变成某企业的员工。
+
+        与密码登录共用 `login:<IP>` 限流桶（默认 10 次/分）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: wx.login 返回的一次性 code
+                companyId:
+                  type: integer
+                  format: int64
+                  description: 客户端所属租户；平台模式下同一 openid 可能对应多家企业，用它收窄
+      responses:
+        "200":
+          description: |
+            code=0 成功（token / refreshToken / expiresIn）；
+            code=1 缺少 code / 未配置小程序凭据 / 微信侧失败；
+            code=2 账号或所属企业已停用（openid 证明不了「你还在这家公司」）；
+            code=3 该微信尚未绑定员工账号，或绑定了多个账号（改用手机号密码登录）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  token:
+                    type: string
+                  refreshToken:
+                    type: string
+                  expiresIn:
+                    type: integer
+
+  /api/employee/wechat/bind:
+    post:
+      tags: [鉴权]
+      summary: 员工绑定 / 换绑微信（已登录）
+      description: |
+        凭据取员工**自己企业**的小程序 appid，不取客户端传值——绑定是已登录场景，
+        身份确定，用错凭据会把别家小程序的 openid 绑进来。
+
+        覆盖写：换微信时重新绑定即可，旧 openid 从此匹配不到任何员工，等同解绑。
+        同企业内一个 openid 只能绑一个员工（否则两人会互相登进对方账号）。
+        重复绑定同一个微信是幂等的，仍返回 code=0，但不再重复记审计。
+
+        **写库成功后**才记审计 `employee.wx_bind`；Detail 只含 `rebind` 布尔值，
+        绝不写 openid / 掩码 / 一次性 code。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: |
+            code=0 已绑定；code=1 缺少 code / 未配置凭据 / 未找到员工 /
+            该微信已绑本企业其他员工 / 写库失败；code=401 未登录
+
+  /api/wechat/openid:
+    post:
+      tags: [鉴权]
+      summary: 微信身份换取（公开，申请开通时采集 openid）
+      description: |
+        小程序 `wx.login` 的 code → openid。公开端点（无需登录）：申请人此刻还没有账号。
+
+        凭据按 `companyId` 选：企业独立版用自己的 appid，没配则回落平台全局那一份。
+        `companyId` 可以被伪造，但伪造只会让 jscode2session 失败（微信会校验
+        appid 与 code 同属一个小程序），拼不出「能用的错凭据」。
+
+        未配置凭据时返回 code=1，前端据此降级为不采集 openid，不影响账号密码登录/申请。
+        注意这条回的是**完整 openid 给调用者本人**，用途是写进自己的申请单；
+        后台列表只回布尔状态与掩码（见 `Employee` / `PlatformAdmin` schema）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                companyId:
+                  type: integer
+                  format: int64
+      responses:
+        "200":
+          description: code=0 成功（openid）；code=1 缺少 code / 未配置 AppID 与 WX_APPSECRET / 微信侧失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  openid:
+                    type: string
+                    description: 仅 code=0 时存在
+
   /api/admin/login:
     post:
       tags: [鉴权]
@@ -909,6 +1032,57 @@ paths:
         "200":
           description: code=0 成功；code=1 缺少 code / 未配置凭据 / 该微信已绑其他管理员；code=401 未登录
 
+  /api/admin/me:
+    get:
+      tags: [鉴权]
+      summary: 当前登录管理员身份（PC 后台 hydration）
+      description: |
+        令牌在 httpOnly Cookie 里，JS 读不到 claims，前端靠这条接口还原身份。
+
+        `wechatBound` / `wxOpenidMasked` 让后台能看出**当前账号**绑没绑微信
+        （决定小程序端能否免密进审核）。只回布尔状态与掩码，绝不回 openid 原文；
+        要看别人的绑定状态，走平台超管列表 / 企业管理员列表。
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: code=0 成功；code=1 未找到账号；code=401 未登录 / 令牌失效
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      adminId:
+                        type: integer
+                        format: int64
+                      username:
+                        type: string
+                      companyId:
+                        type: integer
+                        format: int64
+                        description: 0 = 平台超管
+                      companyName:
+                        type: string
+                      companyShortName:
+                        type: string
+                      isPlatform:
+                        type: boolean
+                      wechatBound:
+                        type: boolean
+                        description: 当前账号是否已绑定微信
+                      wxOpenidMasked:
+                        type: string
+                        description: 脱敏后的 openid（首字符 + **** + 后四位）；未绑定为空串
+                      independentLock:
+                        type: boolean
+                        description: 独立版企业锁定：为真时后台企业管理页只读
+
   /api/refresh:
     post:
       tags: [鉴权]
@@ -995,6 +1169,11 @@ paths:
                   companyShortName:
                     type: string
                     description: 所属企业简称（根级，不在 data 内；有值时优先于全称展示）
+                  wechatBound:
+                    type: boolean
+                    description: |
+                      本人是否已绑定微信（根级，不在 data 内）。「我的」页据此显示
+                      「已绑定 / 点击绑定」，不靠前端猜 data.openid 是否为空。
     put:
       tags: [员工端]
       summary: 提交名片信息修改申请（审核通过后才生效）
@@ -1555,7 +1734,7 @@ paths:
         - name: keyword
           in: query
           required: false
-          description: 模糊匹配姓名 / 手机 / 手机2 / 职位 / 座机 / 昵称 / openid
+          description: 模糊匹配姓名 / 手机 / 手机2 / 职位 / 座机 / 昵称 / openid（按库里明文匹配；列表回包里的 openid 是掩码，不影响检索）
           schema:
             type: string
         - name: status
@@ -4608,6 +4787,17 @@ components:
         createdAt:
           type: string
           format: date-time
+        openid:
+          type: string
+          description: |
+            **脱敏后的** openid（首字符 + **** + 后四位），未绑定为空串。
+            后台列表只回掩码：openid 是「持有即可换登录令牌」的标识，
+            原文发给浏览者等于把别人的登录凭据摊开。列表关键字仍按库里的明文
+            openid 做 LIKE，展示脱敏不影响检索能力。
+            例外：PIPL 查阅复制权的单员工导出接口返回员工本人的完整 openid。
+        wechatBound:
+          type: boolean
+          description: 是否已绑定微信（决定能否一键登录）。前端不该靠判断 openid 是否为空来推断
 
     MpEntry:
       type: object
@@ -5051,6 +5241,10 @@ components:
 
     PlatformAdmin:
       type: object
+      description: |
+        平台超管列表（`GET /api/admin/platform-admins`）与企业管理员列表
+        （`GET /api/admin/companies/{id}/admins`）共用这一形状。
+        `admins.wx_openid` 在模型上标了 `json:"-"`，因此这里绝不会出现 openid 原文。
       properties:
         id:
           type: integer
@@ -5060,6 +5254,12 @@ components:
         createdAt:
           type: string
           format: date-time
+        wechatBound:
+          type: boolean
+          description: 是否绑定了小程序端免密登录用的微信
+        wxOpenidMasked:
+          type: string
+          description: 脱敏后的 openid（首字符 + **** + 后四位）；未绑定为空串
 
     AuditLog:
       type: object
@@ -5071,7 +5271,8 @@ components:
           format: int64
         actorType:
           type: string
-          enum: [admin, employee, anonymous]
+          enum: [admin, employee, anonymous, system]
+          description: system = 后台定时任务 / 异步动作（如清理、CDN 刷新失败），不是「未登录的人」
         actorId:
           type: integer
           format: int64

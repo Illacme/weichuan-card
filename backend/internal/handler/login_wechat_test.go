@@ -2,8 +2,10 @@ package handler
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/setting"
 	"weichuan/internal/wechat"
@@ -249,4 +251,95 @@ func TestWechatBind(t *testing.T) {
 	// 新微信可以
 	_, body = c.do("POST", "/api/employee/login/wechat", map[string]interface{}{"code": "code-b"}, "")
 	require.EqualValues(t, 0, body["code"], "换绑后新微信应能一键登录：%v", body["msg"])
+}
+
+// TestWechatBindAudit 绑定是「给一个微信开免密入口」的动作，必须留痕，且只在写库
+// 真的成功后留。反过来，审计表不能变成新的泄密面：openid 原文、掩码、一次性 code
+// 都不许进 Detail（掩码同样是可关联的标识碎片）。
+//
+// 走后台 /api/admin/audit-logs 查询而不是直接查表，是为了一并钉住「运维在界面上
+// 真能看到」这件事——只写进表里但列表查不出来，等于没记。
+func TestWechatBindAudit(t *testing.T) {
+	c := prepWechatTest(t)
+	adminToken := loginAdmin(t, c)
+
+	_, body := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "审计甲", "phone": "13500000031", "title": "工程师",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	staffID := int64(body["staffId"].(float64))
+	initPwd := body["initialPassword"].(string)
+
+	_, body = c.do("POST", "/api/employee/login", map[string]interface{}{
+		"phone": "13500000031", "password": initPwd,
+	}, "")
+	require.EqualValues(t, 0, body["code"])
+	token := body["token"].(string)
+
+	bindLogs := func() []interface{} {
+		_, b := c.do("GET", "/api/admin/audit-logs?action="+audit.ActionEmployeeWXBind, nil, adminToken)
+		require.EqualValues(t, 0, b["code"])
+		return b["data"].([]interface{})
+	}
+	details := func() []string {
+		var out []string
+		for _, it := range bindLogs() {
+			d, ok := it.(map[string]interface{})["detail"].(string)
+			require.True(t, ok)
+			out = append(out, d)
+		}
+		return out
+	}
+
+	// 未登录不能绑定，更不能留下「有人绑过」的假证据
+	_, body = c.do("POST", "/api/employee/wechat/bind", map[string]interface{}{"code": "code-a"}, "")
+	require.EqualValues(t, 401, body["code"])
+	require.Empty(t, bindLogs())
+
+	// ===== 首次绑定：一条审计，操作者是员工本人 =====
+	_, body = c.do("POST", "/api/employee/wechat/bind", map[string]interface{}{"code": "code-a"}, token)
+	require.EqualValues(t, 0, body["code"], "绑定应成功：%v", body["msg"])
+	logs := bindLogs()
+	require.Len(t, logs, 1)
+	row := logs[0].(map[string]interface{})
+	require.Equal(t, "employee", row["actorType"], "绑定是员工自己做的，不是后台管理员代劳")
+	require.Equal(t, "employee", row["targetType"])
+	require.Equal(t, strconv.FormatInt(staffID, 10), row["targetId"])
+	require.Equal(t, "success", row["result"])
+	firstDetail, ok := row["detail"].(string)
+	require.True(t, ok)
+	require.Contains(t, firstDetail, `"rebind":false`)
+	require.NotContains(t, firstDetail, "openid-a")
+	require.NotContains(t, firstDetail, maskOpenIDForDisplay("openid-a"))
+	require.NotContains(t, firstDetail, "code-a")
+
+	// ===== 幂等：再绑同一个微信不新增审计 =====
+	// MySQL 的 RowsAffected 只数「值真的变了」的行，原样 UPDATE 返回 0；
+	// 若当成失败，员工再点一次就会看到「绑定失败」但其实早绑好了。
+	_, body = c.do("POST", "/api/employee/wechat/bind", map[string]interface{}{"code": "code-a"}, token)
+	require.EqualValues(t, 0, body["code"])
+	require.Len(t, bindLogs(), 1, "状态没变就不该再制造一条「又开了入口」的假记录")
+
+	// ===== 换微信覆盖写：新增一条，且标明是覆盖 =====
+	_, body = c.do("POST", "/api/employee/wechat/bind", map[string]interface{}{"code": "code-b"}, token)
+	require.EqualValues(t, 0, body["code"])
+	ds := details()
+	require.Len(t, ds, 2)
+	require.Contains(t, ds[0]+ds[1], `"rebind":true`)
+	require.NotContains(t, ds[0]+ds[1], "openid-b")
+	require.NotContains(t, ds[0]+ds[1], maskOpenIDForDisplay("openid-b"))
+
+	// ===== 被拒的绑定不留痕：写库没发生，就不能记成「绑定成功」 =====
+	_, body = c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "审计乙", "phone": "13500000032", "title": "工程师",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	_, body = c.do("POST", "/api/employee/login", map[string]interface{}{
+		"phone": "13500000032", "password": body["initialPassword"].(string),
+	}, "")
+	require.EqualValues(t, 0, body["code"])
+	token2 := body["token"].(string)
+	_, body = c.do("POST", "/api/employee/wechat/bind", map[string]interface{}{"code": "code-b"}, token2)
+	require.EqualValues(t, 1, body["code"], "同一微信绑第二个账号必须被拒")
+	require.Len(t, bindLogs(), 2, "被拒的绑定不该留下成功记录")
 }

@@ -55,6 +55,9 @@ export interface CompanyAdminItem {
   id: number
   username: string
   createdAt: string
+  /** 是否绑定了小程序端免密登录用的微信。后端只回布尔与掩码，绝不回 openid 原文 */
+  wechatBound?: boolean
+  wxOpenidMasked?: string
 }
 
 // 企业列表（含员工/管理员数量），服务端分页 + 关键字（名称/简称）+ 状态筛选

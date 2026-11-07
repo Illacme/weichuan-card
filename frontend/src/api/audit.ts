@@ -59,6 +59,9 @@ export const ACTION_LABELS: Record<string, string> = {
   'employee.export': '导出员工个人信息',
   // 批量导出：一次拉走整批员工信息，敏感度高于单个导出，审计里要能一眼分辨
   'employee.export_batch': '批量导出员工信息',
+  // 员工本人在小程序里绑定微信（含换微信号覆盖写）。绑定等于给这个微信开了免密入口，
+  // 与「管理员绑定微信」分开记，便于按 actor_type 区分是谁给谁开的口子
+  'employee.wx_bind': '员工绑定微信',
   'apply.approve': '通过申请',
   'apply.reject': '驳回申请',
   // 备份：执行与下载都是「数据离开系统边界」，与导出员工信息同级敏感

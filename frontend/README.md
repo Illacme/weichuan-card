@@ -40,6 +40,7 @@ frontend/
     │   ├── UploadField.vue   # 通用上传组件（直传预签名 + 回退普通上传 + 素材库入口）
     │   ├── AssetPicker.vue   # 开源素材库选择器（分类 tab + 风格行 + 搜索 + 分页 + 单选/多选采用）
     │   ├── MPReleaseDialog.vue  # 小程序版本发布弹窗（按状态机显隐按钮 + 驳回原因 + 二次确认）
+    │   ├── WechatBindingCell.vue  # 微信绑定状态单元格（三个账号列表共用）
     │   └── ChangePasswordDialog.vue
     └── views/
         ├── Login.vue
@@ -230,7 +231,8 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
   事件下拉覆盖八类、对象列渲染。
 - `src/components/StatTrend.spec.ts`（13 例）：趋势图几何与交互——折线连点、轴刻度、
   **图例点选（默认三线 / 勾选后纵轴重算 / 最后一项点不掉）**、tooltip、空态与 NaN 兜底。
-- `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等。
+- `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等；微信绑定列只出状态 + 掩码。
+- `src/components/WechatBindingCell.spec.ts`（9 例）：绑定状态单元格的四种表现（已绑 / 未绑 / 掩码为空 / compact），外加**三页接入静态守门**（三个账号页都要有 `prop="wechatBound"` 列、传的是掩码字段、员工页不再铺开 `openid` 明文列）与**安全底线**（`model.Admin.WXOpenID` 仍是 `json:"-"`）。静态守门先剥注释，避免注释里的历史写法造成假红/假绿；另由 `Companies.spec.ts` / `Employees.spec.ts` 的真实 DOM 断言（`data-bound`）兜住「源码里有、实际没渲染」。
 - `src/views/ApplyOpen.spec.ts`（19 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功；**「提交时间必须是第一列」静态守门 3 例**（读模板钉住列顺序与 `prop="createdAt"`、时间列只出现一次、手机卡片首行也是提交时间）。
 - `src/views/ApplyModify.spec.ts`（20 例）：名片修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端只隐藏员工ID（提交时间是第一列，始终可见）；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功；**「提交时间必须是第一列」静态守门 2 例**（旧版该列没写 `prop`，「手机端隐藏两列」的断言恒为 0 是假绿，现已补上并改为始终可见）。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
@@ -330,6 +332,30 @@ npm run test:watch  # 监听模式
    这一次请求里做完，分钟级。nginx 默认的 60s 会在上传途中先返回 504，
    而那时代码可能已经传到微信了：前端看到失败、后台没有 draft 记录，
    运营再点一次就撞上「版本号已占用」。改的是反代，不是前端能兜住的。
+
+## 微信绑定状态（三个账号页共用）
+
+后台此前看不到管理员绑没绑微信（`admins.wx_openid` 是 `json:"-"`），员工列表却把
+`openid` 全文摊开。现在四处收敛成同一口径：**布尔状态 + 脱敏掩码**，由
+`src/components/WechatBindingCell.vue` 统一渲染：
+
+| 页面 | 数据来源 | 掩码字段 | 备注 |
+|---|---|---|---|
+| 平台管理 → 账号管理 | `/api/admin/platform-admins` | `wxOpenidMasked` | 平台超管账号 |
+| 企业管理 → 管理员管理弹窗 | `/api/admin/companies/:id/admins` | `wxOpenidMasked` | `compact`，窄弹窗只露状态标签 |
+| 员工管理（桌面表 / 手机卡片 / 预览抽屉） | `/api/admin/employees` | `openid`（该字段现在已是掩码） | 列宽由 210 缩到 150 |
+| 当前登录身份 | `/api/admin/me` | `wxOpenidMasked` | 供顶栏 / hydration 使用 |
+
+两条不能踩的线：
+
+- **openid 原文绝不出网**。它是「持有即可换登录令牌」的标识，后台浏览者不该拿到别人的。
+  要精确定位某个 openid，方向应反过来（输入完整值去反查），而不是把原文下发。
+- **展示脱敏 ≠ 检索脱敏**。搜索框里的 `openid` 关键字仍按库里的明文列做 `LIKE`，
+  后端负责；前端只是不再把明文渲染出来。
+
+例外：`/api/admin/employees/:id/export` 是 PIPL 查阅复制权的协助接口，导出员工本人
+全部个人信息，保留完整 openid；`/api/employee/me` 回的是员工本人资料，同理。
+P1 若要统一收紧，需连同这两处一起审，别只改半边。
 
 ## 已知边界（与后端一致）
 

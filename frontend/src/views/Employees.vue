@@ -23,6 +23,7 @@
         合计 1380px 超出容器，fixed="right" 的操作列直接压住「创建时间」列。
         改动列宽时请按同一口径重算，宁紧勿松。操作列现为 260px（预览/编辑/启用
         或停用/重置密码/导出 五个 link 按钮，超窄会折行或挤占创建时间列）。
+        微信绑定列由原 openid 全文列（210px）改为状态 + 掩码（150px），再省 60px。
       -->
       <el-table v-if="!isPhone" :data="rows" v-loading="loading" border stripe>
         <el-table-column prop="staffId" label="编号" width="62" align="center" />
@@ -47,9 +48,11 @@
             <span :class="{ muted: !row.nickname }">{{ row.nickname || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="openid" label="openid" width="210" v-if="!isPhone" show-overflow-tooltip>
+        <!-- 微信绑定：后端只回布尔状态 + 掩码，openid 原文不再出网。
+             搜索框仍可按 openid 查——后端的 LIKE 打在库里的明文列上，展示脱敏不影响检索能力。 -->
+        <el-table-column prop="wechatBound" label="微信绑定" width="150" v-if="!isPhone">
           <template #default="{ row }">
-            <span class="openid-cell" :class="{ muted: !row.openid }">{{ row.openid || '—' }}</span>
+            <WechatBindingCell :bound="!!row.wechatBound" :masked="row.openid" />
           </template>
         </el-table-column>
         <el-table-column label="头像" width="62" align="center">
@@ -119,6 +122,10 @@
           <div class="emp-card-row" v-if="row.phone2"><span class="emp-k">手机号2</span><span class="emp-v">{{ row.phone2 }}</span></div>
           <div class="emp-card-row" v-if="row.landline"><span class="emp-k">座机</span><span class="emp-v">{{ row.landline }}</span></div>
           <div class="emp-card-row" v-if="row.email"><span class="emp-k">邮箱</span><span class="emp-v">{{ row.email }}</span></div>
+          <div class="emp-card-row">
+            <span class="emp-k">微信绑定</span>
+            <span class="emp-v"><WechatBindingCell :bound="!!row.wechatBound" :masked="row.openid" compact /></span>
+          </div>
           <div class="emp-card-actions">
             <el-button size="small" @click="preview(row)">预览</el-button>
             <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
@@ -236,8 +243,8 @@
           <el-descriptions-item label="微信昵称">
             <span :class="{ muted: !previewRow.nickname }">{{ previewRow.nickname || '—' }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="openid">
-            <span class="openid-cell" :class="{ muted: !previewRow.openid }">{{ previewRow.openid || '—' }}</span>
+          <el-descriptions-item label="微信绑定">
+            <WechatBindingCell :bound="!!previewRow.wechatBound" :masked="previewRow.openid" compact />
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatDateTime(previewRow.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="状态">
@@ -291,6 +298,7 @@ import {
 import { getWxacode } from '@/api/wechat'
 import UploadField from '@/components/UploadField.vue'
 import ImageThumb from '@/components/ImageThumb.vue'
+import WechatBindingCell from '@/components/WechatBindingCell.vue'
 // 服务端分页：员工数会随运营增长，关键字/页码都交给后端（详见 composables/useServerTable）
 import { useServerTable } from '@/composables/useServerTable'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -512,10 +520,6 @@ onMounted(load)
 }
 .muted {
   color: #c0c4cc;
-}
-.openid-cell {
-  font-family: monospace;
-  font-size: 12px;
 }
 /* 姓名/职位等短文本列：禁止换行，超出省略并悬浮显示全文（避免被压宽后折行） */
 .cell-nowrap {

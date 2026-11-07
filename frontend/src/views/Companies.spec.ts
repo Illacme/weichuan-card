@@ -1021,7 +1021,12 @@ describe('企业管理 · 平台超管重置企业管理员密码', () => {
   // 企业管理员忘了密码时唯一的救济入口就是平台超管代重置（自己改密要原密码，
   // 库里只存哈希谁也读不回来）。这个动作的代价是**把对方当前会话全踢下线**，
   // 所以测试重点不是"接口调了没"，而是"确认框弹了没、新密码回显了没"。
-  const admins = [{ id: 11, username: 'entadmin', createdAt: '2026-10-01T10:00:00' }]
+  // 两个管理员：一个绑了微信、一个没绑。后台此前连「绑没绑」都看不见，
+  // 企业管理员能不能用小程序免密审批全靠这两行的状态标签区分。
+  const admins = [
+    { id: 11, username: 'entadmin', createdAt: '2026-10-01T10:00:00', wechatBound: true, wxOpenidMasked: 'o****d-a' },
+    { id: 12, username: 'unbound', createdAt: '2026-10-02T10:00:00', wechatBound: false, wxOpenidMasked: '' },
+  ]
 
   async function openAdminsDialog(w: any) {
     mocks.listCompanyAdmins.mockImplementation(async () => ({ code: 0, data: admins }))
@@ -1029,6 +1034,20 @@ describe('企业管理 · 平台超管重置企业管理员密码', () => {
     await flush()
     return dialogByTitle(w, '管理员管理')
   }
+
+  it('管理员管理弹窗能看出谁绑了微信（窄表只露状态，掩码不进 DOM）', async () => {
+    const w = await setup()
+    const dlg = await openAdminsDialog(w)
+    const cells = dlg!.findAll('.wx-bind-cell')
+    expect(cells).toHaveLength(2)
+    expect(cells[0].attributes('data-bound')).toBe('true')
+    expect(cells[0].text()).toContain('已绑定')
+    expect(cells[1].attributes('data-bound')).toBe('false')
+    expect(cells[1].text()).toContain('未绑定')
+    // 弹窗用 compact：掩码不渲染，避免 680px 弹窗里的表格被撑出横向滚动
+    expect(cells[0].find('.wx-bind-mask').exists()).toBe(false)
+    expect(dlg!.text()).not.toContain('o****d-a')
+  })
 
   it('确认后调接口，并回显服务端生成的新初始密码', async () => {
     mocks.resetCompanyAdminPassword.mockImplementation(async () => 'k7m2p9xq')

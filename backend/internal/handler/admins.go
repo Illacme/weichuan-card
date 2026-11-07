@@ -38,7 +38,9 @@ func RegisterAdmins(r *gin.Engine, db *gorm.DB) {
 		total, page := pagedQuery(db.Model(&model.Admin{}).Where("company_id = ?", 0), "id asc", &list, page, size)
 		data := make([]gin.H, 0, len(list))
 		for _, a := range list {
-			data = append(data, gin.H{"id": a.ID, "username": a.Username, "createdAt": a.CreatedAt})
+			data = append(data, withWechatBinding(gin.H{
+				"id": a.ID, "username": a.Username, "createdAt": a.CreatedAt,
+			}, a.WXOpenID))
 		}
 		pagedOK(c, data, total, page, size)
 	})

@@ -26,6 +26,11 @@
           <el-tag v-if="row.id === myId" size="small" effect="plain" type="success">当前登录</el-tag>
         </template>
       </el-table-column>
+      <el-table-column prop="wechatBound" label="微信绑定" width="160" align="center">
+        <template #default="{ row }">
+          <WechatBindingCell :bound="!!row.wechatBound" :masked="row.wxOpenidMasked" />
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" min-width="180" show-overflow-tooltip v-if="!isPhone">
         <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
@@ -90,6 +95,7 @@ import { adminLogout, getMe } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { formatDateTime } from '@/utils/datetime'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import WechatBindingCell from '@/components/WechatBindingCell.vue'
 // 服务端分页：与其它管理端列表同构（平台超管数量本就不多，但保持契约一致）
 import { useServerTable } from '@/composables/useServerTable'
 

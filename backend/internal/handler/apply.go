@@ -362,7 +362,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionApplyApprove, TargetType: "apply",
 			TargetID: strconv.FormatInt(id, 10),
-			Detail:  map[string]any{"kind": "open", "companyId": a.CompanyID},
+			Detail:   map[string]any{"kind": "open", "companyId": a.CompanyID},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
@@ -402,7 +402,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionApplyReject, TargetType: "apply",
 			TargetID: strconv.FormatInt(id, 10),
-			Detail:  map[string]any{"kind": "open", "companyId": a.CompanyID, "reason": body.Reason},
+			Detail:   map[string]any{"kind": "open", "companyId": a.CompanyID, "reason": body.Reason},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
@@ -496,7 +496,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionApplyApprove, TargetType: "apply",
 			TargetID: strconv.FormatInt(id, 10),
-			Detail:  map[string]any{"kind": "modify", "companyId": a.CompanyID},
+			Detail:   map[string]any{"kind": "modify", "companyId": a.CompanyID},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
@@ -537,7 +537,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionApplyReject, TargetType: "apply",
 			TargetID: strconv.FormatInt(id, 10),
-			Detail:  map[string]any{"kind": "modify", "companyId": a.CompanyID, "reason": body.Reason},
+			Detail:   map[string]any{"kind": "modify", "companyId": a.CompanyID, "reason": body.Reason},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
@@ -666,12 +666,14 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if size = len(list); size == 0 {
 				size = defaultPageSize
 			}
-			pagedOK(c, list, int64(len(list)), 1, size)
+			pagedOK(c, employeeBindingRows(list), int64(len(list)), 1, size)
 			return
 		}
 		var list []model.Employee
 		total, page := pagedQuery(q, "staff_id asc", &list, page, size)
-		pagedOK(c, list, total, page, size)
+		// 列表里 openid 只给掩码 + 布尔状态（见 wechat_binding.go 的口径说明）。
+		// 关键字仍按库里的明文 openid 做 LIKE：搜索能力不受展示脱敏影响。
+		pagedOK(c, employeeBindingRows(list), total, page, size)
 	})
 
 	// 批量导出员工（CSV，按租户隔离）：租户范围内全部员工（可带与列表页一致的

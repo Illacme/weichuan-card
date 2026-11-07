@@ -618,7 +618,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 |---|---|---|---|
 | POST | /api/employee/login | 否 | 员工登录（手机号+密码）→ 返回 token + refreshToken（小程序 Bearer）；企业停用返回 code=2 |
 | POST | /api/employee/login/wechat | 否 | **微信一键登录**：body `{code, companyId}` → 后端 jscode2session 换 openid → 找已绑定该 openid 的员工 → 发令牌。业务码：0 成功 / 1 参数或微信侧错误 / 2 账号或企业停用 / **3 该微信未绑定或绑定了多个账号**（前端据此引导去绑定或改用密码登录）。走登录限流器 |
-| POST | /api/employee/wechat/bind | employee | **绑定微信**（body `{code}`）→ 把当前员工与 openid 绑定，之后可一键登录。凭据取员工**自己企业**的 appid（不信客户端传值）；同一企业内一个微信只能绑一个账号；重复绑定是覆盖写（换微信时直接重绑，无需解绑接口） |
+| POST | /api/employee/wechat/bind | employee | **绑定微信**（body `{code}`）→ 把当前员工与 openid 绑定，之后可一键登录。凭据取员工**自己企业**的 appid（不信客户端传值）；同一企业内一个微信只能绑一个账号；重复绑定是覆盖写（换微信时直接重绑，无需解绑接口）；重复绑同一个微信幂等返回成功、不重复留痕。写库成功后审计 `employee.wx_bind`（Detail 只记是否覆盖写，绝不记 openid / 掩码 / code） |
 | POST | /api/admin/login | 否 | 管理员登录（用户名+密码）→ 写 httpOnly Cookie，响应体仅 expiresIn + 身份（companyId/companyName/isPlatform） |
 | POST | /api/admin/login/mobile | 否 | **小程序端管理员登录**：与上一行同一套校验（bcrypt + 空账号烧等价时间 + 企业停用 + 同一登录限流器），区别是**把 access/refresh 放进响应体**（手机没有 Cookie 容器）。回 `token / refreshToken / expiresIn / companyId / companyName / isPlatform / username / wechatBound`。审计 `admin.mobile_login` |
 | POST | /api/admin/login/wechat | 否 | **管理员微信免密登录**：body `{code, companyId}` → jscode2session 换 openid → 找绑定了该 openid 的管理员。业务码同员工一键登录（0/1/2/**3**）。平台模式下同一微信可能是多家企业的管理员：先用 `companyId` 收窄，收窄后仍多于一条返回 3，**绝不随便挑一个签发令牌** |
@@ -637,7 +637,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/admin/apply/modify | admin | 名片修改申请列表（按租户隔离） |
 | POST | /api/admin/apply/modify/:id/approve | admin | 通过 → 应用快照到员工 |
 | POST | /api/admin/apply/modify/:id/reject | admin | 驳回 |
-| GET  | /api/admin/employees | admin | 员工列表（按租户隔离；平台超管可用 ?companyId= 收窄） |
+| GET  | /api/admin/employees | admin | 员工列表（按租户隔离；平台超管可用 ?companyId= 收窄）。**列表里 `openid` 只回掩码**（首字符 + `****` + 后四位）并附 `wechatBound` 布尔；关键字仍按库里明文 openid 做 LIKE，展示脱敏不影响检索 |
 | POST | /api/admin/employees | admin | 新增员工（生成账号+初始密码；企业管理员落本企业，平台超管可用 ?companyId= 指定） |
 | PUT  | /api/admin/employees/:id | admin | 编辑员工资料（即时生效，不经审核流；姓名/手机必填，不含状态与密码；按租户隔离） |
 | GET  | /api/admin/stats | 名片统计（汇总 + 按员工 + 按天趋势 + TOP 案例/服务榜，零数据员工补 0；趋势与按员工均含八项指标；?from=&to= 日期范围；按租户隔离） |
@@ -647,6 +647,27 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/employees/:id/enable | admin | 启用账号（同上，含审计） |
 | POST | /api/admin/employees/:id/reset-password | admin | 重置密码（返回新初始密码；按租户隔离；目标不存在返回 code=1；记审计 employee.reset_password） |
 | PUT  | /api/admin/password | admin | 修改自己密码 |
+
+#### 微信绑定可见性的统一口径（2026-11-08）
+
+`admins.wx_openid` 一直是 `json:"-"`（它是「持有这个微信号即可签发管理员令牌」的凭据），
+后台连「绑没绑」都看不到；员工列表反倒把 `openid` 全文摊出来。现在两边收敛：
+
+- **四个出网口子**：`GET /api/admin/platform-admins`、`GET /api/admin/companies/:id/admins`、
+  `GET /api/admin/me` 各补 `wechatBound` + `wxOpenidMasked`；`GET /api/admin/employees`
+  （含 `staffIds` 精确取）的 `openid` 改为掩码并补 `wechatBound`。实现集中在
+  `internal/handler/wechat_binding.go`（`withWechatBinding` / `employeeBindingRows`）。
+- **掩码函数刻意分成两个**：`maskOpenIDForDisplay`（界面下发，空串返回空串、只留首字符）
+  与 `contentsec.go` 的 `maskOpenID`（服务端日志，空串显示 `-`、保留前 6 位）。
+  空值语义与威胁模型都不同，**绝不能复用**：界面上 `-` 会被读成「绑了一个叫 - 的微信」。
+  两个同名函数会直接编译冲突，改名时别改回去。
+- **审计里连掩码都不写**（掩码也是可关联的标识碎片）。员工本人在小程序绑定成功后记
+  `employee.wx_bind`，`Detail` 只含 `rebind` 布尔；管理员绑定记 `admin.wx_bind`。
+- **例外**：`/api/admin/employees/:id/export` 是 PIPL 查阅复制权协助接口，回员工本人全部
+  信息（含完整 openid）；`/api/employee/me` 回本人资料，同理。`/api/wechat/openid`
+  回 openid 给申请人本人（写进自己的申请单）。这三处不是「后台浏览者看别人的 openid」。
+- 后台**只能看，不能代绑**：绑定必须本人在小程序用一次性 `code` 经 `code2session` 换取。
+  P1 若要加解绑 / 按 openid 反查，需另立端点与权限边界，不要在这里偷偷放开。
 
 ### 企业内容管理（管理员登录，按租户隔离）
 | 方法 | 路径 | 说明 |

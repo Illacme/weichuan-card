@@ -14,9 +14,9 @@ const mocks = vi.hoisted(() => ({
   // 标注 any：夹具只填断言用到的字段，免去为每行补齐全部 Employee 字段
   listEmployees: vi.fn(async (): Promise<any> => ({
     list: [
-      { staffId: 1, name: '张三', title: '工程师', phone: '13800000001', landline: '021-11111111', email: 'z@a.com', avatar: '', status: 'enabled', createdAt: '2026-01-01 10:00:00' },
-      { staffId: 2, name: '李四', title: '销售', phone: '13900000002', landline: '', email: 'l@a.com', avatar: '', status: 'disabled', createdAt: '2026-01-02 10:00:00' },
-      { staffId: 3, name: '王五', title: '经理', phone: '13700000003', landline: '', email: 'w@a.com', avatar: '', status: 'enabled', createdAt: '2026-01-03 10:00:00' },
+      { staffId: 1, name: '张三', title: '工程师', phone: '13800000001', landline: '021-11111111', email: 'z@a.com', avatar: '', status: 'enabled', createdAt: '2026-01-01 10:00:00', wechatBound: true, openid: 'o****0001' },
+      { staffId: 2, name: '李四', title: '销售', phone: '13900000002', landline: '', email: 'l@a.com', avatar: '', status: 'disabled', createdAt: '2026-01-02 10:00:00', wechatBound: false, openid: '' },
+      { staffId: 3, name: '王五', title: '经理', phone: '13700000003', landline: '', email: 'w@a.com', avatar: '', status: 'enabled', createdAt: '2026-01-03 10:00:00', wechatBound: true, openid: 'o****0003' },
     ],
     total: 3,
     page: 1,
@@ -404,6 +404,24 @@ describe('Employees', () => {
     )
     await vi.waitFor(() => expect(w.text()).toContain('init123'))
     await vi.waitFor(() => expect(vi.mocked(listEmployees)).toHaveBeenCalledTimes(2))
+  })
+
+  it('微信绑定列显示状态与掩码，未绑定的不留空 span、也不铺开 openid 原文', async () => {
+    const w = mountEmployees()
+    await flushLoad(w)
+
+    const cells = w.findAll('.wx-bind-cell')
+    expect(cells).toHaveLength(3)
+    expect(cells[0].attributes('data-bound')).toBe('true')
+    expect(cells[0].text()).toContain('已绑定')
+    expect(cells[0].find('.wx-bind-mask').text()).toBe('o****0001')
+    expect(cells[1].attributes('data-bound')).toBe('false')
+    expect(cells[1].text()).toContain('未绑定')
+    expect(cells[1].find('.wx-bind-mask').exists()).toBe(false)
+    // 掩码是唯一的展示值；后端只回它，完整 openid 根本到不了这一层
+    expect(cells[0].attributes('data-masked')).toBe('o****0001')
+    expect(cells[2].attributes('data-masked')).toBe('o****0003')
+    expect(cells[0].find('.wx-bind-mask').attributes('title')).toBe('o****0001')
   })
 
   it('批量导出：点击「批量导出」调 exportEmployees（带当前关键字）', async () => {

@@ -3,8 +3,10 @@ package handler
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/auth"
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
@@ -169,12 +171,28 @@ func wechatBindHandler(db *gorm.DB, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该微信已绑定本企业的其他员工账号，请联系管理员处理"})
 			return
 		}
-		if err := db.Model(&model.Employee{}).
+		// 幂等短路：重复绑定同一个微信时 MySQL 的 RowsAffected 只数「值真的变了」的行，
+		// 原样 UPDATE 会返回 0。若一律当失败，员工再点一次就会看到「绑定失败」，
+		// 但其实早就绑好了。没有状态变化也不必再记一条审计。
+		if me.OpenID == openid {
+			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已绑定，下次可直接微信一键登录"})
+			return
+		}
+		rebind := me.OpenID != ""
+		res := db.Model(&model.Employee{}).
 			Where("staff_id = ?", me.StaffID).
-			Update("openid", openid).Error; err != nil {
+			Update("openid", openid)
+		if res.Error != nil || res.RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "绑定失败"})
 			return
 		}
+		// 写库成功之后再记：审计要回答「绑定真的生效了没有」，先记后写会在失败时留下假证据。
+		// Detail 只记是否覆盖写，绝不写 openid / 掩码 / code（掩码也是可关联的标识碎片）。
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionEmployeeWXBind, TargetType: "employee",
+			TargetID: strconv.FormatInt(me.StaffID, 10),
+			Detail:   map[string]any{"rebind": rebind},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已绑定，下次可直接微信一键登录"})
 	}
 }

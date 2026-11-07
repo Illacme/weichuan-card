@@ -172,6 +172,9 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			"companyName":      companyName,
 			"companyShortName": companyShortName,
 			"isPlatform":       a.CompanyID == 0,
+			// 当前账号自己绑没绑微信：小程序端免密登录靠它，后台此前完全看不到这一维
+			"wechatBound":    a.WXOpenID != "",
+			"wxOpenidMasked": maskOpenIDForDisplay(a.WXOpenID),
 			// 独立版企业锁定：前端据此把「企业管理」页切为只读。
 			// 后端各写接口也有 writeLocked 拦截——双保险，避免只靠前端隐藏按钮被绕过。
 			"independentLock": independentLocked(),
@@ -221,20 +224,20 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 				exp = lic.ExpiresAt.Format("2006-01-02")
 				expired = now.After(lic.ExpiresAt)
 			}
-		data = append(data, gin.H{
-			"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
-			"loginCode":      comp.LoginCode,
-			"createdAt":      comp.CreatedAt,
-			"employeeCount":  empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
-			"wxConfigured": wxOK[comp.ID],
-			// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
-			"storageBytes":     storeBytes[comp.ID],
-			"licenseExists":    lic.ID > 0,
-			"licenseEdition":   lic.Edition,
-			"licenseSeats":     lic.Seats,
-			"licenseExpiresAt": exp,
-			"licenseExpired":   expired,
-		})
+			data = append(data, gin.H{
+				"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
+				"loginCode":     comp.LoginCode,
+				"createdAt":     comp.CreatedAt,
+				"employeeCount": empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
+				"wxConfigured": wxOK[comp.ID],
+				// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
+				"storageBytes":     storeBytes[comp.ID],
+				"licenseExists":    lic.ID > 0,
+				"licenseEdition":   lic.Edition,
+				"licenseSeats":     lic.Seats,
+				"licenseExpiresAt": exp,
+				"licenseExpired":   expired,
+			})
 		}
 		pagedOK(c, data, total, page, size)
 	})
@@ -419,7 +422,9 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		db.Where("company_id = ?", id).Order("id asc").Find(&list)
 		data := make([]gin.H, 0, len(list))
 		for _, a := range list {
-			data = append(data, gin.H{"id": a.ID, "username": a.Username, "createdAt": a.CreatedAt})
+			data = append(data, withWechatBinding(gin.H{
+				"id": a.ID, "username": a.Username, "createdAt": a.CreatedAt,
+			}, a.WXOpenID))
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": data})
 	})
