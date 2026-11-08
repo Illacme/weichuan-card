@@ -170,6 +170,13 @@ func RegisterAdmins(r *gin.Engine, db *gorm.DB) {
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
+
+	// 微信绑定管理（P1：集中清单 / 按 openid 反查 / 代解绑）。
+	// 挂在本组内部而不是新建顶层 RegisterWechatAdmin：新增顶层注册函数要同步改
+	// cmd/server、cmd/devserver、handler_test 三处，漏一处就是「测试绿、线上 404」。
+	// 注意这三个端点各自用自己的中间件（反查是 plat，清单/解绑是普通 admin + 租户收窄），
+	// 不继承上面的 plat——企业管理员要能解绑本企业的账号。
+	registerWechatAdmin(r, db)
 }
 
 // usernameTaken 用户名是否已被占用（全表唯一，含企业管理员）；excludeID>0 时排除自己（改名用）。

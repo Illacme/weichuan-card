@@ -32,6 +32,7 @@ frontend/
     │   ├── storage.ts        # CDN 刷新 / 私有桶签名
     │   ├── tenants.ts        # 企业管理 / 企业管理员 / 租户小程序凭据（含 releaseEnabled 代发开关）
     │   ├── mpRelease.ts      # 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回
+    │   ├── wechatBindings.ts # 微信绑定管理：清单 / 按 openid 反查 / 代解绑（绝无代绑函数）
     │   └── assets.ts         # 开源素材库：清单 / 采用 / 预览图 URL
     ├── store/auth.ts         # Pinia 登录态（持久化 localStorage）
     ├── router/index.ts       # 路由表 + 路由守卫
@@ -47,6 +48,7 @@ frontend/
         ├── ApplyOpen.vue     # 开通审核（通过弹初始密码 / 驳回）
         ├── ApplyModify.vue   # 名片修改审核（snapshot 旧值→新值对比）
         ├── Employees.vue     # 员工管理（新增/启用停用/重置密码）
+        ├── WechatBindings.vue # 微信绑定管理（集中清单 / 代解绑 / 平台超管反查）
         └── content/
             ├── CompanyInfo.vue
             ├── CompanyProfile.vue
@@ -233,6 +235,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
   **图例点选（默认三线 / 勾选后纵轴重算 / 最后一项点不掉）**、tooltip、空态与 NaN 兜底。
 - `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等；微信绑定列只出状态 + 掩码。
 - `src/components/WechatBindingCell.spec.ts`（9 例）：绑定状态单元格的四种表现（已绑 / 未绑 / 掩码为空 / compact），外加**三页接入静态守门**（三个账号页都要有 `prop="wechatBound"` 列、传的是掩码字段、员工页不再铺开 `openid` 明文列）与**安全底线**（`model.Admin.WXOpenID` 仍是 `json:"-"`）。静态守门先剥注释，避免注释里的历史写法造成假红/假绿；另由 `Companies.spec.ts` / `Employees.spec.ts` 的真实 DOM 断言（`data-bound`）兜住「源码里有、实际没渲染」。
+- `src/views/WechatBindings.spec.ts`（18 例）：微信绑定管理页——清单两类账号 + 企业 + 掩码、服务端分页参数、类型筛选带 `kind`、空态给出「由本人到小程序绑定」的出路；**解绑二次确认的三个后果**（免密入口失效 / 令牌失效 / 后台不能代绑）、取消不发请求、`kind+id` 定位、`self=true` 时清登录态跳登录页；**反查平台超管专属**（企业管理员连入口都看不到）、空值不发请求、完整 openid 只进请求体且结果只显掩码/输入框清空、反查结果里解绑就地移除不重发 lookup；静态守门钉住「每列 `prop`」「api 层没有代绑函数」「页面不写 localStorage」「路由不误标 `platformOnly`」。
 - `src/views/ApplyOpen.spec.ts`（19 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功；**「提交时间必须是第一列」静态守门 3 例**（读模板钉住列顺序与 `prop="createdAt"`、时间列只出现一次、手机卡片首行也是提交时间）。
 - `src/views/ApplyModify.spec.ts`（20 例）：名片修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端只隐藏员工ID（提交时间是第一列，始终可见）；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功；**「提交时间必须是第一列」静态守门 2 例**（旧版该列没写 `prop`，「手机端隐藏两列」的断言恒为 0 是假绿，现已补上并改为始终可见）。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
@@ -241,7 +244,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `src/api/mpRelease.spec.ts`（10 例）：版本发布接口契约——路径拼装（租户维度列表 / 登记 vs 记录维度四个动作）、`undo-audit` 必须带 `confirm:true`、审核状态回包 `wxStatus/changed` 解包、`mpReleaseTagType` 六态映射（含未知值回落 info）、**上传与探活两条路径**（`/releases/upload` 带版本号+备注、`/releases/upload-readiness` 把 `data` 摊平且缺字段兜底）。
 - `src/components/MPReleaseDialog.spec.ts`（12 例）：版本弹窗——打开即按企业拉列表、**每个状态出哪些按钮**（draft 只有提交审核 / auditing 查状态+撤回 / audit_passed 发布 / released 终态无动作）、驳回原因渲染与「重新提审」、撤回与发布的二次确认（含用户取消时不调接口）、**上传链路**（打开即探活并逐条列出缺失项 / 就绪提示 / **环境不齐时点「开始上传」不发请求** / 就绪后提交并刷新列表）。`el-dialog` 桩认 `modelValue`，否则嵌套的登记弹窗会把「取消 / 登记」混进行内按钮断言；`el-button` 桩要把 `disabled` 声明成 prop，否则它以 attr 落到真 `<button>` 上，VTU 的 `trigger` 会直接跳过点击，那道 guard 就永远测不到。
 - `src/views/Companies.spec.ts`（凭据部分）：租户小程序凭据 + **平台代发开关** + **上传密钥**——缺省允许、关掉后随保存提交 `releaseEnabled:false`、回包 `releaseEnabled:false` 时显示关闭态；上传密钥填了随保存提交、**原本已配置却留空时确认文案同时点名 AppSecret 与上传密钥**（一次说清要清掉什么，不连弹两窗）；以及原先的列表标签 / 回填 / Secret 留空二次确认 / AppID 前缀校验。
-- `src/router/index.spec.ts`（11 例）：路由守卫门禁——未登录跳登录页、已登录访问登录页回后台、企业管理员访问平台级页面挡回审核页、平台超管放行、未知路径落默认页、登出后门禁立即生效；另守路由表本身（平台管理分组必须都标 `platformOnly`、仅登录页 public、业务页都要有 title）。做法是真实 routes + 桩组件 + 内存 history，挂的是生产同一个 `registerGuards`。
+- `src/router/index.spec.ts`（17 例）：路由守卫门禁——未登录跳登录页、已登录访问登录页回后台、企业管理员访问平台级页面挡回审核页、平台超管放行、**微信绑定管理两类管理员都放行（防误标 `platformOnly`）**、未知路径落默认页、登出后门禁立即生效；另守路由表本身（平台管理分组必须都标 `platformOnly`、仅登录页 public、业务页都要有 title）。做法是真实 routes + 桩组件 + 内存 history，挂的是生产同一个 `registerGuards`。
 - `src/layout/AdminLayout.spec.ts`（16 例）：后台外壳——**企业管理员看不到「平台管理」组**、平台超管能看到全部入口、品牌名三级回落（企业简称 → 系统设置品牌 → 「· 管理后台」后缀）、顶部标题取路由 `meta.title`、当前菜单跟随路由；刷新后 `profileLoaded=false` 时用 `/api/admin/me` 取回身份（已恢复则不重复请求，失败保留本地身份）；登出（接口失败也要本地登出）、改密弹层、手机端收进头像下拉、路由切换收起窄屏抽屉。
 - `src/views/content/` 六个企业内容页全覆盖：
   - `Categories.spec.ts`（10 例）：列表与锁定态、关键字过滤、**首行上移 / 末行下移禁用条件**、下移后按新顺序批量持久化 sort、新增校验不通过不提交、编辑走 update、删除二次确认、列表失败不崩。
@@ -357,9 +360,39 @@ npm run test:watch  # 监听模式
 全部个人信息，保留完整 openid；`/api/employee/me` 回的是员工本人资料，同理。
 P1 若要统一收紧，需连同这两处一起审，别只改半边。
 
+## 微信绑定管理（P1：看得见 → 管得了）
+
+`src/views/WechatBindings.vue` + `src/api/wechatBindings.ts`，入口挂在侧栏
+**「审核管理」组**（`/wechat-bindings`）。这个位置是刻意的：
+
+- **故意不标 `platformOnly`**。清单与解绑两类管理员都要用——企业管理员要能解绑
+  本企业员工，标了就把他们整页挡在门外。只有「按完整 openid 反查」是平台超管专属，
+  由页内 `auth.isPlatform` 收窄那一块入口（后端另有 `PlatformAdminMiddleware` 兜底）。
+  路由表 / `AdminLayout.vue` 的手写菜单 / 组件三处必须同步，守门用例会双向核对。
+- 页面是**跨企业清单**，所以没进 `AdminLayout.vue` 的 `COMPANY_SCOPED`：平台超管不必
+  先选企业就能看全部；选了企业时请求拦截器注入 `?companyId=`，后端按它收窄，
+  界面上也写明了这一行为。
+
+交互上四条不能省：
+
+- **解绑二次确认必须说清三个后果**：免密入口失效、**该账号已签发令牌全部失效
+  （含手机上正在用的会话）**、重新绑定只能本人到小程序做。只写「确定解绑吗」，
+  运营会以为只是关掉一个开关。
+- **`self=true` 要登出重登，但不要再调 `adminLogout()`**：安全戳已自增，当前令牌
+  本来就是无效的，多发一次请求只会换来拦截器弹「登录已失效」。直接
+  `auth.logout()` + `router.replace('/login')`。
+- **完整 openid 只进请求体**：`lookupWechatBindings(openid)` 是唯一允许出现原文的
+  地方；查询成功后输入框立刻清空，不写 localStorage / sessionStorage，回包也只有
+  掩码。反查结果里直接解绑时**就地移除该行**，不重新发一次 lookup（免得原文再次出网）。
+- **api 层没有、也不该有 `bind` 函数**。后台只能解绑；绑定必须本人在小程序用一次性
+  code 经 `code2session` 换取。静态守门把这条钉死了。
+
+`kind` 类型筛选和 `keyword` 都下沉服务端，且在分页**之前**过滤——前端只筛当前页会
+出现「搜得到但翻页后又没了」。列表沿用 `useServerTable` 与统一分页信封。
+
 ## 已知边界（与后端一致）
 
-- 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；员工 / 企业 / 申请 / 账号 / 审计日志已服务端分页（`useServerTable` + 后端 `?page=&size=`）。
+- 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；员工 / 企业 / 申请 / 账号 / 审计日志 / **微信绑定清单**已服务端分页（`useServerTable` + 后端 `?page=&size=`）。
 - 私有桶场景下，前端无需改造：上传/访问经签名通道，URL 由后端返回限时签名地址（见《三端联调与接口总表》§4.4/§4.5）。
 - 初始密码仅返回一次（开通/新增/重置），前端弹窗展示，需超管线下通知员工。
 - **小程序版本发布是 MVP**：上传代码不在后台也不在后端——由 CI 用「代码上传密钥」经

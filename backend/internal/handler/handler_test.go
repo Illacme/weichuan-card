@@ -974,6 +974,39 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Contains(t, fmt.Sprint(data["message"]), "地址可访问")
 	})
 
+	// 微信绑定管理（P1）：三条端点必须进 runAPIFlow，才会被 TestAPIFlowMySQL 的
+	// parity 一并覆盖——漏在这里就是「SQLite 全绿、MySQL 上才炸」。只做冒烟，
+	// 不真的解绑任何账号，免得改动后面「移动端管理员登录与审核」依赖的状态。
+	t.Run("微信绑定清单与反查", func(t *testing.T) {
+		_, body := c.do("GET", "/api/admin/wechat/bindings?page=1&size=20", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		for _, k := range []string{"total", "page", "size"} {
+			require.Contains(t, body, k, "清单必须走统一分页信封")
+		}
+		_, ok := body["data"].([]interface{})
+		require.True(t, ok, "清单 data 必须是数组")
+
+		// 非法 kind 按「全部」处理，不该把手拼的查询串变成空列表报错
+		_, body = c.do("GET", "/api/admin/wechat/bindings?kind=hacker", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+
+		// 反查：空值 / 超长挡在查询前；合法但查无此号返回空数组
+		for _, bad := range []string{"", strings.Repeat("x", 129)} {
+			_, b := c.do("POST", "/api/admin/wechat/lookup",
+				map[string]interface{}{"openid": bad}, adminToken)
+			require.EqualValues(t, 1, b["code"])
+		}
+		_, body = c.do("POST", "/api/admin/wechat/lookup",
+			map[string]interface{}{"openid": "o-nobody-parity-0000"}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		require.Empty(t, body["data"].([]interface{}))
+
+		// 解绑：参数合法但账号不存在 → 明确拒绝，不落库
+		_, body = c.do("POST", "/api/admin/wechat/unbind",
+			map[string]interface{}{"kind": "employee", "id": 999999}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+	})
+
 	// 移动端管理员身份通路：放最后，因为它会往 sys_setting 写 wx_appid，
 	// 提前执行会让前面的开通申请误判「凭据已配」而触发内容安全分支。
 	// 进 runAPIFlow 才会被 TestAPIFlowMySQL 的 parity 一并覆盖。

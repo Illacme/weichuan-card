@@ -35,6 +35,16 @@ const (
 	// ActionAdminWXBind：管理员把当前微信绑定到后台账号，之后可免密进审核。
 	// 绑定等于给这个微信号开通管理员入口，是特权动作。
 	ActionAdminWXBind = "admin.wx_bind"
+	// ActionAdminWXUnbind / ActionEmployeeWXUnbind：后台代解绑微信。
+	// 解绑会同时自增安全戳令该账号已签发的令牌立即失效（手机丢失时的救济动作），
+	// 事后要能回答「谁在什么时候断掉了哪个账号的免密入口」。
+	ActionAdminWXUnbind    = "admin.wx_unbind"
+	ActionEmployeeWXUnbind = "employee.wx_unbind"
+	// ActionWechatLookup 按完整 openid 反查它绑到了哪些账号（平台超管专属）。
+	// 只读却特意破例留痕：这是把「微信身份 → 后台账号/企业」关联起来的少数入口，
+	// 谁在什么时候查过哪个微信必须有据可查。Detail 只记命中条数，
+	// 绝不写 openid 原文或掩码（见 employee.export 的破例约定）。
+	ActionWechatLookup = "wechat.lookup"
 
 	ActionAdminCreate = "admin.create"
 	ActionAdminRename = "admin.rename"

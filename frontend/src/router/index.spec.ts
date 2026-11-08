@@ -93,6 +93,19 @@ describe('路由守卫', () => {
     expect(await goto(r, '/platform/settings')).toBe('/platform/settings')
   })
 
+  it('微信绑定管理两类管理员都放行（企业管理员要能解绑本企业员工）', async () => {
+    // 反查是平台超管专属，但清单 / 解绑是两类管理员共用的；误标 platformOnly
+    // 会把企业管理员整页挡在门外。页面内再按 auth.isPlatform 收窄反查入口。
+    for (const s of [
+      { loggedIn: true, isPlatform: false, companyId: 5 },
+      { loggedIn: true, isPlatform: true, companyId: 0 },
+    ]) {
+      setSession(s)
+      const r = makeRouter()
+      expect(await goto(r, '/wechat-bindings')).toBe('/wechat-bindings')
+    }
+  })
+
   it('未知路径 → 落到默认页而不是白屏', async () => {
     setSession({ loggedIn: true, isPlatform: true })
     const r = makeRouter()

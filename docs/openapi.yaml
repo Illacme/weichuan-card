@@ -4589,6 +4589,162 @@ paths:
                   code: { $ref: "#/components/schemas/Code" }
                   msg: { type: string }
 
+  # ───────────────── 微信绑定管理（P1：清单 / 反查 / 解绑） ─────────────────
+  # 三条端点都挂在 backend/internal/handler/admins.go 的 RegisterAdmins 内部，
+  # 与「账号管理」同组。设计底线见 backend/internal/handler/wechat_admin.go 文件头：
+  # 后台只能解绑、绝不代绑；openid 只进不出；解绑同时自增 token_version 踢掉已签发令牌。
+  /api/admin/wechat/bindings:
+    get:
+      tags: [账号]
+      summary: 微信绑定清单（服务端分页，只列已绑定账号）
+      description: |
+        合并 `admins.wx_openid` 与 `employees.openid` 两张表，只列**已绑定**的账号：
+        这里是「可解绑对象」列表，未绑定的行没有可执行动作，而「谁没绑」由 P0 的
+        三个账号页各自展示。
+
+        - 两类管理员都可用；`scopeCond` 按身份收窄：企业管理员只见本企业，
+          平台超管不传 `companyId` 时看全部企业。
+        - `keyword` 匹配账号名 / 企业名 / 掩码 / 编号；`kind` 按 admin / employee 收窄。
+          两者都在**分页之前**过滤，`total` 是筛后真实条数（否则翻页会翻出空白页）。
+        - 员工姓名是 PII 密文列，SQL 的 LIKE 打不到明文，故过滤在 Go 侧对已解密行做。
+        - 回包只有 `wechatBound` 与 `wxOpenidMasked`，**绝不回 openid 原文**。
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+        - $ref: "#/components/parameters/CompanyScope"
+        - name: keyword
+          in: query
+          required: false
+          schema: { type: string }
+          description: 账号名 / 企业名 / 掩码 / 编号模糊匹配
+        - name: kind
+          in: query
+          required: false
+          schema: { type: string, enum: [admin, employee] }
+          description: 账号类型；非法值按「全部」处理
+      responses:
+        "200":
+          description: code=0（越界页码夹到末页并回传夹后的 page）；code=401 未登录；code=1 查询失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/WechatBindingRow" }
+                  total: { $ref: "#/components/schemas/PageTotal" }
+                  page: { $ref: "#/components/schemas/PageIndex" }
+                  size: { $ref: "#/components/schemas/PageSize" }
+
+  /api/admin/wechat/lookup:
+    post:
+      tags: [账号]
+      summary: 按完整 openid 反查绑定了哪些账号（仅平台超管）
+      description: |
+        方向是「输入完整 openid → 输出账号」，**反过来不行**：这是把微信身份关联到
+        后台账号 / 企业的少数入口，跨租户关联查询只给平台超管
+        （`PlatformAdminMiddleware`，企业管理员返回 `{code:403}`）。
+
+        - `openid` 长度上限 128 字符，防止本端点变成任意长度字符串的全表扫描放大器；
+          这不是格式校验，不要在服务端试图「验证 openid 长得对不对」。
+        - **openid 只进不出**：请求体是唯一允许出现完整原文的地方；响应只回掩码，
+          审计 Detail 连掩码都不写，只记 `admin_count` / `employee_count` 两个条数。
+        - 只读却破例留痕 `wechat.lookup`：谁在什么时候查过哪个微信必须有据可查。
+          查无此号也会记一条（条数为 0）。
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [openid]
+              properties:
+                openid:
+                  type: string
+                  maxLength: 128
+                  description: 完整 openid（仅上行，响应不回显）
+      responses:
+        "200":
+          description: |
+            code=0（查无此号时 data 为空数组）；code=1 空值 / 超长 / 查询失败；
+            code=401 未登录；code=403 非平台超管。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/WechatBindingRow" }
+                  total:
+                    type: integer
+                    description: 命中条数（此端点不分页）
+
+  /api/admin/wechat/unbind:
+    post:
+      tags: [账号]
+      summary: 后台代解绑微信（清绑定 + 踢掉已签发令牌）
+      description: |
+        **只能解绑，绝不代绑**：绑定必须账号本人在小程序用一次性 code 经
+        `code2session` 换取，后台不提供任何写入 openid 的接口。
+
+        - `kind=admin` 按 `admins.id`，`kind=employee` 按 `employees.staff_id` 定位；
+          两张表主键各自自增，`id` 不可跨类型复用。
+        - `scopeCond` 同时收窄查询与 UPDATE 的 WHERE：企业管理员只能解绑本企业账号，
+          越权时返回「账号不存在（或不在本企业）」且不落库。
+        - 单条 `Updates` 一次完成「清绑定 + `token_version + 1`」：分两条 UPDATE 之间
+          进程挂掉会留下「绑已解、手机上令牌还有效」的窗口。安全戳自增后该账号
+          已签发的所有令牌立即失效（含后台当前会话），需重新用账号密码登录。
+        - `self=true` 表示解的是当前登录的管理员账号，前端必须据此登出重登。
+          员工与管理员分属两张表，员工 `staff_id` 与 `admin.id` 数值撞车不算 self。
+        - 未绑定 / 重复解绑明确拒绝，不制造第二条审计。写库成功后才记
+          `admin.wx_unbind` / `employee.wx_unbind`，Detail 只有 `companyId`，
+          不写姓名 / openid / 掩码。
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, id]
+              properties:
+                kind:
+                  type: string
+                  enum: [admin, employee]
+                id:
+                  type: integer
+                  format: int64
+                  description: admins.id 或 employees.staff_id，取决于 kind
+      responses:
+        "200":
+          description: |
+            code=0 已解绑；code=1 参数错误 / 账号不存在（或不在本企业）/ 该账号未绑定微信 /
+            解绑失败；code=401 未登录。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+                  self:
+                    type: boolean
+                    description: 解的是当前登录账号；为 true 时本次响应之后旧令牌即失效
+                  companyId: { type: integer, format: int64 }
+
 components:
   # 分页约定（管理端列表统一）：请求 ?page=&size=，响应 data 为**当前页数组**，
   # total/page/size 放在顶层。实现见 backend/internal/handler/pagination.go。
@@ -5697,3 +5853,37 @@ components:
             10 个项目案例 + 4 项服务 + 配套图片素材 + 2 个演示账号）。
             **默认 false，商用版装完就是零业务数据**：由平台超管先在「企业管理」
             新建企业，再逐步录入内容。仅供 /api/setup/install 使用（/test 忽略该字段）。
+
+    # 微信绑定清单 / 反查共用的展示行（P1）。
+    # 刻意不含 openid 原文：掩码只是「大概是哪一个」的肉眼核对，
+    # 精确定位走 /api/admin/wechat/lookup，方向正好反过来。
+    WechatBindingRow:
+      type: object
+      required: [kind, id, name, companyId, companyName, wechatBound, wxOpenidMasked, createdAt]
+      properties:
+        kind:
+          type: string
+          enum: [admin, employee]
+        id:
+          type: integer
+          format: int64
+          description: kind=admin 是 admins.id；kind=employee 是 employees.staff_id（两表主键各自自增）
+        name:
+          type: string
+          description: 管理员用户名 / 员工姓名（员工侧为解密后的明文）
+        companyId:
+          type: integer
+          format: int64
+          description: 0 = 平台超管
+        companyName:
+          type: string
+          description: 企业简称优先，缺省回落「企业 #id」；companyId=0 显示「平台」
+        wechatBound:
+          type: boolean
+          description: 是否已绑定。清单只列已绑定账号；反查命中行同样恒为 true
+        wxOpenidMasked:
+          type: string
+          description: 首字符 + **** + 后四位；未绑定为空串。**绝不回 openid 原文**
+        createdAt:
+          type: string
+          format: date-time

@@ -341,6 +341,9 @@ const allMenuGroups = [
       { path: '/apply/open', title: '开通审核' },
       { path: '/apply/modify', title: '名片修改审核' },
       { path: '/employees', title: '员工管理' },
+      // 微信绑定管理：企业管理员要能解绑本企业员工，所以和「内容安全」一样
+      // 放非 platformOnly 组；页内的「按 openid 反查」再单独按身份隐藏。
+      { path: '/wechat-bindings', title: '微信绑定管理' },
       // 内容安全：图片违规记录与一键下架。企业管理员也要用（管自己企业的图），
       // 所以放在这个非 platformOnly 的组里，而不是「平台管理」。
       { path: '/content-sec', title: '内容安全' },

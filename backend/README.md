@@ -623,6 +623,9 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/login/mobile | 否 | **小程序端管理员登录**：与上一行同一套校验（bcrypt + 空账号烧等价时间 + 企业停用 + 同一登录限流器），区别是**把 access/refresh 放进响应体**（手机没有 Cookie 容器）。回 `token / refreshToken / expiresIn / companyId / companyName / isPlatform / username / wechatBound`。审计 `admin.mobile_login` |
 | POST | /api/admin/login/wechat | 否 | **管理员微信免密登录**：body `{code, companyId}` → jscode2session 换 openid → 找绑定了该 openid 的管理员。业务码同员工一键登录（0/1/2/**3**）。平台模式下同一微信可能是多家企业的管理员：先用 `companyId` 收窄，收窄后仍多于一条返回 3，**绝不随便挑一个签发令牌** |
 | POST | /api/admin/wechat/bind | admin | **管理员绑定 / 换绑微信**（body `{code}`）：覆盖写 `admins.wx_openid`，同企业内一个 openid 只绑一个管理员；凭据取管理员**自己企业**的 appid。审计 `admin.wx_bind` |
+| GET  | /api/admin/wechat/bindings | admin | **微信绑定清单**（P1）：合并已绑定的管理员 + 员工，服务端分页 `{code,data,total,page,size}`；`?keyword=` 匹配姓名/企业/掩码/编号、`?kind=admin\|employee` 按类型收窄，两者都在分页**之前**过滤。`scopeCond` 按身份收窄租户。只回 `wechatBound` + `wxOpenidMasked`，不回 openid 原文 |
+| POST | /api/admin/wechat/lookup | **平台超管** | **按完整 openid 反查**（P1）：输入完整值 → 输出账号（只回掩码）。跨租户关联查询，企业管理员 403；openid 上限 128 字符。只读但破例记审计 `wechat.lookup`，`Detail` 只有 `admin_count` / `employee_count`，连掩码都不写 |
+| POST | /api/admin/wechat/unbind | admin | **后台代解绑**（P1）：body `{kind:'admin'\|'employee', id}`，`kind` 决定 id 是 `admins.id` 还是 `employees.staff_id`。单条 `Updates` 一次完成「清绑定 + `token_version + 1`」，该账号已签发令牌立即失效；`self=true` 表示解的是当前登录账号。`scopeCond` 同时收窄查询与 UPDATE。审计 `admin.wx_unbind` / `employee.wx_unbind`，`Detail` 只有 `companyId` |
 | POST | /api/refresh | 否 | 换发新 access（PC 读 refresh Cookie；小程序 body 传 refreshToken） |
 | POST | /api/logout | 否 | 吊销当前会话 sid（单设备精确吊销）+ 清除 httpOnly 鉴权 Cookie（PC 后台登出） |
 | POST | /api/apply/open | 否 | 员工自助提交开通申请（pending；可含 landline / avatar / companyId，缺省落演示租户）。文字经内容安全检测，命中违规返回 code=1 且不落库 |
@@ -667,7 +670,34 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   信息（含完整 openid）；`/api/employee/me` 回本人资料，同理。`/api/wechat/openid`
   回 openid 给申请人本人（写进自己的申请单）。这三处不是「后台浏览者看别人的 openid」。
 - 后台**只能看，不能代绑**：绑定必须本人在小程序用一次性 `code` 经 `code2session` 换取。
-  P1 若要加解绑 / 按 openid 反查，需另立端点与权限边界，不要在这里偷偷放开。
+  P1 已另立端点补上解绑 / 反查，但同样没有开放任何写入 openid 的接口（见下一节）。
+
+#### 微信绑定的「可维护」层（P1，2026-11-08）
+
+实现集中在 `internal/handler/wechat_admin.go`，三个端点挂在 `RegisterAdmins` **内部**
+（`registerWechatAdmin(r, db)`）——新增顶层 `RegisterX` 要同步改 `cmd/server`、
+`cmd/devserver`、`handler_test` 三处装配，漏一处就是「测试全绿、线上静默 404」。
+三个端点也进了 `runAPIFlow`，由 `TestAPIFlowMySQL` 的 parity 一并覆盖。
+
+- **绝不代绑**。绑定必须本人用一次性 code 经 `code2session` 换取，后台只能把已有绑定
+  清掉。「能凭一个 openid 给别人开免密入口」比看不到绑定关系危险得多。
+- **openid 只进不出**。`POST /api/admin/wechat/lookup` 的请求体是唯一允许出现完整原文
+  的地方；清单 / 反查的回包只有掩码，审计 Detail 连掩码都不写（只记命中条数）。
+  长度上限 128 是为了不让反查变成任意长字符串的全表扫描放大器，**不是格式校验**。
+- **租户隔离**。清单 / 解绑用 `scopeCond`：企业管理员只看 / 只解本企业，平台超管可看
+  全部（也可用 `?companyId=` 收窄）。反查是跨租户关联查询，只给
+  `PlatformAdminMiddleware`，企业管理员直接 403。
+- **解绑必须真的断掉入口**：单条 `Updates` 同时清列并自增 `token_version`。分两条
+  UPDATE 之间进程挂掉会留下「绑已解、手机上令牌还有效」的窗口——手机丢失场景下
+  等于没解。因此确认弹窗必须把「会把对方踢下线」说清。
+- **`self` 不能拿 id 直接比 `staffId`**：员工与管理员分属两张表、主键各自自增，数值
+  撞车纯属巧合，且本端点要求 `role=admin`，员工不可能是调用者。`unbindIsSelf` 只在
+  `kind=admin` 且 id 相等时返回 true，否则会误把「解绑别人」显示成「请重新登录」。
+- **审计在写库成功之后记**，且 Detail 不含姓名 / openid / 掩码——审计表不该变成
+  第二份 PII 副本。重复解绑 / 未绑定明确拒绝，不制造第二条成功审计。
+- 清单只列**已绑定**账号（这里是「可解绑对象」列表），「谁没绑」由上面四个出网口
+  各自展示。员工姓名是 PII 密文列，SQL `LIKE` 打不到明文，关键字过滤在 Go 侧对
+  `AfterFind` 解密后的行做；企业名批量补查一次，不 N+1。
 
 ### 企业内容管理（管理员登录，按租户隔离）
 | 方法 | 路径 | 说明 |

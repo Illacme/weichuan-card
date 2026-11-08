@@ -41,6 +41,11 @@ export const ACTION_LABELS: Record<string, string> = {
   // 小程序端管理员：令牌落在手机本地且可直接审批申请，绑定微信等于开一个管理员入口
   'admin.mobile_login': '管理员小程序登录',
   'admin.wx_bind': '管理员绑定微信',
+  // P1 后台代解绑：解绑会踢掉该账号已签发的令牌，属安全处置动作
+  'admin.wx_unbind': '解绑管理员微信',
+  'employee.wx_unbind': '解绑员工微信',
+  // 按完整 openid 反查绑定关系：只读但破例留痕（把微信身份关联到后台账号）
+  'wechat.lookup': '按 openid 反查绑定',
   'admin.create': '新增平台超管',
   'admin.rename': '改管理员用户名',
   'admin.reset_password': '重置管理员密码',
