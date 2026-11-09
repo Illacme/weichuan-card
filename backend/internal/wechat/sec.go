@@ -14,8 +14,10 @@ import (
 // 两条通道：
 //   - 文本走 /wxa/msg_sec_check（v2，同步返回结论）——本文件实现；
 //   - 图片 / 音视频只有异步接口 /wxa/media_check_async，结论要靠微信
-//     「消息推送」回调回来，需要在微信后台配推送 URL，尚未接入
-//     （见 docs/commercial-readiness.md 的 A1）。
+//     「消息推送」回调回来。这条链路**已接入**：见 internal/handler/media_check.go
+//     的「异步送检 → 消息推送回调落库 media_check → 后台一键下架」三段式实现，
+//     以及 docs/commercial-readiness.md 的 A1。运营仍需在微信公众平台配置推送
+//     URL + Token + AESKey（系统设置 → 微信），未配置时图片检测跳过、不阻断上传。
 
 // 内容安全场景值（微信 v2 口径）。场景只影响微信侧的判定尺度，
 // 名片资料属于「资料」场景。

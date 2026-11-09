@@ -83,9 +83,9 @@
 | # | 缺口 | 现状（证据） | 建议动作 |
 |---|---|---|---|
 | D1 | **lint 门禁（✅ 已落地）** | 后端新增 `backend/.golangci.yml`（v2 配置，跟着 Go module 走）：`errcheck / govet / ineffassign / staticcheck / unused` 五个——**只留「报出来一定是问题」的静默失败类，不留风格类**；CI 按官方安装脚本取固定版本 v2.15.0（不用 action：action 大版本与 linter 大版本是两套编号）。前端新增 `eslint.config.mjs`（ESLint 9 flat）：未使用变量/导入 + Vue 模板硬错误 + 少数 JS 陷阱；`vue-tsc` 仍是类型门禁，lint 不重复做类型检查。**存量已清零**：29 处后端（20 处 `defer Close()` / 清理路径的显式 `_ =` + 说明、2 处 ShouldBindJSON 按「理由可选」显式丢弃、1 处 ineffassign、1 处未使用的测试 helper）+ 25 处前端（真未使用的导入/变量）全部修掉，现在两边都是 0 issue | 静默失败没人发现（`errcheck` 最典型：丢弃的 error 编译过、vet 也过） | **已落地**。刻意不启用：gofmt（存量文件有 Go 版本导致的注释排版差异，一开就是上百处噪音）、`no-explicit-any`（测试桩里大量 any，逼着加 disable 反而淹没有效信号）、`vue/multi-word-component-names`（组件名与路由一一对应） |
-| D2 | **依赖漏洞扫描（✅ 已落地，2026-11-03 起转正式门禁）** | CI 新增 `vuln` job：`govulncheck ./...`（按**实际调用到的函数**判定，比单纯比对版本准）+ `npm audit --omit=dev`（只看运行时依赖，构建链告警量极大且不进产物）。~~job 级 `continue-on-error: true`~~ **已摘除**：2026-11-03 运行时基线清零（follow-redirects GHSA-mrwp-f3q8-3g9p 升 1.16.2，`npm audit --omit=dev` = 0），按本行原定计划转阻塞 | 依赖链上有 CVE 没人知道 | **已落地并转门禁**。口径注意：门禁只看**运行时依赖**；`npm ci` 装包时打印的全量树摘要（含 dev 工具链，如 vitest 的 tinypool critical）只是提示行、不影响退出码——dev 依赖不进产物，修它要升 vitest@5 大版本，噪音不应阻塞合并。之前 CI 上「26 vulnerabilities」红的全貌：那行其实是 `npm ci` 的摘要，真正让 job 失败的只有 follow-redirects 这 1 条 high | 
-| D3 | **CI 构建镜像（✅ 已落地）** | CI 新增 `images` job：用 buildx 分别 build `backend/` 与 `frontend/` 两个 Dockerfile（`push: false`，带 gha 缓存） | `go build` / `npm run build` 绿只代表代码能编译，Dockerfile 里的 COPY 路径、多阶段产物名、运行镜像缺 tzdata/wget 这类问题只有真 build 才暴露——全是「本地能跑、客户装不上」 | **已落地** | 
-| D4 | **端到端冒烟（✅ 已落地，非阻塞）** | 新增 `scripts/e2e_smoke.sh`：真起一个进程（临时目录 + 临时端口，不碰现有数据），走完 **安装向导建库 → 登录拿 httpOnly Cookie → 建企业 → 配企业信息 → 建员工 → 小程序侧 `/api/card` 读回刚写的数据**，七步逐步 PASS/FAIL 并带退出码。CI 新增 `e2e-smoke` job（非阻塞） | 单测与接口测试**结构上覆盖不到**「真进程 + 自重启 + 两端衔接」这一层 | **已落地**。本机实测全绿（七步全 PASS）。为什么非阻塞：它依赖起真实进程与端口可用，runner 上偶发环境性抖动，先积累稳定性数据再转门禁 | 
+| D2 | **依赖漏洞扫描（✅ 已落地，2026-11-03 起转正式门禁）** | CI 新增 `vuln` job：`govulncheck ./...`（按**实际调用到的函数**判定，比单纯比对版本准）+ `npm audit --omit=dev`（只看运行时依赖，构建链告警量极大且不进产物）。~~job 级 `continue-on-error: true`~~ **已摘除**：2026-11-03 运行时基线清零（follow-redirects GHSA-mrwp-f3q8-3g9p 升 1.16.2，`npm audit --omit=dev` = 0），按本行原定计划转阻塞 | 依赖链上有 CVE 没人知道 | **已落地并转门禁**。口径注意：门禁只看**运行时依赖**；`npm ci` 装包时打印的全量树摘要（含 dev 工具链，如 vitest 的 tinypool critical）只是提示行、不影响退出码——dev 依赖不进产物，修它要升 vitest@5 大版本，噪音不应阻塞合并。之前 CI 上「26 vulnerabilities」红的全貌：那行其实是 `npm ci` 的摘要，真正让 job 失败的只有 follow-redirects 这 1 条 high |
+| D3 | **CI 构建镜像（✅ 已落地）** | CI 新增 `images` job：用 buildx 分别 build `backend/` 与 `frontend/` 两个 Dockerfile（`push: false`，带 gha 缓存） | `go build` / `npm run build` 绿只代表代码能编译，Dockerfile 里的 COPY 路径、多阶段产物名、运行镜像缺 tzdata/wget 这类问题只有真 build 才暴露——全是「本地能跑、客户装不上」 | **已落地** |
+| D4 | **端到端冒烟（✅ 已落地，2026-11-09 起转正式门禁）** | 新增 `scripts/e2e_smoke.sh`：真起一个进程（临时目录 + 临时端口，不碰现有数据），走完 **安装向导建库 → 登录拿 httpOnly Cookie → 建企业 → 配企业信息 → 建员工 → 小程序侧 `/api/card` 读回刚写的数据**，逐步 PASS/FAIL 并带退出码。CI 新增 `e2e-smoke` job；~~job 级 `continue-on-error: true`~~ **已摘除** | 单测与接口测试**结构上覆盖不到**「真进程 + 自重启 + 两端衔接」这一层 | **已落地并转门禁**。当初按「先非阻塞积累稳定性数据」执行：最近 12 次 CI 该 job 全部 success（含 2 次其它 job 失败的 run），脚本已有动态端口 / `--noproxy '*'` / 探活重试 / 临时目录清理，担心的环境抖动未出现；2026-11-09 本地再跑一次 14 步全 PASS 后摘掉 `continue-on-error` |
 
 ---
 
@@ -411,6 +411,15 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 - 端到端冒烟依赖「起真实进程 + 自重启 + 端口可用」，runner 上偶发环境性抖动。
 
 先让它们**跑起来、看得见**，稳定后再摘掉 `continue-on-error` 转正式门禁。
+
+> **✅ 后续订正（2026-11-09 复核：两条都已转正式门禁）**
+>
+> - D2 于 2026-11-03 清零运行时基线后摘掉 `continue-on-error`（见第十六轮 §2）。
+> - D4 于 2026-11-09 摘掉：最近 12 次 CI 该 job 全部 success，脚本的动态端口 /
+>   `--noproxy '*'` / 探活重试已消掉起先担心的 runner 抖动；本地复跑亦全绿。
+> - 同日还把 `backend-mysql` 从「需配 `TEST_MYSQL_DSN` 才触发」改成 service 容器
+>   自供给的必跑门禁。**现在 12 个 job 全部阻塞合并**，本节「先非阻塞」是当时的
+>   阶段性结论，保留作追溯，不再是现状描述。
 
 ### 6. 本轮踩到并记下的两个坑
 
@@ -967,6 +976,14 @@ B4（存量不补授权）是同一条纪律：**升级不得突变存量**。�
 真机验收、备份演练的季度节奏、以及**代码外必须人工完成**的三项
 （MP 后台配《用户隐私保护指引》、私有部署换真 `LICENSE_PUB`、手工部署设 `PII_ENC_KEY`）。
 
+> **✅ 后续订正（2026-11-09 复核）**：本段是 2026-11-03 当时的快照，其中两条已闭环——
+> ① 《用户隐私保护指引》于 2026-11-07 在 MP 后台审核通过（5 类权限 + 用户标识信息），
+> 原串行阻塞解除；② 用户 2026-11-08 确认 **#163 真机验收全部通过**，
+> `docs/real-device-acceptance.md` 已留档并把勾选表标为通过。
+> **现在仍开放的**只有：C4 水平扩展（Redis，架构演进、暂缓）、binlog 回放演练、
+> 备份演练的季度节奏、私有部署换真 `LICENSE_PUB`、手工部署设 `PII_ENC_KEY`、
+> 以及 E3 的 CF 面板手工配置——后四类都必须在外部系统由人操作，仓库代码无法代劳。
+
 ## 第十五轮实施记录（PII 密钥接入系统设置页，2026-11-03）
 
 ### 1. 缺口
@@ -1065,10 +1082,16 @@ follow-redirects GHSA-mrwp-f3q8-3g9p（跨域重定向丢弃 sensitiveHeaders）
 | vitest 全量 | 76 文件 / 1119 例全绿 |
 | `vite build --outDir dist-check` | 成功 |
 
-### 3. 仍然开放的项（本轮划掉后）
+### 3. 当时开放的项（本轮划掉后；现状见下方订正）
 
 - C4 水平扩展（需 Redis）、binlog 回放未演练、#163 真机验收（清单已备）、
   #231 向导测试与文档、E3 的两项 CF 面板手工配置。
+
+> **✅ 后续订正（2026-11-09 复核）**：这里列的是 2026-11-03 当时的开放项，
+> 其中 `#231 向导测试与文档` 已被**紧随其后的第十七轮**收口（标题就写着「第十七轮
+> 实施记录（#231 …收口）」），列在同一份清单里是自相矛盾的历史残留；
+> `#163 真机验收` 由用户 2026-11-08 确认全部通过并留档。
+> 现存开放项以本报告末尾「第十八轮」的清单为准。
 
 ## 第十七轮实施记录（#231 安装向导测试与文档收口，2026-11-03）
 
@@ -1101,3 +1124,74 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 
 `go test ./internal/setup/ -count=1` 全绿（TestInstall* 10 函数 + 子测试）；
 `go test ./...` 后端全量全绿。
+
+---
+
+## 第十八轮实施记录（CI 门禁实化 + 文档口径收口，2026-11-09）
+
+### 1. 结论先行
+
+用户 2026-11-08 确认 **#163 真机验收全部通过**，代码完成度与验收都不再是瓶颈。
+本轮把「仓库里能自己解决、却因为没人报错而一直挂着」的几件事一次收掉：
+**两条失效的 CI 门禁实化**、**文档与源码注释的口径漂移订正**、**验收结论留档**。
+外部系统必须人本人操作的事项单列清单，不假装做完。
+
+### 2. 两条 CI 门禁此前其实是「绿着没跑」
+
+| 门禁 | 改造前的事实 | 证据 |
+| --- | --- | --- |
+| `backend-mysql` | `if: ${{ vars.TEST_MYSQL_DSN != '' }}` + `env: ${{ vars.TEST_MYSQL_DSN }}`，仓库没配这个变量 | 最近 12 次 CI **全部 skipped**，从没真跑过 MySQL parity |
+| `e2e-smoke` | job 级 `continue-on-error: true`，挂了也不阻塞 | 最近 12 次 CI **全部 success**（含 2 次其它 job 失败的 run），脚本已有动态端口 / `--noproxy '*'` / 探活重试 / 临时目录清理 |
+
+改造：`backend-mysql` 去掉变量门控，DSN 写死在 job 的 `env`，由 `mysql:8.0` service
+容器自供给；`e2e-smoke` 摘掉 `continue-on-error`。现在 **12 个 job 全部阻塞合并**。
+
+### 3. 真跑一次立刻抓出一个从未被发现的 parity 缺陷
+
+本地起与 CI 同构的 `mysql:8.0.46` 容器后，按 CI 的命令逐条跑：
+
+- `TestMySQLMigrations`：PASS；
+- `TestAPIFlowMySQL`：**7 个子测试集体 FAIL**，全是 `company id=1 record not found`；
+- `TestInstallMySQLEndToEnd`：PASS。
+
+根因：`setupSQLiteEngine` 会建 1 号默认租户，而 `TestAPIFlowMySQL` 只
+`TRUNCATE` + 应用迁移，**漏了这一步**；迁移按硬规则只建表结构、不含 `INSERT`。
+多租户改造之后这条 parity 就一直是坏的，但因为 CI 从没跑过它，没人知道。
+
+修法：抽出 `seedDefaultCompany(t, db)`，SQLite 与 MySQL 两条链路**共用**同一个函数；
+`TestAPIFlowMySQL` 在 `applyMigrations` 之后补齐种子。
+反向验证：临时去掉该调用 → `exit=1`、7 个子测试 FAIL；还原 → 全绿且文件字节一致。
+
+> 三条 `grep '^--- PASS: ...'` 断言也随之加进 CI：`go test` 遇到 `t.Skip` 退出码
+> 仍是 0，不钉住「用例真的 PASS 了」，下次 DSN 丢失或用例改名又会「绿着跳过」。
+> 同 job 还补上 `TestInstallMySQLEndToEnd`（安装向导 MySQL 分支，含 CREATE DATABASE）。
+
+### 4. 文档 / 注释口径订正
+
+历史段落一律用「✅ 后续订正」块保留原结论，不改写当时的判断：
+
+- D4 表格行、§5「先非阻塞」、第十六轮 §3「仍然开放的项」、第十四轮「其余开放项」；
+- `docs/branch-protection.md` 还停留在「五个 job，其中四个必跑」，改为 12 个全必跑；
+- `backend/README.md` / `docs/deploy-runbook.md` §6 / `docs/launch-checklist.md` /
+  `部署与联调.md` 里「配 `TEST_MYSQL_DSN`」「四个必跑 job」「先非阻塞」等旧口径；
+- `backend/internal/wechat/sec.go` 包注释仍写图片异步回调「尚未接入」，
+  实际 `internal/handler/media_check.go` 的三段式链路早已落地，改为指向实现并说明
+  仍需运营在 MP 后台配推送 URL/Token/AESKey；
+- `docs/real-device-acceptance.md` 勾选表标为通过并补验收记录（用户口述确认，无逐项截图存档）。
+
+### 5. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 本地 MySQL 8.0 容器真跑三条用例 | 全绿（parity 14 个子测试全 PASS） |
+| 反向验证 + 自动还原 | 去掉种子 exit=1 / 7 FAIL，还原后 exit=0 |
+| `scripts/e2e_smoke.sh` 本地真跑 | 14 步全 PASS，exit=0 |
+| CI YAML 解析 | 12 job，无 `continue-on-error`、无 `vars.TEST_MYSQL_DSN` |
+
+### 6. 仍然开放的项（均在外部系统，代码无法代劳）
+
+1. 私有部署换真 `LICENSE_PUB`（换公钥＝旧授权全失效，需与客户约时间）；
+2. 手工部署设 `PII_ENC_KEY`（必须在写任何 PII **之前**定下，无 re-key）；
+3. E3 的两项 Cloudflare 面板手工配置；
+4. binlog 回放演练、恢复演练的季度节奏（运维动作，需留档）；
+5. C4 水平扩展（需 Redis）——架构演进，明确暂缓，不是缺陷。

@@ -184,6 +184,18 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	return r
 }
 
+// seedDefaultCompany 是 SQLite 与 MySQL parity **共用**的 1 号租户种子。
+// 公开接口的缺省落点、以及所有 companyId=1 的后台断言都依赖它存在。
+// 必须两侧都调：只在 SQLite 侧建的话，parity 会以「company 记录不存在」的形式
+// 大面积假失败——CI 的 MySQL job 长期 skipped，这个缺口一直没人看见（2026-11-09 修）。
+func seedDefaultCompany(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Create(&model.Company{
+		ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电",
+		Status: "enabled", LoginCode: "langhui",
+	}).Error)
+}
+
 // setupSQLiteEngine 创建临时 SQLite 库 + AutoMigrate + 本地存储，返回引擎。
 func setupSQLiteEngine(t *testing.T, mutate ...func(*config.Config)) *gin.Engine {
 	t.Helper()
@@ -197,8 +209,7 @@ func setupSQLiteEngine(t *testing.T, mutate ...func(*config.Config)) *gin.Engine
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(model.All()...))
-	// 1 号租户（朗汇）：公开接口缺省落点；存量行为不随多租户改造而变
-	require.NoError(t, db.Create(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled", LoginCode: "langhui"}).Error)
+	seedDefaultCompany(t, db)
 
 	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
 	require.NoError(t, err)
@@ -1309,6 +1320,10 @@ func TestAPIFlowMySQL(t *testing.T) {
 	}
 	require.NoError(t, db.Exec("SET FOREIGN_KEY_CHECKS = 1").Error)
 	applyMigrations(t, db)
+	// 与 setupSQLiteEngine 完全同构：迁移只建表结构，1 号租户由代码种子补齐。
+	// 漏掉这行会让「公开接口 / 审核流 / 员工管理 / 分类 / 服务 / 统计 / 企业内容」
+	// 七个 flow 集体因 company id=1 不存在而假失败。
+	seedDefaultCompany(t, db)
 
 	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
 	require.NoError(t, err)

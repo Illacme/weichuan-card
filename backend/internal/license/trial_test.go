@@ -45,17 +45,21 @@ func TestTrialSpecDefaults(t *testing.T) {
 }
 
 func TestTrialSpecNewExpiry(t *testing.T) {
-	now := time.Date(2026, 10, 26, 10, 0, 0, 0, time.Local)
+	// 完全由 now 驱动：IsExpired() 内部读 time.Now()，而本用例又写死一个「写用例当天」
+	// 的日期（原为 2026-10-26）+ 14 天到期，于是 2026-11-09 一过就必红。
+	// 这正是 entitlement.go 里 IsExpiredAt 注释警告的「会随日历自己爆炸的用例」。
+	// 改用显式基准的 IsExpiredAt(now)，并取一个必然已过的历史时刻，永不受挂钟影响。
+	now := time.Date(2001, 1, 1, 9, 0, 0, 0, time.Local)
 	spec := TrialSpec{Enabled: true, Days: 14, Seats: 3}
 	ent := spec.New(7, now)
 	require.EqualValues(t, 7, ent.TenantID)
 	require.Equal(t, "trial", ent.Edition)
 	require.Equal(t, 3, ent.Seats)
 	require.Equal(t, now.AddDate(0, 0, 14), ent.ExpiresAt)
-	require.False(t, ent.IsExpired())
+	require.False(t, ent.IsExpiredAt(now))
 	// 到期后必须判为已过期——这是「到期自动降权（只读）」的判定基础
-	ent.ExpiresAt = time.Now().Add(-time.Minute)
-	require.True(t, ent.IsExpired())
+	ent.ExpiresAt = now.Add(-time.Minute)
+	require.True(t, ent.IsExpiredAt(now))
 }
 
 // TestCreateTrialLicense 新开通的企业必须拿到一条试用授权行；重复调用不重复写。

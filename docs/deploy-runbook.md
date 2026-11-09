@@ -1355,9 +1355,15 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
   go test ./... -v
 ```
 
-预期：`TestAPIFlowMySQL` / `TestMySQLMigrations` 由 SKIP 转为 **PASS**，其余用例不变。全绿再上线。
+预期：`TestAPIFlowMySQL` / `TestMySQLMigrations` 由 SKIP 转为 **PASS**，其余用例不变
+（设了 DSN 后 `internal/setup` 的 `TestInstallMySQLEndToEnd` 也会真跑，它自建并删除
+`weichuan_test_inst` 库，不会污染上面的测试库）。全绿再上线。
 
-> 本机需 Go ≥ 1.26（见 `backend/go.mod`）。想让 CI 常驻该门禁：在仓库 Settings → Variables 配 `TEST_MYSQL_DSN`，指向一个 GitHub runner 公网可达的 MySQL（runner 无内网访问）。
+> 本机需 Go ≥ 1.26（见 `backend/go.mod`）。**CI 已常驻该门禁**（2026-11-09 起）：
+> `backend-mysql` job 用 GitHub Actions 的 `mysql:8.0` service 容器自供给，DSN 写在
+> job 的 `env` 里，**不再需要**在仓库 Settings → Variables 配 `TEST_MYSQL_DSN` 或准备
+> runner 公网可达的 MySQL。每一步还额外断言用例确实 `--- PASS`，防止「绿着 Skip」。
+> 本节命令保留给本地/客户现场复现用。
 
 ## 7. 挂上运维任务
 

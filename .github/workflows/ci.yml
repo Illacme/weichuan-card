@@ -87,18 +87,26 @@ jobs:
             | sh -s -- -b "$(go env GOPATH)/bin" v2.15.0
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m
 
-  # ───────── 后端：MySQL 生产契约 parity（可选，需配置 TEST_MYSQL_DSN） ─────────
-  # 启用方式：在仓库 Settings → Secrets and variables → Actions → Variables
-  # 新增变量 TEST_MYSQL_DSN = root:root@tcp(127.0.0.1:3306)/weichuan_test?charset=utf8mb4&parseTime=true
-  # （与下方 services.mysql 的口令/库名对应；未配置时该 job 直接跳过，不影响 CI 绿灯）。
-  # MySQL 用 service 容器自供给（mysql:8.0），不依赖 runner 自带的 MySQL——
-  # GitHub ubuntu runner 自带的 MySQL root 走 auth_socket，密码登录连不上。
+  # ───────── 后端：MySQL 生产契约 parity（**正式门禁**，2026-11-09 起必跑） ─────────
+  # 演进：原先靠仓库变量 TEST_MYSQL_DSN 门控，没配就整个 job skipped。实测最近 12 次
+  # CI 里它**全部 skipped**，等于这条 parity 从没在 CI 上真跑过；2026-11-09 本地起
+  # mysql:8.0 容器复跑，立刻抓出 TestAPIFlowMySQL 漏了 1 号租户种子、7 个子测试
+  # 集体假失败（见 handler_test.go 的 seedDefaultCompany 注释）。
+  # 现改为 service 容器自供给 + DSN 写死在 job 内，不需要任何仓库变量 / 密钥。
+  #
+  # 为什么每步都额外 grep 断言 PASS：go test 遇到 t.Skip 退出码仍是 0，
+  # 一旦 DSN 丢失或用例被改名，job 会「绿着跳过」——这正是当初长期没人发现的
+  # 静默失效形态。断言「用例真的 PASS」才能把它变成红灯。
+  #
+  # GitHub ubuntu runner 自带的 MySQL root 走 auth_socket，密码登录连不上，
+  # 所以必须用 service 容器而不是 runner 预装实例。
   backend-mysql:
     name: 后端 (Go / MySQL parity)
     runs-on: ubuntu-latest
-    if: ${{ vars.TEST_MYSQL_DSN != '' }}
+    timeout-minutes: 20
     env:
-      TEST_MYSQL_DSN: ${{ vars.TEST_MYSQL_DSN }}
+      # 与下方 services.mysql 的口令 / 库名对应
+      TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/weichuan_test?charset=utf8mb4&parseTime=true
     services:
       mysql:
         image: mysql:8.0
@@ -126,11 +134,29 @@ jobs:
       # 便于区分：连接/建表失败 vs 业务断言在 MySQL 下不等价。
       - name: 测试（MySQL 连接与建表）
         working-directory: backend
-        run: go test ./... -run TestMySQLMigrations -v
+        run: |
+          set -o pipefail
+          go test ./internal/handler -run TestMySQLMigrations -v 2>&1 | tee /tmp/mysql-mig.log
+          grep -q '^--- PASS: TestMySQLMigrations' /tmp/mysql-mig.log \
+            || { echo "::error::TestMySQLMigrations 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
 
-      - name: 测试（MySQL parity）
+      - name: 测试（MySQL parity：与 SQLite 同一套断言）
         working-directory: backend
-        run: go test ./... -run TestAPIFlowMySQL -v
+        run: |
+          set -o pipefail
+          go test ./internal/handler -run TestAPIFlowMySQL -v 2>&1 | tee /tmp/mysql-parity.log
+          grep -q '^--- PASS: TestAPIFlowMySQL' /tmp/mysql-parity.log \
+            || { echo "::error::TestAPIFlowMySQL 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
+
+      # 安装向导的 MySQL 分支（含 CREATE DATABASE）同样只在有 DSN 时才跑，
+      # 复用同一个 service，不必再为它单开一个 MySQL 容器。
+      - name: 测试（MySQL 安装向导全流程）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/setup -run TestInstallMySQLEndToEnd -v 2>&1 | tee /tmp/mysql-install.log
+          grep -q '^--- PASS: TestInstallMySQLEndToEnd' /tmp/mysql-install.log \
+            || { echo "::error::TestInstallMySQLEndToEnd 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
 
   # ───────── 前端：Vue 生产构建 + 单元测试 ─────────
   frontend:
@@ -387,15 +413,16 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-  # ───────── 端到端冒烟（非阻塞） ─────────
+  # ───────── 端到端冒烟（**正式门禁**，2026-11-09 起阻塞） ─────────
   # 覆盖的是单测与接口测试**结构上覆盖不到**的那一层：真起一个进程，从安装向导
   # 一路走到「小程序侧公开接口能读到后台刚写的数据」。
-  # 为什么非阻塞：它依赖「起真实进程 + 自重启 + 端口可用」，在 runner 上偶发
-  # 环境性抖动（端口冲突 / 启动慢）；先跑起来积累稳定性数据，稳定后转门禁。
+  # 演进：起初以 continue-on-error 非阻塞跑，专门积累稳定性数据。最近 12 次 CI 中
+  # 该 job **全部 success**（其中还含 2 次其它 job 失败的 run），且脚本已具备动态端口、
+  # --noproxy '*'、探活重试、临时目录清理，起先担心的端口冲突 / 启动慢并未出现，
+  # 故摘掉 continue-on-error 转正式门禁。
   e2e-smoke:
-    name: 端到端冒烟（非阻塞）
+    name: 端到端冒烟
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

@@ -170,13 +170,19 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 ## 测试与 CI
 
-CI 见 `.github/workflows/ci.yml`，五个 job（其中四个必跑）：
+CI 见 `.github/workflows/ci.yml`，**12 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
 
 - **后端 (Go / SQLite)**：`go build` + `go vet` + `go test ./...`，**默认零外部依赖**，用 SQLite 跑完整接口流程、上传内容嗅探与 MinIO/OSS 驱动的 httptest 假服务测试。
-- **后端 (Go / MySQL parity)**：可选 job，仅当仓库配置了 `TEST_MYSQL_DSN` 变量时运行，校验生产 MySQL 契约。
-- **前端 (Vue)**：`npm ci` + `npm run build` + `npm test`（Vitest；含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
+- **后端 (Go / MySQL parity)**：GitHub Actions 自带 `mysql:8.0` service 容器，连真 MySQL 跑「连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支」；DSN 写在 job 内，**无需**仓库变量。每步额外断言用例确实 `--- PASS`，防止 `t.Skip` 让 job 绿着跳过。
+- **后端 lint (golangci-lint)**：固定 v2.15.0，只开五条「静默失败」类规则。
+- **前端 (Vue)**：`npm ci` + eslint + `npm run build` + `npm test`（Vitest；含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
 - **前端类型检查 (vue-tsc)**：`vue-tsc --noEmit`，历史 4 个 `@wangeditor/*` 类型错误已修复，**现为阻塞门禁**。
 - **第三方许可清单（过期检查）**：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md` 是否与当前依赖一致。清单是随专有许可一起交付的声明，依赖一变而清单没重生成，交付的就是与实际不符的声明——这种脱节没人会记得手工核对，交给 CI 挡住。改了依赖后跑一次生成脚本并提交即可（比对会忽略「生成日期」行，不会每天误报）。
+- **备份链自检 / 发版脚本自检**：两个平时不跑、坏了也没人察觉的脚本，由 CI 常驻验证（恢复逐字节一致、非交互口令、迁移清单完整性）。
+- **密钥扫描 (gitleaks) / 依赖漏洞扫描 / 镜像构建**：真实凭据增量扫描、运行时依赖审计（govulncheck + `npm audit --omit=dev`）、两个 Dockerfile 真 build。
+- **端到端冒烟**：`scripts/e2e_smoke.sh` 真起一个进程，走完安装向导 → 登录 → 建企业 → 配内容 → 小程序侧读回；2026-11-09 摘掉 `continue-on-error` 转正式门禁。
+
+分支保护应勾选的 required checks 清单见 `docs/branch-protection.md`。
 
 「前端单测」与「前端类型检查」是两个独立 job，单测全绿不等于类型通过。想在本机提前拦住，仓库自带了一个 `pre-push` 钩子：
 
@@ -242,7 +248,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - **运维子命令**：`server backup --out <文件>`（SQLite 在线快照）、
   `server dbcheck --file <文件> [--field <字段>]`（只读体检：完整性 / 表数 / 各表行数），
   与 `server migrate` 一样不启服务，可进 cron 与流水线。
-- **测试覆盖**：后端 httptest 集成（SQLite 零外部依赖 + 可选 MySQL parity）+ MinIO/OSS 假服务单测；前端含视图层组件测试；小程序纯逻辑测试经前端 Vitest 运行。
+- **测试覆盖**：后端 httptest 集成（SQLite 零外部依赖 + CI 必跑的真 MySQL parity）+ MinIO/OSS 假服务单测；前端含视图层组件测试；小程序纯逻辑测试经前端 Vitest 运行。
 - **操作审计**：后台写操作（改系统设置 / 管理员增删改 / 企业启停 / 改密码）与**登录失败**
   全部记进 `audit_log`，平台超管可在「平台管理 → 操作日志」按动作 / 操作人 / 结果筛选查询。
   敏感值只记「已修改」不落明文（否则审计表会变成新的泄密面）；只提供查询、不提供修改——

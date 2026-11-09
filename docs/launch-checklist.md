@@ -85,7 +85,7 @@
 - **私有 / 独立部署需有效许可证**：私有化交付时设置 `DEPLOY_MODE=private` 并在 `data/license.key` 放入由签发私钥签名的许可证文件（Ed25519，公钥验签）；验签失败或过期时 `cmd/server` 会**拒绝启动**（与 `InsecureGates` 同一类硬门槛）。集中 / 平台模式无需许可证，走系统设置读取。
 - **私有 / 独立部署必须注入发行方自己的验签公钥**：环境变量 `LICENSE_PUB`（base64 的 Ed25519 公钥，优先于二进制内嵌值）。**一键做法**（推荐）：在**签发环境**跑 `scripts/license_setup.sh`——生成 Ed25519 密钥对、把公钥写进 `data/runtime.env` 的 `LICENSE_PUB`、私钥落盘到 `license-private.key`（0600，已被 .gitignore 排除），并打印下一步的签发命令。手工做法是 `license keygen` 后自行填 `LICENSE_PUB`；两条路都要求**私钥只留在签发环境、绝不进仓库或二进制**。仓库里内嵌的那把是占位演示密钥（配对私钥是公开的）——私有部署若仍用它，`cmd/server` 会**拒绝启动**并打印换钥指引（自检排在验签之前，避免只看到"授权校验失败"而误判方向）。集中 / 平台模式不验本地许可证文件，不受此限制（保证开源仓库「clone 就能跑」）。
 - **生产必须设置 `PII_ENC_KEY`（已升级为启动硬门槛）**：员工 / 申请人 PII 落库用 AES-256-GCM 加密 + 盲索引，密钥来自该环境变量（base64 32 字节，`openssl rand -base64 32` 生成）。未设置时 `cmd/server` **拒绝启动**并打印生成命令（此前只打一条 WARN，生产漏设无人察觉）；本地联调可加 `ALLOW_INSECURE=1` 放行，放行时日志打 `[SECURITY][ALLOW_INSECURE]` 留痕。走**安装向导**的部署会**自动签发**并写入 `data/runtime.env`——该文件由 `scripts/backup.sh` 自动**加密**纳入备份（`secrets-*.tar.gz.enc`，见上方备份条目），不必手工处理；但换钥后旧数据无法解密（没有 re-key 机制）。环境变量或配置文件两种写法都支持。**时间约束：必须在首次写入业务数据之前设定**，否则已用内置 dev 密钥写入的 PII 换钥后再也解不回来。
-- **微信隐私保护指引必须在 MP 后台配好**：小程序代码已开启 `__usePrivacyCheck__` 并接入自绘授权弹窗（`components/privacy-consent`），但**平台侧未声明的隐私类型会直接禁用对应接口**（`errno: 112`）。需在「小程序管理后台 → 设置 → 服务内容声明 → 用户隐私保护指引」声明：收集你的昵称、头像、选中的照片或视频信息、使用你的相册（仅写入）权限、读取你的剪切板、使用你的通讯录（仅写入）权限，以及 openid 所属的「用户标识信息」。未声明时提审会被驳回 / 真机对应功能不可用。
+- **微信隐私保护指引（✅ 2026-11-07 已在 MP 后台审核通过）**：小程序代码已开启 `__usePrivacyCheck__` 并接入自绘授权弹窗（`components/privacy-consent`）；平台侧声明的 5 类权限 + openid 所属「用户标识信息」已于 2026-11-07 审核通过，真机复核不再出现 `errno: 112` 死循环。**新部署仍必须重做这一步**——声明是跟着小程序账号走的，换账号/换主体就要重新提交，且审核 1~2 个工作日是串行阻塞，务必最先提交（逐项步骤与权限对照表见 `docs/real-device-acceptance.md` §0.1）。
 - **运行时强制层已生效（取代原 `independent_lock` 只读开关）**：`EnforceLicense` 中间件按 `Entitlement` 落地三类拦截（响应均为 HTTP 200 + JSON `code` 字段）——① 许可证**过期**自动降级只读：拦截写操作（POST/PUT/PATCH/DELETE，白名单登录/刷新/安装/探针/指标/前端报错除外），返回 `{code:2,"授权已过期…只读模式"}`；② **席位上限**：`POST /api/admin/employees` 创建员工时按当前租户（企业）隔离统计的员工数 `>= Seats` 拒绝（`{code:403}`），`Seats<=0` 不限（Phase 3 已落地：集中模式按请求解析的企业隔离；私有 / 独立部署固定为许可证声明的租户，单租户形态下即整个部署）；③ **功能开关**：`RequireFeature` 拦代发等高级功能，未开通返回 `{code:403,"当前授权未开通该功能：name"}`，代发路由已接 `RequireFeature("mp_release")`。运维侧：私有部署「进程先起、授权后过期」时服务还在跑但所有写操作被拦（重启即彻底起不来），集中模式靠系统设置里的 `license_*` 字段（未配置时宽松不强制）。三种提醒通道见下一条。
 - **授权到期有三层提醒，别只留一层**：① 客户登录后台即见顶部横幅（`GET /api/admin/license`，`warn` 可关、`urgent`/`expired` 不可关）；② 平台超管在同一接口拿到「已过期 / 7 天内 / 30 天内」汇总与清单；③ 后端每天扫一次写 `[LICENSE][EXPIRING]`，由 `scripts/alert_check.sh` 的 R5 推送 webhook。**第 ③ 层是唯一不需要有人登录的通道**，也是私有部署唯一的指望——只做 ①② 的部署，等于把「发现」寄托在客户先发现。上线后请手动验一次 `grep '\[LICENSE\]\[EXPIRING\]' "$LOG_FILE"` 有输出，否则 `LOG_FILE` 指错了、R5 永远不响。详见 `docs/deploy-runbook.md` §8.6。
 - **私有部署必须在到期日之前演练过一次续期**：换 `data/license.key` + 重启才算生效，把「第一次换 key」留到到期当天，就是一次确定会发生的停机。平台 / SaaS 形态相反——改到期日下一请求即恢复，不需要重启，所以两种形态的续费提示文案不同。
@@ -97,7 +97,33 @@
 - **`/metrics` 加第二道门 `METRICS_ALLOW_CIDR`**：即使有人在界面上把 `metrics_enabled` 打开，白名单外的来源访问 `/metrics` 仍一律 404。CIDR 写错时**整体拒绝**（fail-closed），启动日志会点名哪条解析失败。
 - **PITR（时间点恢复）要单独开启**：全量备份的恢复点是备份时刻，想回到「误操作前一秒」必须开 binlog（compose 的 mysqld 已带 `--log-bin`）并按小时跑 `scripts/backup_binlog.sh` 归档。SQLite 形态没有 PITR。
 - **恢复演练要留档**：`scripts/restore_drill.sh` 结尾会直接打印可粘贴的记录正文，存进 `docs/drill-records/YYYY-MM-DD-<形态>.md`，每季度至少一次。「我们演练过」这句话在没记录时无法向客户/审计证明。
-- **CI 门禁**：后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）为门禁；依赖漏洞扫描（govulncheck + npm audit）与端到端冒烟（`scripts/e2e_smoke.sh`）先非阻塞跑着积累数据。
+- **CI 门禁**：`.github/workflows/ci.yml` 共 **12 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL parity**（service 容器自供给，2026-11-09 起）均为正式门禁。本地复跑 MySQL parity 见 `docs/deploy-runbook.md` §6。
+
+## 四、必须由本人在外部系统完成（仓库代码无法代劳，2026-11-09 汇总）
+
+> 这一节是「剩下的事」的边界：仓库内能自动化的都已收进 CI / 脚本 / 文档，
+> 下面这些**没有一条能靠改代码完成**。已完成的打 ✅ 留痕，未完成的按状态逐项推进；
+> 每项都写清「在哪做」和「怎么算做完」，避免把「我以为是做完了」当完成。
+
+| # | 事项 | 在哪做 | 完成判据 | 当前状态 |
+|---|---|---|---|---|
+| 1 | 《用户隐私保护指引》审核 | mp.weixin.qq.com → 设置 → 服务内容声明 | 审核通过 + 真机点「存入通讯录」不再 `errno 112` | ✅ 2026-11-07 通过 |
+| 2 | 真机验收（#163） | 真机 + 体验版小程序 | §0 / §1–§4 / §5 / R1–R4 全部通过并留档 | ✅ 2026-11-08 用户口述确认通过（**无逐项截图**，需对外举证时补一轮） |
+| 3 | 小程序工信部备案 | 微信公众平台 → 小程序备案 | 备案号已下发并公示在关于页；只备域名不备小程序会在提审最后一步驳回 | ⬜ 需本人办理 |
+| 4 | 三类服务器合法域名 | mp.weixin.qq.com → 开发管理 → 开发设置 | `request` / `uploadFile` / `downloadFile` 都含生产域名（见 §0.5） | ⬜ 需本人在后台核对 |
+| 5 | 私有部署换真 `LICENSE_PUB` | 构建期注入公钥，重签授权 | 旧占位公钥签发的证全部失效；与客户约好切换窗口再换 | ⬜ 需在私有交付时办理 |
+| 6 | 手工部署设 `PII_ENC_KEY` | 部署机环境变量 / `runtime.env` | **在写任何 PII 之前**设定并备份；无 re-key，换钥＝存量密文不可解 | ⬜ 需在每台手工部署机核对 |
+| 7 | 三把强随机密钥与后台凭据 | 部署环境 / 后台「系统设置」 | `JWT_KEY` / `ADMIN_PASS` 非缺省值；`WX_*`、对象存储、CDN 凭据配齐且真机能用 | ⬜ 需在服务器上核对（`preflight.sh` 的开发机 WARN/FAIL 多为假警报，判据见其注释） |
+| 8 | Cloudflare 面板两项手工配置（E3） | CF 控制台 | 缓存规则按状态码分流已同步到线上；`/uploads/` 404 实测 `cache-control: no-store` + `cf-cache-status: BYPASS` | ✅ 404 缓存雷 2026-11-07 线上复核已闭环；面板其余项按部署形态人工核对 |
+| 9 | binlog 回放 / PITR 演练 | 服务器 + `docs/drill-records/` | 真跑一次时间点恢复并把记录正文存档 | ⬜ 运维动作，需留档 |
+| 10 | 恢复演练季度节奏 | 服务器 + `scripts/restore_drill.sh` | 每季度至少一次，记录存进 `docs/drill-records/YYYY-MM-DD-<形态>.md` | ⬜ 周期性运维，非一次性可关 |
+| 11 | 私有部署续期演练 | 客户现场 `data/license.key` + 重启 | 到期前换过一次 key 并确认写操作恢复，别把首次换证留到到期当天 | ⬜ 需约客户时间 |
+| 12 | C4 水平扩展（Redis） | 架构演进 | 多副本共享限流/会话 | ⏸ **明确暂缓**：当前单实例部署不需要，不是缺陷 |
+
+> 状态口径：✅ 已完成 / ⬜ 必须人工完成 / ⏸ 主动暂缓。
+> 仓库侧已闭环的证据分别在 `docs/real-device-acceptance.md`、
+> `docs/commercial-readiness.md` 第十四轮订正块、第十八轮实施记录，
+> 以及 `tools/nginx-check/verify.sh` 的行为守门。
 
 ## 关联文档
 - 生产上线 Runbook：`docs/deploy-runbook.md`

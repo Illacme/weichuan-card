@@ -1058,6 +1058,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   - `TestTokenRefresh` / `TestCookieAuth` / `TestSingleDeviceRevocation`：分别覆盖 refresh 换发与账号级吊销、PC 端 httpOnly Cookie 鉴权与登出、单设备精确吊销（会话黑名单）。
   - `TestAssetLibrary`（`internal/handler/assets_test.go`）：素材库匿名 401、**分页（翻页不重复 / size 与上限 / 非法页码回落与末页夹取 / 分类与关键字过滤 / 无命中空结果）**、**视觉调性（五档清单 / 调性过滤生效 / styleCounts 排除 style 自身 / 分类+调性组合 / 图标只落 clean 一档 / 调性中文名可搜）**、采用落盘（含首页背景 JPEG）、预览图公开 + immutable、封面与背景缩略图、未知素材/空参/路径穿越 404。
   - `TestAPIFlowMySQL`（生产契约 parity）：设置 `TEST_MYSQL_DSN` 后，连真实 MySQL、应用 `migrations/*.sql`，再跑与 SQLite **完全相同的断言**，用以校验 AutoMigrate 与生产建表 SQL 行为一致。
+    ⚠️ **两条链路的建库前置也必须一致**：迁移只建表结构，1 号租户由 `seedDefaultCompany` 补齐，`setupSQLiteEngine` 与 `TestAPIFlowMySQL` 共用同一个函数。只在 SQLite 侧建的话，公开接口 / 审核流 / 员工 / 分类 / 服务 / 统计 / 企业内容共 7 个 flow 子测试会因 `company id=1` 不存在集体假失败（2026-11-09 本地真跑 MySQL 才抓到，见该文件注释）。
   - `internal/handler/hardening_test.go`（P0 加固守门）：专治「静默失败」——摘掉修复必须红。覆盖：登出写不进黑名单必须报 `code:1`（`TestLogoutReportsRevokeFailure`，另有 `TestLogoutSucceedsNormally` 作对照）、密码生成取不到随机数必须报错而不能 panic（`TestGenPasswordEntropyFailure` / `TestGenPasswordRejectsAtAPI`）、小程序码按 IP 限流挡扫号（`TestWXACodeRateLimitedPerIP`）、小程序码缓存到上限要淘汰（`TestWXACodeCacheEvictsAtCap`）、启停员工留审计且目标不存在要报「未找到」（`TestEmployeeStatusAuditAndNotFound`）。
   - `internal/storage/storage_test.go:TestRandNameEntropyFailure`：守门「熵源读取失败必须报错」——从前忽略错误会让每次上传都叫同一个名字，后上传的静默覆盖先上传的。
   - `internal/handler/mp_release_test.go`（8 例，`TestMPRelease*`）：版本发布 handler 全链路，假微信按调用顺序记账。覆盖：**完整闭环**（登记→提审→轮询到审过→发布，且终态后不再多调一次 release）、**微信报错时本地记录回滚**（不留下「以为提审成功了」的半截状态）、**状态机非法流转被拒**（auditing 态点发布返回 code=1）、**重复版本号 / 未配凭据 / 记录不存在**、**租户凭据优先于全局凭据**、**租户关掉代发后一切写动作 403 而列表仍可读**、**保存凭据时省略 `releaseEnabled` 不清开关**、**重新打开后代发恢复**；每次代发动作都断言落了一条审计（成功记结果态、失败带 error）。
@@ -1144,10 +1145,13 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
   - `backend`（**默认必跑，零外部依赖**）：`go build` + `go vet` + `go test ./...`。
     未设置 `TEST_MYSQL_DSN` 时，两个 MySQL 用例（`TestAPIFlowMySQL` / `TestMySQLMigrations`）自动 `t.Skip`，
     因此本 job **不需要任何数据库账号**，靠 SQLite 覆盖全部业务流程。
-  - `backend-mysql`（**可选**）：仅当仓库配置了变量 `TEST_MYSQL_DSN` 时才运行，
-    先跑「连接 + 建表」再跑完整 parity，用于校验生产 MySQL 契约。
-    配置路径：仓库 Settings → Secrets and variables → Actions → Variables 新增 `TEST_MYSQL_DSN`
-    （例：`root:pwd@tcp(host:3306)/weichuan_test?charset=utf8mb4&parseTime=true`）。
+  - `backend-mysql`（**正式门禁，2026-11-09 起必跑**）：MySQL 8.0 由 CI 的 service 容器
+    自供给，DSN 直接写死在 job 的 `env` 里（不再需要仓库 Variables / 密钥）。依次跑
+    `TestMySQLMigrations`（连得上 + 建表）、`TestAPIFlowMySQL`（与 SQLite 同一套断言）、
+    `TestInstallMySQLEndToEnd`（安装向导 MySQL 分支，含 CREATE DATABASE）。
+    **每步末尾都 grep 断言 `--- PASS`**：`go test` 遇到 `t.Skip` 退出码仍是 0，
+    不这么钉住的话，DSN 丢了或用例改名会让 job「绿着跳过」——这正是该门禁
+    长期失效没被发现的原因。本地复跑方式见上文「生产契约校验」命令。
   - `frontend`：`npm ci` + `npm run build` + `npm run test`（Vitest，含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
   - `frontend-typecheck`（**阻塞门禁**）：`vue-tsc --noEmit`。历史 4 个 `@wangeditor/*` 类型错误已通过 tsconfig `paths` 指向真实 d.ts + 精准断言修复，当前 0 错误。
   - `notices`（**阻塞门禁**）：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md`
