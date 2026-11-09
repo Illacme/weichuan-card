@@ -125,6 +125,88 @@
 > `docs/commercial-readiness.md` 第十四轮订正块、第十八轮实施记录，
 > 以及 `tools/nginx-check/verify.sh` 的行为守门。
 
+## 五、一次上线窗口执行表（按依赖排序，2026-11-09）
+
+> §四回答「还剩哪些事」，本节回答「**按什么顺序做完**」。分阶段不是好看，是被三条硬约束逼出来的：
+> ① 小程序备案是唯一以「工作日」计的串行项，不最先启动就会卡住提审最后一步；
+> ② `PII_ENC_KEY` 必须在**写入任何 PII 之前**定下且备份，事后无法补（无 re-key）；
+> ③ 换 `LICENSE_PUB` 会让旧证全失效，必须与客户约好切换窗口，不能夹在上线当天做。
+>
+> 编号沿用 §四。标「🤖」的项有只读探测可替你判「生效没」，标「👤」的只能本人看。
+
+| 阶段 | 时点 | 编号 · 事项 | 在哪做 | 完成判据 | 依赖 / 备注 |
+|---|---|---|---|---|---|
+| 0 | **T−5 工作日起** | #3 小程序工信部备案 👤 | 微信公众平台 → 小程序备案 | 备案状态「已通过」，备案号已公示在小程序关于页 | **最长串行项，今天就要启动**；只备域名不备小程序，提审最后一步直接驳回 |
+| 0 | 与备案并行 | #6 `PII_ENC_KEY` 👤 | 部署机环境变量 / `data/runtime.env` | 首次写 PII **之前**设定；装完立即随配置文件备份，确认备份可还原 | 无 re-key，换钥＝存量密文全变天书且**不报错**。每台手工部署机各核一次 |
+| 0 | 与备案并行 | #5 私有部署换真 `LICENSE_PUB` 👤 | 构建期注入公钥 + 重签授权 | 旧占位公钥签发的证全部失效；切换窗口已与客户约定 | 仅私有交付形态；平台 / SaaS 形态跳过 |
+| 1 | T−2 ~ T−1 | #4 三类服务器合法域名 👤 | mp.weixin.qq.com → 开发管理 → 开发设置 | `request` / `uploadFile` / `downloadFile` **三类**都含 `https://weichuan.ziyuanxingqiu.cn` | 域名改动有次数限制与生效延迟，必须早于阶段 2 的真机复核；逐项判据见 `docs/real-device-acceptance.md` §0.5 |
+| 1 | T−1 | #7 强随机密钥与后台凭据 🤖 | 部署环境 / 后台「系统设置」 | `JWT_KEY` / `ADMIN_PASS` 非内置缺省值；`WX_*`、对象存储、CDN 凭据配齐；`[SECURITY]` 告警清零 | **必须在该部署的服务器上**跑 `preflight.sh`，开发机裸跑的 FAIL 多是「本机无 .env」假警报；见 §三与脚本注释 |
+| 1 | T−1 | #8 Cloudflare 面板两项 👤 | CF 控制台 | ① Browser Cache TTL = **Respect Existing Headers**（否则 `/uploads/` immutable 被覆盖成 4h）；② HTML 边缘短缓存 60s 规则 | ② 的前置是「发版不清空 `assets/`」。配置后用下方探测块第 3/4 条实测，别只看面板开关 |
+| 1 | T−1 | 迁移目录同步 🤖 | 发版脚本 / 服务器 | 上线同步**整个** `backend/migrations/`；`deploy_frontend.sh --require-migrations` 不报缺文件；启动日志**无** `[MIGRATE][FATAL]` | 只换二进制不换迁移 → 运行期才 `Unknown column`；补齐后 `./server migrate`，**不必重启** |
+| 2 | **T 日** | 一键只读探测 🤖 | 服务器 | 下方探测块 8 条全部符合预期 | 全程 GET/HEAD，不写库、不重启、不清缓存 |
+| 2 | T 日 | 三类域名真机生效 👤 | 真机 + 体验版小程序 | 上传头像（uploadFile）、海报换背景 / 小程序码（downloadFile）、普通接口（request）都通 | **开发者工具勾了「不校验合法域名」时完全复现不出来**，必须真机 |
+| 2 | T 日 | #1 隐私指引复核 👤 | 真机 | 点「存入通讯录」不再 `errno 112` 死循环 | 2026-11-07 已审核通过；**换账号 / 换主体须重新提交**，审核 1~2 工作日又是串行阻塞 |
+| 2 | T 日 | WX 凭据可用 🤖 | 后台「生成小程序码」 | 能出图，海报二维码与微信登录不卡 | `PREFLIGHT_WX_LIVE=1 scripts/preflight.sh` 可真调微信接口校验配对（只读校验） |
+| 3 | T+1 ~ T+7 | #10 恢复演练 👤 | 服务器 + `scripts/restore_drill.sh` | 退出码 0；把脚本结尾打印的「留档正文」粘进 `docs/drill-records/YYYY-MM-DD-<形态>.md` | 每季度至少一次；升级迁移 / 改备份脚本 / 换部署形态后补跑 |
+| 3 | T+1 ~ T+7 | #9 binlog 回放 / PITR 演练 👤 | 服务器 + 留档 | 真跑一次时间点恢复并写进 `docs/drill-records/` | SQLite 形态没有 PITR；MySQL 需开 binlog 与 `scripts/backup_binlog.sh` 归档 |
+| 3 | 到期前 | #11 私有部署续期演练 👤 | 客户现场 `data/license.key` + 重启 | 换 key 后写操作恢复；首次换证不留在到期当天 | 需约客户时间；平台形态改到期日下一请求即恢复，不用重启 |
+
+**放弃上线的硬条件**（任一命中就别发版）：备案未通过 / 三类域名缺任一 / 服务器上 `preflight.sh` 有 FAIL / `/healthz/ready` 返回 HTML / `/uploads/` 404 带 `immutable` / 启动日志有 `[MIGRATE][FATAL]` / `PII_ENC_KEY` 未备份。
+
+### 一键只读探测（在服务器上整段粘贴）
+
+```bash
+# 在**仓库根目录**、该部署的服务器上整段粘贴；只读：只发 GET/HEAD，不写库、不重启服务、不清缓存。
+# 把 BASE 换成实际生产域名。
+BASE="https://weichuan.ziyuanxingqiu.cn"
+HOST="${BASE#https://}"
+
+# 1) 就绪探针必须回 JSON；返回 HTML 说明被 SPA 兜底接走了（后端已死也照样 200）
+curl -sS --noproxy '*' -o /tmp/wc-healthz.out -w 'healthz HTTP %{http_code}\n' "$BASE/healthz/ready"
+head -c 200 /tmp/wc-healthz.out; echo
+
+# 2) SPA 兜底：必须带 Accept: text/html，否则命中 404 分支是预期行为
+curl -sSI --noproxy '*' -H 'Accept: text/html' "$BASE/login" | head -5
+
+# 3) /uploads/ 404 绝不能被长缓存（CF 把「文件不存在」锁死一年的老事故）
+curl -sSI --noproxy '*' "$BASE/uploads/__launch_probe_missing__.png" \
+  | grep -iE '^(HTTP/|cache-control:|cf-cache-status:)'
+#    期望：HTTP/2 404 + cache-control: no-store + cf-cache-status: BYPASS
+
+# 4) 对照：一个真实存在对象仍应是 immutable 长缓存（改 404 不能伤到 200）
+#    先把 OBJ 换成真实对象名；别把占位符直接留在 URL 里（`<` 会被 shell 当成重定向）
+OBJ="换成真实对象名"
+curl -sSI --noproxy '*' "$BASE/uploads/$OBJ" | grep -iE '^(HTTP/|cache-control:)'
+
+# 5) 三个安全头 + 证书有效期
+curl -sSI --noproxy '*' "$BASE/api/admin/login" \
+  | grep -iE '^(HTTP/|x-content-type-options:|x-frame-options:|referrer-policy:)'
+echo | openssl s_client -servername "$HOST" -connect "$HOST:443" 2>/dev/null \
+  | openssl x509 -noout -dates
+
+# 6) 零依赖静态自检（必须在该部署的服务器上跑，且注入该部署的环境变量）
+PREFLIGHT_STRICT=1 PUBLIC_BASE_URL="$BASE" scripts/preflight.sh
+
+# 7) 启动日志里不该出现的三件事；有输出就要查，不能当噪音
+grep -E '\[SECURITY\]|\[MIGRATE\]\[FATAL\]|You trusted all proxies' /path/to/backend.log | head -20 \
+  || echo '无命中（符合预期）'
+
+# 8) 服务端时区：TZ 不设会静默按 UTC，统计每天 00:00–08:00 悄悄错位
+docker exec weichuan-backend date 2>/dev/null || date
+```
+
+> 第 4 步的「真实对象名」和第 7 步的日志路径按现场替换；第 6 步 `PREFLIGHT_STRICT=1` 会把 WARN 也算失败，
+> 但 `UPLOAD_BASE_URL` / `COOKIE_SECURE` / `WX_*` 这类 WARN 若值在后台「系统设置」里配过，是脚本读不到覆盖值的假警报，
+> 到界面人工核对即可，**别照 WARN 回头重复改环境变量**。
+> 这套 Nginx 行为另有桩版守门：`tools/nginx-check/run.sh`（95 条断言，会自动起 / 关 nginx 容器）；
+> 直接裸跑 `verify.sh` 会因为没起服务而报一整片假失败。
+
+### 仍然无法自动核验、必须本人看一眼的
+
+备案号与提审状态（MP 后台）、三类合法域名是否逐条登记（MP 后台）、CF 面板两个开关（CF 控制台）、
+`PII_ENC_KEY` 备份是否真的可还原、`LICENSE_PUB` 切换窗口是否与客户约好、真机上三类域名相关功能是否真通。
+这些没有任何脚本能替你确认——**「界面上勾了」不等于「生效了」**，判据一律以上表为准。
+
 ## 关联文档
 - 生产上线 Runbook：`docs/deploy-runbook.md`
 - 部署与联调：`部署与联调.md`
