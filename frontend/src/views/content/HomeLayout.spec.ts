@@ -133,6 +133,23 @@ function saveButton(w: any) {
   return btn
 }
 
+// 按表单项 label 定位某一组时间档位控件：页面里有两组（案例 / 服务），
+// 直接 findAll('.el-radio') 会把两组合成一个列表，做不到「只改一组」的断言。
+function timeItem(w: any, label: string) {
+  const item = w.findAll('.el-form-item').find((i: any) => i.find('label').text() === label)
+  if (!item) throw new Error('找不到表单项：' + label)
+  return item
+}
+
+async function pickTimeMode(w: any, label: string, optionText: string) {
+  const radio = timeItem(w, label)
+    .findAll('.el-radio')
+    .find((r: any) => r.text() === optionText)
+  if (!radio) throw new Error(`「${label}」里找不到选项：${optionText}`)
+  await radio.trigger('click')
+  await flush()
+}
+
 describe('content/HomeLayout', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockClear()
@@ -176,6 +193,8 @@ describe('content/HomeLayout', () => {
       order: ['service', 'achievement'],
       bgImage: '',
       bgMask: 0,
+      projectTimeMode: 'date',
+      serviceTimeMode: 'date',
     })
   })
 
@@ -210,6 +229,8 @@ describe('content/HomeLayout', () => {
       order: ['achievement', 'service'],
       bgImage: '/uploads/bg.jpg',
       bgMask: 60,
+      projectTimeMode: 'date',
+      serviceTimeMode: 'date',
     })
   })
 
@@ -247,7 +268,7 @@ describe('content/HomeLayout', () => {
     await saveButton(w).trigger('click')
     await flush()
 
-    expect(ElMessage.success).toHaveBeenCalledWith('已保存首页布局')
+    expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序展示设置')
   })
 
   it('保存失败：不提示成功，按钮可从 loading 复位', async () => {
@@ -268,5 +289,74 @@ describe('content/HomeLayout', () => {
 
     expect(orderTags(w)).toEqual(['经典业绩', '业务服务'])
     expect(saveButton(w).exists()).toBe(true)
+  })
+
+  // ---- 详情页时间显示：案例与服务分开控制 ----
+  // 两列独立是这次需求的核心：改案例那一栏不能顺手把服务也改掉。
+  it('拉取到的两个档位分别回填到各自的控件，保存时原样提交', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'],
+      bgImage: '',
+      bgMask: 0,
+      projectTimeMode: 'hidden',
+      serviceTimeMode: 'minute',
+    })
+
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ projectTimeMode: 'hidden', serviceTimeMode: 'minute' })
+    )
+  })
+
+  it('只切换项目案例档位：业务服务那一栏保持原值', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'],
+      bgImage: '',
+      bgMask: 0,
+      projectTimeMode: 'date',
+      serviceTimeMode: 'minute',
+    })
+
+    await pickTimeMode(w, '项目案例详情', '不显示')
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ projectTimeMode: 'hidden', serviceTimeMode: 'minute' })
+    )
+  })
+
+  it('只切换业务服务档位：项目案例那一栏保持原值', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'],
+      bgImage: '',
+      bgMask: 0,
+      projectTimeMode: 'hidden',
+      serviceTimeMode: 'date',
+    })
+
+    await pickTimeMode(w, '业务服务详情', '显示到分')
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ projectTimeMode: 'hidden', serviceTimeMode: 'minute' })
+    )
+  })
+
+  // 客户不该靠猜 hidden/date/minute 的含义，控件下方直接给出效果文案
+  it('档位下方给出「小程序效果」预览，选不显示时不带「更新于」', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'],
+      bgImage: '',
+      bgMask: 0,
+      projectTimeMode: 'hidden',
+      serviceTimeMode: 'date',
+    })
+
+    expect(timeItem(w, '项目案例详情').text()).toContain('小程序效果：不显示时间')
+    expect(timeItem(w, '业务服务详情').text()).toMatch(/小程序效果：更新于 \d{4}-\d{2}-\d{2}/)
   })
 })

@@ -69,11 +69,26 @@ describe('service/detail 页', () => {
     expect(p.data.segments).toEqual([])
   })
 
-  it('更新时间格式化（不含 T）', async () => {
+  // 默认档位 date：服务时间与案例分开配置，但缺省值相同
+  it('更新时间按默认档位格式化为日期（不含 T 与秒）', async () => {
     mocks.request.mockResolvedValueOnce({ code: 0, data: service() })
     const p = await page({ id: '3' })
 
-    expect(p.data.updatedAtText).toBe('2026-10-16 15:34:12')
+    expect(p.data.updatedAtText).toBe('2026-10-16')
+  })
+
+  it('timeMode=minute：显示到分', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: service({ timeMode: 'minute' }) })
+    const p = await page({ id: '3' })
+
+    expect(p.data.updatedAtText).toBe('2026-10-16 15:34')
+  })
+
+  it('timeMode=hidden：留空，不显示「—」占位', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: service({ timeMode: 'hidden' }) })
+    const p = await page({ id: '3' })
+
+    expect(p.data.updatedAtText).toBe('')
   })
 
   it('服务不存在：提示并结束加载', async () => {

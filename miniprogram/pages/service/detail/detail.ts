@@ -1,6 +1,6 @@
 import { request } from '../../../utils/request'
 import { parseRich } from '../../../utils/richtext'
-import { formatDateTime } from '../../../utils/datetime'
+import { detailTimeText } from '../../../utils/datetime'
 import { getCompanyId } from '../../../utils/tenant'
 import { track } from '../../../utils/track'
 
@@ -37,7 +37,8 @@ Page({
       this.setData({
         service: r.data,
         segments: parseRich(r.data.content || ''),
-        updatedAtText: r.data.updatedAt ? formatDateTime(r.data.updatedAt) : '',
+        // 档位与项目案例同一套（serviceTimeMode 单独配置），端上只按 timeMode 渲染
+        updatedAtText: detailTimeText(r.data.timeMode, r.data.updatedAt),
         loading: false,
       })
       // 内容浏览埋点：服务详情加载成功才算一次「浏览」（同案例详情口径）。

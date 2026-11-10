@@ -1369,3 +1369,77 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 
 **门禁**：`index_home` / `types_contract` / `request` / `latest` 四个 spec 共 73 例全绿；
 后端零改动。
+
+## 第二十一轮实施记录（小程序详情页「更新于」可配置，2026-11-10）
+
+### 1. 背景：这不是缺陷，是设计缺口
+
+项目案例与业务服务详情页原先把 `updated_at` 硬编码渲染成「更新于 + 精确到秒」：
+
+| 位置 | 原实现 |
+| --- | --- |
+| `miniprogram/pages/project/detail/detail.wxml` | `分类名 · 更新于 {{updatedAtText}}` |
+| `miniprogram/pages/service/detail/detail.wxml` | `更新于 {{updatedAtText}}` |
+| 取数 | `formatDateTime(r.data.updatedAt)`，固定到秒 |
+| 后台可调性 | **无**。运营在后台看不到这个字段，但访客能精确到秒地看到它 |
+
+三个问题（按重要性）：
+
+1. **它没有信息量**：`updated_at` 是「运营最后一次保存的时间」，不是「案例交付时间」。访客
+   想知道的是「这个项目哪一年做的」，不是「你们昨天 14:34 改了错别字」。
+2. **它会失真**：批量整理内容会让全站案例在同一天集体显示「更新于」，看起来像批量灌水；
+   反过来长期不动又显得公司停更。
+3. **秒级精度是纯噪音**：工业品名片里出现 `14:34:30` 很出戏。
+
+### 2. 方案取舍（三个候选，选了 A）
+
+| 方案 | 做法 | 结论 |
+| --- | --- | --- |
+| **A. 档位可配** | 三档 `hidden` / `date` / `minute`，案例与服务**分开控制** | **本轮实施**：纯展示、零业务风险、不改访客看到的内容本身 |
+| B. 换业务日期 | 加「发布/交付日期」可选字段，运营自己填 | 更彻底，但需要客户逐条录入，留待内容运营有诉求时再做 |
+| C. 自动当前年份 | 每年自动刷新 | **明确拒绝**：对访客是误导，与本项目「内容必须真实」的底线冲突 |
+
+默认档位选 `date` 而不是 `hidden`：升级后存量租户的时间显示**不消失**，只是不再暴露秒级，
+属于「变干净」而非「东西不见了」；要彻底隐藏可在后台一键关掉。
+
+### 3. 实现
+
+| 层 | 改动 |
+| --- | --- |
+| 迁移 | `migrations/0040_detail_time_display.sql`：`home_layouts` 加 `project_time_mode` / `service_time_mode`，`DEFAULT 'date'`，只加列不搬迁；SQLite 由 AutoMigrate 按模型 tag 补齐；已重跑 `gen_migrations_manifest.py` |
+| 模型 | `model.HomeLayout` 两列 + `TimeMode*` 常量 + `DefaultTimeMode` + `NormalizeTimeMode`（非法值返回空串，由调用方决定报错） |
+| 后台接口 | `GET /api/admin/home-layout` 回两个档位（无配置行时回缺省，不回空串）；`PUT` 用 `*string` 指针语义，只改一栏不会刷掉另一栏；枚举外的值 `code=1` 拒绝，不静默兜底 |
+| 公开接口 | `/api/projects/:id` 与 `/api/services/:id` 各回一个 `timeMode`（服务用内嵌结构体保留全部原字段，不改成显式 `gin.H` 免得写丢字段）；`detailTimeMode()` 查不到配置行或查询出错都回缺省——纯展示开关不该让详情页整体失败 |
+| 后台页面 | `content/HomeLayout.vue` 加「详情页时间显示」分区，案例与服务各一组 radio，下方实时给出「小程序效果：更新于 2026-11-10」；页签名 `名片首页样式` → `名片页面样式` |
+| 小程序 | `utils/datetime.ts` 拆出 `formatDate` / `formatMinute`，新增 `detailTimeText(mode, at)`；两个详情页改为按 `timeMode` 渲染，`hidden` 返回空串让 wxml 整行隐藏（不是显示「—」） |
+
+**时区口径刻意保持不变**：格式化仍在端上做（按设备本地时间），后端只下发档位。改成后端
+格式化会在「服务器 TZ 未设」时把时间整体偏 8 小时，属于真实回归风险，收益只是省三行代码。
+
+### 4. 测试与反向验证
+
+| 层 | 覆盖 |
+| --- | --- |
+| 后端 | `runAPIFlow` 新增子测试「详情页时间档位」：缺省值 → 两列分别设为 `hidden` / `minute` → 两个详情接口各按自己的列下发 → 只提交一栏时另一栏保持 → 非法值被拒绝且不落库 |
+| 后台 | `HomeLayout.spec.ts` 新增 4 例：两档位分别回填并原样提交、只改案例不影响服务、只改服务不影响案例、档位下方效果文案 |
+| 小程序 | 新增 `tests/datetime.spec.ts`（10 例）；`project_detail` / `service_detail` 各补 `date` / `minute` / `hidden` 三档断言 |
+
+**反向验证 4 项**（脚本 `try/finally` 自动还原）：详情接口忽略列值（恒回缺省）、非法档位静默
+兜底、端上忽略 `timeMode`、后台保存不提交档位——四项全部 `exit=1` 且失败用例精确命中对应
+断言；还原后全绿。
+
+**新踩的坑**：后台 `HomeLayout.spec.ts` 有 2 处 `toHaveBeenCalledWith` 是**全量参数比对**，
+保存负载多两个字段后集体假红；这是项目第三次踩同一类坑（前两次在第二十轮）。
+
+### 5. 全量门禁（2026-11-10）
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 `go build` / `go vet` / `go test ./... -count=1` | 28 个包全绿 |
+| `golangci-lint v2.15.0 run --timeout=5m` | 0 issues |
+| 本地 MySQL 8.0 parity | `TestAPIFlowMySQL`（含新子测试）+ `TestMySQLMigrations`（实际应用 0040）全 PASS |
+| 前端 eslint / `vue-tsc --noEmit` | 0 错误 |
+| Vitest 全量（含小程序 spec） | **92 文件 / 1511 例全绿** |
+| `vite build`（`--outDir dist-check-*`） | 成功，临时目录已清理 |
+| 类名冲突 / 第三方许可清单 / `git diff --check` | 无危险项 / 一致 / OK |
+| `docs/openapi.yaml` | YAML 可解析、单 components 块、45 个 `$ref` 全部可解析；后台 home-layout 的读写契约已补两个档位 |

@@ -156,17 +156,29 @@ export function sortServices(items: { id: number; sort: number }[]) {
 
 // ===== 首页布局（板块顺序 + 首页背景） =====
 // bgImage 背景图 URL（空串=不设背景）；bgMask 遮罩浓度 0~100（压暗背景保证白卡片可读）
+// 详情页「更新于」的展示档位。与后端 model.TimeMode* 三档一一对应。
+export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 export interface HomeLayoutData {
   order: string[]
   bgImage: string
   bgMask: number
+  /** 项目案例详情页：不显示 / 只到日 / 到分 */
+  projectTimeMode: DetailTimeMode
+  /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */
+  serviceTimeMode: DetailTimeMode
 }
 export function getHomeLayout() {
   return http
     .get('/admin/home-layout')
     .then(
       (r: any) =>
-        (r.data ?? { order: [], bgImage: '', bgMask: 0 }) as HomeLayoutData
+        (r.data ?? {
+          order: [],
+          bgImage: '',
+          bgMask: 0,
+          projectTimeMode: 'date',
+          serviceTimeMode: 'date',
+        }) as HomeLayoutData
     )
 }
 export function saveHomeLayout(p: Partial<HomeLayoutData>) {

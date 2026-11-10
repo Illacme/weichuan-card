@@ -279,6 +279,10 @@ func New(db *gorm.DB) *gin.Engine {
 			"categoryName": p.CategoryName, // 由 repository 回填，前端免二次查询
 			"createdAt":    p.CreatedAt,
 			"updatedAt":    p.UpdatedAt,
+			// 由租户在后台「小程序设置 → 名片页面样式」里选定；端上据此决定
+			// 「更新于」显示到哪一档。放在详情接口里下发而不是让端上再查一次，
+			// 是因为详情页本来就单请求渲染，多一次往返只为三个字不值。
+			"timeMode": detailTimeMode(db, cid, false),
 		}})
 	})
 
@@ -310,7 +314,12 @@ func New(db *gorm.DB) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "服务不存在"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
+		// 内嵌保留 BizService 的全部字段与 json 名，只额外补一个 timeMode；
+		// 改成显式 gin.H 会漏字段（富文本、图标、排序都可能被写丢）。
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": struct {
+			model.BizService
+			TimeMode string `json:"timeMode"`
+		}{BizService: s, TimeMode: detailTimeMode(db, cid, true)}})
 	})
 
 	// 首页布局：板块顺序 + 首页背景（按租户）
@@ -381,4 +390,25 @@ func New(db *gorm.DB) *gin.Engine {
 	})
 
 	return r
+}
+
+// detailTimeMode 取本租户详情页「更新于」的展示档位（项目案例 / 业务服务各一列）。
+//
+// 读不到配置行（新租户还没进过后台）时回缺省档位，让详情页与「后台从未配置过」
+// 的状态一致；查询出错也回缺省而不是向上抛——这是纯展示开关，不该因为它让
+// 详情页整体 500，访客连内容都看不到。
+func detailTimeMode(db *gorm.DB, companyID int64, forService bool) string {
+	l, err := repository.GetHomeLayout(db, companyID)
+	if err != nil {
+		return model.DefaultTimeMode
+	}
+	raw := l.ProjectTimeMode
+	if forService {
+		raw = l.ServiceTimeMode
+	}
+	if m := model.NormalizeTimeMode(raw); m != "" {
+		return m
+	}
+	// 库里存了不认识的值（手工改库 / 降级回滚）：按缺省显示，不静默变空白。
+	return model.DefaultTimeMode
 }

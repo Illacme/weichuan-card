@@ -1,7 +1,7 @@
 import { request, assetUrl } from '../../../utils/request'
 import { onImgFail } from '../../../utils/thumb'
 import { parseRich } from '../../../utils/richtext'
-import { formatDateTime } from '../../../utils/datetime'
+import { detailTimeText } from '../../../utils/datetime'
 import { getCompanyId } from '../../../utils/tenant'
 import { track } from '../../../utils/track'
 
@@ -47,8 +47,10 @@ Page({
       this.setData({
         project: r.data,
         segments: parseRich(r.data.detail || ''),
-        // updatedAt 是后端 RFC3339，直接绑会把 T／时区后缀显示出来（同 PC 端 formatDateTime 口径）
-        updatedAtText: r.data.updatedAt ? formatDateTime(r.data.updatedAt) : '',
+        // 「更新于」的档位由后台按租户下发（timeMode），端上只负责按档位渲染：
+        // hidden 返回空串 → wxml 整行不显示；date / minute 分别只到日、到分。
+        // 不再硬编码 formatDateTime：秒级精度对访客是噪音，且后台需要能关掉它。
+        updatedAtText: detailTimeText(r.data.timeMode, r.data.updatedAt),
         loading: false,
       })
       // 内容浏览埋点：案例详情加载成功才算一次「浏览」——加载失败/不存在不计，

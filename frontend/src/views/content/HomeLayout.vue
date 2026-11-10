@@ -1,11 +1,11 @@
 <template>
   <el-card>
     <div class="page-bar" :class="{ 'only-action': props.embedded }">
-      <h3 v-if="!props.embedded">首页布局</h3>
+      <h3 v-if="!props.embedded">小程序页面样式</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
-    <p class="desc">控制小程序首页「经典业绩」与「业务服务」的先后顺序，并可设置首页背景图做品牌化包装。</p>
+    <p class="desc">控制小程序首页「经典业绩」与「业务服务」的先后顺序、首页背景图，以及两个详情页是否显示「更新于」。</p>
 
     <!-- 表单宽度与「访客先看到谁」对齐（720）：560 时「从素材库选择」按钮的文字会被
          挤成两行，撑满卡片后这个窄表单也显得孤零零 -->
@@ -46,6 +46,34 @@
         </div>
       </el-form-item>
 
+      <el-divider content-position="left">详情页时间显示</el-divider>
+
+      <p class="desc desc-tight">
+        详情页原本固定显示「更新于 + 最后一次保存时间」。这个时间是运营保存内容的时刻，
+        不是案例交付时间——批量整理内容时全站案例会显示同一天，精确到秒对访客也偏噪音。
+        可以调成只到日，或直接关掉。
+      </p>
+
+      <!-- 案例与服务分开控制：案例带「交付年份」语义、服务更像常青内容，
+           两者该不该显示时间往往不是一个答案，共用一个开关会逼客户二选一。 -->
+      <el-form-item label="项目案例详情">
+        <el-radio-group v-model="projectTimeMode">
+          <el-radio value="hidden">不显示</el-radio>
+          <el-radio value="date">只显示日期</el-radio>
+          <el-radio value="minute">显示到分</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">小程序效果：{{ modePreview(projectTimeMode) }}</div>
+      </el-form-item>
+
+      <el-form-item label="业务服务详情">
+        <el-radio-group v-model="serviceTimeMode">
+          <el-radio value="hidden">不显示</el-radio>
+          <el-radio value="date">只显示日期</el-radio>
+          <el-radio value="minute">显示到分</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">小程序效果：{{ modePreview(serviceTimeMode) }}</div>
+      </el-form-item>
+
       <el-form-item>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
         <el-button v-if="bgImage" link @click="clearBg">清除背景</el-button>
@@ -59,7 +87,7 @@
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
-import { getHomeLayout, saveHomeLayout } from '@/api/content'
+import { getHomeLayout, saveHomeLayout, type DetailTimeMode } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
 
@@ -75,6 +103,20 @@ const bgImage = ref('')
 // 背景原图全屏查看器（点击效果预览块打开）
 const bgViewer = ref(false)
 const bgMask = ref(0)
+// 详情页「更新于」档位：案例与服务各一个，互不影响
+const projectTimeMode = ref<DetailTimeMode>('date')
+const serviceTimeMode = ref<DetailTimeMode>('date')
+
+// 把档位翻译成「小程序上会看到什么」，比让客户理解 hidden/date/minute 直观。
+// 时间取当下（不是真实内容时间，只演示格式），够用且不会误导成「这是某条内容的时间」。
+function modePreview(mode: string): string {
+  if (mode === 'hidden') return '不显示时间'
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  if (mode === 'minute') return `更新于 ${date} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return `更新于 ${date}`
+}
 
 const order = computed(() => {
   const rest = BLOCKS.filter((b) => b !== firstBlock.value)
@@ -92,6 +134,8 @@ async function load() {
     if (d && d.order && d.order.length) firstBlock.value = d.order[0]
     bgImage.value = d?.bgImage || ''
     bgMask.value = d?.bgMask || 0
+    projectTimeMode.value = d?.projectTimeMode || 'date'
+    serviceTimeMode.value = d?.serviceTimeMode || 'date'
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -102,9 +146,17 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    // 背景与板块顺序一起提交：bgImage 传空串即清空（后端区分「未提供」与「空串」）
-    await saveHomeLayout({ order: order.value, bgImage: bgImage.value, bgMask: bgMask.value })
-    ElMessage.success('已保存首页布局')
+    // 背景与板块顺序一起提交：bgImage 传空串即清空（后端区分「未提供」与「空串」）。
+    // 两个时间档位一起带上：不传后端会保持原值，但这里本就把两者都渲染出来了，
+    // 全量提交更符合「所见即所存」。
+    await saveHomeLayout({
+      order: order.value,
+      bgImage: bgImage.value,
+      bgMask: bgMask.value,
+      projectTimeMode: projectTimeMode.value,
+      serviceTimeMode: serviceTimeMode.value,
+    })
+    ElMessage.success('已保存小程序展示设置')
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -133,6 +185,11 @@ onMounted(load)
 .desc {
   color: #606266;
   font-size: 13px;
+}
+/* 夹在两组表单之间的说明段：上下留白交给 el-form-item，自身别再撑开 */
+.desc-tight {
+  margin: 0 0 8px;
+  line-height: 1.7;
 }
 /* 内嵌时只剩「重新加载」按钮，别让它贴左 */
 .page-bar.only-action {

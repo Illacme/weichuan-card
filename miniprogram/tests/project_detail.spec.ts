@@ -89,12 +89,28 @@ describe('project/detail 页', () => {
     ])
   })
 
-  // 后端给 RFC3339，直接绑会把 T 和时区后缀显示出来
-  it('更新时间格式化为可读文案（不含 T）', async () => {
+  // 后端给 RFC3339，直接绑会把 T 和时区后缀显示出来。
+  // 默认档位是 date：后端不下发 timeMode（老接口 / 未配置）时只显示日期。
+  it('更新时间按默认档位格式化为日期（不含 T 与秒）', async () => {
     mocks.request.mockResolvedValueOnce({ code: 0, data: detail() })
     const p = await page({ id: '7' })
 
-    expect(p.data.updatedAtText).toBe('2026-10-16 15:34:12')
+    expect(p.data.updatedAtText).toBe('2026-10-16')
+  })
+
+  it('timeMode=minute：显示到分', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: detail({ timeMode: 'minute' }) })
+    const p = await page({ id: '7' })
+
+    expect(p.data.updatedAtText).toBe('2026-10-16 15:34')
+  })
+
+  // 后台把案例时间关掉：wxml 用 wx:if 整行隐藏，所以这里必须是空串而不是「—」
+  it('timeMode=hidden：留空，不显示「—」占位', async () => {
+    mocks.request.mockResolvedValueOnce({ code: 0, data: detail({ timeMode: 'hidden' }) })
+    const p = await page({ id: '7' })
+
+    expect(p.data.updatedAtText).toBe('')
   })
 
   it('没有 updatedAt 时留空，不显示「—」占位', async () => {

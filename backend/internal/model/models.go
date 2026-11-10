@@ -221,7 +221,43 @@ type BizService struct {
 	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at" json:"-"`
 }
 
-// HomeLayout 首页板块顺序 + 首页背景（JSON 数组，按租户隔离，company_id 唯一）
+// 详情页「更新于」的展示档位（home_layouts.project_time_mode / service_time_mode）。
+//
+// 为什么需要它：详情页原先硬编码显示 content 行的 updated_at，精确到秒。这个值是
+// 「运营最后一次保存的时间」而非「案例交付时间」——批量整理内容会让全站案例在同一天
+// 集体显示「更新于」，秒级精度对访客也只是噪音。档位交给租户自选，两端都按它渲染。
+const (
+	TimeModeHidden = "hidden" // 不显示
+	TimeModeDate   = "date"   // 只到日：2026-11-10
+	TimeModeMinute = "minute" // 到分：2026-11-10 14:34
+)
+
+// DefaultTimeMode 缺省档位。
+//
+// 选 date 而不是 hidden：升级时存量租户的时间显示**不消失**，只是不再暴露秒级，
+// 属于「变干净」而非「东西不见了」；要彻底隐藏可以在后台一键关掉。
+const DefaultTimeMode = TimeModeDate
+
+// NormalizeTimeMode 把外部传入的档位归一；非法值返回空串，由调用方决定报错。
+//
+// 空串按缺省处理：新建 home_layouts 行时没显式给值，应落到 DefaultTimeMode，
+// 而不是变成「不认识的值」。
+func NormalizeTimeMode(v string) string {
+	switch v {
+	case "":
+		return DefaultTimeMode
+	case TimeModeHidden, TimeModeDate, TimeModeMinute:
+		return v
+	default:
+		return ""
+	}
+}
+
+// HomeLayout 小程序展示配置（按租户隔离，company_id 唯一）。
+//
+// 名字里的 Home 是历史包袱：它最早只装首页板块顺序与首页背景，现在还承载详情页
+// 的时间展示档位。改名要搬数据、要动公开接口路径，收益不抵风险，故保留表名并在
+// 此说明——新增「展示类」配置可以继续放这里，但涉及权限/业务数据的不要塞进来。
 type HomeLayout struct {
 	ID        int64  `gorm:"primaryKey;column:id" json:"id"`
 	CompanyID int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
@@ -232,6 +268,11 @@ type HomeLayout struct {
 	// BgMask 背景遮罩浓度 0~100：背景图上叠加的黑色蒙层不透明度，
 	// 用于压暗花哨的背景、突出白色内容卡片与文字（0=不压暗，默认）。
 	BgMask int `gorm:"column:bg_mask;default:0" json:"bgMask"`
+	// ProjectTimeMode / ServiceTimeMode 项目案例与业务服务详情页的「更新于」档位。
+	// 刻意分成两列：案例带「交付年份」的语义、服务更像常青内容，两者该不该显示
+	// 时间往往不是一个答案，共用一个开关会逼客户二选一。
+	ProjectTimeMode string `gorm:"column:project_time_mode;size:16;default:date" json:"projectTimeMode"`
+	ServiceTimeMode string `gorm:"column:service_time_mode;size:16;default:date" json:"serviceTimeMode"`
 }
 
 // StatEvent 埋点原始事件

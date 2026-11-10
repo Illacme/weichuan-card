@@ -6,7 +6,7 @@
       <el-tab-pane label="访客先看到谁" name="entry" lazy>
         <MpEntry embedded />
       </el-tab-pane>
-      <el-tab-pane label="名片首页样式" name="appearance" lazy>
+      <el-tab-pane label="名片页面样式" name="appearance" lazy>
         <HomeLayout embedded />
       </el-tab-pane>
     </el-tabs>
@@ -21,7 +21,7 @@ import HomeLayout from './HomeLayout.vue'
 
 // 小程序端「访客第一眼」的两件事：
 //   ① 入口：扫体验版二维码 / 直接打开（裸启动）时，先看到名片墙还是某位员工的名片；
-//   ② 样式：名片首页的板块顺序与背景（品牌化包装）。
+//   ② 样式：名片首页的板块顺序与背景，以及两个详情页是否显示「更新于」。
 // 两者接口不同（/admin/mp-entry 与 /admin/home-layout）、各自保存，所以是页签而不是
 // 一个表单；但菜单只留一项——客户配的是「我的小程序长什么样」，不该由他去猜
 // 「首页布局」其实也是小程序的事。

@@ -869,6 +869,65 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, "", body["bgImage"], "清空后公开接口应为空串，小程序据此不铺背景")
 	})
 
+	// ===== 7b. 详情页「更新于」档位（项目案例 / 业务服务分开控制） =====
+	t.Run("详情页时间档位", func(t *testing.T) {
+		// 从未配置过时后台读到的是缺省档位，而不是空串——空串会让前端 radio 一个都不选中
+		_, body := c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		hl := body["data"].(map[string]interface{})
+		require.Equal(t, model.DefaultTimeMode, hl["projectTimeMode"])
+		require.Equal(t, model.DefaultTimeMode, hl["serviceTimeMode"])
+
+		// 建一条上架案例与一条服务：公开详情接口只对可见内容生效
+		_, body = c.do("POST", "/api/admin/projects", map[string]interface{}{
+			"name": "厂区光伏", "summary": "屋顶分布式", "detail": "<p>正文</p>", "enabled": true,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		pid := body["data"].(map[string]interface{})["id"]
+
+		_, body = c.do("POST", "/api/admin/services", map[string]interface{}{
+			"title": "运维托管", "content": "<p>季度巡检</p>",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		sid := body["data"].(map[string]interface{})["id"]
+
+		// 案例关掉、服务到分：两列独立，不能互相带偏
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"achievement", "service"},
+			"projectTimeMode": "hidden", "serviceTimeMode": "minute",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+
+		_, body = c.do("GET", fmt.Sprintf("/api/projects/%.0f", pid), nil, "")
+		require.EqualValues(t, 0, body["code"])
+		require.Equal(t, "hidden", body["data"].(map[string]interface{})["timeMode"],
+			"案例详情应按 projectTimeMode 下发")
+
+		_, body = c.do("GET", fmt.Sprintf("/api/services/%.0f", sid), nil, "")
+		require.EqualValues(t, 0, body["code"])
+		require.Equal(t, "minute", body["data"].(map[string]interface{})["timeMode"],
+			"服务详情应按 serviceTimeMode 下发，不能与案例串")
+
+		// 只提交案例那一栏：服务档位保持（指针语义区分「未提供」与「显式设置」）
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"achievement", "service"}, "projectTimeMode": "date",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "date", hl["projectTimeMode"])
+		require.Equal(t, "minute", hl["serviceTimeMode"], "未提供 serviceTimeMode 不应被刷成缺省")
+
+		// 非法档位一律拒绝：存进不认识的档位会让端上既不显示也不报错
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"achievement", "service"}, "serviceTimeMode": "seconds",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "minute", body["data"].(map[string]interface{})["serviceTimeMode"],
+			"被拒绝的非法值不应落库")
+	})
+
 	// ===== 8. 文件上传与存储增强（本地驱动回退分支） =====
 	t.Run("上传与存储增强", func(t *testing.T) {
 		// 构造 multipart/form-data 上传

@@ -46,4 +46,5 @@ var expectedMigrations = []string{
 	"0037_company_profile_video_autoplay.sql",
 	"0038_company_profile_video_backup_url.sql",
 	"0039_admin_wx_openid.sql",
+	"0040_detail_time_display.sql",
 }

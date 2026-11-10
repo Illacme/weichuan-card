@@ -435,20 +435,28 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
-	// ===== 首页布局（板块顺序 + 首页背景，按租户） =====
+	// ===== 小程序展示配置（首页板块顺序 + 首页背景 + 详情页时间档位，按租户） =====
 	r.GET("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		var hl model.HomeLayout
 		order := []string{}
 		var bgImage string
 		var bgMask int
+		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
+		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
+		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
 		if db.First(&hl, "company_id = ?", targetCompanyID(c)).Error == nil {
 			if hl.Order != "" {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
 			}
 			bgImage, bgMask = hl.BgImage, hl.BgMask
+			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
+			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
+			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
+			serviceMode = model.NormalizeTimeMode(hl.ServiceTimeMode)
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
+			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
 		}})
 	})
 	r.PUT("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -459,20 +467,49 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 前端分块保存时可能只提交板块顺序，不能把背景顺手清掉。
 			BgImage *string `json:"bgImage"`
 			BgMask  *int    `json:"bgMask"`
+			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
+			ProjectTimeMode *string `json:"projectTimeMode"`
+			ServiceTimeMode *string `json:"serviceTimeMode"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		// 枚举值非法一律拒绝，不做「静默兜底成 date」：后台是唯一写入方，
+		// 存进一个不认识的档位只会让端上渲染出不显示也不报错的空白。
+		projectMode, serviceMode := "", ""
+		if req.ProjectTimeMode != nil {
+			if projectMode = model.NormalizeTimeMode(*req.ProjectTimeMode); projectMode == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "案例时间显示档位无效"})
+				return
+			}
+		}
+		if req.ServiceTimeMode != nil {
+			if serviceMode = model.NormalizeTimeMode(*req.ServiceTimeMode); serviceMode == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "服务时间显示档位无效"})
+				return
+			}
+		}
 		b, _ := json.Marshal(req.Order)
 		var hl model.HomeLayout
 		if db.First(&hl, "company_id = ?", cid).Error != nil {
-			created := model.HomeLayout{CompanyID: cid, Order: string(b)}
+			created := model.HomeLayout{
+				CompanyID:       cid,
+				Order:           string(b),
+				ProjectTimeMode: model.DefaultTimeMode,
+				ServiceTimeMode: model.DefaultTimeMode,
+			}
 			if req.BgImage != nil {
 				created.BgImage = *req.BgImage
 			}
 			if req.BgMask != nil {
 				created.BgMask = clampMask(*req.BgMask)
+			}
+			if projectMode != "" {
+				created.ProjectTimeMode = projectMode
+			}
+			if serviceMode != "" {
+				created.ServiceTimeMode = serviceMode
 			}
 			if err := db.Create(&created).Error; err != nil {
 				dbWriteFailed(c, "新建首页布局", "保存失败，请稍后重试", err)
@@ -485,6 +522,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if req.BgMask != nil {
 				upd["bg_mask"] = clampMask(*req.BgMask)
+			}
+			if projectMode != "" {
+				upd["project_time_mode"] = projectMode
+			}
+			if serviceMode != "" {
+				upd["service_time_mode"] = serviceMode
 			}
 			if err := db.Model(&hl).Updates(upd).Error; err != nil {
 				dbWriteFailed(c, "更新首页布局", "保存失败，请稍后重试", err)

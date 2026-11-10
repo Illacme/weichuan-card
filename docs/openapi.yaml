@@ -2727,7 +2727,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
-      summary: 首页布局顺序
+      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位）
       security:
         - cookieAuth: []
       responses:
@@ -2747,11 +2747,34 @@ paths:
                         type: array
                         items:
                           type: string
+                      bgImage:
+                        type: string
+                        description: 首页背景图 URL，空串=不设背景（保持灰底）
+                      bgMask:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        description: 背景遮罩浓度，0=不压暗
+                      projectTimeMode:
+                        type: string
+                        enum: [hidden, date, minute]
+                        description: |
+                          项目案例详情页「更新于」的档位。从未配置过时回 `date`（缺省），
+                          不会回空串（空串会让后台 radio 一个都不选中）。
+                      serviceTimeMode:
+                        type: string
+                        enum: [hidden, date, minute]
+                        description: 业务服务详情页的档位，与案例**分开控制**，互不影响。
     put:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
-      summary: 更新首页布局顺序
+      summary: 更新小程序展示配置
+      description: |
+        所有字段都是**可选**：未提供的字段保持原值（服务端用指针区分「未提供」与
+        「显式传空」），后台可以只改其中一栏而不覆盖其它配置。
+        `bgImage` 传空串表示清空背景；`order` 仍是必填（它决定首页板块顺序）。
+        时间档位传枚举外的值会被拒绝（code=1），不做静默兜底。
       security:
         - cookieAuth: []
       requestBody:
@@ -2767,9 +2790,21 @@ paths:
                   items:
                     type: string
                     enum: [achievement, service]
+                bgImage:
+                  type: string
+                bgMask:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                projectTimeMode:
+                  type: string
+                  enum: [hidden, date, minute]
+                serviceTimeMode:
+                  type: string
+                  enum: [hidden, date, minute]
       responses:
         "200":
-          description: code=0 成功；code=1 参数错误
+          description: code=0 成功；code=1 参数错误或档位取值无效
 
   /api/admin/mp-entry:
     get:
