@@ -15,6 +15,7 @@ import (
 	"weichuan/internal/mediachk"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
 	"weichuan/internal/wechat"
@@ -119,7 +120,9 @@ func submitMediaCheck(db *gorm.DB, cfg config.Config, c *gin.Context, rawURL str
 		}
 		return
 	}
-	go recordMediaCheck(db, p, d, source, openid, companyID)
+	safego.Run("media_check.submit", func() {
+		recordMediaCheck(db, p, d, source, openid, companyID)
+	})
 }
 
 // recordMediaCheck 同步送检并落库，返回写入的记录（失败时也返回，便于测试断言）。

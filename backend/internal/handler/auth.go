@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"weichuan/internal/audit"
@@ -84,10 +86,15 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		if !auth.CheckPassword(e.PasswordHash, req.Password) {
-			// 登录失败必须留痕：连续失败是爆破信号，没有日志就只能靠猜
+			// 登录失败必须留痕：连续失败是爆破信号，没有日志就只能靠猜。
+			// 但**绝不能把手机号 / 姓名写进审计**：员工表 phone/name 是静态加密列，
+			// 审计表却只追加不加密，写进去等于开了一条绕过 PII 加密的明文旁路
+			// （与 apply.go 注销审计「只记编号」同一约定）。用 staffId 仍能关联到账号，
+			// 也能在后台按「同一编号连续失败」还原爆破序列。
 			audit.Record(db, c, audit.Entry{
-				Action: audit.ActionLoginFail, TargetType: "employee", TargetID: req.Phone,
-				Result: audit.ResultFail, ActorName: e.Name,
+				Action: audit.ActionLoginFail, TargetType: "employee",
+				TargetID: strconv.FormatInt(e.StaffID, 10),
+				Result:   audit.ResultFail,
 			})
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "手机号或密码错误"})
 			return
@@ -121,7 +128,12 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			loginUpdates["nickname_bidx"] = pii.BlindIndex(req.Nickname)
 		}
 		if len(loginUpdates) > 0 {
-			db.Model(&e).Updates(loginUpdates)
+			// 附带身份信息写失败**不阻断登录**：让用户拿不到令牌，比「openid 没记上」
+			// 严重得多。但必须落日志，否则「后台一直看不到这个人的微信绑定状态」
+			// 会变成一个没有线索的客服问题。
+			if err := db.Model(&e).Updates(loginUpdates).Error; err != nil {
+				log.Printf("[AUTH][WARN] 登录时更新微信身份失败 staffId=%d err=%v", e.StaffID, err)
+			}
 		}
 		access, refresh, expiresIn, err := auth.IssueTokens(e.StaffID, "employee", e.TokenVersion, e.CompanyID)
 		if err != nil {
@@ -261,7 +273,8 @@ func RegisterAuth(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 吊销失败必须让调用方知道：从前吞掉错误照样回 ok，
 		// 用户以为已登出，refresh token 却仍能续期——整套「登出吊销 sid」的保证形同虚设。
 		if err := revokeCurrentSession(c, db); err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登出失败，请重试：" + err.Error()})
+			log.Printf("[AUTH][ERROR] 登出吊销会话失败 err=%v", err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "登出失败，请重试"})
 			return
 		}
 		clearAuthCookies(c, cfg)

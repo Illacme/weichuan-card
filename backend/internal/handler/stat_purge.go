@@ -7,6 +7,7 @@ import (
 
 	"weichuan/internal/audit"
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 
 	"gorm.io/gorm"
 )
@@ -118,7 +119,7 @@ func StartStatEventsPurge(db *gorm.DB, interval time.Duration, keepDays func() i
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	var once sync.Once
-	go func() {
+	safego.Run("stat.purge", func() {
 		defer ticker.Stop()
 		defer close(stopped)
 		for {
@@ -134,7 +135,7 @@ func StartStatEventsPurge(db *gorm.DB, interval time.Duration, keepDays func() i
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		once.Do(func() {
 			close(done)

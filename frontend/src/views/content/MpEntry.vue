@@ -78,7 +78,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getMpEntry, saveMpEntry, searchEntryStaff, type MpEntryMode } from '@/api/mpEntry'
 
@@ -150,6 +150,11 @@ async function load() {
 
 // 远程搜索：不做本地过滤（员工可能上千人，一次只取 20 条由服务端筛）
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+// 与 CompanyPicker 同理由：抽屉关闭/路由切走后，待触发的搜索不该再打接口、
+// 更不该回头写 candidates（那时组件已经没了）。
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 function onSearch(kw: string) {
   if (searchTimer) clearTimeout(searchTimer)
   // 250ms 防抖：每敲一个字就发一次请求，中文输入法下会打出好几次无效请求

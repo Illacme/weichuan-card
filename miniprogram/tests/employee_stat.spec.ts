@@ -9,6 +9,9 @@
 //  3. 来源分布各行之和必须等于访问数：两者一旦漂移，「共 N 次访问」就和
 //     转化卡对不上，而且不会报任何错。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { installPageCapture, capturedPage, makeInstance, installWx, flush } from './helpers/harness'
 
 const mocks = vi.hoisted(() => ({
@@ -463,5 +466,35 @@ describe('employee/stat 页', () => {
     expect(t2[2].height).toBe(100)
     expect(t2[1].height).toBe(50)
     expect(t2[0].height).toBe(0)
+  })
+
+  // 弱网回归：以前 loading:false 写在 await 之后，request 一 reject 就永远
+  // 执行不到，页面停在「加载中…」且没有任何可点的出口。
+  it('网络异常：落到可见错误态 + 收掉 loading，不再永久转圈', async () => {
+    storage.set('empToken', 'tk-1')
+    mocks.request.mockRejectedValueOnce(new Error('network down'))
+    const { p } = await page()
+
+    await p.onShow()
+    await flush()
+
+    expect(p.data.loading).toBe(false)
+    expect(p.data.error).toBe(true)
+    expect(lastToast()).toContain('网络异常')
+
+    // 重试按钮绑的就是 load：再拉一次能恢复成正常数据
+    mocks.request.mockResolvedValueOnce({ code: 0, data: fullData() })
+    await p.load()
+    await flush()
+    expect(p.data.error).toBe(false)
+    expect(p.data.loading).toBe(false)
+    expect(p.data.stat.visit).toBe(12)
+  })
+
+  it('WXML 真的渲染错误态与重试按钮（只有 data 变了不算修好）', () => {
+    const wxml = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../pages/employee/stat/stat.wxml'), 'utf8')
+    expect(wxml).toContain('wx:elif="{{error}}"')
+    expect(wxml).toContain('class="error-box"')
+    expect(wxml).toContain('bindtap="load"')
   })
 })

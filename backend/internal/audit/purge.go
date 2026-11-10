@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 
 	"gorm.io/gorm"
 )
@@ -141,7 +142,7 @@ func StartAuditLogPurge(db *gorm.DB, interval time.Duration, keepDays func() int
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	var once sync.Once
-	go func() {
+	safego.Run("audit.purge", func() {
 		defer ticker.Stop()
 		defer close(stopped)
 		for {
@@ -158,7 +159,7 @@ func StartAuditLogPurge(db *gorm.DB, interval time.Duration, keepDays func() int
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		once.Do(func() {
 			close(done)

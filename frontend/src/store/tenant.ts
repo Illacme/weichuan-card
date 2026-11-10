@@ -31,6 +31,12 @@ const PAGE_SIZE = 100
  */
 let inflight: Promise<void> | null = null
 
+// 请求序号：关键字远程搜索可以连发多次，全量预取也可能与搜索同时在飞。
+// 不加序号的话，先发的全量请求后回来会把「按关键字搜到的候选」整个盖掉，
+// 用户点中的企业其实不在当前列表里，而 currentId 已经写下去了——
+// 后续所有 /api/admin 请求都会带着错的 companyId。只认最后一次发出的请求。
+let fetchSeq = 0
+
 export const useTenantStore = defineStore('tenant', {
   state: () => ({
     /** 候选企业（平台超管才有值；关键字搜索时被替换为搜索结果） */
@@ -119,9 +125,11 @@ export const useTenantStore = defineStore('tenant', {
     },
 
     async fetch(keyword: string) {
+      const seq = ++fetchSeq
       this.loading = true
       try {
         const paged = await listCompanies({ page: 1, size: PAGE_SIZE, keyword: keyword || undefined })
+        if (seq !== fetchSeq) return // 已有更新的搜索，旧结果一律丢弃
         this.companies = paged.list
         this.total = paged.total
         this.loaded = true
@@ -132,13 +140,14 @@ export const useTenantStore = defineStore('tenant', {
           this.setCurrent(0)
         }
       } catch {
+        if (seq !== fetchSeq) return // 旧请求失败不该把新请求标成失败
         // 拉取失败不清空已有候选：顶栏选择器宁可显示旧列表，也不要突然变空让人以为企业没了。
         // loaded 仍置 true（避免每次展开都自动重打接口），但要记下 error，
         // 让选择器知道「这不是真的没有企业，是没拉到」，从而允许重试。
         this.loaded = true
         this.error = true
       } finally {
-        this.loading = false
+        if (seq === fetchSeq) this.loading = false
       }
     },
 
@@ -159,6 +168,8 @@ export const useTenantStore = defineStore('tenant', {
       this.keyword = ''
       // 登出后不该让下一个人复用上一个会话的请求结果
       inflight = null
+      // 让上一个会话在飞的请求回来后直接被丢弃，不再写回已清空的 store
+      fetchSeq++
       this.isPlatform = false
       this.ownCompanyId = 0
       this.currentId = 0

@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted } from 'vue'
 import { useTenantStore } from '@/store/tenant'
 
 const props = defineProps<{
@@ -72,6 +72,11 @@ const placeholder = computed(() => props.placeholder || '选择要管理的企�
 //   !tenant.error   —— 上次拉取失败时必须允许重试，否则会永久卡在空态
 //                      （loaded 在 catch 里也会置 true，光看它判断不出来）。
 let timer: ReturnType<typeof setTimeout> | null = null
+// 卸载后不再残留待触发的远程搜索：el-select 在抽屉/路由切换时会被销毁，
+// 定时器晚于组件触发会去写一个已卸载的 store，且请求根本没人再看了。
+onUnmounted(() => {
+  if (timer) clearTimeout(timer)
+})
 function onSearch(kw: string) {
   const q = kw.trim()
   if (!q && !tenant.keyword && !tenant.error && (tenant.loaded || tenant.loading)) return

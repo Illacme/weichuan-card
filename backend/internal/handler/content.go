@@ -83,9 +83,22 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		var ci model.CompanyInfo
 		if db.First(&ci, "company_id = ?", cid).Error != nil {
 			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
-			db.Create(&ci)
+			if err := db.Create(&ci).Error; err != nil {
+				dbWriteFailed(c, "保存公司基础信息（新建）", "保存失败，请稍后重试", err)
+				return
+			}
 		} else {
-			db.Model(&ci).Updates(map[string]interface{}{"full_name": req.FullName, "short_name": req.ShortName, "address": req.Address, "tel": req.Tel, "logo": req.Logo})
+			if err := db.Model(&ci).Updates(map[string]interface{}{"full_name": req.FullName, "short_name": req.ShortName, "address": req.Address, "tel": req.Tel, "logo": req.Logo}).Error; err != nil {
+				dbWriteFailed(c, "保存公司基础信息（更新）", "保存失败，请稍后重试", err)
+				return
+			}
+			// GORM 的 map 更新不回写结构体：手工同步，否则回包还是改动前的旧值，
+			// 界面「保存后立刻刷新」看起来像没生效（与 company-profile 同一处理）。
+			ci.FullName = req.FullName
+			ci.ShortName = req.ShortName
+			ci.Address = req.Address
+			ci.Tel = req.Tel
+			ci.Logo = req.Logo
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ci})
 	})
@@ -218,7 +231,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		req.CompanyID = targetCompanyID(c) // 租户外键以服务端解析为准，不信客户端
-		db.Create(&req)
+		if err := db.Create(&req).Error; err != nil {
+			dbWriteFailed(c, "新建业绩分类", "保存失败，请稍后重试", err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": req})
 	})
 	registerSortRoute(r, db, "/api/admin/categories/sort", &model.AchievementCategory{}, targetCompanyID)
@@ -234,10 +250,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		// 租户条件进 Where：企业管理员改不到别家分类（RowsAffected=0 即越权）
-		if db.Model(&model.AchievementCategory{}).Where("id = ? AND company_id = ?", id, targetCompanyID(c)).
-			Updates(map[string]interface{}{"name": req.Name, "icon": req.Icon, "sort": req.Sort, "is_locked": req.IsLocked}).RowsAffected == 0 {
+		// 「未找到」用带租户条件的查询判定，不用 RowsAffected：重复保存相同值时
+		// MySQL 原样 UPDATE 的 RowsAffected=0，据此判「未找到」会把一次幂等保存报成错误。
+		// 先查出记录再更新，同时把租户越权拦在这里（查不到即无权或不存在）。
+		var cat model.AchievementCategory
+		if db.First(&cat, "id = ? AND company_id = ?", id, targetCompanyID(c)).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&cat).Updates(map[string]interface{}{"name": req.Name, "icon": req.Icon, "sort": req.Sort, "is_locked": req.IsLocked}).Error; err != nil {
+			dbWriteFailed(c, "更新业绩分类", "保存失败，请稍后重试", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
@@ -261,7 +283,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "锁定分类不可删除"})
 			return
 		}
-		db.Delete(&cat)
+		res := db.Delete(&cat)
+		if res.Error != nil {
+			dbWriteFailed(c, "删除业绩分类", "删除失败，请稍后重试", res.Error)
+			return
+		}
+		if res.RowsAffected == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -292,7 +322,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			Cover: in.Cover, Album: string(alb), IsHomeFeatured: in.IsHomeFeatured,
 			Enabled: in.Enabled, Sort: in.Sort,
 		}
-		db.Create(&p)
+		if err := db.Create(&p).Error; err != nil {
+			dbWriteFailed(c, "新建项目案例", "保存失败，请稍后重试", err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": projectToMap(p)})
 	})
 	registerSortRoute(r, db, "/api/admin/projects/sort", &model.ProjectCase{}, targetCompanyID)
@@ -308,17 +341,30 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		alb, _ := json.Marshal(in.Album)
-		db.Model(&p).Updates(map[string]interface{}{
+		if err := db.Model(&p).Updates(map[string]interface{}{
 			"category_id": in.CategoryID, "name": in.Name, "summary": in.Summary,
 			"detail": in.Detail, "cover": in.Cover, "album": string(alb),
 			"is_home_featured": in.IsHomeFeatured, "enabled": in.Enabled, "sort": in.Sort,
-		})
-		db.First(&p, "id = ?", id)
+		}).Error; err != nil {
+			dbWriteFailed(c, "更新项目案例", "保存失败，请稍后重试", err)
+			return
+		}
+		// 二次查库不是多余的：GORM 的 map 更新不会把值写回结构体，回包要给出
+		// 改动后的新值（含数据库刚刷新的 updated_at），必须重读这一行。
+		if err := db.First(&p, "id = ?", id).Error; err != nil {
+			dbWriteFailed(c, "重读项目案例", "保存失败，请稍后重试", err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": projectToMap(p)})
 	})
 	r.DELETE("/api/admin/projects/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-		if db.Delete(&model.ProjectCase{}, "id = ? AND company_id = ?", id, targetCompanyID(c)).RowsAffected == 0 {
+		res := db.Delete(&model.ProjectCase{}, "id = ? AND company_id = ?", id, targetCompanyID(c))
+		if res.Error != nil {
+			dbWriteFailed(c, "删除项目案例", "删除失败，请稍后重试", res.Error)
+			return
+		}
+		if res.RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -343,7 +389,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		s := model.BizService{CompanyID: targetCompanyID(c), Title: req.Title, Icon: req.Icon, Content: req.Content, Sort: req.Sort}
-		db.Create(&s)
+		if err := db.Create(&s).Error; err != nil {
+			dbWriteFailed(c, "新建业务服务", "保存失败，请稍后重试", err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
 	})
 	registerSortRoute(r, db, "/api/admin/services/sort", &model.BizService{}, targetCompanyID)
@@ -359,16 +408,27 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		if db.Model(&model.BizService{}).Where("id = ? AND company_id = ?", id, targetCompanyID(c)).
-			Updates(map[string]interface{}{"title": req.Title, "icon": req.Icon, "content": req.Content, "sort": req.Sort}).RowsAffected == 0 {
+		// 与 categories 同理：先按租户查存在性，不用 RowsAffected 判「未找到」——
+		// MySQL 原样 UPDATE 的 RowsAffected=0 会把一次幂等保存报成错误。
+		var svc model.BizService
+		if db.First(&svc, "id = ? AND company_id = ?", id, targetCompanyID(c)).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&svc).Updates(map[string]interface{}{"title": req.Title, "icon": req.Icon, "content": req.Content, "sort": req.Sort}).Error; err != nil {
+			dbWriteFailed(c, "更新业务服务", "保存失败，请稍后重试", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 	r.DELETE("/api/admin/services/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-		if db.Delete(&model.BizService{}, "id = ? AND company_id = ?", id, targetCompanyID(c)).RowsAffected == 0 {
+		res := db.Delete(&model.BizService{}, "id = ? AND company_id = ?", id, targetCompanyID(c))
+		if res.Error != nil {
+			dbWriteFailed(c, "删除业务服务", "删除失败，请稍后重试", res.Error)
+			return
+		}
+		if res.RowsAffected == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -414,7 +474,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if req.BgMask != nil {
 				created.BgMask = clampMask(*req.BgMask)
 			}
-			db.Create(&created)
+			if err := db.Create(&created).Error; err != nil {
+				dbWriteFailed(c, "新建首页布局", "保存失败，请稍后重试", err)
+				return
+			}
 		} else {
 			upd := map[string]interface{}{"order_col": string(b)}
 			if req.BgImage != nil {
@@ -423,7 +486,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if req.BgMask != nil {
 				upd["bg_mask"] = clampMask(*req.BgMask)
 			}
-			db.Model(&hl).Updates(upd)
+			if err := db.Model(&hl).Updates(upd).Error; err != nil {
+				dbWriteFailed(c, "更新首页布局", "保存失败，请稍后重试", err)
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})

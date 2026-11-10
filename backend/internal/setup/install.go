@@ -20,6 +20,7 @@ import (
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
+	"weichuan/internal/safego"
 	"weichuan/internal/setting"
 )
 
@@ -339,12 +340,12 @@ const restartDelay = 900 * time.Millisecond
 // ScheduleRestart 安排一次安装后自重启。做成包级变量是为了测试能替换掉真实
 // exec——安装逻辑单测绝不能把测试进程自己 exec 掉。
 var ScheduleRestart = func() {
-	go func() {
+	safego.Run("setup.restart", func() {
 		time.Sleep(restartDelay)
 		if err := reexecSelf(); err != nil {
 			log.Printf("[SETUP] 安装后自重启失败：%v；请手动重启服务使配置生效", err)
 		}
-	}()
+	})
 }
 
 // validateAdmin 校验并归一化管理员与密钥输入。

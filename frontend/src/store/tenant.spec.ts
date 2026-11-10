@@ -175,4 +175,51 @@ describe('useTenantStore 当前企业', () => {
     expect(localStorage.getItem('admin_scope_company_id')).toBeNull()
     expect(getCompanyScope().active).toBe(false)
   })
+
+  // 竞态回归：全量预取与关键字搜索同时在飞时，先发的全量请求后回来，
+  // 会把搜索结果整个盖掉；用户随后点中的企业并不在当前候选里，
+  // 而 currentId 已经写进 localStorage 和请求作用域——静默改错企业。
+  it('并发乱序：先发的全量请求后回来，不能盖掉关键字搜索结果', async () => {
+    let resolveAll!: (v: any) => void
+    let resolveSearch!: (v: any) => void
+    const all = new Promise<any>((r) => { resolveAll = r })
+    const search = new Promise<any>((r) => { resolveSearch = r })
+    mocks.listCompanies
+      .mockImplementationOnce(() => all)
+      .mockImplementationOnce(() => search)
+
+    const s = useTenantStore()
+    s.syncIdentity(true, 0)
+    const p1 = s.ensureLoaded()
+    const p2 = s.search('某科技')
+
+    resolveSearch(pagedOf([companiesFixture()[1]]))
+    await p2
+    resolveAll(pagedOf(companiesFixture()))
+    await p1
+
+    expect(s.companies.map((c) => c.id)).toEqual([2])
+    expect(s.total).toBe(1)
+    expect(s.loading).toBe(false)
+  })
+
+  it('并发乱序：旧请求失败不能把新搜索标成失败', async () => {
+    let rejectAll!: (e: any) => void
+    const all = new Promise<any>((_, rej) => { rejectAll = rej })
+    mocks.listCompanies
+      .mockImplementationOnce(() => all)
+      .mockResolvedValueOnce(pagedOf([companiesFixture()[1]]))
+
+    const s = useTenantStore()
+    s.syncIdentity(true, 0)
+    const p1 = s.ensureLoaded()
+    const p2 = s.search('某科技')
+    rejectAll(new Error('network'))
+    await p1
+    await p2
+
+    expect(s.error).toBe(false)
+    expect(s.loading).toBe(false)
+    expect(s.companies.map((c) => c.id)).toEqual([2])
+  })
 })

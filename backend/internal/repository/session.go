@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 
 	"gorm.io/gorm"
 )
@@ -92,7 +93,7 @@ func StartExpiredSessionPurge(db *gorm.DB, interval time.Duration) (stop func())
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	var once sync.Once
-	go func() {
+	safego.Run("session.purge", func() {
 		defer ticker.Stop()
 		defer close(stopped)
 		for {
@@ -117,7 +118,7 @@ func StartExpiredSessionPurge(db *gorm.DB, interval time.Duration) (stop func())
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		once.Do(func() {
 			close(done)

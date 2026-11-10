@@ -8,6 +8,7 @@ import (
 
 	"weichuan/internal/config"
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 	"weichuan/internal/setting"
 	"weichuan/internal/wechat"
 
@@ -51,7 +52,7 @@ type auditNotice struct {
 // 抽成变量不是为了「可替换」，而是为了**可测**：通知必须在 goroutine 里发
 // （postWX 用的 http.Post 没有超时，微信侧卡住时会把审批接口一起拖死），
 // 但测试需要同步等待，否则断言与 goroutine 竞争、时快时慢。
-var dispatch = func(fn func()) { go fn() }
+var dispatch = func(fn func()) { safego.Run("subscribe.notify", fn) }
 
 // sendSubscribe 是 wechat.SendSubscribe 的间接层，唯一目的是可测（同 code2Session）。
 var sendSubscribe = wechat.SendSubscribe

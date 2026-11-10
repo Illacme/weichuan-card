@@ -162,6 +162,8 @@ export function buildSourceDist(raw: any[]): SourceItem[] {
 Page({
   data: {
     loading: true,
+    // 网络失败时的可见错误态（WXML 据此显示重试按钮，不再永久转圈）
+    error: false,
     stat: null as any,
     ranges: RANGES,
     rangeKey: '7d' as RangeKey,
@@ -236,28 +238,39 @@ Page({
     }
     const days = this.rangeDays()
     if (!opts || !opts.silent) this.setData({ loading: true })
-    const r = await request('GET', '/api/employee/me/stat', {
-      from: dayStr(-(days - 1)),
-      to: dayStr(0),
-    })
-    this.setData({ loading: false })
-    if (r.code === 0 && r.data) {
-      this.apply(r.data, days)
-    } else if (r.code === 401) {
-      wx.redirectTo({ url: '/pages/employee/login/login' })
-    } else {
-      wx.showToast({ title: r.msg || '加载失败', icon: 'none' })
+    this.setData({ error: false })
+    try {
+      const r = await request('GET', '/api/employee/me/stat', {
+        from: dayStr(-(days - 1)),
+        to: dayStr(0),
+      })
+      if (r.code === 0 && r.data) {
+        this.apply(r.data, days)
+      } else if (r.code === 401) {
+        wx.redirectTo({ url: '/pages/employee/login/login' })
+      } else {
+        this.setData({ error: true })
+        wx.showToast({ title: r.msg || '加载失败', icon: 'none' })
+      }
+    } catch {
+      // 弱网 / 断网时 request 会 reject：以前 loading:false 写在 await 之后，
+      // 抛错就永远执行不到，页面停在「加载中…」且没有任何可点的出口。
+      // 现在统一落到可见错误态 + 重试按钮（与项目详情页同款）。
+      this.setData({ error: true })
+      wx.showToast({ title: '网络异常，请检查网络后重试', icon: 'none' })
+    } finally {
+      this.setData({ loading: false })
     }
   },
 
   // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
-  // 未登录时 load 内部会 redirectTo 登录页，finally 仍会执行，不会留下卡住的指示器。
+  // load 内部已吞掉网络异常，这里的 catch 只是防御性兜底，避免将来有人
+  // 改回抛错时又变成未捕获的 Promise rejection。
   async onPullDownRefresh() {
     try {
       await this.load({ silent: true })
     } catch {
-      // stat 的 load 没有内部 try/catch，网络异常会抛到这里；
-      // 兜住避免未捕获的 Promise rejection，错误提示沿用原 onShow 的静默口径
+      // 保持静默：错误态与提示由 load 负责
     } finally {
       wx.stopPullDownRefresh()
     }

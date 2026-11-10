@@ -2,7 +2,15 @@
      类名统一 st- 前缀（页面级 wxss 只作用于本页，但 card/panel 这类通用名
      一旦将来被加进 app.wxss 就会悄悄改写本页样式，加前缀把这个可能性关掉）。 -->
 <view class="stat-page">
+  <!-- 网络失败：必须有看得见的错误态和能点的按钮，否则弱网下永远转圈。
+       复用 app.wxss 的全局 .error-box / .retry-btn（与项目详情页同款），
+       不新增页面级类名，避免通用类名将来被全局样式改写。
+       下面三个条件节点必须紧挨着，中间插注释会打断 wx:elif 链。 -->
   <view class="loading" wx:if="{{loading}}">加载中…</view>
+  <view wx:elif="{{error}}" class="error-box">
+    <view class="error-text">网络异常，加载失败</view>
+    <button class="retry-btn" bindtap="load">重新加载</button>
+  </view>
 
   <block wx:elif="{{stat}}">
     <!-- 时间筛选：三档分段控件。范围一变就是另一份数据，必须重新请求 -->

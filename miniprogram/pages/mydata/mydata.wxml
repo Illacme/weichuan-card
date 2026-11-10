@@ -1,7 +1,13 @@
 <view class="mydata">
   <view class="hint">以下为本小程序保存的你的全部个人信息（PIPL 查阅复制权）。如有错误，可在「我的 → 编辑名片」中更正。</view>
 
-  <view class="card" wx:if="{{!loading && items.length}}">
+  <!-- 网络失败：可见错误态 + 可点重试。复用 app.wxss 全局类，不新增页面级类名。 -->
+  <view wx:if="{{error}}" class="error-box">
+    <view class="error-text">网络异常，加载失败</view>
+    <button class="retry-btn" bindtap="loadMe">重新加载</button>
+  </view>
+
+  <view class="card" wx:if="{{!error && !loading && items.length}}">
     <!-- 头像挂了 binderror：图挂了就整行收掉，别在「个人信息」清单顶上留一块裂图 -->
     <view class="avatar-row" wx:if="{{avatar && avatarFail !== avatar}}">
       <image class="avatar" src="{{avatar}}" mode="aspectFill"
@@ -13,10 +19,10 @@
     </view>
   </view>
 
-  <view class="empty" wx:if="{{!loading && !items.length}}">未获取到信息，请重新登录后查看</view>
-  <view class="loading" wx:if="{{loading}}">加载中…</view>
+  <view class="empty" wx:if="{{!error && !loading && !items.length}}">未获取到信息，请重新登录后查看</view>
+  <view class="loading" wx:if="{{!error && loading}}">加载中…</view>
 
-  <button class="copy-btn" wx:if="{{items.length}}" bindtap="copyAll">复制全部信息</button>
+  <button class="copy-btn" wx:if="{{!error && items.length}}" bindtap="copyAll">复制全部信息</button>
 
   <!-- 微信隐私授权弹窗：复制前由 ensurePrivacy 弹出，用户同意后才继续 -->
   <privacy-consent id="privacy-consent" visible="{{privacyVisible}}" />

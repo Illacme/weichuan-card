@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -180,7 +181,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return nil
 		})
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "注销失败：" + err.Error()})
+			dbWriteFailed(c, "员工注销账号", "注销失败，请稍后重试", err)
 			return
 		}
 		// 注销是特权动作，记审计（绝不记姓名/手机等明文 PII，只记编号）
@@ -251,9 +252,17 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "原密码错误"})
 			return
 		}
-		h, _ := auth.HashPassword(req.New)
+		h, err := auth.HashPassword(req.New)
+		if err != nil {
+			log.Printf("[EMPLOYEE][ERROR] 修改密码：口令哈希失败 staffId=%d err=%v", staffID, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "修改失败，请稍后重试"})
+			return
+		}
 		// 改密同时自增安全戳 → 旧令牌立即失效，需重新登录
-		db.Model(&e).Updates(map[string]interface{}{"password_hash": h, "token_version": e.TokenVersion + 1})
+		if err := db.Model(&e).Updates(map[string]interface{}{"password_hash": h, "token_version": e.TokenVersion + 1}).Error; err != nil {
+			dbWriteFailed(c, "员工修改密码", "修改失败，请稍后重试", err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -320,7 +329,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		pwd, err := genPassword()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			// 不回显 err.Error()：随机数失败的底层错误可能带出运行环境细节，
+			// 客户端只需要知道「这次没建成、可以重试」。服务端日志带上路由便于定位。
+			log.Printf("[APPLY][ERROR] 生成初始密码失败 path=%s err=%v", c.FullPath(), err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "生成初始密码失败，请稍后重试"})
 			return
 		}
 		hash, err := auth.HashPassword(pwd)
@@ -334,7 +346,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 和一个**永远登不进去的密码**，而申请单还会被标成 approved
 		// （无从重试，只能手工改库）。宁可如实报错，让管理员再点一次。
 		if err := db.Create(&emp).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建员工账号失败：" + err.Error()})
+			dbWriteFailed(c, "新建员工账号", "创建员工账号失败，请稍后重试", err)
 			return
 		}
 		a.Status = "approved"
@@ -572,7 +584,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		pwd, err := genPassword()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			// 不回显 err.Error()：随机数失败的底层错误可能带出运行环境细节，
+			// 客户端只需要知道「这次没建成、可以重试」。服务端日志带上路由便于定位。
+			log.Printf("[APPLY][ERROR] 生成初始密码失败 path=%s err=%v", c.FullPath(), err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "生成初始密码失败，请稍后重试"})
 			return
 		}
 		hash, err := auth.HashPassword(pwd)
@@ -584,7 +599,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 建号失败必须报错（同审批路径）：失败时返回 code:0 会让管理员拿到
 		// 一个不存在的员工编号与永远登不进去的密码，且无从察觉。
 		if err := db.Create(&emp).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建员工账号失败：" + err.Error()})
+			dbWriteFailed(c, "新建员工账号", "创建员工账号失败，请稍后重试", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
@@ -764,7 +779,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		pwd, err := genPassword()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			// 不回显 err.Error()：随机数失败的底层错误可能带出运行环境细节，
+			// 客户端只需要知道「这次没建成、可以重试」。服务端日志带上路由便于定位。
+			log.Printf("[APPLY][ERROR] 生成初始密码失败 path=%s err=%v", c.FullPath(), err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "生成初始密码失败，请稍后重试"})
 			return
 		}
 		hash, err := auth.HashPassword(pwd)
@@ -836,10 +854,19 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "原密码错误"})
 			return
 		}
-		h, _ := auth.HashPassword(req.New)
+		h, err := auth.HashPassword(req.New)
+		if err != nil {
+			log.Printf("[ADMIN][ERROR] 修改密码：口令哈希失败 adminId=%d err=%v", adminID, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "修改失败，请稍后重试"})
+			return
+		}
 		// 改密同时自增安全戳 → 旧令牌立即失效，需重新登录
-		db.Model(&a).Updates(map[string]interface{}{"password_hash": h, "token_version": a.TokenVersion + 1})
-		// 审计只记「谁改了自己的密码」，绝不记新旧密码
+		if err := db.Model(&a).Updates(map[string]interface{}{"password_hash": h, "token_version": a.TokenVersion + 1}).Error; err != nil {
+			dbWriteFailed(c, "超管修改密码", "修改失败，请稍后重试", err)
+			return
+		}
+		// 审计只记「谁改了自己的密码」，绝不记新旧密码；且必须在写库成功后记，
+		// 否则库里密码没变却多了一条「改密成功」，事后追责会指向错误结论。
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionPassword, TargetType: "admin", TargetID: strconv.FormatInt(adminID, 10),
 			Detail: map[string]any{"username": a.Username},

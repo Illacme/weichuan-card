@@ -8,6 +8,7 @@ import (
 	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
+	"weichuan/internal/safego"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
 
@@ -105,7 +106,9 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 		}
 		// 上传后触发 CDN 刷新（覆盖写场景使旧缓存失效），失败仅记录，不影响本次上传结果。
 		// 异步刷：与内容安全送检（go recordMediaCheck）同思路——响应不必等 CDN 厂商抖动。
-		go refreshCDN(db, refresher, urls...)
+		safego.Run("cdn.refresh", func() {
+			refreshCDN(db, refresher, urls...)
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"urls": urls}})
 	}
 }

@@ -5,6 +5,9 @@
 //   2. 复制前必须经 ensurePrivacy 授权，授权后把信息写入剪贴板；
 //   3. 用户拒绝隐私授权时，既不复制也不把信息外送（只提示）。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   installPageCapture,
   capturedPage,
@@ -139,4 +142,32 @@ it('复制被拒：不复制、提示且不外送', async () => {
   const calls = wxStub.showToast.mock.calls
   const last = calls[calls.length - 1][0].title
   expect(last).toContain('隐私')
+})
+
+// 弱网回归：以前 loadMe 没有 try/catch，await 一抛错，loading:false 永远
+// 执行不到，本页停在「加载中…」且没有任何可点的出口。
+it('网络异常：落到可见错误态 + 收掉 loading，不再永久转圈', async () => {
+  mocks.request.mockRejectedValueOnce(new Error('network down'))
+  const p = await page()
+  p.onShow()
+  await flush()
+
+  expect(p.data.loading).toBe(false)
+  expect(p.data.error).toBe(true)
+  const calls = wxStub.showToast.mock.calls
+  expect(calls[calls.length - 1][0].title).toContain('网络异常')
+
+  // 重试按钮绑的就是 loadMe：再拉一次能恢复资料
+  mocks.request.mockResolvedValueOnce(meData)
+  await p.loadMe()
+  await flush()
+  expect(p.data.error).toBe(false)
+  expect((p.data.items as any[]).length).toBeGreaterThan(0)
+})
+
+it('WXML 真的渲染错误态与重试按钮（只有 data 变了不算修好）', () => {
+  const wxml = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../pages/mydata/mydata.wxml'), 'utf8')
+  expect(wxml).toContain('wx:if="{{error}}"')
+  expect(wxml).toContain('class="error-box"')
+  expect(wxml).toContain('bindtap="loadMe"')
 })

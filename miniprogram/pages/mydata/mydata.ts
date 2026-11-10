@@ -44,6 +44,8 @@ Page({
   data: {
     // 加载态
     loading: true,
+    // 网络失败时的可见错误态（WXML 据此显示重试按钮，不再永久转圈）
+    error: false,
     // 微信隐私授权弹窗是否显示（由 ensurePrivacy 控制）
     privacyVisible: false,
     // 头像（后端相对路径，端上拼绝对）
@@ -60,8 +62,14 @@ Page({
   // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
   async loadMe(opts?: { silent?: boolean }) {
     if (!opts || !opts.silent) this.setData({ loading: true })
-    const r = await request('GET', '/api/employee/me')
-    if (r.code === 0 && r.data) {
+    this.setData({ error: false })
+    try {
+      const r = await request('GET', '/api/employee/me')
+      if (r.code !== 0 || !r.data) {
+        // token 失效：回未登录态，沿用原来的「请重新登录」空态文案
+        this.setData({ items: [] })
+        return
+      }
       const d = r.data as Record<string, any>
       const items: Array<{ key: string; label: string; value: string }> = []
       for (const key of Object.keys(LABELS)) {
@@ -89,22 +97,25 @@ Page({
         })
       }
       this.setData({
-        loading: false,
         avatar: d.avatar ? assetUrl(d.avatar) : '',
         items,
       })
-    } else {
-      // token 失效：回未登录态
-      this.setData({ loading: false, items: [] })
+    } catch {
+      // 弱网 / 断网时 request 会 reject：以前没有 try/catch，await 抛错后
+      // loading:false 永远执行不到，本页停在「加载中…」且没有任何出口。
+      this.setData({ error: true, items: [] })
+      wx.showToast({ title: '网络异常，请检查网络后重试', icon: 'none' })
+    } finally {
+      this.setData({ loading: false })
     }
   },
   // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。
+  // loadMe 内部已吞掉网络异常，这里的 catch 只是防御性兜底。
   async onPullDownRefresh() {
     try {
       await this.loadMe({ silent: true })
     } catch {
-      // loadMe 没有内部 try/catch，网络异常会抛到这里；兜住避免未捕获的
-      // Promise rejection，错误提示沿用原 onShow 的静默口径
+      // 保持静默：错误态与提示由 loadMe 负责
     } finally {
       wx.stopPullDownRefresh()
     }

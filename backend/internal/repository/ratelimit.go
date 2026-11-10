@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"weichuan/internal/model"
+	"weichuan/internal/safego"
 
 	"gorm.io/gorm"
 )
@@ -149,7 +150,7 @@ func StartRateLimitPurge(db *gorm.DB, interval time.Duration) (stop func()) {
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	var once sync.Once
-	go func() {
+	safego.Run("ratelimit.purge", func() {
 		defer ticker.Stop()
 		defer close(stopped)
 		for {
@@ -173,7 +174,7 @@ func StartRateLimitPurge(db *gorm.DB, interval time.Duration) (stop func()) {
 				return
 			}
 		}
-	}()
+	})
 	return func() {
 		once.Do(func() {
 			close(done)

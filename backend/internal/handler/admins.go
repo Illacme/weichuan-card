@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -126,12 +127,21 @@ func RegisterAdmins(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "账号不存在"})
 			return
 		}
-		hash, _ := auth.HashPassword(req.Password)
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			log.Printf("[ADMIN][ERROR] 重置平台超管密码：口令哈希失败 id=%d err=%v", id, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "重置失败，请稍后重试"})
+			return
+		}
 		// 安全戳自增 → 该账号已签发的所有令牌立即失效（重置自己则需重新登录）
-		db.Model(&a).Updates(map[string]interface{}{
+		if err := db.Model(&a).Updates(map[string]interface{}{
 			"password_hash": hash, "token_version": a.TokenVersion + 1,
-		})
-		// 审计只记「给谁重置了」，绝不记新密码
+		}).Error; err != nil {
+			dbWriteFailed(c, "重置平台超管密码", "重置失败，请稍后重试", err)
+			return
+		}
+		// 审计只记「给谁重置了」，绝不记新密码；且必须在写库**成功之后**再记，
+		// 否则库里密码没变，审计却留了一条「已重置」，事后追责会指向错误结论。
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionAdminReset, TargetType: "admin", TargetID: strconv.FormatInt(id, 10),
 			Detail: map[string]any{"username": a.Username, "self": id == c.GetInt64("staffId")},

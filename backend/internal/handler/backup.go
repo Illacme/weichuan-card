@@ -20,6 +20,7 @@ import (
 	"weichuan/internal/dbbackup"
 	"weichuan/internal/dbopen"
 	"weichuan/internal/middleware"
+	"weichuan/internal/safego"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -54,7 +55,7 @@ var (
 
 // backupDispatch 默认丢到 goroutine 里跑；测试替换成同步执行，避免 sleep 等结果。
 // 与 subscribe.go 的 dispatch 同一套路：可测性不该靠「等一会儿再看」。
-var backupDispatch = func(fn func()) { go fn() }
+var backupDispatch = func(fn func()) { safego.Run("backup.run", fn) }
 
 type backupRunResult struct {
 	At      time.Time `json:"at"`
@@ -167,7 +168,13 @@ func RegisterBackup(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 		dsn, upDir := cfg.DBDSN, cfg.UploadDir
 		backupDispatch(func() {
-			bkState.finish(runBackupOnce(dir, dsn, upDir))
+			// finish 必须一定执行：runBackupOnce 里任何 panic 若让协程直接死掉，
+			// bkState.running 会永久卡在 true，此后「立即备份」永远回「已有任务在进行」，
+			// 只能重启进程才能恢复。用闭包 defer 兜底收尾（写成 defer bkState.finish(res)
+			// 会把参数提前求值，成功路径也会记成失败）。safego 负责兜住 panic 并打日志。
+			res := backupRunResult{At: time.Now(), OK: false, Message: "备份任务异常终止"}
+			defer func() { bkState.finish(res) }()
+			res = runBackupOnce(dir, dsn, upDir)
 		})
 
 		// 审计放在这里（同步、handler 返回前）：备份是数据外带的前置动作，必须留痕。

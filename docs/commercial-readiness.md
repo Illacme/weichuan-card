@@ -1198,3 +1198,60 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 3. E3 的两项 Cloudflare 面板手工配置；
 4. binlog 回放演练、恢复演练的季度节奏（运维动作，需留档）；
 5. C4 水平扩展（需 Redis）——架构演进，明确暂缓，不是缺陷。
+
+## 第十九轮实施记录（代码级深度审查收口，2026-11-10）
+
+### 1. 背景：上一轮的「已无可写」说早了
+
+用户确认小程序备案早已通过（三份文档的备案事实已订正，见 `a8c2f40`），
+随后追问「还能做哪些优化」。此前「仓库侧没有可写代码」只是**发布流程 / CI /
+文档 / 开放项层面**的结论，未做代码级审查。本轮派两支只读审查（后端 Go、
+前端 Vue3 + 小程序）系统扫描，逐条亲自核实后，把确认属真问题、改动局部、
+可反向验证的部分收口。
+
+判据沿用项目自定口径：**没人报错时，用户是否无从察觉？**
+
+### 2. 已修
+
+| 类别 | 问题与证据 | 处理 |
+| --- | --- | --- |
+| P0 数据正确性 | `content.go` 内容写接口成片丢 GORM `Error`（`company-info` / 分类 / 项目 / 服务 / 首页布局的 Create、Update、Delete），失败仍回 `code:0`；同文件 `company-profile` 早已就同一缺陷修好，属漏网 | 新增 `dbWriteFailed` 统一出口：服务端日志带真实 SQL 错误（最常见是漏同步 `migrations/` 导致的 `Unknown column`），客户端只给固定文案；全部写接口判 `.Error` |
+| P0 幂等误判 | 分类 / 服务的 `PUT` 用 `RowsAffected == 0` 判「未找到」，MySQL 原样 UPDATE 会返回 0 → 重复保存被报成「未找到」 | 改为先按租户 `First` 查存在性，再判 `.Error`；`DELETE` 保留 `RowsAffected`（删除不受幂等影响）但补 `.Error` |
+| P0 假成功 | `apply.go` 两处改密、`admins.go` 重置平台超管密码丢 `Error`，其中改密在写库**之前**就记了「成功」审计 | 判错并返回；`HashPassword` 也判错；审计移到写库成功之后 |
+| P0 错误回显 | 注销 / 审批建号 / 登出等 6 处把 `err.Error()` 拼进客户端 `msg`，会带出表名、列名、约束名 | 固定文案 + `log.Printf` 落服务端；外部厂商 API 的业务错误文案（微信 / 存储 / 发布）**刻意保留回显**，那些是运维排障必需的信息，不属同一类 |
+| P0 PII 旁路 | `auth.go` 登录失败审计写 `TargetID: req.Phone` 且 `ActorName: e.Name`：员工表 phone/name 是静态加密列，审计表却只追加明文 | 改为 `TargetID = staffId` 字符串、不写姓名；仍能按「同一编号连续失败」还原爆破序列。管理员侧 `TargetID: req.Username` 是账号名、非 PII，按审计包既有约定保留 |
+| P0 进程存活 | 全仓 `recover(` 零命中，`gin.Recovery()` 只管请求协程；10 处 `go fn()`（备份 / 订阅 / CDN 刷新 / 媒体送检 / 5 个 ticker / 安装自重启）任一 panic 直接带崩进程 | 新增 `internal/safego.Run(name, fn)` 统一兜住 + 任务名 + `debug.Stack()`；刻意不自动重试（各任务幂等性不同，统一重试会制造重复副作用）；`backup.go` 用闭包 `defer` 保证 `bkState.finish` 一定执行，否则 `running` 永久卡死、备份按钮再也点不动 |
+| P1 弱网体验 | 小程序 `employee/stat` 与 `mydata` 的 `load()` 无 try/catch，`loading:false` 写在 `await` 之后 → 网络失败永久转圈且无任何出口 | try/catch/finally + `error` 态 + 可见重试按钮；复用 `app.wxss` 既有 `.error-box/.retry-btn`，不新增全局类 |
+| P1 请求竞态 | `useServerTable.load()` 无序号，旧响应会盖掉新页数据并把 `currentPage` 拨回旧值；`store/tenant.ts` 的全量预取后回来会盖掉关键字搜索结果，用户点中的企业已不在候选里而 `companyId` 已写进请求作用域 | 两者各加请求序号，只认最后一次发出的请求；`finally` 按序号决定要不要清 `loading`；组件卸载 / 登出时主动作废在飞请求 |
+| P1 资源泄漏 | `CompanyPicker.vue` / `MpEntry.vue` 的防抖 timer 卸载未清理（同类组件都清了） | 补 `onUnmounted` 清理 |
+
+### 3. 核实后**刻意不改**（别当遗漏再修一遍）
+
+- `/api/home-layout` 未挂 `cdnCache(c, 60)`：与 `/api/company` 同属「管理员改完立刻扫码验证」的路由 / 展示配置，挂 60 秒缓存会制造「改了没生效」的客服问题；其它三个内容接口挂缓存是另一类取舍。
+- `content.go` 项目 `PUT` 的二次查库不是多余：GORM 的 map 更新不回写结构体，回包要给出新值与数据库刚刷新的 `updated_at`，必须重读。已补注释与 `.Error` 判断。
+- 外部 API 的 `err.Error()` 回显：`mp_release` / `wechat` / `storage` 等返回的是厂商业务错误，管理员需要「为什么发布失败」；一刀切改成固定文案会让排障失去线索。
+- `miniprogram/utils/types.ts` 12 个类型零引用：属类型化重构，不是缺陷；当前 `request<T>` 泛型通道空转，另立一轮做。
+
+### 4. 已识别但本轮**未改**（如实留档，不假装收口）
+
+1. 页面级 `load()` 竞态：`StatDetail.vue` / `MPReleaseDialog.vue` / `Stats.vue`、小程序 `project/list.ts` / `team/all.ts` / `employee/stat.ts`（本轮只修了弱网错误态，未加请求序号）。
+2. 请求层统一 `AbortSignal` / 取消能力：这才是竞态的根因层修法；本轮用序号守住了最高频的两个载体，改请求封装会牵动所有调用点，需单独一轮 + 全量回归。
+3. `C4` Redis 水平扩展、PII 密钥轮换、binlog 回放演练：沿用既有「明确暂缓」结论。
+
+### 5. 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 `go build` / `go vet` / `go test ./... -count=1` | 28 个包全绿 |
+| `golangci-lint v2.15.0 run --timeout=5m` | 0 issues |
+| 本地 MySQL 8.0 容器 parity | `TestAPIFlowMySQL` 14 个子测试 + `TestMySQLMigrations` 全 PASS |
+| 前端 eslint / `vue-tsc --noEmit` / Vitest 全量 | 0 错误；88 文件 / 1456 例全绿 |
+| `vite build`（`--outDir dist-check-*`） | 成功 |
+| 小程序类名冲突守门 / 第三方许可清单 / 发版脚本自检 | 无冲突 / 一致 / 50 PASS 0 FAIL |
+| `scripts/e2e_smoke.sh` | 全链路 PASS |
+| `git diff --check` | OK |
+| **反向验证 6 项**（PII 审计、写库失败、panic 屏障、两个序号、弱网错误态） | 逐项改回旧实现 `exit=1`，脚本 `try/finally` 还原后复跑 6 项全 `exit=0`，工作区无残留 |
+
+新增守门：`backend/internal/handler/db_write_test.go`（DROP TABLE 与 GORM Update 回调注入真实 SQL 失败 + 源码级「裸写库」扫描）、
+`backend/internal/safego/safego_test.go`（panic 兜住 + 全仓裸 goroutine 扫描）、
+前端 `useServerTable.spec.ts` / `tenant.spec.ts` 乱序用例、小程序两页弱网与 WXML 错误态用例。
