@@ -1458,3 +1458,22 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 - 门禁：eslint / `vue-tsc` / Vitest 全量 **92 文件 1512 例** / `vite build` 全绿；
   后端零改动。既有测试输出里的 `[Vue warn]: Component is missing template` 是
   基线噪音（改动前后均 99 处），与本次无关。
+
+## 第二十一轮订正：两个列表页统一显示「更新时间」（2026-11-10 同日）
+
+用户确认：案例与服务列表都应显示**更新时间**，创建时间回答不了运营真正的问题
+——「哪些内容旧了该翻新」（一年前建的上周刚改过，内容并不旧）。
+
+- `Projects.vue` / `Services.vue` 两列均改为「更新时间」，绑定 `row.updatedAt`；
+  口径不变（width 180 / 手机端隐藏 / `formatDateTime` / 空值「—」）。
+- 后端：`projectToMap` 补发 `updatedAt`（此前只回 `createdAt`，列表列会全显「—」）；
+  服务列表直接序列化整个模型、天然带 `updatedAt`，零改动。
+- **静默失败守门**：后端漏发该字段时列表只是显示「—」，不报错、不打日志——
+  `runAPIFlow` 的「详情页时间档位」子测试补两条断言（案例 / 服务列表都必须携带
+  非空 `updatedAt`）。
+- 测试桩里 `createdAt`（2026-01-01）与 `updatedAt`（2026-10-16）**故意不同**，
+  绑错字段断言立即红——这本身就是内建的反向验证。
+- 反向验证 2 项：`projectToMap` 删掉 `updatedAt` → API flow 红；`Projects.vue`
+  绑回 `createdAt` → 前端 spec 红。还原后全绿。
+- 门禁：后端 28 包 / vet / lint 0 / MySQL parity PASS；eslint / vue-tsc 0 错误；
+  Vitest 全量 **92 文件 1513 例**；`vite build` 成功。

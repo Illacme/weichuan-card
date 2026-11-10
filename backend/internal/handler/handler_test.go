@@ -891,6 +891,23 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 0, body["code"])
 		sid := body["data"].(map[string]interface{})["id"]
 
+		// 后台两个列表的「更新时间」列靠这两个字段：后端漏发时列表只会显示「—」，
+		// 不报错、不打日志，运营无从察觉（案例走显式 projectToMap、服务走整模型序列化，
+		// 两条路径都可能被改丢）。
+		_, body = c.do("GET", "/api/admin/projects", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		require.NotEmpty(t, body["data"], "刚创建的案例应出现在列表里")
+		pRow := body["data"].([]interface{})[0].(map[string]interface{})
+		require.Contains(t, pRow, "updatedAt")
+		require.NotEmpty(t, pRow["updatedAt"], "案例列表应携带更新时间")
+
+		_, body = c.do("GET", "/api/admin/services", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		require.NotEmpty(t, body["data"], "刚创建的服务应出现在列表里")
+		sRow := body["data"].([]interface{})[0].(map[string]interface{})
+		require.Contains(t, sRow, "updatedAt")
+		require.NotEmpty(t, sRow["updatedAt"], "服务列表应携带更新时间")
+
 		// 案例关掉、服务到分：两列独立，不能互相带偏
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"achievement", "service"},

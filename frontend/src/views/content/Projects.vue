@@ -44,10 +44,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <!-- 与业务服务列表同口径：创建时间 + 手机端隐藏（窄屏优先保住可操作列）。
-             后端 projectToMap 一直有 createdAt，此前只是没渲染。 -->
-        <el-table-column label="创建时间" width="180" align="center" v-if="!isPhone">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        <!-- 显示更新时间而非创建时间：运营看列表要回答的是「哪些案例内容旧了该翻新」，
+             创建时间回答不了这个问题（一年前建的上周刚改过，内容并不旧）。
+             手机端隐藏（窄屏优先保住可操作列）；空值显示「—」。 -->
+        <el-table-column label="更新时间" width="180" align="center" v-if="!isPhone">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
         <el-table-column label="排序" width="120" align="center">
           <template #default="{ row }">

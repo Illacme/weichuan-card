@@ -29,8 +29,10 @@
             <span class="muted">{{ stripHtml(row.content) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="180" align="center" v-if="!isPhone">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        <!-- 显示更新时间而非创建时间：与项目案例列表同口径——运营要判断的是
+             「哪些服务内容旧了」，创建时间回答不了这个问题。 -->
+        <el-table-column label="更新时间" width="180" align="center" v-if="!isPhone">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
         <el-table-column label="排序" width="120" align="center">
           <template #default="{ row }">

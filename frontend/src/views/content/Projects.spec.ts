@@ -10,9 +10,9 @@ import Projects from './Projects.vue'
 // 3) 分类名靠 categories 反查，分类被删时要显示占位而不是空白。
 const mocks = vi.hoisted(() => ({
   listProjects: vi.fn(async (): Promise<any[]> => [
-    { id: 1, categoryId: 1, name: '厂房配电改造', summary: '简介', detail: '<p>详情</p>', cover: '/uploads/c1.jpg', album: ['/uploads/a1.jpg'], isHomeFeatured: true, enabled: true, sort: 1, createdAt: '2026-10-16T15:34:12' },
+    { id: 1, categoryId: 1, name: '厂房配电改造', summary: '简介', detail: '<p>详情</p>', cover: '/uploads/c1.jpg', album: ['/uploads/a1.jpg'], isHomeFeatured: true, enabled: true, sort: 1, createdAt: '2026-01-01T00:00:00', updatedAt: '2026-10-16T15:34:12' },
     { id: 2, categoryId: 2, name: '中央空调工程', summary: '', detail: '', cover: '', album: [], isHomeFeatured: false, enabled: false, sort: 2 },
-    { id: 3, categoryId: 99, name: '历史项目', summary: '', detail: '', cover: '', album: [], isHomeFeatured: false, enabled: true, sort: 3, createdAt: '' },
+    { id: 3, categoryId: 99, name: '历史项目', summary: '', detail: '', cover: '', album: [], isHomeFeatured: false, enabled: true, sort: 3, updatedAt: '' },
   ]),
   listCategories: vi.fn(async (): Promise<any[]> => [
     { id: 1, name: '机电安装' },
@@ -281,10 +281,10 @@ describe('content/Projects', () => {
     expect(columnTexts(w, 1)).toContain('下架')
   })
 
-  // 创建时间列（第 5 列，上架之后）：与业务服务列表同口径，
-  // RFC3339 → YYYY-MM-DD HH:mm:ss；缺值显示「—」而不是把 undefined 绑上去。
-  // 桩里的时间故意不带时区后缀，本地解析在任何 TZ 的机器上断言都成立。
-  it('创建时间列格式化，缺失时显示占位', async () => {
+  // 更新时间列（第 5 列，上架之后）：运营靠它判断「哪些案例内容旧了该翻新」。
+  // 桩里 createdAt（2026-01-01）与 updatedAt（2026-10-16）故意不同——绑错字段
+  // 断言立刻红。缺值显示「—」。时间不带时区后缀，任何 TZ 的机器上断言都成立。
+  it('更新时间列显示 updatedAt（不是 createdAt），缺失时显示占位', async () => {
     const w = await mountPage()
 
     expect(columnTexts(w, 0)[5]).toBe('2026-10-16 15:34:12')

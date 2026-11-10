@@ -634,5 +634,8 @@ func projectToMap(p model.ProjectCase) gin.H {
 		"enabled":        p.Enabled,
 		"sort":           p.Sort,
 		"createdAt":      p.CreatedAt,
+		// 后台列表的「更新时间」列靠它：运营要判断的是「哪些案例内容旧了该翻新」，
+		// 更新时间比创建时间更贴近这个问题。服务列表直接序列化整个模型，天然带 updatedAt。
+		"updatedAt": p.UpdatedAt,
 	}
 }

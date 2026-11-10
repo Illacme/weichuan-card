@@ -8,9 +8,9 @@ import Services from './Services.vue'
 // 摘要渲染（stripHtml）、排序后批量持久化、删除二次确认。
 const mocks = vi.hoisted(() => ({
   listServices: vi.fn(async (): Promise<any[]> => [
-    { id: 1, title: '中央空调维保', icon: '/uploads/i1.png', content: '<p>季度保养</p>', sort: 1, createdAt: '2026-10-16T15:34:12' },
-    { id: 2, title: '配电改造', icon: '', content: '', sort: 2, createdAt: '2026-10-17T09:00:00' },
-    { id: 3, title: '电梯年检', icon: '', content: '<p>法定检验</p>', sort: 3, createdAt: '2026-10-18T09:00:00' },
+    { id: 1, title: '中央空调维保', icon: '/uploads/i1.png', content: '<p>季度保养</p>', sort: 1, createdAt: '2026-01-01T00:00:00', updatedAt: '2026-10-16T15:34:12' },
+    { id: 2, title: '配电改造', icon: '', content: '', sort: 2, updatedAt: '2026-10-17T09:00:00' },
+    { id: 3, title: '电梯年检', icon: '', content: '<p>法定检验</p>', sort: 3 },
   ]),
   createService: vi.fn(async (_payload: any) => ({ id: 9 })),
   updateService: vi.fn(async (_id: number, _payload?: any) => ({ code: 0 })),
@@ -212,6 +212,20 @@ describe('content/Services', () => {
 
     expect(mocks.listServices).toHaveBeenCalledTimes(1)
     expect(rowTitles(w)).toEqual(['中央空调维保', '配电改造', '电梯年检'])
+  })
+
+  // 更新时间列（第 3 列，摘要之后）：与项目案例列表同口径——运营要判断的是
+  // 「哪些服务内容旧了」。桩里 createdAt（2026-01-01）与 updatedAt（2026-10-16）
+  // 故意不同，绑错字段断言立刻红；缺值显示「—」。时间不带时区后缀，
+  // 任何 TZ 的 runner 上断言都成立。
+  it('更新时间列显示 updatedAt（不是 createdAt），缺失时显示占位', async () => {
+    const w = await mountPage()
+
+    const cols = (i: number) =>
+      w.findAll('.el-table-row')[i].findAll('.el-table-column').map((c: any) => c.text())
+    expect(cols(0)[3]).toBe('2026-10-16 15:34:12')
+    expect(cols(1)[3]).toBe('2026-10-17 09:00:00')
+    expect(cols(2)[3]).toBe('—')
   })
 
   it('关键字按标题过滤（大小写不敏感）', async () => {
