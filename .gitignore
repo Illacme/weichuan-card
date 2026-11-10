@@ -15,6 +15,9 @@ dist/
 # 真构建 dist/ 会清掉几十个旧 hash 文件触发沙箱删除保护，验证一律走 dist-check
 dist-check/
 **/dist-check/
+# 带后缀的验证构建目录（如 vite build --outDir dist-check-brand）同样不入库：
+# 之前只忽略固定名，多轮并行验证时会冒出未跟踪目录，差点被 git add -A 带进去。
+**/dist-check-*/
 
 # ── 运行时数据 / 上传目录 ──
 uploads/

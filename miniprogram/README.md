@@ -828,13 +828,23 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 - **员工 token**：登录后存 `wx.storage('empToken')`（access，15 分钟）+ `empRefreshToken`（refresh，30 天），`request.ts` 自动注入；`code=401` 先用 refresh 令牌静默换发并重试一次，失败再清 token 引导重新登录。改密 / 被禁用会令旧令牌立即失效。（小程序走 Bearer 头鉴权；PC 管理后台则改用 httpOnly Cookie，见前端 README。）
 - **状态语义**：员工 `status=disabled` 时首页整页提示「已停用」；名片修改走「提交申请 → 超管审核通过后公开生效」。
 
-## 整体风格模板（配色 + 版式）
+## 风格模板（整体风格 + 品牌配色）
 
-后台「小程序设置 → 整体风格」只存一个 `templateId`，真值分两端对账：
-id 白名单在 `backend/internal/mptemplate`，端上色值与版式全部随版本内置在
+后台「小程序设置 → 风格模板」只存一个 `templateId`，真值分两端对账：
+id 白名单在 `backend/internal/mptemplate`（12 款），端上色值与版式全部随版本内置在
 `app.wxss` 的 18 个 `--wc-*` CSS 变量里（11 个颜色 + 7 个圆角 / 阴影）。
 `utils/theme.ts` 只做 `id → class` 映射 + Storage 缓存 + 页面栈广播，不含色值。
 
+清单按服务端 `Series` 分两组，约束**正好相反**：
+
+- `style`「整体风格」4 款（`default` 免费 + `ink` / `warm` / `teal` 高级）：配色与
+  版式一起换，每款至少 4 项版式 token 不同于 default。
+- `brand`「品牌配色」8 款（全部高级）：**只换配色**，7 个版式 token 逐字沿用
+  default。这是「客户按自有 VI 主色挑一款」的落地方式，仍走白名单，
+  **不是运行时自由色值注入**（端上不能动态加载 WXSS）。8 款主色按统一算法派生，
+  12 组真实搭配实测最低对比度 4.95。
+- `tests/theme.spec.ts` 对这两组分别钉「要有差异」与「不许有差异」两套断言：
+  给品牌款顺手改个圆角，或把整体风格款做成只换色，都会变红。
 - **默认 token 写在 `page` 上**，取值与模板功能上线前逐字一致（升级零突变）；
   只有挂了 `.wc-theme-*` 的 6 个访客页顶层节点会覆盖，员工 / 管理页保持默认。
   主题 class 直接挂在已有的顶层 view 上，**绝不额外包一层 view**（会动布局）。
@@ -844,14 +854,17 @@ id 白名单在 `backend/internal/mptemplate`，端上色值与版式全部随�
   对比度必须 ≥4.5（WCAG AA 正文级），由 `theme.spec.ts` 按相对亮度公式实算。
   `default` 是历史基线，只锁「不许变差」。`--wc-primary-rgb` 必须与
   `--wc-primary` 同色，否则 `rgba(var(--wc-primary-rgb), …)` 的阴影会错色。
-- **加一款模板要改 5 处**：Go 白名单、`app.wxss` 变量块、`THEME_IDS`、
-  `MpTheme.vue` 的 `.layout-<id>` 兜底示意、重跑 `scripts/gen_theme_previews.py`
-  出 `frontend/public/theme-previews/<id>.png`；`tests/theme.spec.ts` 逐项对账，
-  漏一处即变红。加款后必须随小程序**重新提审发版**，端上不能热加载 WXSS。
+- **加一款模板要改 4 处**：Go 白名单（含 `Series`）、`app.wxss` 变量块、
+  `THEME_IDS`、重跑 `scripts/gen_theme_previews.py`
+  出 `frontend/public/theme-previews/<id>.png`；只有加「整体风格」款才需要第 5 处
+  ——`MpTheme.vue` 的 `.layout-<id>` 兜底示意（品牌配色款不许有，守门会拦）。
+  `tests/theme.spec.ts` 逐项对账，漏一处即变红。加款后必须随小程序**重新提审发版**，
+  端上不能热加载 WXSS。
 - **后台预览图不是第二套样式**：`scripts/gen_theme_previews.py` 直接解析本文件
   （`app.wxss`）的 18 个 `--wc-*` token，注入复刻首页结构的 HTML 后用无头 Chrome
-  出图，改了配色 / 圆角重跑脚本即可；`theme.spec.ts` 断言 HTML 里不得手写任一
-  主题主色、PNG 集合与 Go 白名单一一对应，避免端上改了而后台悄悄变旧。
+  出图（12 张），改了配色 / 圆角重跑脚本即可；`theme.spec.ts` 断言 HTML 里不得手写任一
+  主题主色、PNG 集合与 Go 白名单一一对应、**12 张图的内容摘要互不相同**，
+  避免端上改了而后台悄悄变旧，或 12 款全画成同一张默认款。
   出图同时写 `manifest.json`（每款 18 个 token 的快照），改了 `app.wxss` 却没重出图时
   `--check` 与 `theme.spec.ts` 都会红——只查「PNG 都在」是挡不住这种漂移的。
 - **冷启动预热**：`app.ts` 的 `onLaunch` 在租户绑定之后调

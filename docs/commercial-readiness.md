@@ -1793,3 +1793,75 @@ CI 则由全量 Vitest 覆盖——`frontend/vitest.config.ts` 的 include 含
   `docs/launch-checklist.md` §四新增第 13 项，两者都标为**追加待验项**，
   不计入 `#163` 的 28 项，也不改写其「已通过」结论。四款模板的真机观感、
   分享直达二级页的冷启动一致性、后台真实预览图对照，代码侧无法代劳。
+
+---
+
+## 第二十五轮：品牌配色预设色板（A 方案，二期收口）
+
+### 需求与选型
+
+「客户自定义主色」是给渠道商准备的增值能力。三个方案里选了 **A 预设色板**：
+
+- **A 预设色板（采纳）**：往现有白名单再加 8 款完整模板，id 统一 `brand-` 前缀，
+  只换配色、版式沿用 `default`，后台仍只存 `templateId` 一列。
+- B 自定义色值：要引入运行时样式注入，会推翻「不下发自由 CSS」这条已确认边界。
+  小程序代码随版本审核，端上不能动态加载 WXSS；自由 CSS 还会把内部类名变成对
+  客户的长期承诺，并带来注入与「深底 + 深字」对比度失控风险。
+- C 客户上传整包模板：同样绕不开审核口径，且把内部 DOM 结构变成契约。
+
+A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填一个 hex」。它复用了一期
+全部底座：授权 gate、冷启动预热、真实预览图、manifest token 快照、跨端守门，
+**没有新增任何运行时样式通道，也没有改数据库**。
+
+### 落地
+
+| 层 | 改动 |
+|---|---|
+| 后端 | `internal/mptemplate` 新增 8 款 `brand-*`（绛红 / 朱橘 / 琥珀 / 森绿 / 海蓝 / 靛蓝 / 堇紫 / 玫紫），全部 `Advanced: true`；新增 `Series` 字段（`style` / `brand`）与 `SeriesOf` / `IsBrand`；`All()` 现返回 12 款 |
+| 契约 | `docs/openapi.yaml` 三处 `templateId` enum 扩到 12 个 id；admin GET 的 `templates[]` 补 `series`；后台类型 `ThemeTemplate` 补 `ThemeSeries` |
+| 小程序 | `app.wxss` 新增 8 个 `.wc-theme-brand-*` 块，18 个 token 齐全；7 个版式 token **逐字沿用 default**；`THEME_IDS` 扩到 12 款 |
+| 后台 | `MpSettings` 页签「整体风格」→「风格模板」；`MpTheme.vue` 按服务端 `series` 分两组渲染，品牌组注明「只换主色，版式沿用经典蓝」；旧后端不下发 `series` 时全部归入整体风格组，卡片不会消失 |
+| 预览图 | `gen_theme_previews.py` 重出 12 张 750×860 PNG + `manifest.json` 12 款 token 快照 |
+
+8 款主色按统一算法派生（deep / grad 压暗、alt 提亮、浅色档混白），
+**12 组真实搭配全部实测过 WCAG AA**：最低 4.95（琥珀），最高 7.35（堇紫），
+均优于既有高级款的 4.59 / 4.71 下限。`--wc-primary-rgb` 与主色同色，
+后台预览色与端上 `--wc-primary` 逐款对账。
+
+### 关键决策
+
+- **两个系列的约束正好相反**：整体风格款每款至少 4 项版式 token 不同于 default；
+  品牌配色款 7 项版式 token 必须与 default **逐字全等**。`theme.spec.ts` 同时钉住
+  「要有差异」与「不许有差异」，任一侧漂移都变红。
+- **分组真值在服务端**：`Series` 随清单下发，后台不靠 id 前缀猜；端上守门按
+  `brand-` 前缀分组，两份声明由 Go 单测 + `theme.spec.ts` 双向对账。
+- **预览图不能只看「文件都在」**：新增一条内容摘要守门，12 张 PNG 必须两两不同。
+  生成脚本若把每款都画成 default，此前所有检查（存在 / 尺寸 / 体积 / token 快照）
+  都还是绿的，客户却会看到 12 张一样的图——典型的静默失败。
+- **真机项仍不代劳**：`docs/real-device-acceptance.md` §7 从 `T1–T10` 扩到
+  `T1–T13`，新增品牌配色的「主色变了、版式没变」判定、预览图对照和授权置灰；
+  `docs/launch-checklist.md` §四第 13 项同步。仍是**追加待验项**，不计入 #163，
+  不改写「真机验收已通过」结论。
+
+### 门禁与反向验证
+
+- 后端 `go test ./...` 全绿；`mptemplate` 包新增系列一致性、8 款数量、
+  品牌款必须 `Advanced`、未知 `brand-` id 仍被 `Normalize` 拒绝等断言；
+  `handler_test.go` 补「清单下发 series」「品牌款公开接口原样下发」「未授权不能新选品牌款」。
+- `theme.spec.ts` **25 例**（新增系列对账 3 例、版式反向约束 1 例、PNG 内容摘要 1 例），
+  `MpTheme.spec.ts` **14 例**（新增分组渲染与旧后端兼容 2 例），
+  `MpSettings.spec.ts` 11 例；定向合计 50 例全绿。
+- **反向验证 4 组，改回必红、还原后全绿**：把一张预览图换成 default 副本（内容摘要守门红）；
+  给品牌款偷偷改圆角（2 例红）；把 Go 里品牌款 `Series` 改成 `SeriesStyle`（1 例红）；
+  把后台改回不按 `series` 分组（1 例红）。
+- `python3 scripts/gen_theme_previews.py --check`：12 款 / 12 张 750×860 PNG
+  一一对应，`manifest.json` token 快照与 `app.wxss` 同版。
+- 全量门禁照旧：后端 `go build` / `go vet` / `go test ./...` / `golangci-lint` /
+  MySQL parity；前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest /
+  `vite build --outDir dist-check-*` / `git diff --check`。
+
+### 二期边界
+
+「真实预览图」与「客户自定义主色」两件二期功能至此均已落地，代码侧闭环。
+剩下的仍是外部人工项：真机视觉验收 `T1–T13`、微信侧发版审核、渠道商授权配置，
+以及 `launch-checklist.md` §四里其余需本人执行的事项。

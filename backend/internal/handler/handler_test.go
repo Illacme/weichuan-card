@@ -970,6 +970,29 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, true, hl["templateEntitled"], "缺省授权应视为全部开通")
 		require.Len(t, hl["templates"], len(mptemplate.All()))
 		require.Equal(t, mptemplate.DefaultID, hl["templates"].([]interface{})[0].(map[string]interface{})["id"])
+		// 分组由服务端下发：缺 series 时后台会把 12 款挤进一组，且没人报错。
+		brandCount := 0
+		for _, raw := range hl["templates"].([]interface{}) {
+			item := raw.(map[string]interface{})
+			id := item["id"].(string)
+			require.NotEmpty(t, item["series"], "%s 缺 series", id)
+			if mptemplate.IsBrand(id) {
+				brandCount++
+				require.Equal(t, mptemplate.SeriesBrand, item["series"], id)
+			} else {
+				require.Equal(t, mptemplate.SeriesStyle, item["series"], id)
+			}
+		}
+		require.Equal(t, 8, brandCount, "品牌配色 8 款都要随清单下发")
+
+		// 品牌配色款同样走白名单：选中的 id 必须原样出现在公开接口根级，
+		// 否则端上 normalizeTheme 会静默回 default，后台却显示「使用中」。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "brand-ocean"}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "brand-ocean", body["templateId"])
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": mptemplate.DefaultID}, adminToken)
+		require.EqualValues(t, 0, body["code"])
 
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.Equal(t, mptemplate.DefaultID, body["templateId"], "公开接口应在响应根级下发 templateId")
@@ -993,10 +1016,13 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.Equal(t, "ink", body["templateId"], "被拒绝的非法值不应落库")
 
-		// 授权收紧：未开通不得「新选」高级款
+		// 授权收紧：未开通不得「新选」高级款，品牌配色预设色板同样不能漏网
+		// （它是按增值能力卖的，漏一个就是白送）。
 		license.SetCurrent(&license.Entitlement{Features: []string{"content_sec"}})
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "warm"}, adminToken)
 		require.EqualValues(t, 403, body["code"])
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "brand-ocean"}, adminToken)
+		require.EqualValues(t, 403, body["code"], "品牌配色款也必须受 mp_template_advanced 约束")
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, false, body["data"].(map[string]interface{})["templateEntitled"])
 

@@ -607,7 +607,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/projects/:id?companyId= | 项目详情（解析 album JSON；含 categoryName 与 updatedAt） |
 | GET  | /api/services?companyId= | 业务服务列表 |
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
-| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 整体风格模板 `templateId`（`default` 免费 / `ink`、`warm`、`teal` 高级，未授权高级款回落 `default`）。访客从分享直达二级页时 `app.ts` 冷启动也调本接口预热主题 |
+| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 风格模板 `templateId`（12 款：`default` 免费，3 款整体风格 + 8 款品牌配色为高级款，未授权回落 `default`）。访客从分享直达二级页时 `app.ts` 冷启动也调本接口预热主题 |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
 | GET  | /api/team?companyId=&page=&size=&keyword= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证）。**分页与搜索**：`size` 缺省 300（与改造前一致，老端不带参数行为不变）、上限 300，新端固定传 60；`keyword` 同时匹配姓名与职位。回包 `{code, company, entry, data, total, page, size, hasMore, keyword}`，`total` 是**匹配总数**、`hasMore` 由服务端算（端上别用 `total - data.length` 推）。姓名是 PII 密文列、SQL 做不了 `LIKE '张%'`，带关键字时走「全员解密 → Go 侧过滤 → 切片」（`repository.MaxTeamSearchScan` 上限 5000 人），**不要优化回 SQL LIKE** |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
@@ -718,30 +718,45 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/services | 新增业务服务 |
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
-| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 整体风格模板 `templateId`、`templates` 清单与 `templateEntitled` 授权态 |
+| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格模板 `templateId`、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
 | PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。非法模板 id 回 code=1；未开通 `mp_template_advanced` 且「新选」高级款回 code=403 |
 
-小程序「整体风格模板」的白名单在 `internal/mptemplate`（`All()` 返回副本，4 款）。一款模板
-同时决定**配色 + 版式**：端上随版本内置在 `miniprogram/app.wxss` 的 18 个 CSS 变量里
-（`--wc-primary*` 等 11 个色值 + `--wc-r-*` / `--wc-card-shadow-*` 7 个版式），
-后台只存「选了哪一款」。默认 token 写在 `page` 上，取值与模板功能上线前逐字一致（升级零突变）；
+小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，12 款），按服务端下发的
+`Series` 分两组，后台据此分组渲染、不靠 id 前缀猜：
+
+| 系列 | 款数 | 换什么 | 7 个版式 token |
+|---|---|---|---|
+| `style` 整体风格 | 4（`default` 免费 + `ink` / `warm` / `teal` 高级） | 配色 + 版式 | 每款至少 4 项不同于 default |
+| `brand` 品牌配色 | 8（全部高级） | **只换配色** | 逐字沿用 default |
+
+`brand-*` 是「客户自定义主色」的落地方式：**预设色板 + 白名单**，不是运行时自由色值
+注入——小程序代码随版本审核，端上不能动态加载 WXSS，自由 CSS 还会把内部类名变成对
+客户的长期承诺。后台仍只存 `templateId` 一列，加款不需要改数据库。
+端上 18 个 CSS 变量（11 个色值 + 7 个版式）随版本内置在 `miniprogram/app.wxss`：
+默认 token 写在 `page` 上，取值与模板功能上线前逐字一致（升级零突变）；
 挂了 `.wc-theme-*` 的 6 个访客页才覆盖，员工 / 管理页保持默认。
 
-加一款模板 = 改 `internal/mptemplate` + `app.wxss` 变量块 + `utils/theme.ts` 的 `THEME_IDS`
-+ `MpTheme.vue` 的 `.layout-<id>` 兜底示意 + 重跑 `scripts/gen_theme_previews.py`
+加一款模板 = 改 `internal/mptemplate`（含 `Series`） + `app.wxss` 变量块
++ `utils/theme.ts` 的 `THEME_IDS` + 重跑 `scripts/gen_theme_previews.py`
 （产出 `frontend/public/theme-previews/<id>.png`），并随小程序**重新提审发版**；
-`tests/theme.spec.ts` 会逐项对账（id / 变量齐全 / 预览色 / 版式差异 / 对比度 /
-PNG 产物 / 画布比例 / 后台接入代码），漏一处即变红。
+只有加「整体风格」款才需要再补 `MpTheme.vue` 的 `.layout-<id>` 兜底示意
+（品牌配色款版式沿用经典蓝，加专属示意反而是造假，守门会拦）。
+`tests/theme.spec.ts` 逐项对账（id / 变量齐全 / 预览色 / 版式「要有差异」与
+「不许有差异」两套相反约束 / 对比度 / PNG 产物互不相同 / 画布比例 / 后台接入代码），
+漏一处即变红。
 
 后台模板卡展示的是这张从 `app.wxss` token 生成的**真实预览图**（不是手画的第二套样式）：
 `gen_theme_previews.py` 解析 18 个 `--wc-*` 变量、注入复刻首页结构的 HTML，用无头
-Chrome 出 750×860 PNG，并写 `manifest.json` 记录每款 18 个 token 的快照——
+Chrome 出 750×860 PNG（12 张），并写 `manifest.json` 记录每款 18 个 token 的快照——
 **改了配色 / 圆角却没重跑脚本，图片会悄悄停在旧样式**，`--check` 与
 `tests/theme.spec.ts` 的快照对账都会变红。`--check` 只校验产物、不需要浏览器。
+`theme.spec.ts` 还比对 12 张图的内容摘要：生成脚本若把每款都画成 default，
+「文件都在 / 尺寸都对 / 快照也对」全绿但客户看到 12 张一样的图，只有这一条能抓到。
 单张图加载失败时按 id 回落到 CSS 示意并显示「示意图」角标（降级可见），
-点「重新加载」可重试。详见 `docs/commercial-readiness.md` 第二十四轮。
+点「重新加载」可重试。详见 `docs/commercial-readiness.md` 第二十四 / 二十五轮。
 新增主色必须满足 `tests/theme.spec.ts` 的 WCAG AA 守门（12 组搭配 ≥4.5；`default` 是历史基线，
-只锁「不许变差」）。`--wc-primary-rgb` 必须与 `--wc-primary` 同色，否则阴影和按钮会错色。
+只锁「不许变差」）。品牌配色 8 款实测最低 4.95（琥珀款），最高 7.35。
+`--wc-primary-rgb` 必须与 `--wc-primary` 同色，否则阴影和按钮会错色。
 
 `migrations/0041_miniprogram_theme.sql` 只加 `home_layouts.template_id` 一列，缺省 `default`；
 该 SQL 的 COMMENT 里列的 id 是**上线当时的快照**，真实白名单以 `mptemplate.All()` 为准，

@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
 import MpTheme from './MpTheme.vue'
 
-// 「整体风格」页：核心约束是**只提交 templateId**。
+// 风格模板页：核心约束是**只提交 templateId**。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
 // 的值一起写回去（后端 Order 是指针语义，多提交反而可能覆盖），所以这里用精确
 // 断言钉死 payload，而不是只查 objectContaining。
@@ -155,6 +155,52 @@ describe('content/MpTheme', () => {
     expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
   })
 
+  it('按服务端 series 分两组渲染，品牌配色组说明「只换主色」且可选中', async () => {
+    const w = await mountPage({
+      templateId: 'default',
+      templateEntitled: true,
+      templates: [
+        { id: 'default', name: '经典蓝', description: '', series: 'style', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
+        { id: 'ink', name: '沉稳墨', description: '', series: 'style', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
+        { id: 'brand-crimson', name: '绛红', description: '', series: 'brand', advanced: true, previewPrimary: '#a01f2e', previewSoft: '#f3e2e4' },
+      ],
+    })
+
+    const groups = w.findAll('.theme-group')
+    expect(groups).toHaveLength(2)
+    expect(groups[0].text()).toContain('整体风格')
+    expect(groups[1].text()).toContain('品牌配色')
+    expect(groups[1].text()).toContain('版式沿用经典蓝')
+    expect(groups[0].findAll('.theme-card')).toHaveLength(2)
+    expect(groups[1].findAll('.theme-card')).toHaveLength(1)
+    // 分组不能把卡片弄丢，也不能打乱顺序（后台清单顺序仍有意义）
+    expect(cards(w)).toHaveLength(3)
+    expect(cards(w)[2].text()).toContain('绛红')
+    expect(cards(w)[2].find('.theme-preview').classes()).toContain('layout-brand-crimson')
+
+    await cards(w)[2].trigger('click')
+    await flush()
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'brand-crimson' })
+  })
+
+  // 后端是随二进制升级的：只换前端时旧接口不下发 series。分组逻辑不能因此
+  // 让整组卡片消失——宁可都落在「整体风格」组，也不能白屏。
+  it('旧后端不下发 series：全部归入整体风格组，卡片不丢失', async () => {
+    const w = await mountPage({
+      templateId: 'default',
+      templateEntitled: true,
+      templates: [
+        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
+        { id: 'ink', name: '沉稳墨', description: '', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
+      ],
+    })
+
+    expect(w.findAll('.theme-group')).toHaveLength(1)
+    expect(cards(w)).toHaveLength(2)
+  })
+
   it('当前 templateId 回填为「使用中」', async () => {
     const w = await mountPage({
       templateId: 'ink', templateEntitled: true,
@@ -178,7 +224,7 @@ describe('content/MpTheme', () => {
 
     expect(cards(w)[1].classes()).toContain('selected')
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'ink' })
-    expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序整体风格')
+    expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序风格模板')
   })
 
   it('未开通高级模板：显示授权说明，高级款置灰且点不动', async () => {

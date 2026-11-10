@@ -95,6 +95,182 @@ page {
   --wc-card-shadow-soft: 0 2rpx 10rpx rgba(15, 118, 110, 0.08);
   --wc-card-shadow-bg: 0 4rpx 16rpx rgba(8, 69, 63, 0.16);
 }
+/* ===== 品牌配色预设色板（brand-*，8 款） =====
+   与上面三款「整体风格」不同，这一系列是**只换配色**：7 个版式 token 逐字沿用
+   page 上的默认值，卡片圆角 / 按钮形态 / 投影质感保持经典蓝不变。客户拿它对齐
+   自己的 VI 主色时，不该连带把已经验收过的版式也换掉。这里重复写一遍默认值是
+   刻意的（不靠继承兜底），tests/theme.spec.ts 会反向断言它们与 default 全等，
+   以后谁想给品牌款偷偷改圆角都会变红。
+   色值按统一算法从主色派生（deep/grad 压暗、alt 提亮、浅色档混白），12 组真实
+   搭配全部实测过 WCAG AA，注释里的最低值由同一套公式算出，不是手挑的「好看组合」。 */
+/* 绛红：节庆、餐饮、国潮与零售品牌；主色 #a01f2e，12 组关键搭配最低 6.16。 */
+.wc-theme-brand-crimson {
+  --wc-primary: #a01f2e;
+  --wc-primary-deep: #801925;
+  --wc-primary-grad: #63131d;
+  --wc-primary-alt: #a62c3b;
+  --wc-primary-soft: #fbf5f6;
+  --wc-primary-border: #dbaab0;
+  --wc-primary-tint: #f3e2e4;
+  --wc-primary-chip: #f5e7e9;
+  --wc-primary-pcat: #f8eeef;
+  --wc-track: #e1dfe6;
+  --wc-primary-rgb: 160, 31, 46;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 朱橘：食品、家居与生活方式品牌；主色 #a33d16，12 组关键搭配最低 5.32。 */
+.wc-theme-brand-coral {
+  --wc-primary: #a33d16;
+  --wc-primary-deep: #823112;
+  --wc-primary-grad: #65260e;
+  --wc-primary-alt: #a94924;
+  --wc-primary-soft: #fbf6f5;
+  --wc-primary-border: #dcb5a6;
+  --wc-primary-tint: #f3e6e1;
+  --wc-primary-chip: #f5ebe7;
+  --wc-primary-pcat: #f8f0ee;
+  --wc-track: #e1e1e5;
+  --wc-primary-rgb: 163, 61, 22;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 琥珀：酒旅、文创与高端制造品牌；主色 #8a5a08，12 组关键搭配最低 4.95。 */
+.wc-theme-brand-amber {
+  --wc-primary: #8a5a08;
+  --wc-primary-deep: #6e4806;
+  --wc-primary-grad: #563805;
+  --wc-primary-alt: #916417;
+  --wc-primary-soft: #faf8f4;
+  --wc-primary-border: #d3c0a1;
+  --wc-primary-tint: #f0eadf;
+  --wc-primary-chip: #f3eee5;
+  --wc-primary-pcat: #f6f3ec;
+  --wc-track: #e0e2e4;
+  --wc-primary-rgb: 138, 90, 8;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 森绿：农林、健康与户外品牌；主色 #12603a，12 组关键搭配最低 6.18。 */
+.wc-theme-brand-forest {
+  --wc-primary: #12603a;
+  --wc-primary-deep: #0e4d2e;
+  --wc-primary-grad: #0b3c24;
+  --wc-primary-alt: #206a46;
+  --wc-primary-soft: #f4f8f6;
+  --wc-primary-border: #a5c3b4;
+  --wc-primary-tint: #e0eae5;
+  --wc-primary-chip: #e6eeea;
+  --wc-primary-pcat: #edf3f0;
+  --wc-track: #d8e3e7;
+  --wc-primary-rgb: 18, 96, 58;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 海蓝：物流、科技与专业服务品牌；主色 #0b5585，12 组关键搭配最低 6.42。 */
+.wc-theme-brand-ocean {
+  --wc-primary: #0b5585;
+  --wc-primary-deep: #09446a;
+  --wc-primary-grad: #073552;
+  --wc-primary-alt: #1a5f8c;
+  --wc-primary-soft: #f4f7fa;
+  --wc-primary-border: #a2bed1;
+  --wc-primary-tint: #dfe9ef;
+  --wc-primary-chip: #e5edf2;
+  --wc-primary-pcat: #edf2f6;
+  --wc-track: #d8e2eb;
+  --wc-primary-rgb: 11, 85, 133;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 靛蓝：金融、咨询与教育机构；主色 #38429c，12 组关键搭配最低 6.98。 */
+.wc-theme-brand-indigo {
+  --wc-primary: #38429c;
+  --wc-primary-deep: #2d357d;
+  --wc-primary-grad: #232961;
+  --wc-primary-alt: #444da2;
+  --wc-primary-soft: #f6f6fb;
+  --wc-primary-border: #b3b7d9;
+  --wc-primary-tint: #e5e6f2;
+  --wc-primary-chip: #eaebf5;
+  --wc-primary-pcat: #f0f1f8;
+  --wc-track: #dbe1ed;
+  --wc-primary-rgb: 56, 66, 156;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 堇紫：美业、设计与文化创意品牌；主色 #612a96，12 组关键搭配最低 7.35。 */
+.wc-theme-brand-violet {
+  --wc-primary: #612a96;
+  --wc-primary-deep: #4e2278;
+  --wc-primary-grad: #3c1a5d;
+  --wc-primary-alt: #6a379c;
+  --wc-primary-soft: #f8f5fa;
+  --wc-primary-border: #c3aed7;
+  --wc-primary-tint: #eae3f1;
+  --wc-primary-chip: #eee9f4;
+  --wc-primary-pcat: #f3eff7;
+  --wc-track: #dddfec;
+  --wc-primary-rgb: 97, 42, 150;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
+/* 玫紫：时尚、母婴与女性消费品牌；主色 #8c2358，12 组关键搭配最低 6.71。 */
+.wc-theme-brand-magenta {
+  --wc-primary: #8c2358;
+  --wc-primary-deep: #701c46;
+  --wc-primary-grad: #571637;
+  --wc-primary-alt: #933062;
+  --wc-primary-soft: #faf5f7;
+  --wc-primary-border: #d3abc0;
+  --wc-primary-tint: #f0e2e9;
+  --wc-primary-chip: #f3e8ed;
+  --wc-primary-pcat: #f6eef2;
+  --wc-track: #e0dfe9;
+  --wc-primary-rgb: 140, 35, 88;
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
+}
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
 .disabled-tip { padding: 120rpx 40rpx; text-align: center; color: #999; font-size: 30rpx; }

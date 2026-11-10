@@ -544,14 +544,16 @@ paths:
   /api/home-layout:
     get:
       tags: [公开内容]
-      summary: 小程序展示配置（板块顺序 + 首页背景 + 整体风格模板）
+      summary: 小程序展示配置（板块顺序 + 首页背景 + 风格模板）
       description: |
         字段都在**响应根级**，不在 `data` 里。首页 `loadAll` 一次拿到这四组配置，
         不需要再为详情页时间档位或整体风格多打一次请求。
 
-        `templateId` 是内置整体风格模板 id（白名单见 `internal/mptemplate`）：一款
-        模板同时决定主色与版式（圆角 / 按钮形态 / 卡片阴影）。小程序代码随版本审核，
-        端上不能动态加载 WXSS，所以这里只下发 id，由端上映射到随包内置的 CSS 变量
+        `templateId` 是内置风格模板 id（白名单见 `internal/mptemplate`）。清单分两个系列：
+        `style`「整体风格」同时决定主色与版式（圆角 / 按钮形态 / 卡片阴影）；
+        `brand`「品牌配色预设色板」只换主色，7 个版式 token 逐字沿用 `default`，供客户
+        对齐自有 VI 主色。**两者都走白名单，不是运行时自由色值注入**：小程序代码随版本
+        审核，端上不能动态加载 WXSS，所以这里只下发 id，由端上映射到随包内置的 CSS 变量
         （`--wc-*` 配色 + `--wc-r-*` / `--wc-card-shadow-*` 版式）。未开通高级模板
         授权时读路径回落 `default`，但后台保存的 id 不抹——续费后自动恢复。
         访客从分享链接直达二级页时，`app.ts` 冷启动也会拉本接口预热主题。
@@ -582,7 +584,7 @@ paths:
                     description: 背景遮罩浓度 0~100
                   templateId:
                     type: string
-                    enum: [default, ink, warm, teal]
+                    enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
                     description: 当前生效的整体风格模板 id；未知/未授权一律回 default
 
   /api/team:
@@ -2751,7 +2753,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
-      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位 + 整体风格模板）
+      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位 + 风格模板）
       security:
         - cookieAuth: []
       responses:
@@ -2791,11 +2793,11 @@ paths:
                         description: 业务服务详情页的档位，与案例**分开控制**，互不影响。
                       templateId:
                         type: string
-                        enum: [default, ink, warm, teal]
-                        description: 当前选中的整体风格模板；存量行（0041 前）缺省为 `default`。
+                        enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                        description: 当前选中的风格模板；存量行（0041 前）缺省为 `default`。
                       templates:
                         type: array
-                        description: 后台「整体风格」页的可选清单，随二进制内置（端上不硬编码）。
+                        description: 后台模板页的可选清单，随二进制内置（端上不硬编码）；按 `series` 分两组展示。
                         items:
                           type: object
                           properties:
@@ -2805,6 +2807,13 @@ paths:
                               type: string
                             description:
                               type: string
+                            series:
+                              type: string
+                              enum: [style, brand]
+                              description: |
+                                `style` 整体风格（配色 + 版式一起换）；
+                                `brand` 品牌配色预设色板（只换配色，版式沿用 default）。
+                                后台按服务端下发的这个字段分组，不自行猜 id 前缀。
                             advanced:
                               type: boolean
                               description: 需要 `mp_template_advanced` 授权
@@ -2859,8 +2868,8 @@ paths:
                   enum: [hidden, date, minute]
                 templateId:
                   type: string
-                  enum: [default, ink, warm, teal]
-                  description: 整体风格模板 id；非法值 code=1，未授权高级款「新选」code=403。
+                  enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                  description: 风格模板 id；非法值 code=1，未授权高级款「新选」code=403。
       responses:
         "200":
           description: code=0 成功；code=1 参数错误或枚举取值无效；code=403 未开通高级模板

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -23,6 +24,29 @@ const REPO = resolve(HERE, '../..')
 const MP = resolve(REPO, 'miniprogram')
 const GO_TPL = resolve(REPO, 'backend/internal/mptemplate/mptemplate.go')
 const APP_WXSS = resolve(MP, 'app.wxss')
+
+// 两个系列的约束是**相反**的：style 款必须有真实版式差异，brand 款必须完全没有
+// 版式差异（只换配色）。所以守门不能一刀切地「对所有非 default 款都要求差异」。
+// 后台按服务端下发的 series 分组，端上守门按 brand- 前缀分组，两份声明由下面的
+// 用例读 Go 源码对账，任一侧漂移都会变红。
+const BRAND_PREFIX = 'brand-'
+const BRAND_IDS = THEME_IDS.filter((id) => id.startsWith(BRAND_PREFIX))
+const STYLE_ADVANCED_IDS = THEME_IDS.filter(
+  (id) => id !== THEME_DEFAULT && !id.startsWith(BRAND_PREFIX)
+)
+
+/** 读 Go 白名单里的 ID → Series 配对；后台分组的真值在这里，不在前端猜。 */
+function goSeriesById(): Record<string, string> {
+  const src = readFileSync(GO_TPL, 'utf-8')
+  const def = /DefaultID\s*=\s*"([a-z0-9_-]+)"/.exec(src)?.[1]
+  if (!def) throw new Error('mptemplate.go 找不到 DefaultID')
+  const out: Record<string, string> = {}
+  const re = /ID:\s*(DefaultID|"([a-z0-9_-]+)")[\s\S]*?Series:\s*(SeriesStyle|SeriesBrand),/g
+  for (const m of src.matchAll(re)) {
+    out[m[2] || def] = m[3] === 'SeriesBrand' ? 'brand' : 'style'
+  }
+  return out
+}
 
 function varsOf(block: string): string[] {
   return Array.from(block.matchAll(/(--wc-[\w-]+)\s*:/g)).map((m) => m[1]).sort()
@@ -158,6 +182,35 @@ describe('小程序整体风格模板 utils/theme', () => {
     const page = { setData: vi.fn() }
     bindTheme(page)
     expect(page.setData).toHaveBeenCalledWith({ themeClass: 'wc-theme-warm' })
+  })
+})
+
+// ===== 两个系列的对账 =====
+//
+// 品牌配色是「客户按自有 VI 挑主色」的增值能力，产品口径明确只换配色、不动版式。
+// 如果 Go 的 Series 与端上守门的 brand- 前缀分了叉，客户只会看到卡片出现在错误的
+// 分组里，不会有任何报错；如果后台改成自己猜前缀，服务端就失去分组的真值地位。
+describe('小程序风格模板 系列分组', () => {
+  it('Go 的 Series 与端上 brand- 前缀一一对应（后台分组不能和守门分组漂移）', () => {
+    const series = goSeriesById()
+    expect(Object.keys(series).sort()).toEqual([...THEME_IDS].sort())
+    for (const id of THEME_IDS) {
+      expect(series[id], `${id} 的系列`).toBe(id.startsWith(BRAND_PREFIX) ? 'brand' : 'style')
+    }
+  })
+
+  it('预设色板固定 8 款，整体风格高级款固定 3 款（加款必须同步扩色板与预览图）', () => {
+    expect(BRAND_IDS).toHaveLength(8)
+    expect(STYLE_ADVANCED_IDS).toEqual(['ink', 'warm', 'teal'])
+  })
+
+  it('后台按服务端 series 分组渲染，不自己猜 id 前缀', () => {
+    const vue = readFileSync(resolve(REPO, 'frontend/src/views/content/MpTheme.vue'), 'utf-8')
+    expect(vue).toContain("t.series === 'brand'")
+    expect(vue).toContain('brandTemplates')
+    expect(vue).toContain('styleTemplates')
+    expect(vue).toContain('品牌配色')
+    expect(vue).not.toContain("startsWith('brand-')")
   })
 })
 
@@ -313,13 +366,30 @@ describe('小程序整体风格模板 版式差异', () => {
     }
   })
 
-  it('每款高级模板都有真实的版式差异，不能只是换了个颜色', () => {
+  it('每款整体风格高级模板都有真实的版式差异，不能只是换了个颜色', () => {
     const all = readThemeVars()
     const base = all[THEME_DEFAULT]
-    for (const id of THEME_IDS.filter((v) => v !== THEME_DEFAULT)) {
+    for (const id of STYLE_ADVANCED_IDS) {
       const vars = all[id]
       const diffs = LAYOUT_TOKENS.filter((k) => vars[k] !== base[k])
       expect(diffs.length, `${id} 只有 ${diffs.length} 项版式差异`).toBeGreaterThanOrEqual(4)
+    }
+  })
+
+  // 与上面的约束正好相反：品牌配色的卖点是「只对齐主色，版式不动」。
+  // 客户挑完主色发现按钮圆角也变了，或者后来有人顺手给某款加了「更好看」的
+  // 圆角，都是不会报错的静默改版，必须逐字钉住。
+  it('品牌配色 8 款的版式 token 逐字等于 default（只换配色，不动版式）', () => {
+    const all = readThemeVars()
+    const base = all[THEME_DEFAULT]
+    for (const id of BRAND_IDS) {
+      const vars = all[id]
+      expect(vars, `app.wxss 缺主题 ${id}`).toBeDefined()
+      for (const key of LAYOUT_TOKENS) {
+        expect(vars[key], `${id} 的 ${key} 不沿用经典蓝版式`).toBe(base[key])
+      }
+      // 换色必须真的发生，否则这一款就是 default 的别名
+      expect(vars['--wc-primary'], `${id} 没有自己的主色`).not.toBe(base['--wc-primary'])
     }
   })
 
@@ -333,16 +403,20 @@ describe('小程序整体风格模板 版式差异', () => {
     expect(styles.split('var(--wc-r-control)').length - 1).toBeGreaterThanOrEqual(8)
   })
 
-  it('后台预览卡为每个高级款画出版式差异（加款忘了补示意会变红）', () => {
+  it('后台预览卡为每款整体风格高级款画出版式差异（加款忘了补示意会变红）', () => {
     const src = readFileSync(resolve(REPO, 'frontend/src/views/content/MpTheme.vue'), 'utf-8')
     expect(src).toContain(`:class="'layout-' + t.id"`)
-    // default 不需要示意规则：它用的就是预览卡基线样式
+    // default 与品牌配色都不需要专属示意规则：它们用的就是预览卡基线样式。
+    // 给品牌款加了 .layout-brand-*，等于在示意图里凭空造出并不存在的版式差异。
     expect(src).not.toContain('.layout-default')
-    for (const id of THEME_IDS.filter((v) => v !== THEME_DEFAULT)) {
+    for (const id of STYLE_ADVANCED_IDS) {
       expect(src, `缺 .layout-${id} 的卡片示意`).toMatch(
         new RegExp(`\\.layout-${id}\\s+\\.preview-card\\s*\\{`)
       )
       expect(src, `缺 .layout-${id} 的按钮示意`).toContain(`.layout-${id} .preview-btn`)
+    }
+    for (const id of BRAND_IDS) {
+      expect(src, `${id} 不该有专属版式示意`).not.toContain(`.layout-${id}`)
     }
   })
 })
@@ -387,6 +461,17 @@ describe('小程序整体风格模板 真实预览图', () => {
       expect([buf.readUInt32BE(16), buf.readUInt32BE(20)], `${id} 尺寸`).toEqual(expected)
       expect(buf.length, `${id} 疑似空白图`).toBeGreaterThan(5000)
     }
+  })
+
+  // 「每张图都存在、尺寸都对、token 快照也对」仍挡不住一种静默失败：生成脚本
+  // 若把 12 款都用 default 的 token 出图，客户会看到 12 张一模一样的预览，
+  // 而上面所有检查都还是绿的。逐张比内容摘要才能钉住「图真的按各自 token 画了」。
+  it('每款预览图内容互不相同（不能 12 张都是同一张默认款）', () => {
+    const ids = goTemplateIds()
+    const digests = ids.map((id) =>
+      createHash('sha256').update(readFileSync(join(PREVIEW_DIR, `${id}.png`))).digest('hex')
+    )
+    expect(new Set(digests).size, '有重复预览图：某一款没按自己的 token 出图').toBe(ids.length)
   })
 
   it('生成脚本从 app.wxss 取 token，不手画第二套主题色', () => {

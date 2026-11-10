@@ -311,16 +311,16 @@ describe('content/MpSettings', () => {
     await vi.waitFor(() => expect(router.currentRoute.value.query.tab).toBe('entry'))
   })
 
-  // 「整体风格」是第三个页签，同样必须 lazy：它和首页样式共用 home-layout 接口，
+  // 「风格模板」是第三个页签，同样必须 lazy：它和首页样式共用 home-layout 接口，
   // 一进「小程序设置」就把三页全挂载会多打两次请求，弱网下三个 loading 一起转。
-  it('默认不挂载「整体风格」页签', async () => {
+  it('默认不挂载「风格模板」页签', async () => {
     const { w } = await mountPage()
 
     expect(pane(w, 'theme').exists()).toBe(false)
     expect(contentMocks.getHomeLayout).not.toHaveBeenCalled()
   })
 
-  it('?tab=theme 直接落在整体风格，且按内嵌模式渲染', async () => {
+  it('?tab=theme 直接落在风格模板，且按内嵌模式渲染', async () => {
     const { w } = await mountPage('?tab=theme')
 
     expect(pane(w, 'theme').exists()).toBe(true)

@@ -1,13 +1,21 @@
-// 小程序整体风格模板：把后端下发的 templateId 翻译成挂在页面顶层节点上的 class。
+// 小程序风格模板：把后端下发的 templateId 翻译成挂在页面顶层节点上的 class。
 //
 // 真实色值不在这里——它们随小程序版本内置在 app.wxss 的 .wc-theme-* 里。
 // 端上不能动态加载 WXSS（代码是编译上传审核的），后台也绝不下发自由 CSS：
 // 这里只是一份**白名单 id → class 名**的映射。
 //
+// 清单分两个系列：default/ink/warm/teal 是「整体风格」（配色 + 版式一起换），
+// brand-* 是「品牌配色预设色板」（只换配色，版式沿用 default）。端上不需要分组，
+// 一律按同一个 id → class 规则处理；后台按服务端下发的 series 分组展示。
+//
 // id 集合的唯一真值在 backend/internal/mptemplate/mptemplate.go；
 // miniprogram/tests/theme.spec.ts 会读 Go 源码逐项对账，任一端加款忘了同步就变红。
 export const THEME_DEFAULT = 'default'
-export const THEME_IDS = ['default', 'ink', 'warm', 'teal'] as const
+export const THEME_IDS = [
+  'default', 'ink', 'warm', 'teal',
+  'brand-crimson', 'brand-coral', 'brand-amber', 'brand-forest',
+  'brand-ocean', 'brand-indigo', 'brand-violet', 'brand-magenta',
+] as const
 export type ThemeId = (typeof THEME_IDS)[number]
 
 const STORAGE_KEY = 'wc_theme_id'

@@ -159,11 +159,15 @@ export function sortServices(items: { id: number; sort: number }[]) {
 // 详情页「更新于」的展示档位。与后端 model.TimeMode* 三档一一对应。
 export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 
-/** 后台「整体风格」页的一张模板卡。清单由服务端下发，前端不硬编码模板 id。 */
+/** 模板系列：style=整体风格（配色+版式），brand=品牌配色（只换配色）。由服务端下发。 */
+export type ThemeSeries = 'style' | 'brand'
+
+/** 后台模板页的一张模板卡。清单与分组都由服务端下发，前端不硬编码模板 id。 */
 export interface ThemeTemplate {
   id: string
   name: string
   description: string
+  series: ThemeSeries
   /** 需要 mp_template_advanced 授权；未开通时置灰 */
   advanced: boolean
   previewPrimary: string

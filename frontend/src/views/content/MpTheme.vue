@@ -1,13 +1,14 @@
 <template>
   <el-card>
     <div class="page-bar" :class="{ 'only-action': props.embedded }">
-      <h3 v-if="!props.embedded">小程序整体风格</h3>
+      <h3 v-if="!props.embedded">小程序风格模板</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
     <p class="desc">
-      为小程序选择一套内置整体风格：主色、卡片圆角、按钮形态与投影质感一并切换。
-      模板随小程序版本内置，后台只记录「选了哪一款」，
+      为小程序选择一套内置风格：「整体风格」把主色、卡片圆角、按钮形态与投影质感一并切换；
+      「品牌配色」按预设色板只换主色，版式沿用经典蓝，用于对齐企业自有 VI 主色。
+      两个系列都随小程序版本内置，后台只记录「选了哪一款」，
       保存后访客端即时生效，不需要重新上传代码或提交微信审核。
     </p>
 
@@ -18,53 +19,63 @@
       type="warning"
       :closable="false"
       show-icon
-      title="当前授权未开通高级整体风格模板"
+      title="当前授权未开通高级风格模板"
       class="entitle-alert"
     >
       高级款暂不可新选，访客端会临时回落到经典蓝；已经选中的高级款会为您保留，续费后自动恢复。
       已选中的款式仍可继续使用或切回经典蓝。如需开通请联系服务商升级授权。
     </el-alert>
 
-    <div class="theme-grid">
-      <div
-        v-for="t in templates"
-        :key="t.id"
-        class="theme-card"
-        :class="{ selected: selected === t.id, locked: isLocked(t) }"
-        @click="pick(t)"
-      >
-        <!-- 真实预览图由 scripts/gen_theme_previews.py 从 miniprogram/app.wxss 的
-             token 生成，和访客端共用同一套配色 / 圆角 / 投影，不是手画的第二套样式。
-             底层 CSS 示意常驻：图片加载中、404、或新增模板忘了补图时都不会留空白；
-             右下角「示意图」角标让降级可见，而不是悄悄退回旧样式。
-             .layout-<id> 仍是示意路径与跨端守门的对账点。 -->
-        <div class="theme-preview" :class="'layout-' + t.id">
-          <div class="preview-fallback" :style="{ background: t.previewSoft }">
-            <div class="preview-nav" :style="{ background: t.previewPrimary }" />
-            <div class="preview-card">
-              <div class="preview-line" :style="{ background: t.previewPrimary }" />
-              <div class="preview-line short" />
-              <div class="preview-btn" :style="{ background: t.previewPrimary }" />
+    <!-- 两个系列的分组由服务端下发的 series 决定，前端不猜 id 前缀：
+         加一款品牌配色时后端清单会自动带 series，这里不需要跟着改。
+         旧后端不下发 series 时全部归入「整体风格」，不会凭空少一组卡片。 -->
+    <div v-for="group in groups" :key="group.key" class="theme-group">
+      <div class="group-head">
+        <h4>{{ group.title }}</h4>
+        <span class="group-hint">{{ group.hint }}</span>
+      </div>
+      <div class="theme-grid">
+        <div
+          v-for="t in group.items"
+          :key="t.id"
+          class="theme-card"
+          :class="{ selected: selected === t.id, locked: isLocked(t) }"
+          @click="pick(t)"
+        >
+          <!-- 真实预览图由 scripts/gen_theme_previews.py 从 miniprogram/app.wxss 的
+               token 生成，和访客端共用同一套配色 / 圆角 / 投影，不是手画的第二套样式。
+               底层 CSS 示意常驻：图片加载中、404、或新增模板忘了补图时都不会留空白；
+               右下角「示意图」角标让降级可见，而不是悄悄退回旧样式。
+               .layout-<id> 只给「整体风格」款画版式差异；品牌配色款版式沿用经典蓝，
+               没有专属规则，示意自然落在基线样式上。 -->
+          <div class="theme-preview" :class="'layout-' + t.id">
+            <div class="preview-fallback" :style="{ background: t.previewSoft }">
+              <div class="preview-nav" :style="{ background: t.previewPrimary }" />
+              <div class="preview-card">
+                <div class="preview-line" :style="{ background: t.previewPrimary }" />
+                <div class="preview-line short" />
+                <div class="preview-btn" :style="{ background: t.previewPrimary }" />
+              </div>
+              <span class="fallback-tag">示意图</span>
             </div>
-            <span class="fallback-tag">示意图</span>
+            <img
+              v-if="!failedPreviews[t.id]"
+              class="preview-shot"
+              :src="previewUrl(t.id)"
+              :alt="t.name + ' 小程序首页预览'"
+              decoding="async"
+              @error="onPreviewError(t.id)"
+            />
           </div>
-          <img
-            v-if="!failedPreviews[t.id]"
-            class="preview-shot"
-            :src="previewUrl(t.id)"
-            :alt="t.name + ' 小程序首页预览'"
-            decoding="async"
-            @error="onPreviewError(t.id)"
-          />
-        </div>
-        <div class="theme-meta">
-          <div class="theme-name">
-            {{ t.name }}
-            <el-tag v-if="t.advanced" size="small" type="warning" class="adv-tag">高级</el-tag>
-            <span v-if="selected === t.id" class="current">使用中</span>
+          <div class="theme-meta">
+            <div class="theme-name">
+              {{ t.name }}
+              <el-tag v-if="t.advanced" size="small" type="warning" class="adv-tag">高级</el-tag>
+              <span v-if="selected === t.id" class="current">使用中</span>
+            </div>
+            <div class="theme-desc">{{ t.description }}</div>
+            <div v-if="isLocked(t)" class="theme-lock">未开通 · 暂不可选</div>
           </div>
-          <div class="theme-desc">{{ t.description }}</div>
-          <div v-if="isLocked(t)" class="theme-lock">未开通 · 暂不可选</div>
         </div>
       </div>
     </div>
@@ -80,7 +91,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getHomeLayout, saveHomeLayout, type ThemeTemplate } from '@/api/content'
 
@@ -92,6 +103,39 @@ const saving = ref(false)
 const selected = ref('default')
 const templates = ref<ThemeTemplate[]>([])
 const templateEntitled = ref(true)
+
+// 分组真值来自服务端下发的 series，不靠 id 前缀猜。旧后端（升级前的二进制）
+// 不下发 series 时一律归入「整体风格」组：宁可都挤在一组，也不能让卡片凭空消失。
+const styleTemplates = computed(() => templates.value.filter((t) => t.series !== 'brand'))
+const brandTemplates = computed(() => templates.value.filter((t) => t.series === 'brand'))
+
+interface ThemeGroup {
+  key: string
+  title: string
+  hint: string
+  items: ThemeTemplate[]
+}
+
+const groups = computed<ThemeGroup[]>(() => {
+  const out: ThemeGroup[] = []
+  if (styleTemplates.value.length) {
+    out.push({
+      key: 'style',
+      title: '整体风格',
+      hint: '主色、卡片圆角、按钮形态与投影质感一并切换',
+      items: styleTemplates.value,
+    })
+  }
+  if (brandTemplates.value.length) {
+    out.push({
+      key: 'brand',
+      title: '品牌配色',
+      hint: '按预设色板只换主色，版式沿用经典蓝；用于对齐企业自有 VI 主色',
+      items: brandTemplates.value,
+    })
+  }
+  return out
+})
 
 // 预览图是随前端版本发布的静态资源：加载失败时移除该张 <img>，露出底层示意。
 // 用「id -> 失败」而不是一个全局开关，某一张图坏了不能把其余三张一起降级。
@@ -143,7 +187,7 @@ async function save() {
     // 只提交 templateId：三个页签各存各的，后端 PUT 对未提供的字段保持原值。
     // 整份表单回传会把别的页签刚改过的值一起写回去，属于典型的跨页签覆盖。
     await saveHomeLayout({ templateId: selected.value })
-    ElMessage.success('已保存小程序整体风格')
+    ElMessage.success('已保存小程序风格模板')
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -175,6 +219,29 @@ onMounted(load)
 .entitle-alert {
   margin-bottom: 16px;
 }
+.theme-group + .theme-group {
+  margin-top: 24px;
+}
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ebeef5;
+}
+.group-head h4 {
+  margin: 0;
+  flex: none;
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+.group-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
 .theme-grid {
   display: flex;
   flex-wrap: wrap;
@@ -200,8 +267,8 @@ onMounted(load)
   opacity: 0.62;
 }
 /* 预览容器比例与 gen_theme_previews.py 的 375x430 画布一致：图片下载完成前后
-   都不跳版，四张卡保持对齐。生成脚本刻意把高度收到 430，就是为了让底部按钮
-   （四款圆角差异最大的一处）完整可见，这里不能再裁切。 */
+   都不跳版，所有卡保持对齐。生成脚本刻意把高度收到 430，就是为了让底部按钮
+   （各款圆角差异最大的一处）完整可见，这里不能再裁切。 */
 .theme-preview {
   position: relative;
   aspect-ratio: 375 / 430;
