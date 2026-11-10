@@ -4,6 +4,9 @@ import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { clearEntryStaff } from '../../utils/entry'
 import { track, deriveSource } from '../../utils/track'
 import { FALLBACK_BRAND } from '../../utils/brand'
+// 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
+// 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
+import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
 
 Page({
   data: {
@@ -219,15 +222,15 @@ Page({
     this.setData(patch)
     try {
       const [card, ach, svc, layout] = await Promise.all([
-        request('GET', '/api/card?staffId=' + sid),
-        request('GET', '/api/achievements'),
-        request('GET', '/api/services'),
-        request('GET', '/api/home-layout'),
+        request<CardResp>('GET', '/api/card?staffId=' + sid),
+        request<AchievementsResp>('GET', '/api/achievements'),
+        request<ServicesResp>('GET', '/api/services'),
+        request<HomeLayoutResp>('GET', '/api/home-layout'),
       ])
       // 停用：后端返回 code=2（无 employee）
       if (card.code === 2) {
         this.setData({ disabled: true, loading: false })
-        this.reconcileEntry((card as any).company)
+        this.reconcileEntry(card.company)
         return
       }
       // 不存在：后端返回 code=1（无 employee）。
@@ -238,14 +241,14 @@ Page({
         this.setData({ notFound: true, loading: false })
         // 凭「默认入口缓存」跳进来的：静默纠正回名片墙，不弹「员工不存在」——
         // 访客根本没输过任何编号，跟他说编号有问题只会更困惑。
-        if (this.reconcileEntry((card as any).company)) return
+        if (this.reconcileEntry(card.company)) return
         wx.showToast({ title: '员工不存在', icon: 'none' })
         return
       }
       // 后端资源返回相对路径（/uploads/... 等），小程序 <image src> 不认相对，
       // 必须在端上拼绝对——统一经 assetUrl 修正后再下发（employee-card /
       // featured-projects / achievement-grid / service-grid / company-video 组件直接消费）。
-      const cardData = card as any
+      const cardData = card
       // 凭「默认入口缓存」跳进来的：后台此刻的配置说了算（见 reconcileEntry）。
       // 必须放在 setData 之前——否则访客会先看到一张「后台已经不认」的旧名片再被跳走。
       if (this.reconcileEntry(cardData.company)) return

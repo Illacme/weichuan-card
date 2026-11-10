@@ -1231,6 +1231,11 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 - `content.go` 项目 `PUT` 的二次查库不是多余：GORM 的 map 更新不回写结构体，回包要给出新值与数据库刚刷新的 `updated_at`，必须重读。已补注释与 `.Error` 判断。
 - 外部 API 的 `err.Error()` 回显：`mp_release` / `wechat` / `storage` 等返回的是厂商业务错误，管理员需要「为什么发布失败」；一刀切改成固定文案会让排障失去线索。
 - `miniprogram/utils/types.ts` 12 个类型零引用：属类型化重构，不是缺陷；当前 `request<T>` 泛型通道空转，另立一轮做。
+  > **✅ 后续订正（2026-11-10 第二十轮）**：已重写。复核时发现那 12 个 interface 不只是「暂时没用」，
+  > 而是**字段全部过时的错误契约**（`Employee` 缺 `phone2`、`CompanyInfo` 缺 `mpEntryMode`/`mpEntryStaffId`、
+  > `HomeLayoutResp` 缺 `bgImage`/`bgMask`），留着会把错误写法当成正确示范。现收敛为首页真正消费的
+  > 4 个信封，并被 `pages/index/index.ts` 引用；`request<R>` 泛型改为「整个响应信封」后通道真正生效。
+  > 详见下方「第二十轮」§7。
 
 ### 4. 已识别但**当时**未改（1 / 2 已在第二十轮闭环，见下方订正）
 
@@ -1334,4 +1339,33 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 
 只剩第十九轮 §4 第 3 项：`C4` Redis 水平扩展、PII 密钥轮换、binlog 回放演练——
 架构演进与演练事项，不是缺陷，沿用既有「明确暂缓」结论。
-第十九轮 §3 的 `utils/types.ts` 类型化重构也仍属可选清理，不影响运行行为。
+
+第十九轮 §3 的 `utils/types.ts` 类型化重构**已在本轮闭环**（见 §7），不再是开放项。
+
+### 7. 追加：小程序类型契约不再腐烂（同日续做）
+
+**为什么做**：前一节收口后，仓库里唯一还剩的「有证据、能改、有收益」的代码项就是
+`miniprogram/utils/types.ts`。原判断是「12 个 interface 暂时没人引用」，复核后升级了：
+它们与真实回包**已经对不上**——`Employee` 缺第 219 轮刚加的手机 2 字段 `phone2`，
+`CompanyInfo` 缺 0034 迁移引入的 `mpEntryMode`/`mpEntryStaffId`，`HomeLayoutResp`
+缺 `bgImage`/`bgMask`。这不是「暂未使用」，而是**一份不存在的契约**，谁照着写谁错。
+
+**为什么能腐烂这么久**：`miniprogram/tsconfig.json` 是 `strict: false` + `allowJs: true`
+且没有 wx typings，`tsc --noEmit` 本来就有一批基线错误（`Cannot find name 'wx'` 等），
+**不是门禁**；零引用的类型文件既没人用、也没人报错。
+
+**处理**：
+
+| 项 | 处理 |
+| --- | --- |
+| `utils/types.ts` | 12 个零引用 interface → 首页 `loadAll` 真正消费的 4 个信封 + 元素类型；字段全部由脚本从 `backend/internal/model/models.go` 的 json tag 抽出（不凭印象） |
+| `request` 泛型 | 从 `T = data 类型` 改为 `R = 整个响应信封`，默认 `ApiResult<any>`——不传泛型时与改动前逐字等价。原语义撑不住「字段在根级」的 `/api/card`、`/api/achievements`、`/api/home-layout`，这正是全站零使用、通道空转的原因 |
+| `pages/index/index.ts` | 4 个请求改成 `request<CardResp>` / `<AchievementsResp>` / `<ServicesResp>` / `<HomeLayoutResp>`，顺带删掉 3 处 `as any` |
+| 防再次腐烂 | 新增 `miniprogram/tests/types_contract.spec.ts`（9 例）：TS 字段与 Go json tag 逐项对账；`FeaturedProject`/`ServiceBrief` 是裁剪投影、必须分别不含 `detail`/`album`、`content`；`types.ts` 必须被业务文件 import；每个导出类型至少被引用一次 |
+
+**反向验证 3 项**（`try/finally` 自动还原）：把 `phone2` 写成 `phoneTwo`、删掉 `mpEntryMode`、
+去掉 `index.ts` 的 import，三次跑 `types_contract.spec.ts` 全部 `exit=1` 且失败用例精确命中
+对应断言；还原后 9 例全绿。
+
+**门禁**：`index_home` / `types_contract` / `request` / `latest` 四个 spec 共 73 例全绿；
+后端零改动。

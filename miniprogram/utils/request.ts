@@ -110,25 +110,32 @@ function withCompanyId(method: 'GET' | 'POST' | 'PUT', path: string, data: any):
 }
 
 // method 支持 GET/POST/PUT；GET 的 data 会拼成 query string。
+//
 // 第四个参数 signal 是**可选**的取消信号（见 utils/latest.ts）：不传时行为与从前完全一致，
 // 全站几十个调用点一个都不用改；只有会连续重查的页面才传，用来取消在途的旧查询。
-export function request<T = any>(
+//
+// 泛型 R 是**整个响应信封**，默认 ApiResult<any>（不传时与改动前等价）：
+//   - 标准 data 数组/对象接口：`request<ApiResult<T>>(...)` 或 `request()` 不传；
+//   - 字段在**根级**的接口（/api/card、/api/achievements、/api/home-layout）：
+//     用 utils/types.ts 里的 CardResp / AchievementsResp / HomeLayoutResp。
+// 上一版泛型是 `T = data 类型`，全站零使用、通道空转；改成信封后才撑得住根级字段。
+export function request<R = ApiResult<any>>(
   method: 'GET' | 'POST' | 'PUT',
   path: string,
   data?: any,
   signal?: RequestSignal
-): Promise<ApiResult<T>> {
-  return doRequest<T>(method, path, data, wx.getStorageSync('empToken'), false, signal)
+): Promise<R> {
+  return doRequest<R>(method, path, data, wx.getStorageSync('empToken'), false, signal)
 }
 
-function doRequest<T>(
+function doRequest<R = ApiResult<any>>(
   method: 'GET' | 'POST' | 'PUT',
   path: string,
   data: any,
   token: string,
   retried: boolean,
   signal?: RequestSignal
-): Promise<ApiResult<T>> {
+): Promise<R> {
   return new Promise((resolve, reject) => {
     data = withCompanyId(method, path, data)
     let url = baseUrl() + path
@@ -156,7 +163,9 @@ function doRequest<T>(
           reject(new SupersededError())
           return
         }
-        const result = res.data as ApiResult<T>
+        // 运行时只保证是信封形状（下方 badStatus / notEnvelope 校验）；
+        // 具体字段由调用点用泛型 R 声明，这里不做校验也不做转换。
+        const result = res.data as ApiResult<any>
         // 网关/反代兜底页（nginx 404/502 的 HTML）不是接口信封：resolve 出去会让
         // 调用方把「服务不可达」误判成业务态（如员工不存在 → 引导用户改编号，
         // 真实原因却是后端没通）。统一按网络错误 reject，让页面走 error 态。
@@ -184,10 +193,10 @@ function doRequest<T>(
               return
             }
             if (newToken) {
-              doRequest<T>(method, path, data, newToken, true, signal).then(resolve, reject)
+              doRequest<R>(method, path, data, newToken, true, signal).then(resolve, reject)
             } else {
               clearAuth()
-              resolve(result)
+              resolve(result as unknown as R)
             }
           })
           return
@@ -196,7 +205,7 @@ function doRequest<T>(
           // 已重试仍 401：彻底清理
           clearAuth()
         }
-        resolve(result)
+        resolve(result as unknown as R)
       },
       fail: (err) => {
         // 真 wx.request 的 abort() 会触发 fail("request:fail abort")：
