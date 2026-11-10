@@ -5,22 +5,15 @@
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
-    <p class="desc">控制小程序首页「经典业绩」与「业务服务」的先后顺序、首页背景图，以及两个详情页是否显示「更新于」。</p>
+    <p class="desc">设置小程序首页背景、首页「经典业绩」与「业务服务」的先后顺序，以及两个详情页是否显示「更新于」。</p>
 
     <!-- 表单宽度与「访客先看到谁」对齐（720）：560 时「从素材库选择」按钮的文字会被
          挤成两行，撑满卡片后这个窄表单也显得孤零零 -->
     <el-form label-width="120px" style="max-width: 720px">
-      <el-form-item label="板块顺序">
-        <el-radio-group v-model="firstBlock">
-          <el-radio value="achievement">业绩在前，服务在后</el-radio>
-          <el-radio value="service">服务在前，业绩在后</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item label="当前顺序">
-        <el-tag v-for="b in order" :key="b" class="order-tag">{{ blockLabel(b) }}</el-tag>
-      </el-form-item>
-
-      <el-divider content-position="left">首页背景（可选）</el-divider>
+      <!-- 模块顺序是产品约定：首页背景 → 板块顺序 → 详情页时间显示。
+           三块都带标题，调整顺序时别只挪表单项、把标题留在原地。
+           HomeLayout.spec.ts 有源码级守门钉死这个顺序。 -->
+      <el-divider content-position="left">首页背景</el-divider>
 
       <el-form-item label="背景图">
         <UploadField v-model="bgImage" library-type="background" :multiple="false" tip="建议竖幅 750×1334 以上，JPG/PNG，≤10MB" />
@@ -44,6 +37,18 @@
           <div class="bg-preview-mask" :style="{ opacity: bgMask / 100 }" />
           <div class="bg-preview-card">白色内容卡片</div>
         </div>
+      </el-form-item>
+
+      <el-divider content-position="left">板块顺序</el-divider>
+
+      <el-form-item label="谁在前">
+        <el-radio-group v-model="firstBlock">
+          <el-radio value="achievement">业绩在前，服务在后</el-radio>
+          <el-radio value="service">服务在前，业绩在后</el-radio>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item label="当前顺序">
+        <el-tag v-for="b in order" :key="b" class="order-tag">{{ blockLabel(b) }}</el-tag>
       </el-form-item>
 
       <el-divider content-position="left">详情页时间显示</el-divider>
@@ -91,7 +96,7 @@ import { getHomeLayout, saveHomeLayout, type DetailTimeMode } from '@/api/conten
 import UploadField from '@/components/UploadField.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
 
-// embedded=true：被「小程序设置」内嵌在「名片首页样式」页签里时，不再重复自己的标题。
+// embedded=true：被「小程序设置」内嵌在「名片页面样式」页签里时，不再重复自己的标题。
 const props = defineProps<{ embedded?: boolean }>()
 
 const BLOCKS = ['achievement', 'service']

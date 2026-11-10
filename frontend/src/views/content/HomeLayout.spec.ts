@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject } from 'vue'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import HomeLayout from './HomeLayout.vue'
+
+// 模块顺序是产品约定（首页背景 → 板块顺序 → 详情页时间显示）。
+// 模板重排属于视觉要求，Vitest 挂载后看不出「谁在前」，只能读源码守门。
+const PAGE_SRC = resolve(dirname(fileURLToPath(import.meta.url)), './HomeLayout.vue')
 
 // 首页布局页：板块顺序 + 背景图 + 遮罩浓度。
 // 关键约束是「保存时提交的是完整顺序数组」——只提交 firstBlock 会让后端
@@ -162,6 +169,19 @@ describe('content/HomeLayout', () => {
 
     expect(mocks.getHomeLayout).toHaveBeenCalledTimes(1)
     expect(orderTags(w)).toEqual(['经典业绩', '业务服务'])
+  })
+
+  // 只挪表单项、把 divider 留在原地，会出现「标题说首页背景，底下是板块顺序」的错位，
+  // 所以直接钉死三个模块标题在源码里的相对位置。
+  it('配置模块顺序：首页背景 → 板块顺序 → 详情页时间显示', () => {
+    const src = readFileSync(PAGE_SRC, 'utf-8')
+    const bg = src.indexOf('<el-divider content-position="left">首页背景</el-divider>')
+    const order = src.indexOf('<el-divider content-position="left">板块顺序</el-divider>')
+    const time = src.indexOf('<el-divider content-position="left">详情页时间显示</el-divider>')
+
+    expect(bg).toBeGreaterThan(-1)
+    expect(order).toBeGreaterThan(bg)
+    expect(time).toBeGreaterThan(order)
   })
 
   // order[0] 决定谁是「在前」的板块
