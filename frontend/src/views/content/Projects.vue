@@ -44,6 +44,11 @@
             </el-tag>
           </template>
         </el-table-column>
+        <!-- 与业务服务列表同口径：创建时间 + 手机端隐藏（窄屏优先保住可操作列）。
+             后端 projectToMap 一直有 createdAt，此前只是没渲染。 -->
+        <el-table-column label="创建时间" width="180" align="center" v-if="!isPhone">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="排序" width="120" align="center">
           <template #default="{ row }">
             <div class="sort-cell">
@@ -151,6 +156,7 @@ import {
 } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import ImageThumb from '@/components/ImageThumb.vue'
+import { formatDateTime } from '@/utils/datetime'
 // 富文本编辑器体积较大（~800KB），按页面懒加载，避免拖累首屏
 const RichEditor = defineAsyncComponent(() => import('@/components/RichEditor.vue'))
 import { useTable } from '@/composables/useTable'

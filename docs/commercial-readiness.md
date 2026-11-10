@@ -1443,3 +1443,18 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 | `vite build`（`--outDir dist-check-*`） | 成功，临时目录已清理 |
 | 类名冲突 / 第三方许可清单 / `git diff --check` | 无危险项 / 一致 / OK |
 | `docs/openapi.yaml` | YAML 可解析、单 components 块、45 个 `$ref` 全部可解析；后台 home-layout 的读写契约已补两个档位 |
+
+## 第二十一轮补充：后台案例列表补「创建时间」列（2026-11-10 同日）
+
+用户指出后台「项目案例」列表没有时间列（业务服务列表有「创建时间」，案例没有）。
+核查：后端 `/api/admin/projects` 的 `projectToMap` **一直都返回 `createdAt`**，
+纯粹是 `Projects.vue` 没渲染——前端一行接口改动都不需要。
+
+- `Projects.vue` 在「上架」之后加「创建时间」列（width 180、`v-if="!isPhone"`、
+  `formatDateTime`），与 `Services.vue` 完全同口径；空值显示「—」。
+- `Projects.spec.ts` 补 1 例：格式化断言 + 缺值占位；桩里的时间**不带时区后缀**，
+  本地解析在任何 TZ 的 runner 上断言都成立。
+- 反向验证：删掉该列 → 新用例 `exit=1` 精确命中；还原后 13 例全绿。
+- 门禁：eslint / `vue-tsc` / Vitest 全量 **92 文件 1512 例** / `vite build` 全绿；
+  后端零改动。既有测试输出里的 `[Vue warn]: Component is missing template` 是
+  基线噪音（改动前后均 99 处），与本次无关。
