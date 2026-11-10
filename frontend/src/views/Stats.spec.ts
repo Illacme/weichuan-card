@@ -227,7 +227,7 @@ describe('Stats', () => {
 
     expect(vi.mocked(adminStats)).toHaveBeenCalledTimes(1)
     // 首次加载不带日期范围（全部时间）
-    expect(vi.mocked(adminStats)).toHaveBeenCalledWith({})
+    expect(vi.mocked(adminStats)).toHaveBeenCalledWith({}, expect.objectContaining({ signal: expect.anything() }))
     // 汇总
     expect(w.text()).toContain('12') // 总访问
     expect(w.text()).toContain('3') // 拨号点击
@@ -287,7 +287,7 @@ describe('Stats', () => {
     expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({
       from: '2026-10-01',
       to: '2026-10-07',
-    })
+    }, expect.objectContaining({ signal: expect.anything() }))
     expect(w.text()).toContain('2026-10-01 至 2026-10-07')
   })
 
@@ -297,11 +297,11 @@ describe('Stats', () => {
 
     await w.findComponent(ElDatePicker).vm.$emit('update:modelValue', ['2026-10-01', '2026-10-07'])
     await flushLoad(w)
-    expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({ from: '2026-10-01', to: '2026-10-07' })
+    expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({ from: '2026-10-01', to: '2026-10-07' }, expect.objectContaining({ signal: expect.anything() }))
 
     await w.findComponent(ElDatePicker).vm.$emit('update:modelValue', null)
     await flushLoad(w)
-    expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({})
+    expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({}, expect.objectContaining({ signal: expect.anything() }))
     expect(w.text()).toContain('全部时间')
   })
 
@@ -388,7 +388,7 @@ describe('Stats', () => {
     expect(vi.mocked(adminStats)).toHaveBeenLastCalledWith({
       from: '2026-10-22',
       to: '2026-10-22',
-    })
+    }, expect.objectContaining({ signal: expect.anything() }))
     // 范围文案同步
     expect(w.text()).toContain('2026-10-22 至 2026-10-22')
     // 抽屉打开，且日期范围收窄到当天——明细与汇总是同一个口径
@@ -612,5 +612,44 @@ describe('Stats', () => {
     // 总量 = 4+5+2+1 = 12；scan 行占比 = 4/12 ≈ 33%
     const bar = w.find('.src-row .src-bar')
     expect(bar.attributes('style')).toContain('width: 33%')
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+function statOf(visit: number) {
+  return {
+    summary: { visit, call: 0, save: 0, projectView: 0, serviceView: 0, videoPlay: 0, share: 0, posterSave: 0 },
+    byStaff: [], trend: [], topProjects: [], topServices: [], sourceDist: [], fissionTop: [],
+  }
+}
+
+describe('Stats 请求竞态守门', () => {
+  it('连切日期范围：旧范围响应后回来也不得盖掉新范围的数字', async () => {
+    const d1 = raceDeferred<any>()
+    const d2 = raceDeferred<any>()
+    vi.mocked(adminStats).mockClear()
+    vi.mocked(adminStats)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise)
+
+    const w = mount(Stats, mountOpts)
+    await nextTick()
+    await w.findComponent(ElDatePicker).vm.$emit('update:modelValue', ['2026-10-01', '2026-10-07'])
+    await nextTick()
+    expect(vi.mocked(adminStats)).toHaveBeenCalledTimes(2)
+
+    d2.resolve(statOf(2222))
+    await flushLoad(w)
+    expect(w.text()).toContain('2222')
+
+    d1.resolve(statOf(1111))
+    await flushLoad(w)
+    expect(w.text()).toContain('2222')
+    expect(w.text()).not.toContain('1111')
   })
 })

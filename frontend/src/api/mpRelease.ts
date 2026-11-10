@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http, { toPaged, type Paged } from './request'
 
 // 小程序版本发布（平台超管代租户上传 / 提审 / 发布）。
@@ -55,10 +56,12 @@ export interface MPReleaseUploadReadiness {
 // 某企业的版本发布记录（服务端分页 + 可选状态筛选）
 export function listMPReleases(
   companyId: number,
-  params: { page?: number; size?: number; status?: string } = {}
+  params: { page?: number; size?: number; status?: string } = {},
+  config?: AxiosRequestConfig
 ): Promise<Paged<MPReleaseItem>> {
+  // config 只透传 signal（见 ./latest.ts）；params 放后面保证分页口径不被覆盖
   return http
-    .get('/admin/companies/' + companyId + '/releases', { params })
+    .get('/admin/companies/' + companyId + '/releases', { ...config, params })
     .then((r) => toPaged<MPReleaseItem>(r))
 }
 

@@ -112,7 +112,7 @@ describe('employee/stat 页', () => {
     expect(mocks.request).toHaveBeenCalledWith('GET', '/api/employee/me/stat', {
       from: dayStr(-6),
       to: dayStr(0),
-    })
+    }, expect.anything())
     expect(p.data.stat).toEqual({
       visit: 12,
       call: 3,
@@ -296,7 +296,7 @@ describe('employee/stat 页', () => {
     expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/employee/me/stat', {
       from: dayStr(0),
       to: dayStr(0),
-    })
+    }, expect.anything())
     expect(p.data.rangeKey).toBe('today')
     expect(p.data.trend).toHaveLength(1)
   })
@@ -316,7 +316,7 @@ describe('employee/stat 页', () => {
     expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/employee/me/stat', {
       from: dayStr(-29),
       to: dayStr(0),
-    })
+    }, expect.anything())
     const trend = p.data.trend as any[]
     expect(trend).toHaveLength(30)
     expect(trend[0].showLabel).toBe(true) // 第 0 天必标
@@ -496,5 +496,40 @@ describe('employee/stat 页', () => {
     expect(wxml).toContain('wx:elif="{{error}}"')
     expect(wxml).toContain('class="error-box"')
     expect(wxml).toContain('bindtap="load"')
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('employee/stat 请求竞态守门', () => {
+  it('连切时间范围：旧范围响应后回来不覆盖新范围的数字', async () => {
+    storage.set('empToken', 'tk-1')
+    const d1 = raceDeferred<any>()
+    const d2 = raceDeferred<any>()
+    let n = 0
+    mocks.request.mockImplementation(async () => {
+      n += 1
+      return n === 1 ? d1.promise : d2.promise
+    })
+
+    const { p } = await page()
+    await p.onShow()
+    await flush()
+    await p.onRangeTap({ currentTarget: { dataset: { key: 'today' } } })
+    await flush()
+    expect(mocks.request).toHaveBeenCalledTimes(2)
+
+    d2.resolve({ code: 0, data: fullData({ visit: 222 }) })
+    await flush()
+    expect(p.data.stat.visit).toBe(222)
+
+    d1.resolve({ code: 0, data: fullData({ visit: 111 }) })
+    await flush()
+    expect(p.data.stat.visit).toBe(222)
+    expect(p.data.error).toBe(false)
   })
 })

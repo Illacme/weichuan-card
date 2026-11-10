@@ -142,7 +142,7 @@ describe('StatDetail', () => {
       targetId: undefined,
       page: 1,
       size: 20,
-    })
+    }, expect.objectContaining({ signal: expect.anything() }))
     // 范围文案：两端都有值时显示「起 至 止」
     expect(w.text()).toContain('2026-10-01 至 2026-10-07')
   })
@@ -168,14 +168,14 @@ describe('StatDetail', () => {
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2 })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
 
     // el-select 的真实契约：用户选择时发 change（不是 update:modelValue）
     await w.findAllComponents(ElSelect)[0].vm.$emit('change', 2)
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ staffId: 2, page: 1 })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('切换事件类型筛选：带 eventType 重查', async () => {
@@ -186,7 +186,7 @@ describe('StatDetail', () => {
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ eventType: 'call' })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('清空筛选发 change 空值：按不过滤处理且不传 undefined 字符串', async () => {
@@ -198,7 +198,7 @@ describe('StatDetail', () => {
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ staffId: undefined })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('翻页与改每页条数各自带正确的 page/size', async () => {
@@ -209,13 +209,13 @@ describe('StatDetail', () => {
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 3 })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
 
     await w.findComponent(ElPagination).vm.$emit('size-change', 50)
     await flush(w)
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ size: 50, page: 1 })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('回包页码被后端夹到末页时，分页栏同步（不停在第 5 页显示第 1 页内容）', async () => {
@@ -235,7 +235,7 @@ describe('StatDetail', () => {
 
     expect(vi.mocked(adminStatsDetail)).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'project_view', targetId: 12 })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
     // 对象标签说明「筛了什么」——不然用户只看到行数变少，不知道为什么
     const chip = w.findAllComponents(ElTag).find((c) => c.props('closable'))
     expect(chip).toBeTruthy()
@@ -261,7 +261,7 @@ describe('StatDetail', () => {
 
     expect(vi.mocked(adminStatsDetail)).toHaveBeenLastCalledWith(
       expect.objectContaining({ eventType: 'project_view', targetId: undefined })
-    )
+    , expect.objectContaining({ signal: expect.anything() }))
     // 标签已消失（不再有可关闭的标签）
     expect(w.findAllComponents(ElTag).find((c) => c.props('closable'))).toBeFalsy()
   })
@@ -345,5 +345,42 @@ describe('StatDetail', () => {
     await flush(w)
     expect(w.text()).toContain('2026-10-01 至 今天')
     expect(w.text()).not.toContain('undefined')
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('StatDetail 请求竞态守门', () => {
+  it('快速翻页：旧页响应后回来不覆盖新页表格，也不把页码拨回去', async () => {
+    const d1 = raceDeferred<any>()
+    const d2 = raceDeferred<any>()
+    vi.mocked(adminStatsDetail).mockClear()
+    vi.mocked(adminStatsDetail)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise)
+
+    const w = mountDetail()
+    await nextTick()
+    await w.findComponent(ElPagination).vm.$emit('current-change', 3)
+    await nextTick()
+    expect(vi.mocked(adminStatsDetail)).toHaveBeenCalledTimes(2)
+
+    const item = (id: number, name: string): any => ({
+      id, staffId: 1, name, eventType: 'visit',
+      statDate: '2026-10-01', createdAt: '2026-10-01 10:00:00',
+    })
+    d2.resolve({ list: [item(3, 'third-page-row')], total: 50, page: 3, size: 20 })
+    await flush(w)
+    expect((w.findComponent(ElTable).props('data') as any[])[0].name).toBe('third-page-row')
+    expect(w.findComponent(ElPagination).props('currentPage')).toBe(3)
+
+    d1.resolve({ list: [item(1, 'stale-first-page')], total: 50, page: 1, size: 20 })
+    await flush(w)
+    expect((w.findComponent(ElTable).props('data') as any[])[0].name).toBe('third-page-row')
+    expect(w.findComponent(ElPagination).props('currentPage')).toBe(3)
   })
 })

@@ -1232,11 +1232,17 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 - 外部 API 的 `err.Error()` 回显：`mp_release` / `wechat` / `storage` 等返回的是厂商业务错误，管理员需要「为什么发布失败」；一刀切改成固定文案会让排障失去线索。
 - `miniprogram/utils/types.ts` 12 个类型零引用：属类型化重构，不是缺陷；当前 `request<T>` 泛型通道空转，另立一轮做。
 
-### 4. 已识别但本轮**未改**（如实留档，不假装收口）
+### 4. 已识别但**当时**未改（1 / 2 已在第二十轮闭环，见下方订正）
 
 1. 页面级 `load()` 竞态：`StatDetail.vue` / `MPReleaseDialog.vue` / `Stats.vue`、小程序 `project/list.ts` / `team/all.ts` / `employee/stat.ts`（本轮只修了弱网错误态，未加请求序号）。
 2. 请求层统一 `AbortSignal` / 取消能力：这才是竞态的根因层修法；本轮用序号守住了最高频的两个载体，改请求封装会牵动所有调用点，需单独一轮 + 全量回归。
 3. `C4` Redis 水平扩展、PII 密钥轮换、binlog 回放演练：沿用既有「明确暂缓」结论。
+
+> **✅ 后续订正（2026-11-10 第二十轮）**：第 **1**、**2** 项均已闭环，
+> 不再是开放项。两端请求层新增**可选** `signal`（不传则行为完全不变，
+> 现有几十个调用点零改动），并抽出 `latestOnly` / `latestGuard` 守门；
+> 上述 6 个页面全部接入，含乱序用例与 8 项反向验证。
+> 第 **3** 项仍按既有结论暂缓，属架构演进而非缺陷。
 
 ### 5. 验证
 
@@ -1255,3 +1261,77 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
 新增守门：`backend/internal/handler/db_write_test.go`（DROP TABLE 与 GORM Update 回调注入真实 SQL 失败 + 源码级「裸写库」扫描）、
 `backend/internal/safego/safego_test.go`（panic 兜住 + 全仓裸 goroutine 扫描）、
 前端 `useServerTable.spec.ts` / `tenant.spec.ts` 乱序用例、小程序两页弱网与 WXML 错误态用例。
+
+
+---
+
+## 第二十轮实施记录（请求竞态的根因层收口，2026-11-10）
+
+### 1. 背景
+
+第十九轮把「页面级 `load()` 竞态」和「请求层统一取消能力」如实留成开放项。
+本轮把这两项一起收掉：不再让每个页面各写一套序号，而是让请求层具备**可选**的
+取消能力，再抽一个守门工具给页面复用。后端零改动，不影响任何接口契约。
+
+判据仍是项目自定口径：**没人报错时，用户是否无从察觉？** 旧响应盖掉新结果
+不会抛错、不会打日志，只会让运营看到「切了筛选数据没变 / 提交成功却像没生效」。
+
+### 2. 已修
+
+| 类别 | 问题与证据 | 处理 |
+| --- | --- | --- |
+| 根因层（前端） | `frontend/src/api/request.ts` 没有取消路径；`axios` 原生支持 `signal`，但三个会连查的 api 函数没把 config 透出去 | `adminStats` / `adminStatsDetail` / `listMPReleases` 各加**可选** `AxiosRequestConfig`；新增 `api/latest.ts` 的 `latestOnly()`（`next` / `isCurrent` / `cancel`）；error 拦截器对 `isCancel` / `ERR_CANCELED` 静默，否则连点两次筛选会弹一条莫名的「网络异常」 |
+| 根因层（小程序） | `miniprogram/utils/request.ts` 的 `wx.request` 返回 `RequestTask` 却丢弃，无法中断在途请求 | 新增 `utils/latest.ts`（`latestGuard` / `SupersededError` / `isSuperseded`）；`request` 加**可选第四参数** `signal`，把 `RequestTask` 挂上去；`success` / `fail` / 401 刷新链各挡一道 `aborted`；取消以 `SupersededError` **reject** 而非让 Promise 悬挂——悬挂会让 `onPullDownRefresh` 的 `finally` 永不执行，下拉指示器卡在屏幕上 |
+| 前端 3 页 | `Stats.vue` 连切日期、`StatDetail.vue` 翻页 / 换筛选 / 下钻、`MPReleaseDialog.vue` 打开 / 翻页 / 提交后刷新，旧响应都会盖掉新结果 | 各持一个 `latestOnly()`；`onUnmounted` 取消在飞请求；响应写回与 `finally` 清 loading 都判 `isCurrent`；`MPReleaseDialog` 的 `@closed="reset"` 也作废在飞请求 |
+| 小程序 3 页 | `project/list` 连点分类、`team/all` 搜索与加载更多并发、`employee/stat` 连切时间范围 | 各持 `latestGuard()`，`onUnload` 取消；`project/list` 的**列表与分类条各用一个 guard**（下拉刷新并发发两个请求，共用一个会互相取消）；`team/all` 新轮开始时复位 `loadingMore` 锁并加 `mainInFlight`，否则被取消的追加请求会让「加载更多」永久点不动，或追加请求反过来取消主查询 |
+| 测试桩耦合（本轮踩到） | 两端共 25 处 `toHaveBeenCalledWith` / `toHaveBeenLastCalledWith` 精确断言，新增可选参数后集体假红；先前两轮 grep 都漏了 `toHaveBeenLastCalledWith` 这个变体 | 全部补上第 N 个参数的 **正向守门**（`expect.objectContaining({ signal: expect.anything() })` / `expect.anything()`），既适配新签名，也钉死「这些页面必须传 signal」 |
+
+**向后兼容**：两端的 `signal` 都是可选参数。全站几十个调用点一个都不用改，
+不传时请求行为与改动前逐字一致；`{ ...config, params }` 的展开顺序保证
+调用方无法误传 `params` 改掉日期 / 分页口径。
+
+### 3. 刻意不改（别当遗漏再修一遍）
+
+- **不给 `rawRefresh` / 登录端点加 signal**：刷新是全局单飞，一个页面切走就 abort
+  掉刷新，会把同时 401 的其它页面一起拖下水。被取消的查询在
+  `refreshing.then` 里自行退场即可。
+- **不用 `instanceof SupersededError`**：小程序测试会 `resetModules`，跨模块实例
+  的 `instanceof` 会失效（`-target es2018` 下 Error 继承链也脆），统一按 `name` 判定。
+- **不做全站请求取消**：只有「同一页面会连续重查」的 6 个页面接入。表单提交、
+  写操作接取消会造成「用户以为没提交、其实后端已经成功」的更坏歧义。
+- **`team/all` 的 `mainInFlight` 不是多余**：它挡的是「主查询在途时触底追加」，
+  否则追加请求的 `next()` 会取消主查询，第 1 页永远回不来。
+
+### 4. 测试与反向验证
+
+6 个页面各补 1 个**乱序用例**：让第一次请求挂起，第二次先返回，再放旧响应回来，
+断言最终数据 / 页码 / 标题栏 / 错误态都不被旧响应改写。
+两端请求层共补 11 个用例（守门工具语义、取消后不交付旧数据、abort 的 fail 不误报
+网络错误、`RequestTask.abort()` 真被调用、401 刷新链中不发重试、axios 取消不弹提示）。
+另加源码级静态守门：`frontend/src/api/latest.spec.ts` 扫这 6 个页面，
+新增同类页面漏接守门即 CI 红。
+
+**反向验证 8 项**：6 个页面的 `isCurrent` 判定、小程序请求层的 3 处 `aborted` 拦截、
+前端 axios 取消静默分支，逐项改回旧实现并跑对应 spec 全部 `exit=1`；
+`try/finally` 自动还原后复跑 8 个 spec 全 `exit=0`，工作区无临时残留。
+
+### 5. 全量门禁（2026-11-10）
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 `go build` / `go vet` / `go test ./... -count=1` | 28 个包全绿 |
+| `golangci-lint v2.15.0 run --timeout=5m` | 0 issues |
+| 本地 MySQL 8.0 parity | `TestAPIFlowMySQL` 14 个子测试 + `TestMySQLMigrations` + `TestInstallMySQLEndToEnd` 全 PASS |
+| 前端 eslint / `vue-tsc --noEmit` | 0 错误 |
+| Vitest 全量（含小程序 spec） | **90 文件 / 1484 例全绿** |
+| `vite build`（`--outDir dist-check-*`） | 成功，临时目录已清理 |
+| `scripts/e2e_smoke.sh` | 全链路 PASS |
+| `tools/nginx-check/run.sh` | 95 通过 / 0 失败 |
+| `scripts/selftest_backup.sh` / `scripts/selftest_deploy_frontend.sh` | 12/0；50 PASS 0 FAIL |
+| 小程序类名冲突 / 第三方许可清单 / `git diff --check` | 无冲突 / 一致 / OK |
+
+### 6. 仍未改（如实留档）
+
+只剩第十九轮 §4 第 3 项：`C4` Redis 水平扩展、PII 密钥轮换、binlog 回放演练——
+架构演进与演练事项，不是缺陷，沿用既有「明确暂缓」结论。
+第十九轮 §3 的 `utils/types.ts` 类型化重构也仍属可选清理，不影响运行行为。

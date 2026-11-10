@@ -1,5 +1,6 @@
 import { request, assetUrl } from '../../../utils/request'
 import { thumbnailURL, onThumbError } from '../../../utils/thumb'
+import { latestGuard, isSuperseded } from '../../../utils/latest'
 
 Page({
   data: {
@@ -13,7 +14,13 @@ Page({
     loading: true,
     error: false,
   },
+  // 列表与分类条各自一个守门：下拉刷新会**并发**发这两个请求，
+  // 共用一个 guard 会导致后者把前者取消掉。
+  guard: null as any,
+  catsGuard: null as any,
   onLoad(query: any) {
+    if (!this.guard) this.guard = latestGuard()
+    if (!this.catsGuard) this.catsGuard = latestGuard()
     this.setData({
       categoryId: parseInt(query.categoryId || '0', 10),
       // 从首页透传（跳转页文档 §5）：子页分享 / 返回名片用
@@ -22,17 +29,26 @@ Page({
     this.loadCats()
     this.load()
   },
+  onUnload() {
+    this.guard?.cancel()
+    this.catsGuard?.cancel()
+  },
   // 业绩分类切换条：/api/achievements 的 categories 在响应根级（非 data 包裹）
   async loadCats() {
+    if (!this.catsGuard) this.catsGuard = latestGuard()
+    const guard = this.catsGuard
+    const sig = guard.next()
     try {
-      const r: any = await request('GET', '/api/achievements')
+      const r: any = await request('GET', '/api/achievements', undefined, sig)
+      if (!guard.isCurrent(sig)) return
       const cats = r.categories || []
       const target = this.data.categoryId > 0 ? 'cat-' + this.data.categoryId : ''
       // scroll-into-view 必须在目标节点渲染完成后设置，否则找不到元素不生效
       this.setData({ cats }, () => {
         if (target) this.setData({ toView: target })
       })
-    } catch {
+    } catch (e) {
+      if (isSuperseded(e) || !guard.isCurrent(sig)) return
       // 分类加载失败不阻塞列表：列表本身仍可用，只是没有分类切换
     }
   },
@@ -44,11 +60,17 @@ Page({
   },
   // 下拉刷新走 silent：不把整页切成「加载中」，否则内容会闪一下再回来。
   async load(opts?: { silent?: boolean }) {
+    if (!this.guard) this.guard = latestGuard()
+    const guard = this.guard
+    // 快速连点分类时，旧分类的响应必须作废：否则列表会显示上一个分类的案例，
+    // 而切换条高亮与标题栏已经是新分类（用户看不出为什么数据对不上）。
+    const sig = guard.next()
     const patch: Record<string, unknown> = { error: false }
     if (!opts || !opts.silent) patch.loading = true
     this.setData(patch)
     try {
-      const r = await request('GET', '/api/projects', { categoryId: this.data.categoryId })
+      const r = await request('GET', '/api/projects', { categoryId: this.data.categoryId }, sig)
+      if (!guard.isCurrent(sig)) return
       const list = (r.data || []).map((p: any) => {
         const cover = assetUrl(p.cover)
         return { ...p, cover, coverThumb: thumbnailURL(cover) }
@@ -58,8 +80,11 @@ Page({
       // 分类被删导致空名时退化为固定标题；「全部」（categoryId=0）不回显分类名
       const name = this.data.categoryId > 0 && list.length ? list[0].categoryName : ''
       wx.setNavigationBarTitle({ title: name || '项目案例' })
-    } catch {
+    } catch (e) {
+      if (isSuperseded(e) || !guard.isCurrent(sig)) return
       this.setData({ loading: false, error: true })
+    } finally {
+      if (guard.isCurrent(sig)) this.setData({ loading: false })
     }
   },
   // 下拉刷新：分类与列表一起重拉（分类可能被后台增删，只刷列表会留下失效的切换条）。

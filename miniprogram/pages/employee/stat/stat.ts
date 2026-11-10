@@ -1,5 +1,6 @@
 import { request } from '../../../utils/request'
 import { sourceLabel } from '../../../utils/track'
+import { latestGuard, isSuperseded } from '../../../utils/latest'
 
 // 员工数据统计页（B10）：时间筛选 + 转化率 + 按天趋势 + 内容浏览 TOP3 +
 // 裂变 + **访客从哪来**（来源分布）。
@@ -196,8 +197,17 @@ Page({
   // 30 天 × 8 项白跑一趟渲染层。
   rawTrend: [] as any[],
 
+  // onShow（每次切回前台）/ 时间范围切换 / 下拉刷新都会发请求，
+  // 快速连点「今日 → 7 天 → 30 天」时旧范围的数字会盖掉新范围。
+  guard: null as any,
+
   onShow() {
+    if (!this.guard) this.guard = latestGuard()
     this.load()
+  },
+
+  onUnload() {
+    this.guard?.cancel()
   },
 
   // 时间范围：切了就重新拉——范围不同就是另一份数据，不能拿旧响应凑
@@ -236,6 +246,9 @@ Page({
       wx.redirectTo({ url: '/pages/employee/login/login' })
       return
     }
+    if (!this.guard) this.guard = latestGuard()
+    const guard = this.guard
+    const sig = guard.next()
     const days = this.rangeDays()
     if (!opts || !opts.silent) this.setData({ loading: true })
     this.setData({ error: false })
@@ -243,7 +256,8 @@ Page({
       const r = await request('GET', '/api/employee/me/stat', {
         from: dayStr(-(days - 1)),
         to: dayStr(0),
-      })
+      }, sig)
+      if (!guard.isCurrent(sig)) return
       if (r.code === 0 && r.data) {
         this.apply(r.data, days)
       } else if (r.code === 401) {
@@ -252,14 +266,16 @@ Page({
         this.setData({ error: true })
         wx.showToast({ title: r.msg || '加载失败', icon: 'none' })
       }
-    } catch {
+    } catch (e) {
+      // 被下一次查询取消：不是网络故障，不能把新范围的数据打成错误态
+      if (isSuperseded(e) || !guard.isCurrent(sig)) return
       // 弱网 / 断网时 request 会 reject：以前 loading:false 写在 await 之后，
       // 抛错就永远执行不到，页面停在「加载中…」且没有任何可点的出口。
       // 现在统一落到可见错误态 + 重试按钮（与项目详情页同款）。
       this.setData({ error: true })
       wx.showToast({ title: '网络异常，请检查网络后重试', icon: 'none' })
     } finally {
-      this.setData({ loading: false })
+      if (guard.isCurrent(sig)) this.setData({ loading: false })
     }
   },
 

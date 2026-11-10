@@ -184,7 +184,7 @@ describe('MPReleaseDialog', () => {
     mountDialog([row({})])
     await nextTick()
     await nextTick()
-    expect(apiMocks.list).toHaveBeenCalledWith(2, { page: 1, size: 10 })
+    expect(apiMocks.list).toHaveBeenCalledWith(2, { page: 1, size: 10 }, expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('draft：只有「提交审核」，点击即提审', async () => {
@@ -322,5 +322,42 @@ describe('MPReleaseDialog', () => {
     // 上传成功后弹窗关掉、列表重新拉过一次（1 次首拉 + 1 次刷新）
     expect(apiMocks.list).toHaveBeenCalledTimes(2)
     expect(ElMessage.success).toHaveBeenCalled()
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('MPReleaseDialog 请求竞态守门', () => {
+  it('关闭再打开：旧列表响应后回来不覆盖新列表', async () => {
+    const d1 = raceDeferred<any>()
+    const d2 = raceDeferred<any>()
+    apiMocks.list.mockReset()
+    apiMocks.list
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise)
+
+    const w = mount(MPReleaseDialog, {
+      props: { company: { id: 2, name: '乙公司', wxConfigured: true }, modelValue: true },
+      global: { stubs, directives: { loading: vLoading } },
+    })
+    await nextTick()
+    await w.setProps({ modelValue: false })
+    await w.setProps({ modelValue: true })
+    await nextTick()
+    expect(apiMocks.list).toHaveBeenCalledTimes(2)
+
+    d2.resolve({ list: [row({ id: 2, userVersion: '2.0.0' })], total: 1, page: 1, size: 10 })
+    await nextTick()
+    await nextTick()
+    expect((w.findComponent(ElTable).props('data') as any[])[0].id).toBe(2)
+
+    d1.resolve({ list: [row({ id: 1, userVersion: '0.9.0' })], total: 1, page: 1, size: 10 })
+    await nextTick()
+    await nextTick()
+    expect((w.findComponent(ElTable).props('data') as any[])[0].id).toBe(2)
   })
 })

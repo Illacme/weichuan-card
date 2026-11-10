@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import http from './request'
 
 // 全局名片统计（超管）：汇总 + 按员工 + 按天趋势 + 内容浏览 TOP 榜。
@@ -78,9 +78,11 @@ const zeroSummary = (): StatSummary => ({
   posterSave: 0,
 })
 
-export function adminStats(range: StatRange = {}) {
+export function adminStats(range: StatRange = {}, config?: AxiosRequestConfig) {
   // 响应拦截器回传整包信封 {code,msg,data}，汇总/按员工/趋势/TOP 榜均在 data 下
-  return http.get('/admin/stats', { params: cleanParams(range) }).then((r: any) => {
+  // config 只用来透传 signal（见 ./latest.ts 的竞态守门）：params 由本函数决定，
+  // 放在展开之后，避免调用方误传 params 把日期口径改掉而不自知。
+  return http.get('/admin/stats', { ...config, params: cleanParams(range) }).then((r: any) => {
     const s = r.data?.summary ?? {}
     // 逐项 Number 兜底：后端理论上八项都在，但老副本（未跑迁移 0021）会缺
     // 后五项——缺项按 0 渲染，而不是把 undefined 显示成「undefined」
@@ -133,7 +135,7 @@ export interface StatDetailQuery {
   size?: number
 }
 
-export function adminStatsDetail(query: StatDetailQuery = {}) {
+export function adminStatsDetail(query: StatDetailQuery = {}, config?: AxiosRequestConfig) {
   const params: Record<string, string> = { ...cleanParams(query) }
   if (query.staffId) params.staffId = String(query.staffId)
   if (query.eventType) params.eventType = query.eventType
@@ -141,7 +143,8 @@ export function adminStatsDetail(query: StatDetailQuery = {}) {
   params.page = String(query.page ?? 1)
   params.size = String(query.size ?? 20)
   // 响应拦截器回传整包信封：data 是当前页数组，分页元信息在顶层
-  return http.get('/admin/stats/detail', { params }).then((r: any) => ({
+  // config 只贡献 signal；params 放后面防止被覆盖（同 adminStats）
+  return http.get('/admin/stats/detail', { ...config, params }).then((r: any) => ({
     list: (r.data ?? []) as StatDetailItem[],
     total: Number(r.total ?? 0),
     page: Number(r.page ?? 1),

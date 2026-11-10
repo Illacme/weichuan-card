@@ -240,7 +240,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { latestOnly, isSuperseded } from '@/api/latest'
 import { Download, Refresh, Search, Tickets, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { adminStats, exportStatsCsv, type StatRange, type StatSummary, type StatTopItem, type StatSourceItem, type StatFissionItem, SOURCE_LABELS } from '@/api/stats'
@@ -255,6 +256,10 @@ const { keyword, currentPage, size, total, paged } = useTable(
     (r.name || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw)
 )
 const loading = ref(false)
+// 日期快捷项 / 趋势图点某天 / 手动刷新连着点时，旧范围的汇总会盖掉新范围的
+// 三卡与趋势图；用 latestOnly 真取消在途请求，只让最后一次写回。
+const guard = latestOnly()
+onUnmounted(() => guard.cancel())
 // 方案A 同页分区折叠：内容浏览与裂变（三卡+两卡+TOP榜）与按员工表默认收起，
 // 点分区标题展开。常驻首屏只留工具条+转化三卡+趋势图，保住转化 vs 内容浏览的
 // 同屏对比与下钻闭环，只给首屏减负。
@@ -324,7 +329,7 @@ const rangeParam = computed<StatRange>(() =>
 
 // 范围变化即重查（不含首次：首次由 onMounted 触发，避免双请求）
 watch(range, () => {
-  load()
+  void load()
 })
 
 // 明细抽屉：员工行「明细」/「数据明细」按钮/趋势图点某天/TOP 榜行点击四个入口
@@ -375,9 +380,11 @@ function fissionTip(row: any): string {
 }
 
 async function load() {
+  const signal = guard.next()
   loading.value = true
   try {
-    const r = await adminStats(rangeParam.value)
+    const r = await adminStats(rangeParam.value, { signal })
+    if (!guard.isCurrent(signal)) return
     summary.value = r.summary
     // 浏览合计 / 裂变合计在前端算：后端每行已给五个分项（CSV 要用分项），
     // 表格只要两个数——多算两列比多传五列更省，也不改接口契约。
@@ -394,10 +401,11 @@ async function load() {
     // 老副本（未跑迁移 0022）缺这两个字段，兜底空数组——UI 显示空态而非崩溃
     sourceDist.value = r.sourceDist || []
     fissionTop.value = r.fissionTop || []
-  } catch {
+  } catch (e) {
+    if (isSuperseded(e)) return
     /* 拦截器已提示 */
   } finally {
-    loading.value = false
+    if (guard.isCurrent(signal)) loading.value = false
   }
 }
 

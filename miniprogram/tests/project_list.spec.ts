@@ -112,7 +112,7 @@ describe('project/list 页', () => {
     mockApis({ list: [project(7)] })
     const p = await page({ categoryId: '2' })
 
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/projects', { categoryId: 2 })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/projects', { categoryId: 2 }, expect.anything())
     expect(p.data.list[0].cover).toBe('https://cdn.test/uploads/p7.jpg')
     expect(p.data.loading).toBe(false)
   })
@@ -159,7 +159,7 @@ describe('project/list 页', () => {
     await flush()
 
     expect(p.data.categoryId).toBe(5)
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/projects', { categoryId: 5 })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/projects', { categoryId: 5 }, expect.anything())
   })
 
   it('点击案例：带 staffId 时把名片链透传到详情页', async () => {
@@ -190,5 +190,39 @@ describe('project/list 页', () => {
     expect(p.data.error).toBe(true)
     expect(p.data.loading).toBe(false)
     expect(p.data.list).toEqual([])
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('project/list 请求竞态守门', () => {
+  it('快速切分类：旧分类响应后回来不覆盖新分类列表', async () => {
+    const d1 = raceDeferred<any>()
+    const d2 = raceDeferred<any>()
+    let n = 0
+    mocks.request.mockImplementation(async (_m: string, path: string) => {
+      if (path === '/api/achievements') return { code: 0, categories: [] }
+      n += 1
+      return n === 1 ? d1.promise : d2.promise
+    })
+
+    const p = await page({ categoryId: '1' })
+    p.onCat({ currentTarget: { dataset: { id: '2' } } })
+    await flush()
+    expect(mocks.request).toHaveBeenCalledTimes(3) // 1 次分类 + 2 次列表
+
+    d2.resolve({ code: 0, data: [project(22)] })
+    await flush()
+    expect(p.data.list[0].id).toBe(22)
+
+    d1.resolve({ code: 0, data: [project(11)] })
+    await flush()
+    expect(p.data.list[0].id).toBe(22)
+    // 旧响应也不许再改一次标题栏
+    expect(wxStub.setNavigationBarTitle).toHaveBeenCalledTimes(1)
   })
 })

@@ -188,6 +188,12 @@ http.interceptors.response.use(
     return data as unknown as AxiosResponse
   },
   (error) => {
+    // 被下一轮查询主动取消（见 ./latest.ts）：这是**正常路径**，不是网络故障。
+    // 若走下面的通用分支，用户每连点两次筛选就会收到一条「网络异常，请稍后重试」，
+    // 明明最新那次请求已经成功了。调用方靠 isSuperseded() 自行静默返回。
+    if (axios.isCancel(error) || (error as any)?.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
     // HTTP 非 2xx（403 / 500 / 404…）时后端同样回 { code, msg } 信封，必须把 msg
     // 透出来。丢掉它，用户只会看到 axios 的英文原文
     // （"Request failed with status code 403"）——安装向导第一步 403 就是这么被

@@ -82,8 +82,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { adminStatsDetail, type StatDetailItem, type StatRange } from '@/api/stats'
+import { latestOnly, isSuperseded } from '@/api/latest'
 
 const props = defineProps<{
   open: boolean
@@ -107,6 +108,10 @@ const total = ref(0)
 const page = ref(1)
 const size = ref(20)
 const loading = ref(false)
+// 打开抽屉 / 换筛选 / 翻页 / 下钻会各发一次请求，条件切换快时旧响应会盖掉新结果
+// （表格是第 2 页的张三，分页器却已经被拨回第 1 页）。统一交给 latestOnly。
+const guard = latestOnly()
+onUnmounted(() => guard.cancel())
 const staffFilter = ref(0)
 const typeFilter = ref('')
 const targetFilter = ref(0)
@@ -147,26 +152,33 @@ const rangeLabel = computed(() =>
 )
 
 async function load() {
+  const signal = guard.next()
   loading.value = true
   try {
-    const r = await adminStatsDetail({
-      from: props.range.from,
-      to: props.range.to,
-      staffId: staffFilter.value || undefined,
-      eventType: typeFilter.value || undefined,
-      targetId: targetFilter.value || undefined,
-      page: page.value,
-      size: size.value,
-    })
+    const r = await adminStatsDetail(
+      {
+        from: props.range.from,
+        to: props.range.to,
+        staffId: staffFilter.value || undefined,
+        eventType: typeFilter.value || undefined,
+        targetId: targetFilter.value || undefined,
+        page: page.value,
+        size: size.value,
+      },
+      { signal }
+    )
+    if (!guard.isCurrent(signal)) return
     list.value = r.list
     total.value = r.total
     // 越界页码（如翻到第 5 页后数据被删）会被后端夹到末页，界面同步过来，
     // 否则分页栏显示第 5 页而表格是第 1 页的内容
     page.value = r.page
-  } catch {
+  } catch (e) {
+    if (isSuperseded(e)) return
     /* 拦截器已提示 */
   } finally {
-    loading.value = false
+    // 旧请求不许清掉新请求正在转的圈
+    if (guard.isCurrent(signal)) loading.value = false
   }
 }
 

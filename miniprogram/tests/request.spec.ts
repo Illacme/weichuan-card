@@ -8,6 +8,7 @@
 //     调用发生即按 index 挂起，测试在合适的链路节点用 respond(index, data) 精确投递，
 //     之后用 tick()（等一个 macrotask，附带排空微任务）推进到下一节点。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { latestGuard, isSuperseded } from '../utils/latest'
 
 interface WxRequestOpts {
   url: string
@@ -26,6 +27,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
 function installWx() {
   const store: Record<string, string> = {}
   const calls: WxRequestOpts[] = []
+  // 真 wx.request 返回 RequestTask；桩也返回一个，供「取消会 abort 在途请求」的用例断言
+  const taskAbort = vi.fn()
   const script = new Map<number, { v: any | 'fail'; statusCode?: number }>()
   const waiting = new Map<number, WxRequestOpts>()
 
@@ -46,6 +49,7 @@ function installWx() {
       const idx = calls.length
       calls.push(opts)
       deliver(idx, opts)
+      return { abort: taskAbort }
     }),
     getStorageSync: (k: string) => (k in store ? store[k] : ''),
     setStorageSync: (k: string, v: string) => {
@@ -64,7 +68,7 @@ function installWx() {
     if (opts) deliver(idx, opts)
   }
 
-  return { store, calls, respond }
+  return { store, calls, respond, taskAbort }
 }
 
 async function loadRequest() {
@@ -265,5 +269,81 @@ describe('401 静默刷新与重试', () => {
     expect(r1.code).toBe(0)
     expect(r2.code).toBe(0)
     expect(store.empToken).toBe('shared')
+  })
+})
+
+// 可选 signal：不传时上面 13 个用例已经钉住行为完全不变；
+// 传了才启用取消，且取消必须 reject（不能悬挂 Promise，否则下拉指示器不收）。
+describe('request 的取消信号', () => {
+  it('被下一轮取消后，旧 success 响应不得交付调用方', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+    const guard = latestGuard()
+    const sig = guard.next()
+
+    const p = request('GET', '/api/card', { staffId: 1 }, sig)
+    // 立刻挂 catch：刷新链会跨 macrotask，晚挂会被 Node 判成 unhandledRejection
+    const settled = p.catch((e) => e)
+    guard.next() // 用户切了筛选，旧查询作废
+    respond(0, { code: 0, data: { stale: true } })
+
+    const err = await settled
+    expect(isSuperseded(err)).toBe(true)
+    expect((err as Error).message).toBe('superseded')
+  })
+
+  it('abort 触发的 fail 不能被当成网络错误', async () => {
+    const { respond } = installWx()
+    const { request } = await loadRequest()
+    const guard = latestGuard()
+    const sig = guard.next()
+
+    const p = request('GET', '/api/card', undefined, sig)
+    const settled = p.catch((e) => e)
+    guard.next()
+    // 真 wx.request 的 abort() 会以 fail("request:fail abort") 回来
+    respond(0, 'fail')
+
+    const err = await settled
+    expect(isSuperseded(err)).toBe(true)
+    expect((err as Error).message).not.toContain('network')
+  })
+
+  it('next() 会真的调用在途 RequestTask.abort()', async () => {
+    const { taskAbort, respond } = installWx()
+    const { request } = await loadRequest()
+    const guard = latestGuard()
+    const sig = guard.next()
+
+    // 不预设应答 → 桩把请求挂起，task 已挂到 signal 上
+    const p = request('GET', '/api/card', undefined, sig)
+    const settled = p.catch((e) => e)
+    guard.next()
+
+    expect(taskAbort).toHaveBeenCalledTimes(1)
+    // 补一个应答，确认旧请求以「被取消」收尾而不是永远悬挂
+    respond(0, { code: 0, data: { stale: true } })
+    const err = await settled
+    expect(isSuperseded(err)).toBe(true)
+  })
+
+  it('401 刷新链期间被取消 → 不再为旧查询发重试请求', async () => {
+    const { store, calls, respond } = installWx()
+    store.empToken = 'old'
+    store.empRefreshToken = 'r-1'
+    const { request } = await loadRequest()
+    const guard = latestGuard()
+    const sig = guard.next()
+
+    const p = request('GET', '/api/employee/me', undefined, sig)
+    const settled = p.catch((e) => e)
+    respond(0, { code: 401 }) // 触发全局刷新（第 2 个 wx.request）
+    guard.next() // 刷新还没回来，页面已经切走
+    respond(1, { code: 0, token: 'new' })
+    await tick()
+
+    const err = await settled
+    expect(isSuperseded(err)).toBe(true)
+    expect(calls).toHaveLength(2) // 只有原请求 + 刷新，没有第三次重试
   })
 })

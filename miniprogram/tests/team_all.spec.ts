@@ -75,7 +75,7 @@ describe('查看全部 · 首屏与分页', () => {
     mocks.request.mockResolvedValueOnce(resp())
     const p = await page({ companyId: '7' })
 
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 }, expect.anything())
     expect(p.data.list).toHaveLength(60)
     expect(p.data.total).toBe(130)
     expect(p.data.hasMore).toBe(true)
@@ -91,7 +91,7 @@ describe('查看全部 · 首屏与分页', () => {
     p.onReachBottom()
     await flush()
 
-    expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/team', { page: 2, size: 60 })
+    expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/team', { page: 2, size: 60 }, expect.anything())
     expect(p.data.list).toHaveLength(120)
     expect(p.data.page).toBe(2)
   })
@@ -204,7 +204,7 @@ describe('查看全部 · 搜索', () => {
     const p = await page({ companyId: '7', keyword: '张' })
 
     expect(p.data.keyword).toBe('张')
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60, keyword: '张' })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60, keyword: '张' }, expect.anything())
   })
 
   // 换关键字必须从第一页重来，否则会把新结果追加到旧结果后面
@@ -221,7 +221,7 @@ describe('查看全部 · 搜索', () => {
     expect(p.data.page).toBe(1)
     expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/team', {
       page: 1, size: 60, keyword: '销售',
-    })
+    }, expect.anything())
   })
 
   it('清空关键字：回到全员列表', async () => {
@@ -233,7 +233,7 @@ describe('查看全部 · 搜索', () => {
     await flush()
 
     expect(p.data.activeKeyword).toBe('')
-    expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/team', { page: 1, size: 60 })
+    expect(mocks.request).toHaveBeenLastCalledWith('GET', '/api/team', { page: 1, size: 60 }, expect.anything())
   })
 })
 
@@ -268,5 +268,46 @@ describe('查看全部 · 交互', () => {
     await p.onPullDownRefresh()
 
     expect(wxStub.stopPullDownRefresh).toHaveBeenCalled()
+  })
+})
+
+function raceDeferred<T = any>() {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('team/all 请求竞态守门', () => {
+  it('搜索时旧的「加载更多」响应后回来，不得追加进新搜索结果', async () => {
+    const dMore = raceDeferred<any>()
+    const dSearch = raceDeferred<any>()
+    let n = 0
+    mocks.request.mockImplementation(async () => {
+      n += 1
+      if (n === 1) return resp()
+      if (n === 2) return dMore.promise
+      return dSearch.promise
+    })
+
+    const p = await page()
+    p.onReachBottom()
+    await flush()
+    expect(p.data.loadingMore).toBe(true)
+
+    p.onKeywordInput({ detail: { value: '李' } })
+    p.onSearch()
+    await flush()
+    expect(mocks.request).toHaveBeenCalledTimes(3)
+
+    dSearch.resolve(resp({ data: people(99, 1), total: 1, page: 1, hasMore: false }))
+    await flush()
+    expect(p.data.list).toHaveLength(1)
+    expect(p.data.activeKeyword).toBe('李')
+
+    dMore.resolve(resp({ data: people(61, 60), page: 2, hasMore: true }))
+    await flush()
+    expect(p.data.list).toHaveLength(1)
+    expect(p.data.page).toBe(1)
+    expect(p.data.loadingMore).toBe(false)
   })
 })

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import axios from 'axios'
 
 // 统一响应契约见 request.ts 注释：
 //   成功 code=0；业务失败 code=1；特殊状态 code=2；鉴权失败 HTTP 200 + code 401/403。
@@ -218,6 +219,21 @@ describe('request 响应拦截：HTTP 非 2xx 时的错误文案', () => {
     // 拿不到 msg 就原样抛出 axios 错误，至少保留 status / response 供排障
     expect(err).toBe(raw)
     expect(elMessage.error).toHaveBeenCalledWith('网络异常，请稍后重试')
+  })
+
+  it('请求被下一轮查询取消：原样抛出，绝不弹「网络异常」惊动用户', async () => {
+    // 连点两次筛选就会取消上一次请求；最新那次其实成功了，
+    // 若这里走通用分支，用户会莫名其妙收到一条红色错误提示。
+    const cancelled = new axios.CanceledError('canceled')
+    const err = await respRejected()(cancelled).catch((e: any) => e)
+    expect(err).toBe(cancelled)
+    expect(elMessage.error).not.toHaveBeenCalled()
+
+    const byCode: any = new Error('canceled')
+    byCode.code = 'ERR_CANCELED'
+    const err2 = await respRejected()(byCode).catch((e: any) => e)
+    expect(err2).toBe(byCode)
+    expect(elMessage.error).not.toHaveBeenCalled()
   })
 })
 

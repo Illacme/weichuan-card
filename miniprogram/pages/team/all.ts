@@ -17,6 +17,7 @@
 //     只在底部给一行「加载失败，点击重试」。
 import { request } from '../../utils/request'
 import { onThumbError } from '../../utils/thumb'
+import { latestGuard, isSuperseded } from '../../utils/latest'
 import { applyBrandTitle } from '../../utils/brand'
 import { mapTeamList, mergeTeam, teamParams, hasMoreOf } from '../../utils/team'
 
@@ -38,7 +39,14 @@ Page({
     moreError: false,
   },
 
+  // 搜索 / 清空 / 下拉刷新 / 滚动追加共用一个守门：换关键字时若旧请求还在途，
+  // 旧响应会把 list 重新填回旧关键字的人（用户点中的人反而不在列表里）。
+  guard: null as any,
+  // 主查询（非 more）在途时不允许发追加：否则追加会 guard.next() 取消主查询，
+  // 第 1 页的结果永远回不来，用户看到的是「越滑越多的第 2 页」。
+  mainInFlight: false,
   onLoad(query: any) {
+    if (!this.guard) this.guard = latestGuard()
     const cid = parseInt((query && query.companyId) || '0', 10)
     const kw = ((query && query.keyword) || '').trim()
     const patch: Record<string, unknown> = {}
@@ -48,14 +56,26 @@ Page({
     this.load()
   },
 
+  onUnload() {
+    this.guard?.cancel()
+  },
+
   // load 拉数据。more=true 表示「追加下一页」，false 表示「从第一页重来」。
   async load(opts?: { silent?: boolean; more?: boolean }) {
     const more = !!(opts && opts.more)
-    // 防重入：加载更多时若已有请求在途，或后端说没有了，直接忽略
-    if (more && (this.data.loadingMore || !this.data.hasMore)) return
+    // 防重入：加载更多时若已有请求在途、主查询在途，或后端说没有了，直接忽略
+    if (more && (this.data.loadingMore || !this.data.hasMore || this.mainInFlight)) return
 
+    if (!this.guard) this.guard = latestGuard()
+    const guard = this.guard
+    const sig = guard.next()
+    // 新轮开始：上一轮的主查询要么已结束，要么刚被 next() 取消，标志统一复位。
+    // 旧轮的 finally 判 isCurrent=false，不会回来把新轮的标志改错。
+    this.mainInFlight = !more
     const nextPage = more ? this.data.page + 1 : 1
-    const patch: Record<string, unknown> = { error: false, moreError: false }
+    // 上一轮若是在途的「加载更多」并被本次取消，loadingMore 会永远为 true，
+    // 之后所有 onReachBottom 都被防重入挡住——开新轮时先复位这把锁。
+    const patch: Record<string, unknown> = { error: false, moreError: false, loadingMore: false }
     if (more) {
       patch.loadingMore = true
     } else if (!opts || !opts.silent) {
@@ -64,7 +84,8 @@ Page({
     this.setData(patch)
 
     try {
-      const r: any = await request('GET', '/api/team', teamParams(nextPage, this.data.activeKeyword))
+      const r: any = await request('GET', '/api/team', teamParams(nextPage, this.data.activeKeyword), sig)
+      if (!guard.isCurrent(sig)) return
       if (r.code !== 0) {
         // 企业不存在 / 停用：不是网络问题，重试也没用
         this.setData({ loading: false, loadingMore: false, unavailable: true })
@@ -82,7 +103,8 @@ Page({
         loadingMore: false,
       })
       applyBrandTitle({ shortName: comp.shortName, fullName: comp.fullName })
-    } catch {
+    } catch (e) {
+      if (isSuperseded(e) || !guard.isCurrent(sig)) return
       // 追加失败：保留已加载的人，只在底部提示可重试
       this.setData({
         loading: false,
@@ -90,6 +112,12 @@ Page({
         error: !more,
         moreError: more,
       })
+    } finally {
+      // 旧轮（已被取消）不许清掉新轮正在转的圈，也不许把追加锁一直留着
+      if (guard.isCurrent(sig)) {
+        this.mainInFlight = false
+        this.setData({ loading: false, loadingMore: false })
+      }
     }
   },
 

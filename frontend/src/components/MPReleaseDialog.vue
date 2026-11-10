@@ -171,7 +171,8 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch, type Ref } from 'vue'
+import { reactive, ref, watch, onUnmounted, type Ref } from 'vue'
+import { latestOnly, isSuperseded } from '@/api/latest'
 import { Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
@@ -209,20 +210,32 @@ const total = ref(0)
 const page = ref(1)
 const size = ref(10)
 const loading = ref(false)
+// 打开弹窗 / 翻页 / 提交动作后的 reload / 手动刷新会并发发请求，
+// 旧列表回来会覆盖刚提交成功后的新状态（看起来像「操作没生效」）。
+const guard = latestOnly()
+onUnmounted(() => guard.cancel())
 // acting = `${记录id}:${动作}`：同一时刻只让一个按钮转圈，且能精确到是哪一行的哪个动作
 const acting = ref('')
 
 async function reload() {
   if (!props.company) return
+  const signal = guard.next()
   loading.value = true
   try {
-    const r = await listMPReleases(props.company.id, { page: page.value, size: size.value })
+    const r = await listMPReleases(
+      props.company.id,
+      { page: page.value, size: size.value },
+      { signal }
+    )
+    if (!guard.isCurrent(signal)) return
     rows.value = r.list
     total.value = r.total
-  } catch {
+  } catch (e) {
+    // 被下一次 reload 取消：不是错误，也不弹提示
+    if (isSuperseded(e)) return
     // 拦截器已提示；保留旧数据，避免一次网络抖动把表格清空让人以为记录没了
   } finally {
-    loading.value = false
+    if (guard.isCurrent(signal)) loading.value = false
   }
 }
 
@@ -243,6 +256,8 @@ watch(
 watch([page, size], reload)
 
 function reset() {
+  // 弹窗已经关了，别让在飞响应把 rows 再填回去；下次打开会重新开一轮
+  guard.cancel()
   rows.value = []
   total.value = 0
   acting.value = ''

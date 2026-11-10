@@ -8,6 +8,7 @@
 // /api/employee/*、/api/wechat/*、登录刷新等与租户无关，一律不注入。
 import { getCompanyId } from './tenant'
 import { DEFAULT_BASE_URL } from './config'
+import { SupersededError, type RequestSignal } from './latest'
 
 const app = getApp() as any
 
@@ -45,7 +46,9 @@ export interface ApiResult<T> {
 // 单飞锁：并发 401 只触发一次刷新，其余复用同一次结果
 let refreshing: Promise<string | null> | null = null
 
-// 裸请求（不经过本封装，避免递归）：用 refresh 令牌换新的 access
+// 裸请求（不经过本封装，避免递归）：用 refresh 令牌换新的 access。
+// 刻意**不接受 signal**：刷新是全局单飞，一个页面切走就把刷新 abort 掉，
+// 会把同时 401 的其它页面一起拖下水；被取消的查询在 refreshing.then 里自行退场。
 function rawRefresh(refreshToken: string): Promise<ApiResult<any>> {
   return new Promise((resolve, reject) => {
     wx.request({
@@ -106,9 +109,16 @@ function withCompanyId(method: 'GET' | 'POST' | 'PUT', path: string, data: any):
   return { ...(data || {}), companyId: cid }
 }
 
-// method 支持 GET/POST/PUT；GET 的 data 会拼成 query string
-export function request<T = any>(method: 'GET' | 'POST' | 'PUT', path: string, data?: any): Promise<ApiResult<T>> {
-  return doRequest<T>(method, path, data, wx.getStorageSync('empToken'), false)
+// method 支持 GET/POST/PUT；GET 的 data 会拼成 query string。
+// 第四个参数 signal 是**可选**的取消信号（见 utils/latest.ts）：不传时行为与从前完全一致，
+// 全站几十个调用点一个都不用改；只有会连续重查的页面才传，用来取消在途的旧查询。
+export function request<T = any>(
+  method: 'GET' | 'POST' | 'PUT',
+  path: string,
+  data?: any,
+  signal?: RequestSignal
+): Promise<ApiResult<T>> {
+  return doRequest<T>(method, path, data, wx.getStorageSync('empToken'), false, signal)
 }
 
 function doRequest<T>(
@@ -116,7 +126,8 @@ function doRequest<T>(
   path: string,
   data: any,
   token: string,
-  retried: boolean
+  retried: boolean,
+  signal?: RequestSignal
 ): Promise<ApiResult<T>> {
   return new Promise((resolve, reject) => {
     data = withCompanyId(method, path, data)
@@ -130,7 +141,7 @@ function doRequest<T>(
       if (qs) url += (url.indexOf('?') >= 0 ? '&' : '?') + qs
       body = undefined
     }
-    wx.request({
+    const task = wx.request({
       url,
       method,
       data: body,
@@ -139,6 +150,12 @@ function doRequest<T>(
         ...(token ? { Authorization: 'Bearer ' + token } : {}),
       },
       success: (res) => {
+        // 被后一次查询取消：abort() 可能来不及阻止回调（尤其同步应答的桩），
+        // 这里再挡一道，旧响应绝不能进调用方的成功分支。
+        if (signal?.aborted) {
+          reject(new SupersededError())
+          return
+        }
         const result = res.data as ApiResult<T>
         // 网关/反代兜底页（nginx 404/502 的 HTML）不是接口信封：resolve 出去会让
         // 调用方把「服务不可达」误判成业务态（如员工不存在 → 引导用户改编号，
@@ -160,8 +177,14 @@ function doRequest<T>(
             })
           }
           refreshing.then((newToken) => {
+            // 刷新链跨多轮微任务，期间页面可能已经发了新查询。
+            // 不在这里挡，就会为一次已被取消的旧查询再发一个请求。
+            if (signal?.aborted) {
+              reject(new SupersededError())
+              return
+            }
             if (newToken) {
-              doRequest<T>(method, path, data, newToken, true).then(resolve, reject)
+              doRequest<T>(method, path, data, newToken, true, signal).then(resolve, reject)
             } else {
               clearAuth()
               resolve(result)
@@ -175,7 +198,29 @@ function doRequest<T>(
         }
         resolve(result)
       },
-      fail: (err) => reject(err),
+      fail: (err) => {
+        // 真 wx.request 的 abort() 会触发 fail("request:fail abort")：
+        // 这是主动取消，不能当成网络错误把页面打成错误态。
+        if (signal?.aborted) {
+          reject(new SupersededError())
+          return
+        }
+        reject(err)
+      },
     })
+    // RequestTask.abort() 才能真正断掉在途请求，省下弱网下的带宽。
+    // 单测桩的 wx.request 通常返回 undefined，故一律可选判断。
+    if (signal) {
+      signal.task = task
+      // 同步应答的桩在拿到 task 之前就跑完了 success，那时候 abort 还没发；
+      // 若此刻已被取消就补一次（真环境异步，next() 里已经发过，这里不会重复生效）。
+      if (signal.aborted && task && typeof task.abort === 'function') {
+        try {
+          task.abort()
+        } catch {
+          // 请求已结束，忽略
+        }
+      }
+    }
   })
 }
