@@ -33,16 +33,29 @@
         :class="{ selected: selected === t.id, locked: isLocked(t) }"
         @click="pick(t)"
       >
-        <!-- 预览卡按模板 id 套用对应的版式示意：换色之外，圆角/描边/按钮形态
-             也要让客户一眼看出差别。这里是示意而非像素级复刻，真值在
-             miniprogram/app.wxss 的 --wc-r-* / --wc-card-shadow-* token。 -->
-        <div class="theme-preview" :class="'layout-' + t.id" :style="{ background: t.previewSoft }">
-          <div class="preview-nav" :style="{ background: t.previewPrimary }" />
-          <div class="preview-card">
-            <div class="preview-line" :style="{ background: t.previewPrimary }" />
-            <div class="preview-line short" />
-            <div class="preview-btn" :style="{ background: t.previewPrimary }" />
+        <!-- 真实预览图由 scripts/gen_theme_previews.py 从 miniprogram/app.wxss 的
+             token 生成，和访客端共用同一套配色 / 圆角 / 投影，不是手画的第二套样式。
+             底层 CSS 示意常驻：图片加载中、404、或新增模板忘了补图时都不会留空白；
+             右下角「示意图」角标让降级可见，而不是悄悄退回旧样式。
+             .layout-<id> 仍是示意路径与跨端守门的对账点。 -->
+        <div class="theme-preview" :class="'layout-' + t.id">
+          <div class="preview-fallback" :style="{ background: t.previewSoft }">
+            <div class="preview-nav" :style="{ background: t.previewPrimary }" />
+            <div class="preview-card">
+              <div class="preview-line" :style="{ background: t.previewPrimary }" />
+              <div class="preview-line short" />
+              <div class="preview-btn" :style="{ background: t.previewPrimary }" />
+            </div>
+            <span class="fallback-tag">示意图</span>
           </div>
+          <img
+            v-if="!failedPreviews[t.id]"
+            class="preview-shot"
+            :src="previewUrl(t.id)"
+            :alt="t.name + ' 小程序首页预览'"
+            decoding="async"
+            @error="onPreviewError(t.id)"
+          />
         </div>
         <div class="theme-meta">
           <div class="theme-name">
@@ -80,6 +93,21 @@ const selected = ref('default')
 const templates = ref<ThemeTemplate[]>([])
 const templateEntitled = ref(true)
 
+// 预览图是随前端版本发布的静态资源：加载失败时移除该张 <img>，露出底层示意。
+// 用「id -> 失败」而不是一个全局开关，某一张图坏了不能把其余三张一起降级。
+const failedPreviews = ref<Record<string, boolean>>({})
+
+// public/ 下的文件由 Vite 原样拷到产物根目录；带 BASE_URL 前缀，部署到子路径时
+// 不会误打到站点根下的 /theme-previews。encodeURIComponent 防 id 拼出非预期路径，
+// 真出异常也就是这张图 404 → 走兜底，不会静默显示另一款模板的图。
+function previewUrl(id: string): string {
+  return `${import.meta.env.BASE_URL}theme-previews/${encodeURIComponent(id)}.png`
+}
+
+function onPreviewError(id: string) {
+  failedPreviews.value = { ...failedPreviews.value, [id]: true }
+}
+
 // 未开通授权时禁止「新选」高级款；但**当前已在用**的那一款不能锁——
 // 授权到期后客户仍要能带着它保存别处设置，或主动切回经典蓝（后端同值放行）。
 function isLocked(t: ThemeTemplate): boolean {
@@ -93,6 +121,9 @@ function pick(t: ThemeTemplate) {
 
 async function load() {
   loading.value = true
+  // 「重新加载」也该给预览图一次重试机会：例如刚补上漏生成的 PNG，
+  // 或上一轮只是临时网络抖动，不能让客户一直停在示意图上。
+  failedPreviews.value = {}
   try {
     const d = await getHomeLayout()
     templates.value = Array.isArray(d?.templates) ? d.templates : []
@@ -151,7 +182,7 @@ onMounted(load)
   margin-top: 8px;
 }
 .theme-card {
-  width: 210px;
+  width: 230px;
   border: 2px solid #e4e7ed;
   border-radius: 12px;
   overflow: hidden;
@@ -168,20 +199,53 @@ onMounted(load)
   cursor: not-allowed;
   opacity: 0.62;
 }
+/* 预览容器比例与 gen_theme_previews.py 的 375x430 画布一致：图片下载完成前后
+   都不跳版，四张卡保持对齐。生成脚本刻意把高度收到 430，就是为了让底部按钮
+   （四款圆角差异最大的一处）完整可见，这里不能再裁切。 */
 .theme-preview {
   position: relative;
-  height: 128px;
+  aspect-ratio: 375 / 430;
+  overflow: hidden;
+}
+/* 底层示意常驻：img 还在下载 / 404 / 新模板漏补图时都有内容；
+   「示意图」角标让降级是可见的，不会没人报错就没人发现。 */
+.preview-fallback {
+  position: absolute;
+  inset: 0;
   padding: 12px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+.fallback-tag {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-size: 11px;
+  color: #606266;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.preview-shot {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .preview-nav {
   height: 14px;
   border-radius: 4px;
   opacity: 0.9;
+  flex: none;
 }
 .preview-card {
   margin-top: 12px;
   padding: 12px;
+  flex: 1;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);

@@ -844,9 +844,16 @@ id 白名单在 `backend/internal/mptemplate`，端上色值与版式全部随�
   对比度必须 ≥4.5（WCAG AA 正文级），由 `theme.spec.ts` 按相对亮度公式实算。
   `default` 是历史基线，只锁「不许变差」。`--wc-primary-rgb` 必须与
   `--wc-primary` 同色，否则 `rgba(var(--wc-primary-rgb), …)` 的阴影会错色。
-- **加一款模板要改 4 处**：Go 白名单、`app.wxss` 变量块、`THEME_IDS`、
-  `MpTheme.vue` 的 `.layout-<id>` 预览示意；`tests/theme.spec.ts` 逐项对账，
+- **加一款模板要改 5 处**：Go 白名单、`app.wxss` 变量块、`THEME_IDS`、
+  `MpTheme.vue` 的 `.layout-<id>` 兜底示意、重跑 `scripts/gen_theme_previews.py`
+  出 `frontend/public/theme-previews/<id>.png`；`tests/theme.spec.ts` 逐项对账，
   漏一处即变红。加款后必须随小程序**重新提审发版**，端上不能热加载 WXSS。
+- **后台预览图不是第二套样式**：`scripts/gen_theme_previews.py` 直接解析本文件
+  （`app.wxss`）的 18 个 `--wc-*` token，注入复刻首页结构的 HTML 后用无头 Chrome
+  出图，改了配色 / 圆角重跑脚本即可；`theme.spec.ts` 断言 HTML 里不得手写任一
+  主题主色、PNG 集合与 Go 白名单一一对应，避免端上改了而后台悄悄变旧。
+  出图同时写 `manifest.json`（每款 18 个 token 的快照），改了 `app.wxss` 却没重出图时
+  `--check` 与 `theme.spec.ts` 都会红——只查「PNG 都在」是挡不住这种漂移的。
 - **冷启动预热**：`app.ts` 的 `onLaunch` 在租户绑定之后调
   `utils/themeBootstrap.prefetchTheme()` 拉一次公开 `/api/home-layout`，
   写缓存并广播到页面栈。访客从分享链接**直达二级页**时首页 `loadAll` 不会执行，

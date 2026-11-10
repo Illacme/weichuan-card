@@ -346,3 +346,106 @@ describe('小程序整体风格模板 版式差异', () => {
     }
   })
 })
+
+// ===== 真实预览图 跨端对账 =====
+//
+// 后台模板卡若退回「手画 CSS 色块」，或加了一款模板却忘了重跑生成脚本，
+// 都不会有人报错：客户只是看到一张和端上对不上的示意图，或一张 404 空白。
+// 这里把 Go 白名单 / PNG 产物 / 生成脚本画布 / 后台容器比例 / 接入代码钉成一条链，
+// 并且和生成脚本的 --check 互为补充：那个查产物，这个查「接入代码有没有被改回去」。
+const PREVIEW_DIR = resolve(REPO, 'frontend/public/theme-previews')
+const PREVIEW_SCRIPT = resolve(REPO, 'scripts/gen_theme_previews.py')
+const MP_THEME_VUE = resolve(REPO, 'frontend/src/views/content/MpTheme.vue')
+
+function goTemplateIds(): string[] {
+  const src = readFileSync(GO_TPL, 'utf-8')
+  const def = /DefaultID\s*=\s*"([a-z0-9_-]+)"/.exec(src)?.[1]
+  if (!def) throw new Error('mptemplate.go 找不到 DefaultID')
+  return Array.from(src.matchAll(/ID:\s*(DefaultID|"([a-z0-9_-]+)")/g)).map((m) => m[2] || def)
+}
+
+describe('小程序整体风格模板 真实预览图', () => {
+  it('每款模板都有一张合法 PNG，尺寸与生成脚本画布一致，没有多余图', () => {
+    const ids = goTemplateIds()
+    expect(ids.length).toBeGreaterThanOrEqual(2)
+    expect([...THEME_IDS].sort()).toEqual([...ids].sort(), '小程序 class 白名单与 Go 白名单漂移')
+    const files = readdirSync(PREVIEW_DIR)
+      .filter((f) => f.endsWith('.png'))
+      .map((f) => f.slice(0, -4))
+    expect(files.sort()).toEqual([...ids].sort(), '加款忘了重跑 gen_theme_previews.py')
+
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)
+    const scale = /SCALE\s*=\s*(\d+)/.exec(script)
+    expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
+    expect(scale, '生成脚本缺 SCALE').not.toBeNull()
+    const expected = [Number(dim![1]) * Number(scale![1]), Number(dim![2]) * Number(scale![1])]
+
+    for (const id of ids) {
+      const buf = readFileSync(join(PREVIEW_DIR, `${id}.png`))
+      expect(buf.subarray(0, 8).toString('hex'), `${id} 不是 PNG`).toBe('89504e470d0a1a0a')
+      expect([buf.readUInt32BE(16), buf.readUInt32BE(20)], `${id} 尺寸`).toEqual(expected)
+      expect(buf.length, `${id} 疑似空白图`).toBeGreaterThan(5000)
+    }
+  })
+
+  it('生成脚本从 app.wxss 取 token，不手画第二套主题色', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    expect(script).toContain('miniprogram/app.wxss')
+    expect(script).toContain('read_tokens()')
+    expect(script).toMatch(/TOKEN_RE\s*=\s*re\.compile/)
+    // 模板 id 与顺序必须以 Go 白名单为准，脚本里不能自己再列一份
+    expect(script).toContain('mptemplate.go')
+
+    const html = script.slice(script.indexOf('HTML = """'), script.indexOf('def find_chrome'))
+    expect(html.length, '取不到预览 HTML 模板').toBeGreaterThan(1000)
+    for (const id of THEME_IDS) {
+      const primary = colorOf(readThemeVars()[id], '--wc-primary')
+      expect(html.toLowerCase(), `${id} 主色被硬编码进预览 HTML`).not.toContain(primary.toLowerCase())
+    }
+    expect(html.split('var(--wc-').length - 1, '预览 HTML 没有真正用 token').toBeGreaterThanOrEqual(15)
+  })
+
+  it('后台容器比例与生成画布一致，否则真实图会被裁切/拉伸', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
+    const ratio = /aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/.exec(vue)
+    expect(ratio, '后台预览容器缺 aspect-ratio，图没加载完会跳版').not.toBeNull()
+    expect([Number(ratio![1]), Number(ratio![2])]).toEqual([Number(dim[1]), Number(dim[2])])
+    expect(vue).toContain('object-fit: cover')
+  })
+
+  it('后台确实渲染真实图并保留按张降级的兜底（改回色块示意会变红）', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue).toContain('class="preview-shot"')
+    expect(vue).toContain(':src="previewUrl(t.id)"')
+    expect(vue).toContain('theme-previews/')
+    expect(vue).toContain('encodeURIComponent(id)')
+    expect(vue).toContain('import.meta.env.BASE_URL')
+    expect(vue).toContain('@error="onPreviewError(t.id)"')
+    expect(vue).toContain('class="preview-fallback"')
+    expect(vue).toContain('class="fallback-tag"')
+    expect(vue).toContain('failedPreviews.value = {}')
+  })
+
+  // 只查「PNG 都在」挡不住「app.wxss 改了配色却没重出图」：文件一个不少，
+  // 客户看到的仍是旧样式，而且没人会报错。manifest 是出图时写下的 token 快照。
+  it('token 快照与 app.wxss 同版（改了配色 / 圆角没重出图会变红）', () => {
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    expect(manifest.source).toBe('miniprogram/app.wxss')
+    const ids = goTemplateIds()
+    expect(Object.keys(manifest.tokens).sort()).toEqual([...ids].sort())
+
+    const current = readThemeVars()
+    for (const id of ids) {
+      expect(manifest.tokens[id], `${id} 的 token 快照`).toEqual(current[id])
+    }
+
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
+    const scale = /SCALE\s*=\s*(\d+)/.exec(script)!
+    expect(manifest.canvas).toEqual([Number(dim[1]), Number(dim[2])])
+    expect(manifest.scale).toBe(Number(scale[1]))
+  })
+})

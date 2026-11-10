@@ -109,6 +109,52 @@ describe('content/MpTheme', () => {
     expect(cards(w)[3].find('.theme-preview').classes()).toContain('layout-teal')
   })
 
+  it('每张卡按 id 拼出真实预览图，底层示意常驻（图没加载完不留空白）', async () => {
+    const w = await mountPage()
+
+    const shots = cards(w).map((c: any) => c.find('img.preview-shot'))
+    expect(shots).toHaveLength(4)
+    expect(shots[0].attributes('src')).toContain('theme-previews/default.png')
+    expect(shots[1].attributes('src')).toContain('theme-previews/ink.png')
+    expect(shots[2].attributes('src')).toContain('theme-previews/warm.png')
+    expect(shots[3].attributes('src')).toContain('theme-previews/teal.png')
+    expect(shots[1].attributes('alt')).toContain('沉稳墨')
+    for (const c of cards(w)) {
+      expect(c.find('.preview-fallback').exists()).toBe(true)
+      // 降级必须是可见的：静默退回色块会让「真实预览图没生效」没人察觉
+      expect(c.find('.fallback-tag').text()).toBe('示意图')
+    }
+  })
+
+  it('单张预览图加载失败：只降级这一张，其余三张不受影响', async () => {
+    const w = await mountPage()
+
+    await cards(w)[2].find('img.preview-shot').trigger('error')
+    await flush()
+
+    expect(cards(w)[2].find('img.preview-shot').exists()).toBe(false)
+    expect(cards(w)[2].find('.preview-fallback').exists()).toBe(true)
+    expect(cards(w)[2].find('.fallback-tag').exists()).toBe(true)
+    expect(cards(w)[0].find('img.preview-shot').exists()).toBe(true)
+    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
+    expect(cards(w)[3].find('img.preview-shot').exists()).toBe(true)
+  })
+
+  it('点「重新加载」会重试预览图，不再一直停在示意图上', async () => {
+    const w = await mountPage()
+
+    await cards(w)[1].find('img.preview-shot').trigger('error')
+    await flush()
+    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(false)
+
+    const reload = w.findAll('.el-button').find((b: any) => b.text().includes('重新加载'))
+    expect(reload).toBeDefined()
+    await reload!.trigger('click')
+    await flush()
+
+    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
+  })
+
   it('当前 templateId 回填为「使用中」', async () => {
     const w = await mountPage({
       templateId: 'ink', templateEntitled: true,

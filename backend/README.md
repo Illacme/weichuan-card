@@ -728,8 +728,18 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 挂了 `.wc-theme-*` 的 6 个访客页才覆盖，员工 / 管理页保持默认。
 
 加一款模板 = 改 `internal/mptemplate` + `app.wxss` 变量块 + `utils/theme.ts` 的 `THEME_IDS`
-+ `MpTheme.vue` 的 `.layout-<id>` 预览示意，并随小程序**重新提审发版**；
-`tests/theme.spec.ts` 会逐项对账（id / 变量齐全 / 预览色 / 版式差异 / 对比度），漏一处即变红。
++ `MpTheme.vue` 的 `.layout-<id>` 兜底示意 + 重跑 `scripts/gen_theme_previews.py`
+（产出 `frontend/public/theme-previews/<id>.png`），并随小程序**重新提审发版**；
+`tests/theme.spec.ts` 会逐项对账（id / 变量齐全 / 预览色 / 版式差异 / 对比度 /
+PNG 产物 / 画布比例 / 后台接入代码），漏一处即变红。
+
+后台模板卡展示的是这张从 `app.wxss` token 生成的**真实预览图**（不是手画的第二套样式）：
+`gen_theme_previews.py` 解析 18 个 `--wc-*` 变量、注入复刻首页结构的 HTML，用无头
+Chrome 出 750×860 PNG，并写 `manifest.json` 记录每款 18 个 token 的快照——
+**改了配色 / 圆角却没重跑脚本，图片会悄悄停在旧样式**，`--check` 与
+`tests/theme.spec.ts` 的快照对账都会变红。`--check` 只校验产物、不需要浏览器。
+单张图加载失败时按 id 回落到 CSS 示意并显示「示意图」角标（降级可见），
+点「重新加载」可重试。详见 `docs/commercial-readiness.md` 第二十四轮。
 新增主色必须满足 `tests/theme.spec.ts` 的 WCAG AA 守门（12 组搭配 ≥4.5；`default` 是历史基线，
 只锁「不许变差」）。`--wc-primary-rgb` 必须与 `--wc-primary` 同色，否则阴影和按钮会错色。
 
