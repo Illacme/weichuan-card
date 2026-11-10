@@ -1,6 +1,16 @@
 // 业务服务详情页：与项目详情同构，但正文取自 content 字段、空态文案与默认分享标题不同。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { installPageCapture, capturedPage, makeInstance, installWx, flush } from './helpers/harness'
+
+// WXML 不在 Vitest 的编译范围里，只能做源码级守门：
+// 「不显示」时若 meta 行仍渲染，空 view 的 16rpx 下内边距会在标题与正文间留白。
+const WXML = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../pages/service/detail/detail.wxml'
+)
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
@@ -89,6 +99,12 @@ describe('service/detail 页', () => {
     const p = await page({ id: '3' })
 
     expect(p.data.updatedAtText).toBe('')
+  })
+
+  // 数据为空串还不够：meta 行本身也必须不渲染，否则 padding-bottom 留下空白
+  it('不显示时间时 meta 整行不渲染（源码级守门）', () => {
+    const wxml = readFileSync(WXML, 'utf-8')
+    expect(wxml).toContain('<view class="meta" wx:if="{{updatedAtText}}">')
   })
 
   it('服务不存在：提示并结束加载', async () => {

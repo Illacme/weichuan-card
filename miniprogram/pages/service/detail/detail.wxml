@@ -1,7 +1,9 @@
 <view class="detail" wx:if="{{!loading && !error && service}}">
   <view class="title">{{service.title}}</view>
-  <view class="meta">
-    <text wx:if="{{updatedAtText}}">更新于 {{updatedAtText}}</text>
+  <!-- 不显示时间时整行不渲染：空 .meta 仍带 16rpx 下内边距，会在标题与正文间
+       留下一段莫名其妙的空白（后台把服务时间设为「不显示」时尤其明显）。 -->
+  <view class="meta" wx:if="{{updatedAtText}}">
+    <text>更新于 {{updatedAtText}}</text>
   </view>
   <view class="rich">
     <block wx:for="{{segments}}" wx:key="index">

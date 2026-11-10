@@ -1477,3 +1477,34 @@ WorkingDirectory）、HTTPS 站点必勾 Cookie Secure、装完立即备份 runt
   绑回 `createdAt` → 前端 spec 红。还原后全绿。
 - 门禁：后端 28 包 / vet / lint 0 / MySQL parity PASS；eslint / vue-tsc 0 错误；
   Vitest 全量 **92 文件 1513 例**；`vite build` 成功。
+
+## 第二十一轮核查：小程序端支持是否到位（2026-11-10 同日）
+
+用户追问「小程序端都一并做好支持了吧」，按证据逐项核查，结论如下：
+
+| 链路 | 状态 | 证据 |
+| --- | --- | --- |
+| 两个详情页按后台档位渲染 | 已支持 | `project/detail/detail.ts:53`、`service/detail/detail.ts:41` 均走 `detailTimeText(r.data.timeMode, r.data.updatedAt)`；三档各有 spec 断言 |
+| 数据源是更新时间 | 从来就是 | 两个详情页读的一直是 `updatedAt`（非 `createdAt`），与后台列表订正后的口径一致 |
+| 后端下发档位 | 已支持 | `/api/projects/:id` 与 `/api/services/:id` 各回 `timeMode`，读 `home_layouts` 的对应列 |
+| 后台改档位后端上生效 | 实时 | 两个详情接口**都未挂** `cdnCache`（只有 `/api/services` 列表挂了），每次请求现查 |
+| 老后端兼容 | 已支持 | 端上收不到 `timeMode`（未知档位）按 `date` 兜底，不让这一行凭空消失 |
+| 「不显示」档位不留残影 | **本轮修复** | 见下 |
+
+**发现并修掉的一处遗漏**：业务服务详情页在 `hidden` 档位时，`updatedAtText` 为空串，
+但 `<view class="meta">` 仍渲染——`.detail .meta` 带 `padding-bottom: 16rpx`，
+标题与正文之间会留下一段莫名其妙的空白。项目详情页在「无分类名 + hidden」时同理。
+现给两处 meta 行加条件：服务页 `wx:if="{{updatedAtText}}"`、
+案例页 `wx:if="{{project.categoryName || updatedAtText}}"`。
+
+WXML 不进 Vitest 编译范围，因此补了 2 条**源码级守门**（两个 detail spec 各一条），
+钉死「meta 行在两种都为空时不得渲染」；反向验证 2 项（去掉 `wx:if`）均 `exit=1`，
+还原后全绿。后端零改动。
+
+**核查边界（刻意没动）**：小程序端只有两个详情页展示时间——案例列表、首页精选/服务卡、
+名片墙本来就不显示时间，不存在「列表时间要跟着改」的问题。管理员审核页的
+`createdAt`（申请提交时间）与「我的资料」的 `createdAt`（注册时间）是各自业务语义，
+不该换成更新时间。
+
+门禁：Vitest 全量 **92 文件 1515 例**全绿；eslint / `vue-tsc` 0 错误；
+类名冲突无危险项；`git diff --check` OK。

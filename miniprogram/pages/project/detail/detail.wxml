@@ -5,7 +5,9 @@
   <image class="banner" src="{{project.cover}}" mode="aspectFill" lazy-load wx:if="{{project.cover && coverFail !== project.cover}}"
     binderror="onImgFail" data-fail="coverFail" data-src="{{project.cover}}" />
   <view class="title">{{project.name}}</view>
-  <view class="meta">
+  <!-- 分类名和时间都为空时整行不渲染：空 .meta 仍带 16rpx 下内边距，
+       会在标题与正文间留下空白（无分类 + 后台把案例时间设为「不显示」）。 -->
+  <view class="meta" wx:if="{{project.categoryName || updatedAtText}}">
     <text wx:if="{{project.categoryName}}">{{project.categoryName}}</text>
     <text wx:if="{{updatedAtText}}"> · 更新于 {{updatedAtText}}</text>
   </view>

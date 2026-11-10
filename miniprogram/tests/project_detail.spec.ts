@@ -1,6 +1,16 @@
 // 项目案例详情页：相册预览 + 富文本（含视频号片段）+ 分享回带名片链。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { installPageCapture, capturedPage, makeInstance, installWx, flush } from './helpers/harness'
+
+// WXML 不在 Vitest 的编译范围里，只能做源码级守门：
+// 分类名与时间都为空时若 meta 行仍渲染，16rpx 下内边距会留下空白。
+const WXML = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../pages/project/detail/detail.wxml'
+)
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
@@ -111,6 +121,14 @@ describe('project/detail 页', () => {
     const p = await page({ id: '7' })
 
     expect(p.data.updatedAtText).toBe('')
+  })
+
+  // 数据为空串还不够：分类名与时间都为空时，meta 行本身也必须不渲染
+  it('分类名与时间都为空时 meta 整行不渲染（源码级守门）', () => {
+    const wxml = readFileSync(WXML, 'utf-8')
+    expect(wxml).toContain(
+      '<view class="meta" wx:if="{{project.categoryName || updatedAtText}}">'
+    )
   })
 
   it('没有 updatedAt 时留空，不显示「—」占位', async () => {
