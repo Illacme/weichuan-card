@@ -1789,3 +1789,7 @@ CI 则由全量 Vitest 覆盖——`frontend/vitest.config.ts` 的 include 含
 - 全量门禁照旧：后端 `go build` / `go vet` / `go test ./...` / `golangci-lint` /
   MySQL parity；前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest /
   `vite build --outDir dist-check-*` / `git diff --check`。
+- **真机验收清单已补**：`docs/real-device-acceptance.md` 新增 §7（`T1–T10`），
+  `docs/launch-checklist.md` §四新增第 13 项，两者都标为**追加待验项**，
+  不计入 `#163` 的 28 项，也不改写其「已通过」结论。四款模板的真机观感、
+  分享直达二级页的冷启动一致性、后台真实预览图对照，代码侧无法代劳。
