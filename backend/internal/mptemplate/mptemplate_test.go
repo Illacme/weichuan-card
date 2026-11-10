@@ -34,6 +34,7 @@ func TestIDsAreUniqueAndDefaultFirst(t *testing.T) {
 	require.False(t, IsAdvanced(DefaultID), "缺省款必须免费，否则升级后客户会被降级")
 	require.True(t, IsAdvanced("ink"))
 	require.True(t, IsAdvanced("warm"))
+	require.True(t, IsAdvanced("teal"))
 }
 
 func TestNormalize(t *testing.T) {
@@ -41,6 +42,7 @@ func TestNormalize(t *testing.T) {
 	require.Equal(t, DefaultID, Normalize("  "))
 	require.Equal(t, "ink", Normalize("ink"))
 	require.Equal(t, "warm", Normalize(" warm "))
+	require.Equal(t, "teal", Normalize("teal"))
 	require.Equal(t, "", Normalize("neon"), "未知 id 必须返回空串由调用方拒绝，不能静默兜底")
 	require.Equal(t, "", Normalize("INK"), "大小写不敏感会让端上 class 名对不上")
 }

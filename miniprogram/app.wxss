@@ -1,11 +1,12 @@
 /* 全局样式（组件已开启 addGlobalClass，可直接使用这里的类） */
 
-/* ===== 小程序配色主题（一期：只换配色，不动版式） =====
+/* ===== 小程序模板主题（配色 + 版式 token） =====
    默认 token 写在 page 上：没挂主题 class 的页面（员工 / 管理页）取值与
-   主题功能上线前逐字一致，升级零突变。挂了 .wc-theme-* 的访客页由该元素
+   模板功能上线前逐字一致，升级零突变。挂了 .wc-theme-* 的访客页由该元素
    上的同名变量覆盖，子元素按 CSS 自定义属性继承规则自动跟随。
-   一期不动页面底色 / 卡片底色 / 正文灰度，避免深色主色压低文字对比度。
-   每加一款模板必须给齐下面 11 个 token，theme.spec.ts 会逐个核对。 */
+   不动页面底色 / 卡片底色 / 正文灰度，避免深色主色压低文字对比度；
+   版式只改圆角与阴影（都不占布局尺寸），绝不改 padding / width / flex。
+   每加一款模板必须给齐下面 18 个 token，theme.spec.ts 会逐个核对。 */
 page {
   --wc-primary: #1a8cff;
   --wc-primary-deep: #1b66df;
@@ -18,7 +19,16 @@ page {
   --wc-primary-pcat: #eaf4ff;
   --wc-track: #e5ebf2;
   --wc-primary-rgb: 26, 140, 255;
+  /* 版式 token：默认值 = 模板功能上线前的原值，改这里等于改默认款外观 */
+  --wc-r-card: 20rpx;
+  --wc-r-card-bg: 16rpx;
+  --wc-r-control: 40rpx;
+  --wc-r-chip: 28rpx;
+  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
+/* 沉稳墨：近直角 + 细描边代替投影，工程 / 制造 / 法律的硬朗感。 */
 .wc-theme-ink {
   --wc-primary: #3d4b5c;
   --wc-primary-deep: #2b3745;
@@ -31,19 +41,59 @@ page {
   --wc-primary-pcat: #eef2f6;
   --wc-track: #dde3e9;
   --wc-primary-rgb: 61, 75, 92;
+  --wc-r-card: 6rpx;
+  --wc-r-card-bg: 6rpx;
+  --wc-r-control: 8rpx;
+  --wc-r-chip: 6rpx;
+  --wc-card-shadow: 0 0 0 1rpx rgba(61, 75, 92, 0.16);
+  --wc-card-shadow-soft: 0 0 0 1rpx rgba(61, 75, 92, 0.12);
+  --wc-card-shadow-bg: 0 0 0 1rpx rgba(31, 42, 53, 0.26);
 }
+/* 暖金棕：大圆角 + 胶囊按钮 + 暖色柔阴影，餐饮 / 文旅 / 家居的亲和感。
+   主色按 WCAG AA 实测调深过一档：早期 #a5742a 在「白字按钮 / 浅底主色字」
+   两处只有 3.27～4.09，换模板反而不如默认款好读；现 12 组关键搭配最低 4.59
+   （见 tests/theme.spec.ts）。浅色系保持暖调不变，只压深主色。 */
 .wc-theme-warm {
-  --wc-primary: #a5742a;
-  --wc-primary-deep: #8a5c1d;
-  --wc-primary-grad: #6f4916;
-  --wc-primary-alt: #b98435;
+  --wc-primary: #8f6320;
+  --wc-primary-deep: #7a521a;
+  --wc-primary-grad: #63400f;
+  --wc-primary-alt: #996a24;
   --wc-primary-soft: #fdf6e9;
   --wc-primary-border: #e8d3a8;
   --wc-primary-tint: #f7efdf;
   --wc-primary-chip: #f9eed6;
   --wc-primary-pcat: #fdf3e2;
   --wc-track: #ece4d5;
-  --wc-primary-rgb: 165, 116, 42;
+  --wc-primary-rgb: 143, 99, 32;
+  --wc-r-card: 32rpx;
+  --wc-r-card-bg: 28rpx;
+  --wc-r-control: 999rpx;
+  --wc-r-chip: 999rpx;
+  --wc-card-shadow: 0 10rpx 28rpx rgba(143, 99, 32, 0.12);
+  --wc-card-shadow-soft: 0 8rpx 22rpx rgba(143, 99, 32, 0.10);
+  --wc-card-shadow-bg: 0 10rpx 28rpx rgba(90, 60, 20, 0.18);
+}
+/* 松石青：中圆角 + 极轻的青色投影，走清爽自然路线，与墨款的硬朗、
+   暖款的大圆角都拉开差距。主色 12 组搭配最低 4.71（见 theme.spec.ts）。 */
+.wc-theme-teal {
+  --wc-primary: #0f766e;
+  --wc-primary-deep: #0a5a54;
+  --wc-primary-grad: #06453f;
+  --wc-primary-alt: #137a70;
+  --wc-primary-soft: #f0faf8;
+  --wc-primary-border: #a8ddd6;
+  --wc-primary-tint: #dff2ef;
+  --wc-primary-chip: #e2f5f2;
+  --wc-primary-pcat: #ecfaf7;
+  --wc-track: #dcecea;
+  --wc-primary-rgb: 15, 118, 110;
+  --wc-r-card: 12rpx;
+  --wc-r-card-bg: 12rpx;
+  --wc-r-control: 20rpx;
+  --wc-r-chip: 12rpx;
+  --wc-card-shadow: 0 2rpx 10rpx rgba(15, 118, 110, 0.10);
+  --wc-card-shadow-soft: 0 2rpx 10rpx rgba(15, 118, 110, 0.08);
+  --wc-card-shadow-bg: 0 4rpx 16rpx rgba(8, 69, 63, 0.16);
 }
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
@@ -58,8 +108,8 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card {
   background: #fff;
   margin: 16rpx 20rpx 0;
-  border-radius: 20rpx;
-  box-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
+  border-radius: var(--wc-r-card);
+  box-shadow: var(--wc-card-shadow);
   padding: 24rpx 20rpx 20rpx;
   box-sizing: border-box;
 }
@@ -238,7 +288,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 
 /* 底部操作栏 */
 .action-bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1rpx solid #eee; padding: 16rpx 24rpx; padding-bottom: calc(16rpx + env(safe-area-inset-bottom)); }
-.ab-btn { flex: 1; margin: 0 12rpx; border-radius: 40rpx; font-size: 30rpx; }
+.ab-btn { flex: 1; margin: 0 12rpx; border-radius: var(--wc-r-control); font-size: 30rpx; }
 .ab-btn.call { background: var(--wc-primary); color: #fff; }
 .ab-btn.save { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); }
 
@@ -259,7 +309,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   font-size: 26rpx;
   color: #5f6f80;
   background: #f2f5f9;
-  border-radius: 28rpx;
+  border-radius: var(--wc-r-chip);
 }
 .pcat-chip.on { background: var(--wc-primary-pcat); color: var(--wc-primary); font-weight: 600; }
 
@@ -283,7 +333,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .form-item { display: flex; align-items: center; padding: 20rpx 0; border-bottom: 1rpx solid #eee; }
 .form-item .label { width: 160rpx; color: #666; }
 .form-item input { flex: 1; }
-.submit-btn { margin-top: 40rpx; background: var(--wc-primary); color: #fff; border-radius: 40rpx; }
+.submit-btn { margin-top: 40rpx; background: var(--wc-primary); color: #fff; border-radius: var(--wc-r-control); }
 
 /* 手机号行右侧「+ 备用手机号」（申请开通页 / 编辑名片页共用）：
    默认只展示一个手机号输入框，多数人只有一个号；需要第二个时点它展开，
@@ -308,7 +358,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 
 /* 海报入口 + 海报页 */
 .poster-entry { padding: 24rpx; }
-.poster-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 28rpx; }
+.poster-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: var(--wc-r-control); font-size: 28rpx; }
 .poster-page { padding: 24rpx; }
 .poster-canvas { width: 320px; height: 460px; background: #fff; border-radius: 12rpx; }
 /* 海报页：canvas 与「生成中 / 失败」覆盖层叠在同一块 320×460 的舞台上。
@@ -325,8 +375,8 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
    保存退为次要（描边，左侧）——微信习惯主操作在右 */
 .actions { margin-top: 24rpx; display: flex; }
 .actions button { flex: 1; margin: 0 8rpx; font-size: 30rpx; }
-.save-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; }
-.share-btn { background: var(--wc-primary); color: #fff; border: 1rpx solid var(--wc-primary); border-radius: 40rpx; }
+.save-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: var(--wc-r-control); }
+.share-btn { background: var(--wc-primary); color: #fff; border: 1rpx solid var(--wc-primary); border-radius: var(--wc-r-control); }
 
 /* 海报背景选择条：横滑一排缩略图（海报是 640×920 竖幅，缩略图按 3:4.3 裁）。
    选中项用主色描边——44 张里挑一张，没有选中态的话根本看不出当前用的哪张。 */
@@ -463,7 +513,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 }
 .chip {
   padding: 0 24rpx; height: 56rpx; line-height: 56rpx;
-  font-size: 25rpx; color: #444; background: #f2f3f5; border-radius: 28rpx;
+  font-size: 25rpx; color: #444; background: #f2f3f5; border-radius: var(--wc-r-chip);
   border: 1rpx solid transparent; box-sizing: border-box;
 }
 .chip.on { background: var(--wc-primary-chip); color: var(--wc-primary); border-color: var(--wc-primary); }
@@ -477,14 +527,14 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 /* 网络异常占位 + 重试（首页 / 列表 / 详情共用；断网时 loading 必须落下来） */
 .error-box { padding: 160rpx 48rpx; text-align: center; }
 .error-text { color: #999; font-size: 30rpx; }
-.retry-btn { margin-top: 32rpx; background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 28rpx; }
+.retry-btn { margin-top: 32rpx; background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: var(--wc-r-control); font-size: 28rpx; }
 
 /* 详情页元信息行（分类名 / 更新时间） */
 .detail .meta { padding: 0 24rpx 16rpx; color: #999; font-size: 24rpx; }
 
 /* 通用按钮 */
-.primary-btn { background: var(--wc-primary); color: #fff; border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
-.plain-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
+.primary-btn { background: var(--wc-primary); color: #fff; border-radius: var(--wc-r-control); font-size: 30rpx; margin-top: 24rpx; }
+.plain-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: var(--wc-r-control); font-size: 30rpx; margin-top: 24rpx; }
 
 /* 「我的」页（员工 tabBar） */
 .me { padding: 24rpx; }

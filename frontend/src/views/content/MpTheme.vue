@@ -6,7 +6,8 @@
     </div>
 
     <p class="desc">
-      为小程序选择一套内置配色。模板随小程序版本内置，后台只记录「选了哪一款」，
+      为小程序选择一套内置整体风格：主色、卡片圆角、按钮形态与投影质感一并切换。
+      模板随小程序版本内置，后台只记录「选了哪一款」，
       保存后访客端即时生效，不需要重新上传代码或提交微信审核。
     </p>
 
@@ -17,7 +18,7 @@
       type="warning"
       :closable="false"
       show-icon
-      title="当前授权未开通高级配色模板"
+      title="当前授权未开通高级整体风格模板"
       class="entitle-alert"
     >
       高级款暂不可新选，访客端会临时回落到经典蓝；已经选中的高级款会为您保留，续费后自动恢复。
@@ -32,7 +33,10 @@
         :class="{ selected: selected === t.id, locked: isLocked(t) }"
         @click="pick(t)"
       >
-        <div class="theme-preview" :style="{ background: t.previewSoft }">
+        <!-- 预览卡按模板 id 套用对应的版式示意：换色之外，圆角/描边/按钮形态
+             也要让客户一眼看出差别。这里是示意而非像素级复刻，真值在
+             miniprogram/app.wxss 的 --wc-r-* / --wc-card-shadow-* token。 -->
+        <div class="theme-preview" :class="'layout-' + t.id" :style="{ background: t.previewSoft }">
           <div class="preview-nav" :style="{ background: t.previewPrimary }" />
           <div class="preview-card">
             <div class="preview-line" :style="{ background: t.previewPrimary }" />
@@ -200,6 +204,31 @@ onMounted(load)
   width: 44%;
   border-radius: 6px;
 }
+/* 版式示意（与端上 --wc-r-* token 同向，px 只是后台缩略图尺度）：
+   沉稳墨 = 近直角 + 细描边代替投影；暖金棕 = 大圆角 + 胶囊按钮；
+   松石青 = 中圆角 + 极轻投影。
+   加新模板必须补一条 .layout-<id>，theme.spec.ts 会逐个对账。 */
+.layout-ink .preview-nav,
+.layout-ink .preview-line,
+.layout-ink .preview-btn { border-radius: 2px; }
+.layout-ink .preview-card {
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(61, 75, 92, 0.22);
+}
+.layout-warm .preview-nav,
+.layout-warm .preview-line { border-radius: 8px; }
+.layout-warm .preview-card {
+  border-radius: 16px;
+  box-shadow: 0 6px 14px rgba(143, 99, 32, 0.16);
+}
+.layout-warm .preview-btn { border-radius: 999px; }
+.layout-teal .preview-nav,
+.layout-teal .preview-line { border-radius: 5px; }
+.layout-teal .preview-card {
+  border-radius: 6px;
+  box-shadow: 0 1px 5px rgba(15, 118, 110, 0.14);
+}
+.layout-teal .preview-btn { border-radius: 10px; }
 .theme-meta {
   padding: 12px 14px 14px;
 }

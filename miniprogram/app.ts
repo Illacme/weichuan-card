@@ -1,4 +1,5 @@
-import { bindCompanyFromScene, tenantConfig } from './utils/tenant'
+import { bindCompanyFromScene, getCompanyId, tenantConfig } from './utils/tenant'
+import { prefetchTheme } from './utils/themeBootstrap'
 import {
   baseUrlOf,
   cacheSettings,
@@ -64,5 +65,17 @@ App({
         options && options.query && options.query.companyId
       )
     } catch {}
+
+    // 冷启动预热整体风格：访客直接从分享链接 / 小程序码进二级页时，首页 loadAll
+    // 根本不会执行，只靠 onLoad 读缓存会一直停在默认蓝。这里拉一次公开配置：
+    // 写缓存供后续页面 bindTheme，同时广播给已入栈的页面。
+    // 与首页 loadAll 会各拉一次很轻的公开 GET，换来任意入口页的主题一致；
+    // 失败静默，纯展示配置绝不阻塞启动。必须在 bindCompanyFromScene 之后，
+    // 否则平台模式会按缺省租户取错模板。
+    if (hasBaseUrl(globalData.baseUrl)) {
+      try {
+        prefetchTheme(globalData.baseUrl, getCompanyId())
+      } catch {}
+    }
   },
 })

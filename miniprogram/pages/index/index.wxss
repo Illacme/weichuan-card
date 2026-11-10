@@ -95,10 +95,10 @@
    用户要求「内容区两边距减少一点，多腾出名片内容空间」，全线统一避免卡片左右错位。 */
 .page .section {
   background: #fff;
-  border-radius: 20rpx;
+  border-radius: var(--wc-r-card);
   margin: 20rpx 20rpx 0;
   padding: 24rpx;
-  box-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
+  box-shadow: var(--wc-card-shadow-soft);
   box-sizing: border-box;
 }
 /* 板块标题统一与下方装饰线紧贴：间距只由 .sec-title-line 的 margin-top 控制，
@@ -119,7 +119,7 @@
 
 /* 有背景时的高端包装：卡片半透明浮起 + 圆角阴影，与深色背景形成层次 */
 .has-bg .custom-nav { background: rgba(255,255,255,.94); }
-.has-bg .section { background: rgba(255,255,255,.95); border-radius: 16rpx; margin: 20rpx 24rpx; padding: 28rpx; box-shadow: 0 6rpx 20rpx rgba(0,0,0,.10); }
+.has-bg .section { background: rgba(255,255,255,.95); border-radius: var(--wc-r-card-bg); margin: 20rpx 24rpx; padding: 28rpx; box-shadow: var(--wc-card-shadow-bg); }
 .has-bg .nav-spacer + .section, .has-bg .section:first-of-type { margin-top: 20rpx; }
 
 /* 左蓝右灰分段线（2026-10-20 用户要求：与名片卡 ec-rows-line 同款视觉语言）。

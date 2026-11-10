@@ -256,7 +256,7 @@ func NormalizeTimeMode(v string) string {
 // HomeLayout 小程序展示配置（按租户隔离，company_id 唯一）。
 //
 // 名字里的 Home 是历史包袱：它最早只装首页板块顺序与首页背景，现在还承载详情页
-// 的时间展示档位与小程序配色模板。改名要搬数据、要动公开接口路径，收益不抵风险，
+// 的时间展示档位与小程序整体风格模板。改名要搬数据、要动公开接口路径，收益不抵风险，
 // 故保留表名并在此说明——新增「展示类」配置可以继续放这里，但涉及权限/业务数据的不要塞进来。
 type HomeLayout struct {
 	ID        int64  `gorm:"primaryKey;column:id" json:"id"`
@@ -273,7 +273,7 @@ type HomeLayout struct {
 	// 时间往往不是一个答案，共用一个开关会逼客户二选一。
 	ProjectTimeMode string `gorm:"column:project_time_mode;size:16;default:date" json:"projectTimeMode"`
 	ServiceTimeMode string `gorm:"column:service_time_mode;size:16;default:date" json:"serviceTimeMode"`
-	// TemplateID 小程序配色模板 id（白名单真值见 internal/mptemplate）。
+	// TemplateID 小程序整体风格模板 id（白名单真值见 internal/mptemplate）。
 	// 空串按 default 渲染：0041 之前建的行由迁移默认值补上，升级零突变。
 	// 授权未开通高级款时库里的值**保留不抹**（续费自动恢复），只由公开接口
 	// 在读取时回落 default，见 handler.go 的 publicTemplateID()。

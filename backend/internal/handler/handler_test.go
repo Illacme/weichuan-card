@@ -946,8 +946,8 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 			"被拒绝的非法值不应落库")
 	})
 
-	// ===== 7c. 小程序配色模板（白名单 + 按租户授权 + 分块保存不串列） =====
-	t.Run("小程序配色模板", func(t *testing.T) {
+	// ===== 7c. 小程序整体风格模板（白名单 + 按租户授权 + 分块保存不串列） =====
+	t.Run("小程序整体风格模板", func(t *testing.T) {
 		// 授权是进程级全局量：显式置缺省放行，并在结束时还原，避免前面的用例
 		// 遗留 Entitlement 让本子测试在「切高级款」这一步被意外拦下。
 		prev := license.Current()

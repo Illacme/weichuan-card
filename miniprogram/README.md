@@ -828,6 +828,32 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 - **员工 token**：登录后存 `wx.storage('empToken')`（access，15 分钟）+ `empRefreshToken`（refresh，30 天），`request.ts` 自动注入；`code=401` 先用 refresh 令牌静默换发并重试一次，失败再清 token 引导重新登录。改密 / 被禁用会令旧令牌立即失效。（小程序走 Bearer 头鉴权；PC 管理后台则改用 httpOnly Cookie，见前端 README。）
 - **状态语义**：员工 `status=disabled` 时首页整页提示「已停用」；名片修改走「提交申请 → 超管审核通过后公开生效」。
 
+## 整体风格模板（配色 + 版式）
+
+后台「小程序设置 → 整体风格」只存一个 `templateId`，真值分两端对账：
+id 白名单在 `backend/internal/mptemplate`，端上色值与版式全部随版本内置在
+`app.wxss` 的 18 个 `--wc-*` CSS 变量里（11 个颜色 + 7 个圆角 / 阴影）。
+`utils/theme.ts` 只做 `id → class` 映射 + Storage 缓存 + 页面栈广播，不含色值。
+
+- **默认 token 写在 `page` 上**，取值与模板功能上线前逐字一致（升级零突变）；
+  只有挂了 `.wc-theme-*` 的 6 个访客页顶层节点会覆盖，员工 / 管理页保持默认。
+  主题 class 直接挂在已有的顶层 view 上，**绝不额外包一层 view**（会动布局）。
+- **不改 DOM 也不改盒模型**：版式只调圆角与阴影；`padding` / `width` / `flex`
+  不进 token。改默认款变量等于给全部存量客户换皮，`tests/theme.spec.ts` 会拦。
+- **可读性有硬门槛**：新增模板的 12 组「白字 / 主色按钮」「主色字 / 浅底」搭配
+  对比度必须 ≥4.5（WCAG AA 正文级），由 `theme.spec.ts` 按相对亮度公式实算。
+  `default` 是历史基线，只锁「不许变差」。`--wc-primary-rgb` 必须与
+  `--wc-primary` 同色，否则 `rgba(var(--wc-primary-rgb), …)` 的阴影会错色。
+- **加一款模板要改 4 处**：Go 白名单、`app.wxss` 变量块、`THEME_IDS`、
+  `MpTheme.vue` 的 `.layout-<id>` 预览示意；`tests/theme.spec.ts` 逐项对账，
+  漏一处即变红。加款后必须随小程序**重新提审发版**，端上不能热加载 WXSS。
+- **冷启动预热**：`app.ts` 的 `onLaunch` 在租户绑定之后调
+  `utils/themeBootstrap.prefetchTheme()` 拉一次公开 `/api/home-layout`，
+  写缓存并广播到页面栈。访客从分享链接**直达二级页**时首页 `loadAll` 不会执行，
+  不预热就会停在默认蓝。该模块刻意**不 import `utils/request.ts`**——后者在模块
+  加载期执行 `getApp()`，由 `app.ts` 静态引入会让请求层永久丢掉后台下发的
+  `baseUrl` 覆盖；这里用裸 `wx.request` + 调用方传入已解析的基址 / 租户。
+
 ## 组件开发规范与样式自查清单
 
 所有组件均开启 `addGlobalClass: true`，组件目录内**没有独立 wxss**，样式统一写在 `app.wxss`。由此带来一条必须遵守的约束（踩过真实线上样式 bug）：

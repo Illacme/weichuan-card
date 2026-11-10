@@ -1,4 +1,4 @@
-// Package mptemplate 定义小程序「配色模板」的白名单。
+// Package mptemplate 定义小程序「整体风格模板」（配色 + 版式）的白名单。
 //
 // 这是模板 id 的唯一真值来源：后台可选清单、写接口校验、公开接口下发都读这里；
 // 小程序端 utils/theme.ts 只负责把 id 翻译成 CSS 变量值，两端 id 集合由
@@ -24,8 +24,9 @@ const (
 
 // Template 是后台「整体风格」页渲染一张模板卡所需的全部信息。
 //
-// PreviewPrimary / PreviewSoft 只用于后台色块预览，不是端上的 token 值；
-// 端上完整的 CSS 变量表在 miniprogram/utils/theme.ts，两边靠 id 对账。
+// PreviewPrimary / PreviewSoft 只用于后台色块预览；端上完整的 CSS 变量表在
+// miniprogram/app.wxss（utils/theme.ts 只做 id → class 映射，不含色值）。
+// 后台预览主色与端上 --wc-primary 由 miniprogram/tests/theme.spec.ts 逐款对账。
 type Template struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
@@ -40,7 +41,7 @@ var templates = []Template{
 	{
 		ID:             DefaultID,
 		Name:           "经典蓝",
-		Description:    "当前默认配色，清爽稳重，适合大多数行业",
+		Description:    "默认配色与圆角，清爽稳重，适合大多数行业",
 		Advanced:       false,
 		PreviewPrimary: "#1a8cff",
 		PreviewSoft:    "#e8f1fb",
@@ -48,7 +49,7 @@ var templates = []Template{
 	{
 		ID:             "ink",
 		Name:           "沉稳墨",
-		Description:    "低饱和深灰蓝，适合工程、制造、法律等专业形象",
+		Description:    "低饱和深灰蓝 + 近直角细描边，适合工程、制造、法律等专业形象",
 		Advanced:       true,
 		PreviewPrimary: "#3d4b5c",
 		PreviewSoft:    "#e8edf2",
@@ -56,10 +57,20 @@ var templates = []Template{
 	{
 		ID:             "warm",
 		Name:           "暖金棕",
-		Description:    "温暖的金棕主色，适合餐饮、文旅、家居等品牌",
+		Description:    "金棕主色 + 大圆角胶囊按钮，适合餐饮、文旅、家居等品牌",
 		Advanced:       true,
-		PreviewPrimary: "#a5742a",
+		// 与 miniprogram/app.wxss 的 .wc-theme-warm --wc-primary 保持一致；
+		// theme.spec.ts 会逐款对账，端上调深后后台预览不能还显示旧的浅金色。
+		PreviewPrimary: "#8f6320",
 		PreviewSoft:    "#f7efdf",
+	},
+	{
+		ID:             "teal",
+		Name:           "松石青",
+		Description:    "清透青绿 + 中圆角轻投影，适合健康、教育、环保等品牌",
+		Advanced:       true,
+		PreviewPrimary: "#0f766e",
+		PreviewSoft:    "#dff2ef",
 	},
 }
 

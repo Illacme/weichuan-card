@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
     templates: [
       { id: 'default', name: '经典蓝', description: '默认配色', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
       { id: 'ink', name: '沉稳墨', description: '低饱和深灰蓝', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      { id: 'warm', name: '暖金棕', description: '温暖金棕', advanced: true, previewPrimary: '#a5742a', previewSoft: '#f7efdf' },
+      { id: 'warm', name: '暖金棕', description: '温暖金棕', advanced: true, previewPrimary: '#8f6320', previewSoft: '#f7efdf' },
+      { id: 'teal', name: '松石青', description: '清透青绿', advanced: true, previewPrimary: '#0f766e', previewSoft: '#dff2ef' },
     ],
   })),
   saveHomeLayout: vi.fn(async (_payload: any) => ({ code: 0 })),
@@ -90,12 +91,22 @@ describe('content/MpTheme', () => {
     const w = await mountPage()
 
     expect(mocks.getHomeLayout).toHaveBeenCalledTimes(1)
-    expect(cards(w)).toHaveLength(3)
+    expect(cards(w)).toHaveLength(4)
     expect(cards(w)[0].text()).toContain('经典蓝')
     expect(cards(w)[1].text()).toContain('沉稳墨')
     expect(cards(w)[2].text()).toContain('暖金棕')
+    expect(cards(w)[3].text()).toContain('松石青')
     expect(cards(w)[0].find('.el-tag').exists()).toBe(false)
     expect(cards(w)[1].find('.el-tag').text()).toBe('高级')
+  })
+
+  it('每张预览卡按模板 id 套版式示意 class（换色之外也要看得出圆角差异）', async () => {
+    const w = await mountPage()
+
+    expect(cards(w)[0].find('.theme-preview').classes()).toContain('layout-default')
+    expect(cards(w)[1].find('.theme-preview').classes()).toContain('layout-ink')
+    expect(cards(w)[2].find('.theme-preview').classes()).toContain('layout-warm')
+    expect(cards(w)[3].find('.theme-preview').classes()).toContain('layout-teal')
   })
 
   it('当前 templateId 回填为「使用中」', async () => {

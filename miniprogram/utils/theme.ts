@@ -1,4 +1,4 @@
-// 小程序配色模板：把后端下发的 templateId 翻译成挂在页面顶层节点上的 class。
+// 小程序整体风格模板：把后端下发的 templateId 翻译成挂在页面顶层节点上的 class。
 //
 // 真实色值不在这里——它们随小程序版本内置在 app.wxss 的 .wc-theme-* 里。
 // 端上不能动态加载 WXSS（代码是编译上传审核的），后台也绝不下发自由 CSS：
@@ -7,7 +7,7 @@
 // id 集合的唯一真值在 backend/internal/mptemplate/mptemplate.go；
 // miniprogram/tests/theme.spec.ts 会读 Go 源码逐项对账，任一端加款忘了同步就变红。
 export const THEME_DEFAULT = 'default'
-export const THEME_IDS = ['default', 'ink', 'warm'] as const
+export const THEME_IDS = ['default', 'ink', 'warm', 'teal'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
 
 const STORAGE_KEY = 'wc_theme_id'

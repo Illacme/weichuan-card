@@ -324,12 +324,12 @@ func New(db *gorm.DB) *gin.Engine {
 		}{BizService: s, TimeMode: detailTimeMode(db, cid, true)}})
 	})
 
-	// 首页布局：板块顺序 + 首页背景 + 配色模板（按租户）
+	// 首页布局：板块顺序 + 首页背景 + 整体风格模板（按租户）
 	//
 	// 背景图是可选增强：bg_image 为空即保持原有灰底布局，小程序端据此决定是否
 	// 铺背景层与遮罩。bg_mask（0~100）为黑色蒙层浓度，用于压暗花哨背景、
 	// 保证白色内容卡片与文字的可读性。
-	// templateId 是内置配色模板 id（字段与 order/bgImage 一样在**响应根级**）。
+	// templateId 是内置整体风格模板 id（字段与 order/bgImage 一样在**响应根级**）。
 	// 小程序代码随版本审核，端上不能动态加载 WXSS，所以这里只下发 id，
 	// 由 utils/theme.ts 映射到随包内置的 CSS 变量。
 	r.GET("/api/home-layout", func(c *gin.Context) {

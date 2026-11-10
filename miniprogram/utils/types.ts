@@ -144,6 +144,6 @@ export type HomeLayoutResp = Envelope & {
   bgImage?: string
   /** 背景遮罩浓度 0..100 */
   bgMask?: number
-  /** 本租户选中的内置配色模板 id；缺省 / 未知值在端上按 default 渲染 */
+  /** 本租户选中的内置整体风格模板 id；缺省 / 未知值在端上按 default 渲染 */
   templateId?: string
 }

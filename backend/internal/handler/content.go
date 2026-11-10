@@ -437,7 +437,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
-	// ===== 小程序展示配置（板块顺序 + 首页背景 + 详情页时间档位 + 配色模板，按租户） =====
+	// ===== 小程序展示配置（板块顺序 + 首页背景 + 详情页时间档位 + 整体风格模板，按租户） =====
 	r.GET("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var hl model.HomeLayout
@@ -487,7 +487,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
-			// 配色模板 id：三个页签各存各的，未提供时保持原值。
+			// 整体风格模板 id：三个页签各存各的，未提供时保持原值。
 			TemplateID *string `json:"templateId"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
@@ -515,7 +515,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if req.TemplateID != nil {
 			templateID = mptemplate.Normalize(*req.TemplateID)
 			if templateID == "" {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配色模板无效"})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "整体风格模板无效"})
 				return
 			}
 			// 授权只卡「切到高级款」这一个动作，不把整个 PUT 挂 RequireFeature：
@@ -533,7 +533,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				}
 				if templateID != current &&
 					!license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
-					c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通高级配色模板，请联系服务商升级"})
+					c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通高级整体风格模板，请联系服务商升级"})
 					return
 				}
 			}

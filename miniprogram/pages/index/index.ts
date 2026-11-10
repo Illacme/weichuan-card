@@ -283,7 +283,7 @@ Page({
         const icon = assetUrl(s.icon)
         return { ...s, icon, iconThumb: thumbnailURL(icon) }
       })
-      // 配色模板同样在响应根级：缓存到 Storage 并广播给已渲染的页面栈，
+      // 整体风格模板同样在响应根级：缓存到 Storage 并广播给已渲染的页面栈，
       // 否则从名片墙点进名片时，那一页还停在默认蓝色（要下次冷启动才统一）。
       applyTheme(layout.templateId)
       const order = layout.order && layout.order.length ? layout.order : ['achievement', 'service']

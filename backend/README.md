@@ -607,7 +607,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/projects/:id?companyId= | 项目详情（解析 album JSON；含 categoryName 与 updatedAt） |
 | GET  | /api/services?companyId= | 业务服务列表 |
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
-| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 配色模板 `templateId`（`default`/`ink`/`warm`，未授权高级款回落 `default`） |
+| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 整体风格模板 `templateId`（`default` 免费 / `ink`、`warm`、`teal` 高级，未授权高级款回落 `default`）。访客从分享直达二级页时 `app.ts` 冷启动也调本接口预热主题 |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
 | GET  | /api/team?companyId=&page=&size=&keyword= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证）。**分页与搜索**：`size` 缺省 300（与改造前一致，老端不带参数行为不变）、上限 300，新端固定传 60；`keyword` 同时匹配姓名与职位。回包 `{code, company, entry, data, total, page, size, hasMore, keyword}`，`total` 是**匹配总数**、`hasMore` 由服务端算（端上别用 `total - data.length` 推）。姓名是 PII 密文列、SQL 做不了 `LIKE '张%'`，带关键字时走「全员解密 → Go 侧过滤 → 切片」（`repository.MaxTeamSearchScan` 上限 5000 人），**不要优化回 SQL LIKE** |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
@@ -718,14 +718,30 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/services | 新增业务服务 |
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
-| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 配色模板 `templateId`、`templates` 清单与 `templateEntitled` 授权态 |
+| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 整体风格模板 `templateId`、`templates` 清单与 `templateEntitled` 授权态 |
 | PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。非法模板 id 回 code=1；未开通 `mp_template_advanced` 且「新选」高级款回 code=403 |
 
-小程序配色模板的 id 白名单在 `internal/mptemplate`（`All()` 返回副本），端上色值随版本内置在
-`miniprogram/app.wxss` 的 `--wc-*` 变量里，后台只存「选了哪一款」。加一款模板 = 改这三处 +
-`miniprogram/utils/theme.ts` 的 id 清单并发版；`migrations/0041_miniprogram_theme.sql` 只加
-`home_layouts.template_id` 一列，缺省 `default`，升级零突变。授权 gate 只卡 PUT 里的「切到
-高级款」这一步，**读接口不拦**：到期时访客回落默认款，但库里的 id 保留，续费自动恢复。
+小程序「整体风格模板」的白名单在 `internal/mptemplate`（`All()` 返回副本，4 款）。一款模板
+同时决定**配色 + 版式**：端上随版本内置在 `miniprogram/app.wxss` 的 18 个 CSS 变量里
+（`--wc-primary*` 等 11 个色值 + `--wc-r-*` / `--wc-card-shadow-*` 7 个版式），
+后台只存「选了哪一款」。默认 token 写在 `page` 上，取值与模板功能上线前逐字一致（升级零突变）；
+挂了 `.wc-theme-*` 的 6 个访客页才覆盖，员工 / 管理页保持默认。
+
+加一款模板 = 改 `internal/mptemplate` + `app.wxss` 变量块 + `utils/theme.ts` 的 `THEME_IDS`
++ `MpTheme.vue` 的 `.layout-<id>` 预览示意，并随小程序**重新提审发版**；
+`tests/theme.spec.ts` 会逐项对账（id / 变量齐全 / 预览色 / 版式差异 / 对比度），漏一处即变红。
+新增主色必须满足 `tests/theme.spec.ts` 的 WCAG AA 守门（12 组搭配 ≥4.5；`default` 是历史基线，
+只锁「不许变差」）。`--wc-primary-rgb` 必须与 `--wc-primary` 同色，否则阴影和按钮会错色。
+
+`migrations/0041_miniprogram_theme.sql` 只加 `home_layouts.template_id` 一列，缺省 `default`；
+该 SQL 的 COMMENT 里列的 id 是**上线当时的快照**，真实白名单以 `mptemplate.All()` 为准，
+加款不需要改数据库。授权 gate 只卡 PUT 里的「切到高级款」这一步，**读接口不拦**：
+到期时访客回落默认款，但库里的 id 保留，续费自动恢复。
+
+冷启动主题统一：`app.ts` 的 `onLaunch` 在租户绑定之后调 `utils/themeBootstrap.prefetchTheme()`
+拉一次本接口，写缓存并广播到页面栈——访客直接从分享链接进二级页时首页 `loadAll` 不会执行，
+不预热就会一直停在默认蓝。该模块**刻意不 import `utils/request.ts`**：后者在模块加载期取
+`getApp()`，由 `app.ts` 静态引入会让请求层永久丢掉后台下发的 `baseUrl` 覆盖。
 | GET  | /api/admin/mp-entry?companyId= | 小程序**裸启动默认入口**：`mode`（配置原值）+ `effectiveMode`（生效值）+ 指定员工姓名/职位/状态/`staffMissing` |
 | PUT  | /api/admin/mp-entry | 设置默认入口：`{mode:'wall'\|'staff', staffId}`。`mode=staff` 时 `staffId` 必填且须为**本企业启用中**员工（跨租户 / 不存在 / 已停用一律 code=1）；`mode=wall` 时 `staffId` 归零（必须显式传 0）。非法 mode 直接拒绝，不静默兜底 |
 | POST | /api/admin/upload | 文件上传（图片/mp4），返回可访问 URL（填回封面/相册/头像/LOGO） |
