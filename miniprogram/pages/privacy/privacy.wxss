@@ -46,7 +46,7 @@
   font-weight: 500;
 }
 .pv-link {
-  color: #1b66df;
+  color: var(--wc-primary-deep);
   font-size: 26rpx;
 }
 .pv-foot {

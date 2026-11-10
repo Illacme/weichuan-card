@@ -1,7 +1,7 @@
 /* 员工数据统计页（页面级样式，只作用于本页）。
    类名一律 st- 前缀：app.wxss 里的 .card / .panel 这类通用名一旦将来出现，
    会把本页悄悄改写；加前缀把这个可能性关掉。
-   配色沿用全局主题蓝 #1a8cff，卡片与 .emp-card 同款圆角阴影。 */
+   配色沿用全局主题蓝 var(--wc-primary)，卡片与 .emp-card 同款圆角阴影。 */
 
 /* ===== 时间筛选（三档分段控件） ===== */
 .st-range {
@@ -20,7 +20,7 @@
   border-radius: 12rpx;
 }
 .st-range-on {
-  background: #1a8cff;
+  background: var(--wc-primary);
   color: #fff;
   font-weight: 600;
 }
@@ -44,7 +44,7 @@
 .st-kpi-num {
   font-size: 52rpx;
   font-weight: 600;
-  color: #1a8cff;
+  color: var(--wc-primary);
   line-height: 1.1;
 }
 .st-kpi-label {
@@ -104,7 +104,7 @@
 }
 .st-metric-on {
   background: #e6f2ff;
-  color: #1a8cff;
+  color: var(--wc-primary);
   font-weight: 600;
 }
 .st-chart {
@@ -130,7 +130,7 @@
 .st-bar {
   width: 60%;
   min-height: 0;
-  background: linear-gradient(180deg, #6cb6ff 0%, #1a8cff 100%);
+  background: linear-gradient(180deg, #6cb6ff 0%, var(--wc-primary) 100%);
   border-radius: 6rpx 6rpx 0 0;
 }
 /* 刻度标签：30 天时只标每 5 天，靠列自身的宽度居中，不需要另画一条轴 */
@@ -209,7 +209,7 @@
 .st-src-bar {
   height: 100%;
   border-radius: 999rpx;
-  background: linear-gradient(90deg, #6cb6ff 0%, #1a8cff 100%);
+  background: linear-gradient(90deg, #6cb6ff 0%, var(--wc-primary) 100%);
 }
 /* 次数右对齐且定宽：数字位数不齐时条形右端会跟着抖 */
 .st-src-cnt {
@@ -217,7 +217,7 @@
   flex-shrink: 0;
   text-align: right;
   font-size: 25rpx;
-  color: #1a8cff;
+  color: var(--wc-primary);
 }
 /* 占比：比次数再淡一档——它是解释性的，不该抢走「几次」这个确数 */
 .st-src-pct {
@@ -270,7 +270,7 @@
   margin-right: 12rpx;
 }
 .st-rank-cnt {
-  color: #1a8cff;
+  color: var(--wc-primary);
   font-size: 25rpx;
   flex-shrink: 0;
 }

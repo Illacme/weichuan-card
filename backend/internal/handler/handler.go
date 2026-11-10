@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"weichuan/internal/license"
 	"weichuan/internal/model"
+	"weichuan/internal/mptemplate"
 	"weichuan/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -322,11 +324,14 @@ func New(db *gorm.DB) *gin.Engine {
 		}{BizService: s, TimeMode: detailTimeMode(db, cid, true)}})
 	})
 
-	// 首页布局：板块顺序 + 首页背景（按租户）
+	// 首页布局：板块顺序 + 首页背景 + 配色模板（按租户）
 	//
 	// 背景图是可选增强：bg_image 为空即保持原有灰底布局，小程序端据此决定是否
 	// 铺背景层与遮罩。bg_mask（0~100）为黑色蒙层浓度，用于压暗花哨背景、
 	// 保证白色内容卡片与文字的可读性。
+	// templateId 是内置配色模板 id（字段与 order/bgImage 一样在**响应根级**）。
+	// 小程序代码随版本审核，端上不能动态加载 WXSS，所以这里只下发 id，
+	// 由 utils/theme.ts 映射到随包内置的 CSS 变量。
 	r.GET("/api/home-layout", func(c *gin.Context) {
 		cid, ok := publicCompanyID(c, db)
 		if !ok {
@@ -335,14 +340,17 @@ func New(db *gorm.DB) *gin.Engine {
 		order := []string{"achievement", "service"}
 		var bgImage string
 		var bgMask int
+		templateID := mptemplate.DefaultID
 		if l, err := repository.GetHomeLayout(db, cid); err == nil {
 			if l.Order != "" {
 				_ = json.Unmarshal([]byte(l.Order), &order)
 			}
 			bgImage, bgMask = l.BgImage, l.BgMask
+			templateID = publicTemplateID(c, cid, l.TemplateID)
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": bgImage, "bgMask": bgMask,
+			"templateId": templateID,
 		})
 	})
 
@@ -390,6 +398,23 @@ func New(db *gorm.DB) *gin.Engine {
 	})
 
 	return r
+}
+
+// publicTemplateID 公开读路径的授权回落。
+//
+// 授权到期 / 未开通高级款时访客回默认配色，但**不抹库里的 template_id**：
+// 续费后 ResolveFor 每次请求重新查库，客户无需重选即可自动恢复。
+// 读路径绝不因为展示配置报错或拦请求——与 detailTimeMode() 同一原则，
+// 纯展示开关不该让访客连名片都打不开。
+func publicTemplateID(c *gin.Context, cid int64, raw string) string {
+	id := mptemplate.Normalize(raw)
+	if id == "" || !mptemplate.IsAdvanced(id) {
+		return mptemplate.DefaultID
+	}
+	if license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
+		return id
+	}
+	return mptemplate.DefaultID
 }
 
 // detailTimeMode 取本租户详情页「更新于」的展示档位（项目案例 / 业务服务各一列）。

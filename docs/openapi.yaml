@@ -544,7 +544,17 @@ paths:
   /api/home-layout:
     get:
       tags: [公开内容]
-      summary: 首页板块顺序
+      summary: 小程序展示配置（板块顺序 + 首页背景 + 配色模板）
+      description: |
+        字段都在**响应根级**，不在 `data` 里。首页 `loadAll` 一次拿到这四组配置，
+        不需要再为详情页时间档位或配色多打一次请求。
+
+        `templateId` 是内置配色模板 id（白名单见 `internal/mptemplate`）。小程序代码
+        随版本审核，端上不能动态加载 WXSS，所以这里只下发 id，由端上映射到随包
+        内置的 CSS 变量。未开通高级模板授权时读路径回落 `default`，但后台保存的
+        id 不抹——续费后自动恢复。
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
       responses:
         "200":
           description: code=0 成功
@@ -560,6 +570,18 @@ paths:
                     items:
                       type: string
                     example: [achievement, service]
+                  bgImage:
+                    type: string
+                    description: 首页背景图 URL，空串=不设背景
+                  bgMask:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+                    description: 背景遮罩浓度 0~100
+                  templateId:
+                    type: string
+                    enum: [default, ink, warm]
+                    description: 当前生效的配色模板 id；未知/未授权一律回 default
 
   /api/team:
     get:
@@ -2727,7 +2749,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
-      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位）
+      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位 + 配色模板）
       security:
         - cookieAuth: []
       responses:
@@ -2765,6 +2787,34 @@ paths:
                         type: string
                         enum: [hidden, date, minute]
                         description: 业务服务详情页的档位，与案例**分开控制**，互不影响。
+                      templateId:
+                        type: string
+                        enum: [default, ink, warm]
+                        description: 当前选中的配色模板；存量行（0041 前）缺省为 `default`。
+                      templates:
+                        type: array
+                        description: 后台「整体风格」页的可选清单，随二进制内置（端上不硬编码）。
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            name:
+                              type: string
+                            description:
+                              type: string
+                            advanced:
+                              type: boolean
+                              description: 需要 `mp_template_advanced` 授权
+                            previewPrimary:
+                              type: string
+                              description: 后台预览色块主色
+                            previewSoft:
+                              type: string
+                              description: 后台预览色块浅底
+                      templateEntitled:
+                        type: boolean
+                        description: 本租户是否开通高级模板；false 时后台把高级款置灰。
     put:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
@@ -2772,9 +2822,13 @@ paths:
       summary: 更新小程序展示配置
       description: |
         所有字段都是**可选**：未提供的字段保持原值（服务端用指针区分「未提供」与
-        「显式传空」），后台可以只改其中一栏而不覆盖其它配置。
-        `bgImage` 传空串表示清空背景；`order` 仍是必填（它决定首页板块顺序）。
-        时间档位传枚举外的值会被拒绝（code=1），不做静默兜底。
+        「显式传空」），三个页签各存各的——只提交 `templateId` 不会冲掉板块顺序、
+        背景与时间档位。`bgImage` 传空串表示清空背景；`order` 未提供时保持原值，
+        新建配置行则落缺省顺序。
+        时间档位与 `templateId` 传枚举外的值一律拒绝（code=1），不做静默兜底。
+        `templateId` 指向高级款时按租户校验 `mp_template_advanced`：未开通且属于
+        「新选」时回 code=403；已在用的高级款带着同一个 id 保存其它设置、或切回
+        `default`，都放行（授权降级只禁止新选，不锁死基础展示设置）。
       security:
         - cookieAuth: []
       requestBody:
@@ -2783,7 +2837,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [order]
               properties:
                 order:
                   type: array
@@ -2802,9 +2855,13 @@ paths:
                 serviceTimeMode:
                   type: string
                   enum: [hidden, date, minute]
+                templateId:
+                  type: string
+                  enum: [default, ink, warm]
+                  description: 配色模板 id；非法值 code=1，未授权高级款「新选」code=403。
       responses:
         "200":
-          description: code=0 成功；code=1 参数错误或档位取值无效
+          description: code=0 成功；code=1 参数错误或枚举取值无效；code=403 未开通高级模板
 
   /api/admin/mp-entry:
     get:

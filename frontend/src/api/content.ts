@@ -154,10 +154,22 @@ export function sortServices(items: { id: number; sort: number }[]) {
   return http.put('/admin/services/sort', items)
 }
 
-// ===== 首页布局（板块顺序 + 首页背景） =====
+// ===== 首页布局（板块顺序 + 首页背景 + 详情页时间档位 + 配色模板） =====
 // bgImage 背景图 URL（空串=不设背景）；bgMask 遮罩浓度 0~100（压暗背景保证白卡片可读）
 // 详情页「更新于」的展示档位。与后端 model.TimeMode* 三档一一对应。
 export type DetailTimeMode = 'hidden' | 'date' | 'minute'
+
+/** 后台「整体风格」页的一张模板卡。清单由服务端下发，前端不硬编码模板 id。 */
+export interface ThemeTemplate {
+  id: string
+  name: string
+  description: string
+  /** 需要 mp_template_advanced 授权；未开通时置灰 */
+  advanced: boolean
+  previewPrimary: string
+  previewSoft: string
+}
+
 export interface HomeLayoutData {
   order: string[]
   bgImage: string
@@ -166,6 +178,11 @@ export interface HomeLayoutData {
   projectTimeMode: DetailTimeMode
   /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */
   serviceTimeMode: DetailTimeMode
+  /** 当前配色模板 id（白名单真值在后端 internal/mptemplate） */
+  templateId: string
+  templates: ThemeTemplate[]
+  /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
+  templateEntitled: boolean
 }
 export function getHomeLayout() {
   return http
@@ -178,6 +195,9 @@ export function getHomeLayout() {
           bgMask: 0,
           projectTimeMode: 'date',
           serviceTimeMode: 'date',
+          templateId: 'default',
+          templates: [],
+          templateEntitled: true,
         }) as HomeLayoutData
     )
 }

@@ -5,9 +5,10 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import MpSettings from './MpSettings.vue'
 import MpEntry from './MpEntry.vue'
 import HomeLayout from './HomeLayout.vue'
+import MpTheme from './MpTheme.vue'
 import { routes } from '@/router'
 
-// 「小程序设置」= 一个菜单项 + 两个页签（访客先看到谁 / 名片首页样式）。
+// 「小程序设置」= 一个菜单项 + 三个页签（访客先看到谁 / 名片页面样式 / 整体风格）。
 //
 // 拆开时客户得自己猜「首页布局」其实也是小程序的事，合并后菜单少一项、名字变成
 // 客户语言。但合并有一个真风险：两页是**两个接口**，页签若同时挂载，进页面就会
@@ -222,6 +223,11 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
+      templateId: 'default',
+      templateEntitled: true,
+      templates: [
+        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
+      ],
     })
     contentMocks.saveHomeLayout.mockClear()
   })
@@ -303,5 +309,33 @@ describe('content/MpSettings', () => {
 
     await pickTab(w, 'entry')
     await vi.waitFor(() => expect(router.currentRoute.value.query.tab).toBe('entry'))
+  })
+
+  // 「整体风格」是第三个页签，同样必须 lazy：它和首页样式共用 home-layout 接口，
+  // 一进「小程序设置」就把三页全挂载会多打两次请求，弱网下三个 loading 一起转。
+  it('默认不挂载「整体风格」页签', async () => {
+    const { w } = await mountPage()
+
+    expect(pane(w, 'theme').exists()).toBe(false)
+    expect(contentMocks.getHomeLayout).not.toHaveBeenCalled()
+  })
+
+  it('?tab=theme 直接落在整体风格，且按内嵌模式渲染', async () => {
+    const { w } = await mountPage('?tab=theme')
+
+    expect(pane(w, 'theme').exists()).toBe(true)
+    expect(pane(w, 'theme').attributes('data-active')).toBe('true')
+    expect(w.findComponent(MpTheme).props('embedded')).toBe(true)
+    expect(contentMocks.getHomeLayout).toHaveBeenCalledTimes(1)
+    expect(mpMocks.getMpEntry).not.toHaveBeenCalled()
+  })
+
+  it('风格页与样式页各自拉一次；切回已渲染的页签不重复请求', async () => {
+    const { w } = await mountPage()
+    await pickTab(w, 'theme')
+    await pickTab(w, 'appearance')
+    await pickTab(w, 'theme')
+
+    expect(contentMocks.getHomeLayout).toHaveBeenCalledTimes(2)
   })
 })

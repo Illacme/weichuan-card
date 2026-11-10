@@ -4,9 +4,11 @@ import { parseRich } from '../../../utils/richtext'
 import { detailTimeText } from '../../../utils/datetime'
 import { getCompanyId } from '../../../utils/tenant'
 import { track } from '../../../utils/track'
+import { bindTheme } from '../../../utils/theme'
 
 Page({
   data: {
+    themeClass: '',
     id: 0,
     staffId: 0,
     project: null,
@@ -20,6 +22,7 @@ Page({
     error: false,
   },
   onLoad(query: any) {
+    bindTheme(this)
     this.setData({
       id: parseInt(query.id || '0', 10),
       // 从首页 / 列表透传（跳转页文档 §5）：分享时带回对应员工名片

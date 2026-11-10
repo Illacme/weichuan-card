@@ -1,6 +1,6 @@
 <!-- 查看全部同事：名片墙的第二层，滚动加载。
      与落地页的区别只有两点：没有企业抬头（避免占掉半屏），列表滚到底自动续页。 -->
-<view class="team-search team-search-fixed">
+<view class="team-search team-search-fixed wc-theme {{themeClass}}">
   <input
     class="team-search-input"
     value="{{keyword}}"
@@ -13,25 +13,25 @@
   <view class="team-search-clear" wx:if="{{keyword}}" catchtap="onClearSearch">✕</view>
 </view>
 
-<view class="team-count" wx:if="{{!loading && !error && !unavailable && total > 0}}">
+<view class="team-count wc-theme {{themeClass}}" wx:if="{{!loading && !error && !unavailable && total > 0}}">
   <block wx:if="{{activeKeyword}}">找到 {{total}} 位匹配的同事</block>
   <block wx:else>共 {{total}} 位同事</block>
 </view>
 
-<view wx:if="{{loading}}" class="loading">加载中…</view>
+<view wx:if="{{loading}}" class="loading wc-theme {{themeClass}}">加载中…</view>
 
-<view wx:elif="{{error}}" class="error-box">
+<view wx:elif="{{error}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">网络异常，加载失败</view>
   <button class="retry-btn" bindtap="load">重新加载</button>
 </view>
 
-<view wx:elif="{{unavailable}}" class="error-box">
+<view wx:elif="{{unavailable}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">该企业暂不可用</view>
   <view class="team-hint">可能已停用或链接已失效，请向分享者确认后再试。</view>
   <button class="retry-btn" bindtap="load">重试</button>
 </view>
 
-<view wx:else>
+<view class="wc-theme {{themeClass}}" wx:else>
   <view class="team-grid" wx:if="{{list.length}}">
     <view
       class="team-cell"

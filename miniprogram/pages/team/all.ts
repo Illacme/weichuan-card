@@ -20,9 +20,11 @@ import { onThumbError } from '../../utils/thumb'
 import { latestGuard, isSuperseded } from '../../utils/latest'
 import { applyBrandTitle } from '../../utils/brand'
 import { mapTeamList, mergeTeam, teamParams, hasMoreOf } from '../../utils/team'
+import { bindTheme } from '../../utils/theme'
 
 Page({
   data: {
+    themeClass: '',
     list: [],
     total: 0,
     hasMore: false,
@@ -46,6 +48,7 @@ Page({
   // 第 1 页的结果永远回不来，用户看到的是「越滑越多的第 2 页」。
   mainInFlight: false,
   onLoad(query: any) {
+    bindTheme(this)
     if (!this.guard) this.guard = latestGuard()
     const cid = parseInt((query && query.companyId) || '0', 10)
     const kw = ((query && query.keyword) || '').trim()

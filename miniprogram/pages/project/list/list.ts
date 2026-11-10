@@ -1,9 +1,11 @@
 import { request, assetUrl } from '../../../utils/request'
 import { thumbnailURL, onThumbError } from '../../../utils/thumb'
 import { latestGuard, isSuperseded } from '../../../utils/latest'
+import { bindTheme } from '../../../utils/theme'
 
 Page({
   data: {
+    themeClass: '',
     categoryId: 0,
     staffId: 0,
     list: [],
@@ -19,6 +21,7 @@ Page({
   guard: null as any,
   catsGuard: null as any,
   onLoad(query: any) {
+    bindTheme(this)
     if (!this.guard) this.guard = latestGuard()
     if (!this.catsGuard) this.catsGuard = latestGuard()
     this.setData({

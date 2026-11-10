@@ -52,8 +52,8 @@
 .brand-logo-img { width: 100%; height: 100%; }
 /* 没有 LOGO：蓝渐变磁贴 + 白色名片 glyph */
 .brand-logo.is-glyph {
-  background: linear-gradient(135deg, #1a8cff, #35b3ff);
-  box-shadow: 0 16rpx 36rpx rgba(26, 140, 255, 0.30);
+  background: linear-gradient(135deg, var(--wc-primary), #35b3ff);
+  box-shadow: 0 16rpx 36rpx rgba(var(--wc-primary-rgb), 0.30);
 }
 .brand-glyph {
   width: 76rpx;
@@ -111,8 +111,8 @@
   font-size: 32rpx;
   font-weight: 600;
   border-radius: 46rpx;
-  background: linear-gradient(135deg, #1a8cff, #35b3ff);
-  box-shadow: 0 10rpx 24rpx rgba(26, 140, 255, 0.28);
+  background: linear-gradient(135deg, var(--wc-primary), #35b3ff);
+  box-shadow: 0 10rpx 24rpx rgba(var(--wc-primary-rgb), 0.28);
 }
 .login-form .submit-btn::after { border: none; }
 

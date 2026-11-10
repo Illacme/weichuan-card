@@ -18,7 +18,7 @@
 // **四个接口的字段都在响应根级，不在 data 里**：
 //   /api/card         → employee / company / profile
 //   /api/achievements → categories / featured
-//   /api/home-layout  → order / bgImage / bgMask
+//   /api/home-layout  → order / bgImage / bgMask / templateId
 // 误读成 `card.data.*` 会让名片页恒走 notFound——这个 bug 已经真实发生过一次。
 import type { ApiResult } from './request'
 
@@ -137,11 +137,13 @@ export interface ServiceBrief {
 /** /api/services：标准 data 数组信封 */
 export type ServicesResp = ApiResult<ServiceBrief[]>
 
-/** /api/home-layout 整个响应信封（order / bgImage / bgMask 均在根级） */
+/** /api/home-layout 整个响应信封（order / bgImage / bgMask / templateId 均在根级） */
 export type HomeLayoutResp = Envelope & {
   /** 首页区块顺序，缺省 ['achievement', 'service'] */
   order?: string[]
   bgImage?: string
   /** 背景遮罩浓度 0..100 */
   bgMask?: number
+  /** 本租户选中的内置配色模板 id；缺省 / 未知值在端上按 default 渲染 */
+  templateId?: string
 }

@@ -54,7 +54,7 @@
 }
 .copy-btn {
   margin-top: 32rpx;
-  background: #2f6bff;
+  background: var(--wc-primary-alt);
   color: #fff;
   border-radius: 12rpx;
   font-size: 30rpx;

@@ -25,9 +25,11 @@ import { FALLBACK_BRAND, applyBrandTitle } from '../../utils/brand'
 import { mapTeamList, teamParams, hasMoreOf } from '../../utils/team'
 import { readEntryStaff, writeEntryStaff, clearEntryStaff } from '../../utils/entry'
 import { getCompanyId } from '../../utils/tenant'
+import { bindTheme } from '../../utils/theme'
 
 Page({
   data: {
+    themeClass: '',
     list: [],
     total: 0,
     // 还有更多人（后端 hasMore）：底部据此显示「查看全部 N 位同事」。
@@ -64,6 +66,7 @@ Page({
   },
 
   onLoad(query: any) {
+    bindTheme(this)
     // 平台模式下企业可能由扫码 scene 带进来；query 里的 companyId 只用于
     // 兜底展示，实际请求的 companyId 由 utils/request 按租户语义统一注入。
     const cid = parseInt((query && query.companyId) || '0', 10)

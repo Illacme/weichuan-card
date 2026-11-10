@@ -36,7 +36,7 @@
   align-items: center;
   padding: 6rpx 20rpx;
   background: rgba(255, 255, 255, 0.75);
-  border: 1rpx solid rgba(26, 140, 255, 0.45);
+  border: 1rpx solid rgba(var(--wc-primary-rgb), 0.45);
   border-radius: 28rpx;
 }
 .custom-nav .nav-me-avatar {
@@ -72,7 +72,7 @@
 .custom-nav .nav-me-user-icon:last-child { margin-right: 0; }
 .custom-nav .nav-me-text {
   font-size: 26rpx;
-  color: #1a8cff;
+  color: var(--wc-primary);
 }
 
 /* 首页背景：无后台背景图时按设计稿铺浅蓝→白渐变；有背景图时由
@@ -127,7 +127,7 @@
    企业名下那条为通栏；板块标题（经典业绩/业务服务）下为短装饰线。 */
 .line-split {
   height: 2rpx;
-  background: linear-gradient(90deg, #1b66df 0, #1b66df 34%, #e5ebf2 34%, #e5ebf2 100%);
+  background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 34%, var(--wc-track) 34%, var(--wc-track) 100%);
 }
 /* 企业名下：通栏，紧贴名称（间距由 .company-name 的 padding-bottom 提供） */
 .company-name-line { margin: 0; }

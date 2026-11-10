@@ -33,7 +33,7 @@
   line-height: 1.7;
 }
 .pc-link {
-  color: #1b66df;
+  color: var(--wc-primary-deep);
 }
 .pc-actions {
   display: flex;
@@ -56,7 +56,7 @@
   border: none;
 }
 .pc-btn-primary {
-  background: #1b66df;
+  background: var(--wc-primary-deep);
   color: #fff;
   border: none;
 }

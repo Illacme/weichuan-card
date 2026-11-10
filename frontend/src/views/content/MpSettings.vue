@@ -9,6 +9,12 @@
       <el-tab-pane label="名片页面样式" name="appearance" lazy>
         <HomeLayout embedded />
       </el-tab-pane>
+      <!-- 「整体风格」独立成第三个页签，不塞进「名片页面样式」里当第四块：
+           那一页的三块顺序（首页背景 → 板块顺序 → 详情页时间显示）是产品约定，
+           HomeLayout.spec.ts 用源码 indexOf 钉死了，插一块就得改约定。 -->
+      <el-tab-pane label="整体风格" name="theme" lazy>
+        <MpTheme embedded />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -18,15 +24,17 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MpEntry from './MpEntry.vue'
 import HomeLayout from './HomeLayout.vue'
+import MpTheme from './MpTheme.vue'
 
-// 小程序端「访客第一眼」的两件事：
+// 小程序端「访客第一眼」的三件事：
 //   ① 入口：扫体验版二维码 / 直接打开（裸启动）时，先看到名片墙还是某位员工的名片；
-//   ② 样式：名片首页的板块顺序与背景，以及两个详情页是否显示「更新于」。
-// 两者接口不同（/admin/mp-entry 与 /admin/home-layout）、各自保存，所以是页签而不是
-// 一个表单；但菜单只留一项——客户配的是「我的小程序长什么样」，不该由他去猜
+//   ② 样式：名片首页的板块顺序与背景，以及两个详情页是否显示「更新于」；
+//   ③ 风格：整套内置配色模板（按授权开关的增值能力）。
+// 三者各自保存（/admin/mp-entry 与 /admin/home-layout 的不同写入子集），所以是页签
+// 而不是一个表单；但菜单只留一项——客户配的是「我的小程序长什么样」，不该由他去猜
 // 「首页布局」其实也是小程序的事。
 
-const TABS = ['entry', 'appearance'] as const
+const TABS = ['entry', 'appearance', 'theme'] as const
 type TabName = (typeof TABS)[number]
 
 const route = useRoute()

@@ -1,4 +1,4 @@
-<view class="detail" wx:if="{{!loading && !error && project}}">
+<view class="detail wc-theme {{themeClass}}" wx:if="{{!loading && !error && project}}">
   <!-- 封面 / 相册都挂了 binderror。相册图挂了不留白块：占位与图片同尺寸同圆角
        （.album-img 自带 #eee 底色），宫格不会因为一张坏图塌掉一格。
        占位不绑 preview——点它没有意义，还会用空地址调起预览。 -->
@@ -37,8 +37,8 @@
     </block>
   </view>
 </view>
-<view wx:elif="{{error}}" class="error-box">
+<view wx:elif="{{error}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">网络异常，加载失败</view>
   <button class="retry-btn" bindtap="load">重新加载</button>
 </view>
-<view wx:else class="loading">加载中…</view>
+<view wx:else class="loading wc-theme {{themeClass}}">加载中…</view>

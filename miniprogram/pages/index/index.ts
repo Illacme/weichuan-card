@@ -7,9 +7,11 @@ import { FALLBACK_BRAND } from '../../utils/brand'
 // 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
 // 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
+import { applyTheme, bindTheme } from '../../utils/theme'
 
 Page({
   data: {
+    themeClass: '',
     staffId: 0,
     // 微信隐私授权弹窗是否显示（由 ensurePrivacy 控制）：
     // 「存入通讯录」调的是隐私接口 addPhoneContact，未同意时微信会直接 fail
@@ -57,6 +59,7 @@ Page({
     source: '',
   },
   onLoad(query: any) {
+    bindTheme(this)
     // 名片墙凭「本地缓存的默认入口」直接跳过来时会带这个标记。
     // 它只服务一件事：万一那位员工已经不可用（停用 / 删除），
     // 本页负责清缓存并把访客送回名片墙，而不是让人停在一句「员工不存在」上。
@@ -280,6 +283,9 @@ Page({
         const icon = assetUrl(s.icon)
         return { ...s, icon, iconThumb: thumbnailURL(icon) }
       })
+      // 配色模板同样在响应根级：缓存到 Storage 并广播给已渲染的页面栈，
+      // 否则从名片墙点进名片时，那一页还停在默认蓝色（要下次冷启动才统一）。
+      applyTheme(layout.templateId)
       const order = layout.order && layout.order.length ? layout.order : ['achievement', 'service']
       this.setData({
         employee: cardData.employee,

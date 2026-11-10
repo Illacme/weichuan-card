@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"weichuan/internal/config"
+	"weichuan/internal/license"
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
+	"weichuan/internal/mptemplate"
 	"weichuan/internal/setting"
 
 	"github.com/gin-gonic/gin"
@@ -435,8 +437,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
-	// ===== 小程序展示配置（首页板块顺序 + 首页背景 + 详情页时间档位，按租户） =====
+	// ===== 小程序展示配置（板块顺序 + 首页背景 + 详情页时间档位 + 配色模板，按租户） =====
 	r.GET("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		cid := targetCompanyID(c)
 		var hl model.HomeLayout
 		order := []string{}
 		var bgImage string
@@ -444,7 +447,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
-		if db.First(&hl, "company_id = ?", targetCompanyID(c)).Error == nil {
+		templateID := mptemplate.DefaultID
+		if db.First(&hl, "company_id = ?", cid).Error == nil {
 			if hl.Order != "" {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
 			}
@@ -453,16 +457,29 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
 			serviceMode = model.NormalizeTimeMode(hl.ServiceTimeMode)
+			// 0041 之前建的行 template_id 为空，按缺省款回；脏值同样不让前端
+			// 渲染出「一个都没选中」的模板列表。
+			if v := mptemplate.Normalize(hl.TemplateID); v != "" {
+				templateID = v
+			}
 		}
+		// 清单与授权态一并下发：后台不必自己硬编码模板，且能直接把「未开通」
+		// 的高级款置灰并说明原因，而不是等保存时才被拒。
+		entitled := license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
+			"templateId": templateID, "templates": mptemplate.All(),
+			"templateEntitled": entitled,
 		}})
 	})
 	r.PUT("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var req struct {
-			Order []string `json:"order"`
+			// Order 也必须是指针：新增「整体风格」页签后，模板页只提交 templateId，
+			// 若仍无条件写 order_col，会把客户配好的板块顺序冲成 "null"——
+			// 没人报错、前台只是悄悄回到默认顺序，属于典型的静默数据丢失。
+			Order *[]string `json:"order"`
 			// 指针区分「未提供」（保持原值）与「传空串」（清空背景）——
 			// 前端分块保存时可能只提交板块顺序，不能把背景顺手清掉。
 			BgImage *string `json:"bgImage"`
@@ -470,6 +487,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
+			// 配色模板 id：三个页签各存各的，未提供时保持原值。
+			TemplateID *string `json:"templateId"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -490,14 +509,60 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				return
 			}
 		}
-		b, _ := json.Marshal(req.Order)
+
+		// 模板 id 走白名单：未知值直接拒绝，不落库。
+		templateID := ""
+		if req.TemplateID != nil {
+			templateID = mptemplate.Normalize(*req.TemplateID)
+			if templateID == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配色模板无效"})
+				return
+			}
+			// 授权只卡「切到高级款」这一个动作，不把整个 PUT 挂 RequireFeature：
+			// 后者会连首页背景、板块顺序、时间档位一起拦掉，没买高级模板的客户
+			// 连基础展示设置都保存不了。
+			// 已在用高级款但授权到期时，带着同一个 id 保存其它设置仍放行；
+			// 切回 default 也放行——降级只禁止「新选」，不破坏客户既有配置。
+			if mptemplate.IsAdvanced(templateID) {
+				var cur model.HomeLayout
+				current := mptemplate.DefaultID
+				if db.First(&cur, "company_id = ?", cid).Error == nil {
+					if v := mptemplate.Normalize(cur.TemplateID); v != "" {
+						current = v
+					}
+				}
+				if templateID != current &&
+					!license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
+					c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通高级配色模板，请联系服务商升级"})
+					return
+				}
+			}
+		}
+
+		orderJSON := ""
+		if req.Order != nil {
+			// []string 的 Marshal 没有失败分支（无 chan/func/循环引用），忽略 err 是安全的。
+			b, _ := json.Marshal(*req.Order)
+			orderJSON = string(b)
+		}
 		var hl model.HomeLayout
 		if db.First(&hl, "company_id = ?", cid).Error != nil {
+			// 新行：没显式提交 order / templateId 时也要落成合法缺省值，
+			// 不能写 "null" 或空串（端上会把空 id 当成不认识的模板）。
+			createdOrder := orderJSON
+			if createdOrder == "" {
+				createdOrder = `["achievement","service"]`
+			}
+			createdTemplate := templateID
+			if createdTemplate == "" {
+				createdTemplate = mptemplate.DefaultID
+			}
 			created := model.HomeLayout{
 				CompanyID:       cid,
-				Order:           string(b),
+				Order:           createdOrder,
 				ProjectTimeMode: model.DefaultTimeMode,
 				ServiceTimeMode: model.DefaultTimeMode,
+				TemplateID:      createdTemplate,
 			}
 			if req.BgImage != nil {
 				created.BgImage = *req.BgImage
@@ -516,7 +581,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				return
 			}
 		} else {
-			upd := map[string]interface{}{"order_col": string(b)}
+			upd := map[string]interface{}{}
+			if orderJSON != "" {
+				upd["order_col"] = orderJSON
+			}
 			if req.BgImage != nil {
 				upd["bg_image"] = *req.BgImage
 			}
@@ -529,9 +597,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if serviceMode != "" {
 				upd["service_time_mode"] = serviceMode
 			}
-			if err := db.Model(&hl).Updates(upd).Error; err != nil {
-				dbWriteFailed(c, "更新首页布局", "保存失败，请稍后重试", err)
-				return
+			if templateID != "" {
+				upd["template_id"] = templateID
+			}
+			// 三个页签各存各的：只带 templateId 的 payload 只改 template_id 一列，
+			// 其余展示配置一律不动。upd 为空说明没带任何可写字段，直接回成功即可。
+			if len(upd) > 0 {
+				if err := db.Model(&hl).Updates(upd).Error; err != nil {
+					dbWriteFailed(c, "更新首页布局", "保存失败，请稍后重试", err)
+					return
+				}
 			}
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})

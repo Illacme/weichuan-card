@@ -1525,3 +1525,88 @@ WXML 不进 Vitest 编译范围，因此补了 2 条**源码级守门**（两个
 - 反向验证：把首尾两个模块标题对调 → 守门 `exit=1` 精确命中；还原后全绿。
 - 门禁：eslint / `vue-tsc` 0 错误；Vitest 全量 **92 文件 1516 例**；
   `vite build` 成功；`git diff --check` OK。后端零改动。
+
+## 第二十二轮：小程序配色模板（增值能力，2026-11-10 同日）
+
+**需求**：为便于给客户提供更高级的增值服务，管理后台要能提供「小程序模板支持」。
+用户确认第一期范围：**只做配色模板，不动版式**。
+
+### 方案：内置白名单模板包 + theme tokens + license feature gate
+
+刻意**不做**「后台上传自由 WXML/CSS」：小程序代码是编译后上传审核的，端上不能
+动态加载 WXSS；自由样式会把内部类名变成对客户的长期承诺（以后改版就是破坏定制），
+还附带注入与「深底 + 深字」对比度失控的风险。模板必须随小程序版本内置，后台只记
+「选了哪一款」。加一款 = 改代码 + 发版，这是刻意保留的成本。
+
+### 复用的三套既有底座（没有另起炉灶）
+
+1. **按租户展示配置链路**：`model.HomeLayout` 注释里本就写明「新增展示类配置可以
+   继续放这里」，后台 `GET/PUT /api/admin/home-layout` 与公开 `GET /api/home-layout`
+   现成可用 → 只加 `template_id` 一列（`0041`），不新建表 / 新接口路径。
+2. **商业授权**：`tenant_license.features` + `license.ResolveFor().HasFeature()`，
+   后台 `Companies.vue` 早已能按企业填 `mp_release` 这类开关 → 新增
+   `mp_template_advanced`，无需新授权体系。
+3. **代码内白名单包**：`internal/cattemplate`（`Default()` 返回副本）与
+   `internal/assets/library`（`go:embed`）都是已验证的模式 → 新包
+   `internal/mptemplate` 作为 id 唯一真值来源。
+
+### 改动清单
+
+- 后端：`internal/mptemplate`（3 款：`default` 免费 / `ink` / `warm` 高级）、
+  `HomeLayout.TemplateID`、迁移 `0041_miniprogram_theme.sql`（缺省 `default`、
+  不搬存量）+ manifest 重生成；admin GET 下发 `templateId` / `templates` /
+  `templateEntitled`，PUT 校验白名单；公开 GET 在响应**根级**下发 `templateId`。
+- 后台：`MpSettings.vue` 新增第三个 lazy 页签「整体风格」（不插进已钉死顺序的
+  「名片页面样式」三块），`MpTheme.vue` 用预览色块 + 授权提示；保存**只提交
+  `{ templateId }`**。
+- 小程序：12 份 WXSS 共 **83 处**主色硬编码抽成 11 个 `--wc-*` 变量；默认 token
+  写在 `page` 上（没挂主题 class 的页面取值与上线前逐字一致）；
+  `.wc-theme-ink` / `.wc-theme-warm` 覆盖同名变量；6 个访客页的 **25 个顶层状态
+  节点**只加 `wc-theme {{themeClass}}` 类、**不改 DOM 结构**；`utils/theme.ts`
+  负责 id → class、Storage 缓存与 `getCurrentPages()` 广播。
+- 契约：`types.ts` 的 `HomeLayoutResp` 补 `templateId` 并与 Go json tag 对账；
+  新增 `tests/theme.spec.ts` 对账 Go 白名单 / CSS 变量齐全 / WXSS 无残留 /
+  6 页顶层节点与 `applyTheme` 调用点。
+
+### 关键决策（都不是「顺手实现」）
+
+- **授权 gate 不能挂路由**：`RequireFeature` 挂在整个 PUT 上会连首页背景、板块
+  顺序、时间档位一起拦掉——没买高级模板的客户连基础展示设置都存不了。改为在
+  PUT 内部只校验「切到高级款」这一步；已选中的高级款带着同一个 id 保存其它设置、
+  或切回 `default`，都放行。
+- **读路径不抹库**：授权到期时公开接口回落 `default`，但 `template_id` 保留，
+  续费后 `ResolveFor` 每次请求重新查库、自动恢复，客户无需重选。与
+  `detailTimeMode()` 的「纯展示配置不让页面失败」同一原则。
+- **`order` 也改成指针**：三个页签各存各的，模板页只提交 `templateId` 时，
+  原实现会无条件把 `order_col` 写成 `"null"`，静默冲掉客户配的板块顺序。
+  这是本次顺带修掉的真实数据丢失路径，不是重构洁癖。
+- **默认外观逐字不变**：变量默认值就是原硬编码值；一期不动页面底色 / 卡片白 /
+  正文灰度，避免深色主色压低文字对比度。
+
+### 一期边界（写清楚，避免被当成 bug）
+
+模板只覆盖访客主链路 6 页（名片首页、名片墙、全员、案例列表、两个详情页）；
+员工 / 管理页沿用 `page` 默认配色。首次冷启动若还没进过名片首页，用上次缓存的
+模板（首次即 `default`）；首页拿到 `/api/home-layout` 后广播到已打开页面栈即时统一。
+版式差异、预览图、更多模板包、客户自定义主色留到二期。
+
+### 门禁与反向验证
+
+- 后端：`go build` / `go vet` / `go test ./...`（28 包）全绿；`golangci-lint v2.15.0`
+  **0 issues**；本地 MySQL parity `TestAPIFlowMySQL` 17 个子测试全 PASS，含新增
+  「小程序配色模板」——`0041` 迁移在真实 MySQL 上确实跑通。
+- 前端：`eslint .` / `vue-tsc --noEmit` 0 错误；全量 Vitest **94 文件 1535 例**全绿；
+  `vite build --outDir dist-check-theme` 成功；WXSS 类名冲突自检无危险项；
+  `git diff --check` OK。
+- **反向验证 6 项**（改回旧实现必红、还原后全绿）：①去掉授权 gate ②恢复 `order`
+  无条件写 ③去掉读路径授权回落 ④模板页整表单回传 ⑤首页删掉 `applyTheme`
+  ⑥端上类型删掉 `templateId`。六项全部 `exit=1` 精确命中；还原后
+  `TestAPIFlow` 与全量 Vitest 均 `exit=0`。
+
+### 上线注意
+
+- **必须同步整个 `migrations/`**（含 `0041`）：只换二进制会在运行期炸
+  `Unknown column: template_id`；补齐后 `./server migrate`，不必重启。
+- 高级款要按租户在企业授权里填 `mp_template_advanced`（逗号分隔，留空 = 全部开通）。
+- 新增模板需同步改 `internal/mptemplate`、`app.wxss` 变量块、`utils/theme.ts` 的 id
+  清单，并随小程序**重新提审发版**——端上不能热加载样式。

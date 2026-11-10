@@ -15,7 +15,7 @@
   width: 120rpx;
   height: 120rpx;
   border-radius: 24rpx;
-  background: #e8f1fb;
+  background: var(--wc-primary-tint);
   margin-bottom: 16rpx;
 }
 .team-name {
@@ -50,14 +50,14 @@
   width: 120rpx;
   height: 120rpx;
   border-radius: 50%;
-  background: #e8f1fb;
+  background: var(--wc-primary-tint);
 }
 /* 无头像时的占位：取姓名首字，比灰色空圈有信息量 */
 .team-avatar-ph {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #1b66df;
+  color: var(--wc-primary-deep);
   font-size: 40rpx;
   font-weight: 600;
   overflow: hidden;
@@ -144,8 +144,8 @@
   height: 76rpx;
   line-height: 76rpx;
   text-align: center;
-  border: 1rpx solid #1a8cff;
+  border: 1rpx solid var(--wc-primary);
   border-radius: 38rpx;
-  color: #1a8cff;
+  color: var(--wc-primary);
   font-size: 28rpx;
 }

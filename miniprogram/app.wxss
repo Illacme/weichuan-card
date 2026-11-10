@@ -1,4 +1,50 @@
 /* 全局样式（组件已开启 addGlobalClass，可直接使用这里的类） */
+
+/* ===== 小程序配色主题（一期：只换配色，不动版式） =====
+   默认 token 写在 page 上：没挂主题 class 的页面（员工 / 管理页）取值与
+   主题功能上线前逐字一致，升级零突变。挂了 .wc-theme-* 的访客页由该元素
+   上的同名变量覆盖，子元素按 CSS 自定义属性继承规则自动跟随。
+   一期不动页面底色 / 卡片底色 / 正文灰度，避免深色主色压低文字对比度。
+   每加一款模板必须给齐下面 11 个 token，theme.spec.ts 会逐个核对。 */
+page {
+  --wc-primary: #1a8cff;
+  --wc-primary-deep: #1b66df;
+  --wc-primary-grad: #0e6fe0;
+  --wc-primary-alt: #2f6bff;
+  --wc-primary-soft: #f5faff;
+  --wc-primary-border: #b3d9ff;
+  --wc-primary-tint: #e8f1fb;
+  --wc-primary-chip: #e8f3ff;
+  --wc-primary-pcat: #eaf4ff;
+  --wc-track: #e5ebf2;
+  --wc-primary-rgb: 26, 140, 255;
+}
+.wc-theme-ink {
+  --wc-primary: #3d4b5c;
+  --wc-primary-deep: #2b3745;
+  --wc-primary-grad: #1f2a35;
+  --wc-primary-alt: #4a5b6e;
+  --wc-primary-soft: #f2f5f8;
+  --wc-primary-border: #c8d2dc;
+  --wc-primary-tint: #e8edf2;
+  --wc-primary-chip: #e6ebf0;
+  --wc-primary-pcat: #eef2f6;
+  --wc-track: #dde3e9;
+  --wc-primary-rgb: 61, 75, 92;
+}
+.wc-theme-warm {
+  --wc-primary: #a5742a;
+  --wc-primary-deep: #8a5c1d;
+  --wc-primary-grad: #6f4916;
+  --wc-primary-alt: #b98435;
+  --wc-primary-soft: #fdf6e9;
+  --wc-primary-border: #e8d3a8;
+  --wc-primary-tint: #f7efdf;
+  --wc-primary-chip: #f9eed6;
+  --wc-primary-pcat: #fdf3e2;
+  --wc-track: #ece4d5;
+  --wc-primary-rgb: 165, 116, 42;
+}
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
 .disabled-tip { padding: 120rpx 40rpx; text-align: center; color: #999; font-size: 30rpx; }
@@ -20,7 +66,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card .ec-head { display: flex; }
 .emp-card .ec-avatar {
   width: 112rpx; height: 112rpx; border-radius: 50%;
-  background: #e8f1fb; flex-shrink: 0;
+  background: var(--wc-primary-tint); flex-shrink: 0;
   border: 4rpx solid #fff; box-shadow: 0 4rpx 10rpx rgba(0, 0, 0, 0.10);
 }
 .emp-card .ec-info { flex: 1; min-width: 0; margin-left: 22rpx; }
@@ -30,7 +76,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card .ec-title { color: #6b7a89; font-size: 24rpx; margin-top: 2rpx; }
 .emp-card .ec-line3 { display: flex; align-items: center; margin-top: 10rpx; }
 .emp-card .ec-cname {
-  flex: 1; min-width: 0; color: #1b66df; font-size: 26rpx; font-weight: 600;
+  flex: 1; min-width: 0; color: var(--wc-primary-deep); font-size: 26rpx; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 「查看案例」：细长条小药丸，两轮收紧（用户两次反馈公司名被挤）：
@@ -40,8 +86,8 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
    箭头为黑色实心小三角 ▾/▸：纯文本字形（无 emoji 变体风险，U+25B6 那种有），
    ▾ = 滚动到首页业绩区，▸ = 跳案例页（见 pages/index/index.ts）。 */
 .emp-card .case-btn {
-  flex-shrink: 0; margin-left: 10rpx; font-size: 18rpx; color: #1a8cff;
-  background: #f5faff; border: 1rpx solid #b3d9ff;
+  flex-shrink: 0; margin-left: 10rpx; font-size: 18rpx; color: var(--wc-primary);
+  background: var(--wc-primary-soft); border: 1rpx solid var(--wc-primary-border);
   height: 28rpx; padding: 0 10rpx; border-radius: 999rpx;
   display: flex; align-items: center; line-height: 1;
 }
@@ -61,7 +107,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card .ec-rows { margin-top: 22rpx; }
 .emp-card .ec-rows-line {
   height: 1px; width: 100%; margin-bottom: 16rpx;
-  background: linear-gradient(90deg, #1b66df 0, #1b66df 34%, #e5ebf2 34%, #e5ebf2 100%);
+  background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 34%, var(--wc-track) 34%, var(--wc-track) 100%);
 }
 .emp-card .ec-contact { display: flex; align-items: flex-start; }
 .emp-card .ec-col { min-width: 0; }
@@ -132,7 +178,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   content: '';
   position: absolute; left: 44rpx; top: 34rpx;
   width: 0; height: 0;
-  border-left: 36rpx solid #1a8cff;
+  border-left: 36rpx solid var(--wc-primary);
   border-top: 22rpx solid transparent;
   border-bottom: 22rpx solid transparent;
 }
@@ -162,7 +208,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   color: #fff; font-size: 32rpx; font-weight: 600;
   text-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.35);
 }
-.company-video .cv-ph { background: linear-gradient(180deg, #1a8cff, #0e6fe0); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 36rpx; }
+.company-video .cv-ph { background: linear-gradient(180deg, var(--wc-primary), var(--wc-primary-grad)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 36rpx; }
 .intro { display: block; margin-top: 20rpx; color: #666; line-height: 1.7; }
 /* 简介区公司名标题（设计稿：黑色加粗大字 + 下方左蓝右灰分段线）。
    线由 index.wxml 的 .line-split 独立元素绘制（border 只能单色，做不出左蓝右灰），
@@ -173,7 +219,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .cat-grid { display: flex; flex-wrap: wrap; }
 .cat-item { width: 25%; display: flex; flex-direction: column; align-items: center; padding: 12rpx 8rpx; box-sizing: border-box; }
 .cat-icon { width: 100%; height: auto; }
-.cat-placeholder { width: 100%; aspect-ratio: 1 / 1; border-radius: 28rpx; background: linear-gradient(180deg, #1a8cff, #0e6fe0); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 46rpx; }
+.cat-placeholder { width: 100%; aspect-ratio: 1 / 1; border-radius: 28rpx; background: linear-gradient(180deg, var(--wc-primary), var(--wc-primary-grad)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 46rpx; }
 .cat-name { margin-top: 12rpx; font-size: 24rpx; text-align: center; color: #333; }
 
 /* 精选项目（设计图：2 列横版照片卡，等比缩放充满显示区，不放标题文字） */
@@ -187,14 +233,14 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .svc-grid { display: flex; flex-wrap: wrap; }
 .svc-item { width: 25%; display: flex; flex-direction: column; align-items: center; padding: 16rpx 8rpx; box-sizing: border-box; }
 .svc-icon { width: 100%; height: auto; border-radius: 16rpx; }
-.svc-icon-ph { width: 100%; aspect-ratio: 11 / 20; border-radius: 16rpx; background: linear-gradient(180deg, #1a8cff, #0e6fe0); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 46rpx; }
+.svc-icon-ph { width: 100%; aspect-ratio: 11 / 20; border-radius: 16rpx; background: linear-gradient(180deg, var(--wc-primary), var(--wc-primary-grad)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 46rpx; }
 .svc-title { text-align: center; font-size: 26rpx; color: #333; margin-top: 12rpx; }
 
 /* 底部操作栏 */
 .action-bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1rpx solid #eee; padding: 16rpx 24rpx; padding-bottom: calc(16rpx + env(safe-area-inset-bottom)); }
 .ab-btn { flex: 1; margin: 0 12rpx; border-radius: 40rpx; font-size: 30rpx; }
-.ab-btn.call { background: #1a8cff; color: #fff; }
-.ab-btn.save { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; }
+.ab-btn.call { background: var(--wc-primary); color: #fff; }
+.ab-btn.save { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); }
 
 /* 项目案例列表：业绩分类横向切换条（吸顶，点选即重载列表） */
 .pcat-bar {
@@ -215,7 +261,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   background: #f2f5f9;
   border-radius: 28rpx;
 }
-.pcat-chip.on { background: #eaf4ff; color: #1a8cff; font-weight: 600; }
+.pcat-chip.on { background: var(--wc-primary-pcat); color: var(--wc-primary); font-weight: 600; }
 
 /* 列表/详情通用 */
 .list { padding: 16rpx; }
@@ -237,15 +283,15 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .form-item { display: flex; align-items: center; padding: 20rpx 0; border-bottom: 1rpx solid #eee; }
 .form-item .label { width: 160rpx; color: #666; }
 .form-item input { flex: 1; }
-.submit-btn { margin-top: 40rpx; background: #1a8cff; color: #fff; border-radius: 40rpx; }
+.submit-btn { margin-top: 40rpx; background: var(--wc-primary); color: #fff; border-radius: 40rpx; }
 
 /* 手机号行右侧「+ 备用手机号」（申请开通页 / 编辑名片页共用）：
    默认只展示一个手机号输入框，多数人只有一个号；需要第二个时点它展开，
    比一上来摆两个空框更不容易误解为「都要填」 */
 .add-sub {
   flex-shrink: 0; display: flex; align-items: center; margin-left: 16rpx;
-  height: 44rpx; padding: 0 16rpx; border: 1rpx solid #1a8cff; border-radius: 999rpx;
-  color: #1a8cff; font-size: 24rpx; line-height: 1;
+  height: 44rpx; padding: 0 16rpx; border: 1rpx solid var(--wc-primary); border-radius: 999rpx;
+  color: var(--wc-primary); font-size: 24rpx; line-height: 1;
 }
 .add-sub-plus { font-size: 30rpx; margin-right: 4rpx; line-height: 1; }
 /* 展开后的「×」：收起并清空备用号，防止暗数据 */
@@ -262,7 +308,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 
 /* 海报入口 + 海报页 */
 .poster-entry { padding: 24rpx; }
-.poster-btn { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; font-size: 28rpx; }
+.poster-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 28rpx; }
 .poster-page { padding: 24rpx; }
 .poster-canvas { width: 320px; height: 460px; background: #fff; border-radius: 12rpx; }
 /* 海报页：canvas 与「生成中 / 失败」覆盖层叠在同一块 320×460 的舞台上。
@@ -279,8 +325,8 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
    保存退为次要（描边，左侧）——微信习惯主操作在右 */
 .actions { margin-top: 24rpx; display: flex; }
 .actions button { flex: 1; margin: 0 8rpx; font-size: 30rpx; }
-.save-btn { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; }
-.share-btn { background: #1a8cff; color: #fff; border: 1rpx solid #1a8cff; border-radius: 40rpx; }
+.save-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; }
+.share-btn { background: var(--wc-primary); color: #fff; border: 1rpx solid var(--wc-primary); border-radius: 40rpx; }
 
 /* 海报背景选择条：横滑一排缩略图（海报是 640×920 竖幅，缩略图按 3:4.3 裁）。
    选中项用主色描边——44 张里挑一张，没有选中态的话根本看不出当前用的哪张。 */
@@ -294,7 +340,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   border: 4rpx solid transparent; box-sizing: border-box;
   background: #f2f3f5;
 }
-.bg-item.on .bg-thumb { border-color: #1a8cff; }
+.bg-item.on .bg-thumb { border-color: var(--wc-primary); }
 /* 「今日节气」角标：节气日自动选中 + 排到第一位，只靠蓝色边框
    看不出是节气选的，用户会以为是上次的选择。贴缩略图底部一条，
    与素材图上烧的节气名呼应。 */
@@ -313,7 +359,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   display: flex; align-items: center; justify-content: center;
   background: #fff; border-color: #dcdfe6; color: #909399; font-size: 24rpx;
 }
-.bg-item.on .bg-plain { border-color: #1a8cff; color: #1a8cff; }
+.bg-item.on .bg-plain { border-color: var(--wc-primary); color: var(--wc-primary); }
 
 /* 海报页底部：工具条 + 单行选项面板。
    工具条常驻一屏内，「位置」不必滚动就能点到；面板只渲染当前工具的一行，
@@ -326,12 +372,12 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   flex: 1; text-align: center; font-size: 25rpx; color: #666;
   padding: 14rpx 0; border-radius: 10rpx; position: relative;
 }
-.tool.on { background: #fff; color: #1a8cff; font-weight: 600; }
+.tool.on { background: #fff; color: var(--wc-primary); font-weight: 600; }
 /* 当前工具下的小圆点：只靠底色区分在浅灰面板上不够明显 */
 .tool.on::after {
   content: ''; position: absolute; left: 50%; bottom: 6rpx;
   width: 8rpx; height: 8rpx; margin-left: -4rpx;
-  border-radius: 50%; background: #1a8cff;
+  border-radius: 50%; background: var(--wc-primary);
 }
 .poster-panel {
   margin-top: 16rpx;
@@ -360,7 +406,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: #f7f8fa; border-color: #c8cdd6; border-style: dashed;
 }
-.bg-upload-plus { font-size: 40rpx; line-height: 1; color: #1a8cff; }
+.bg-upload-plus { font-size: 40rpx; line-height: 1; color: var(--wc-primary); }
 .bg-upload-txt { font-size: 20rpx; color: #909399; margin-top: 6rpx; }
 .bg-upload.busy { opacity: 0.55; }
 .bg-hint { font-size: 22rpx; color: #aaa; margin-top: 10rpx; }
@@ -375,11 +421,11 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   position: absolute; box-sizing: border-box;
   border: 2rpx dashed transparent; border-radius: 8rpx;
 }
-.qr-hit.show { border-color: rgba(26, 140, 255, 0.9); background: rgba(26, 140, 255, 0.06); }
+.qr-hit.show { border-color: rgba(var(--wc-primary-rgb), 0.9); background: rgba(var(--wc-primary-rgb), 0.06); }
 .qr-hit-label {
   position: absolute; left: 0; top: 0;
   font-size: 18rpx; line-height: 1; padding: 4rpx 8rpx;
-  color: #fff; background: rgba(26, 140, 255, 0.9);
+  color: #fff; background: rgba(var(--wc-primary-rgb), 0.9);
   border-radius: 8rpx 0 8rpx 0;
 }
 .drag-tip { font-size: 22rpx; color: #aaa; text-align: center; margin-top: 12rpx; }
@@ -420,7 +466,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   font-size: 25rpx; color: #444; background: #f2f3f5; border-radius: 28rpx;
   border: 1rpx solid transparent; box-sizing: border-box;
 }
-.chip.on { background: #e8f3ff; color: #1a8cff; border-color: #1a8cff; }
+.chip.on { background: var(--wc-primary-chip); color: var(--wc-primary); border-color: var(--wc-primary); }
 
 /* 员工头像上传 */
 .form-item.avatar-row { align-items: center; }
@@ -431,14 +477,14 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 /* 网络异常占位 + 重试（首页 / 列表 / 详情共用；断网时 loading 必须落下来） */
 .error-box { padding: 160rpx 48rpx; text-align: center; }
 .error-text { color: #999; font-size: 30rpx; }
-.retry-btn { margin-top: 32rpx; background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; font-size: 28rpx; }
+.retry-btn { margin-top: 32rpx; background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 28rpx; }
 
 /* 详情页元信息行（分类名 / 更新时间） */
 .detail .meta { padding: 0 24rpx 16rpx; color: #999; font-size: 24rpx; }
 
 /* 通用按钮 */
-.primary-btn { background: #1a8cff; color: #fff; border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
-.plain-btn { background: #fff; color: #1a8cff; border: 1rpx solid #1a8cff; border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
+.primary-btn { background: var(--wc-primary); color: #fff; border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
+.plain-btn { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); border-radius: 40rpx; font-size: 30rpx; margin-top: 24rpx; }
 
 /* 「我的」页（员工 tabBar） */
 .me { padding: 24rpx; }
@@ -483,7 +529,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 /* 申请开通页 */
 .tip { color: #999; font-size: 24rpx; margin-top: 24rpx; line-height: 1.6; }
 .done { padding: 120rpx 48rpx; text-align: center; }
-.done-icon { width: 120rpx; height: 120rpx; border-radius: 50%; background: #1a8cff; color: #fff; font-size: 60rpx; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
+.done-icon { width: 120rpx; height: 120rpx; border-radius: 50%; background: var(--wc-primary); color: #fff; font-size: 60rpx; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
 .done-title { font-size: 36rpx; font-weight: 600; margin-top: 32rpx; }
 .done-tip { color: #888; margin-top: 16rpx; line-height: 1.6; }
 

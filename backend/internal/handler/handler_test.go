@@ -40,6 +40,7 @@ import (
 	"weichuan/internal/license"
 	"weichuan/internal/migrate"
 	"weichuan/internal/model"
+	"weichuan/internal/mptemplate"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
 	"weichuan/internal/urlprobe"
@@ -943,6 +944,77 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, "minute", body["data"].(map[string]interface{})["serviceTimeMode"],
 			"被拒绝的非法值不应落库")
+	})
+
+	// ===== 7c. 小程序配色模板（白名单 + 按租户授权 + 分块保存不串列） =====
+	t.Run("小程序配色模板", func(t *testing.T) {
+		// 授权是进程级全局量：显式置缺省放行，并在结束时还原，避免前面的用例
+		// 遗留 Entitlement 让本子测试在「切高级款」这一步被意外拦下。
+		prev := license.Current()
+		license.SetCurrent(nil)
+		defer license.SetCurrent(prev)
+
+		// 先立一份可核对的基线：四个展示字段都是非缺省值，后面只提交 templateId
+		// 时任何一个被冲掉都能被断言抓到（order 曾因无条件写库被冲成 null）。
+		_, body := c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"service", "achievement"}, "bgMask": 25,
+			"projectTimeMode": "hidden", "serviceTimeMode": "minute",
+			"templateId": mptemplate.DefaultID,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		hl := body["data"].(map[string]interface{})
+		require.Equal(t, mptemplate.DefaultID, hl["templateId"])
+		require.Equal(t, true, hl["templateEntitled"], "缺省授权应视为全部开通")
+		require.Len(t, hl["templates"], len(mptemplate.All()))
+		require.Equal(t, mptemplate.DefaultID, hl["templates"].([]interface{})[0].(map[string]interface{})["id"])
+
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, mptemplate.DefaultID, body["templateId"], "公开接口应在响应根级下发 templateId")
+
+		// 切到高级款：只提交 templateId，其余四列必须原样不动
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "ink"}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "ink", hl["templateId"])
+		require.EqualValues(t, []interface{}{"service", "achievement"}, hl["order"])
+		require.EqualValues(t, 25, hl["bgMask"])
+		require.Equal(t, "hidden", hl["projectTimeMode"])
+		require.Equal(t, "minute", hl["serviceTimeMode"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "ink", body["templateId"])
+
+		// 非法 id：直接拒绝且不落库
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "neon"}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "ink", body["templateId"], "被拒绝的非法值不应落库")
+
+		// 授权收紧：未开通不得「新选」高级款
+		license.SetCurrent(&license.Entitlement{Features: []string{"content_sec"}})
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "warm"}, adminToken)
+		require.EqualValues(t, 403, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, false, body["data"].(map[string]interface{})["templateEntitled"])
+
+		// 授权到期后带着「当前正在用的」高级款保存其它设置仍放行，切回 default 也放行：
+		// 授权 gate 只卡「新选」，不能把基础展示设置一起锁死。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"templateId": "ink", "projectTimeMode": "date",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, mptemplate.DefaultID, body["templateId"], "未开通高级款时读路径回落默认款")
+
+		// 关键：回落只发生在读路径，库里的 id 不抹；续费后自动恢复。
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "ink", body["data"].(map[string]interface{})["templateId"], "授权到期不应抹掉客户已选模板")
+		license.SetCurrent(prev)
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "ink", body["templateId"], "恢复授权后无需重选即自动生效")
 	})
 
 	// ===== 8. 文件上传与存储增强（本地驱动回退分支） =====

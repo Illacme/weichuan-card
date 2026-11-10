@@ -29,5 +29,5 @@
   color: #a9b4c0;
 }
 .team-foot-retry {
-  color: #1a8cff;
+  color: var(--wc-primary);
 }

@@ -1,7 +1,7 @@
 /* 申请目标企业行（多租户分发）：企业名加粗展示，让访客确认申请加入的企业 */
 .company-value {
   flex: 1;
-  color: #2f6bff;
+  color: var(--wc-primary-alt);
   font-weight: 600;
 }
 
@@ -27,8 +27,8 @@
   box-sizing: border-box;
 }
 .agree-box-on {
-  background: #2f6bff;
-  border-color: #2f6bff;
+  background: var(--wc-primary-alt);
+  border-color: var(--wc-primary-alt);
 }
 .agree-text {
   flex: 1;
@@ -38,5 +38,5 @@
   line-height: 1.6;
 }
 .agree-link {
-  color: #2f6bff;
+  color: var(--wc-primary-alt);
 }

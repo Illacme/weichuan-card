@@ -1,18 +1,18 @@
 <!-- 业绩分类切换条：常驻，不随列表 loading 重建。
      原因：它若被 loading 的 wx:if 销毁重建，横向滚动位置会被重置回最左侧，
      用户滑到后面的分类再点击就「弹回开头」，体验很差。 -->
-<scroll-view class="pcat-bar" scroll-x scroll-into-view="{{toView}}" wx:if="{{cats.length}}">
+<scroll-view class="pcat-bar wc-theme {{themeClass}}" scroll-x scroll-into-view="{{toView}}" wx:if="{{cats.length}}">
   <view id="cat-0" class="pcat-chip {{categoryId === 0 ? 'on' : ''}}" data-id="0" bindtap="onCat">全部</view>
   <view id="cat-{{item.id}}" class="pcat-chip {{categoryId === item.id ? 'on' : ''}}" wx:for="{{cats}}" wx:key="id" data-id="{{item.id}}" bindtap="onCat">{{item.name}}</view>
 </scroll-view>
 
 <!-- 仅列表区域走加载/错误/空态 -->
-<view wx:if="{{loading}}" class="loading">加载中…</view>
-<view wx:elif="{{error}}" class="error-box">
+<view wx:if="{{loading}}" class="loading wc-theme {{themeClass}}">加载中…</view>
+<view wx:elif="{{error}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">网络异常，加载失败</view>
   <button class="retry-btn" bindtap="load">重新加载</button>
 </view>
-<view class="list" wx:else>
+<view class="list wc-theme {{themeClass}}" wx:else>
   <view class="item" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
     <image class="cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
       binderror="onImgErr" data-arr="list" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />

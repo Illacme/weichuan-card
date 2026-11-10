@@ -1,4 +1,4 @@
-<view class="detail" wx:if="{{!loading && !error && service}}">
+<view class="detail wc-theme {{themeClass}}" wx:if="{{!loading && !error && service}}">
   <view class="title">{{service.title}}</view>
   <!-- 不显示时间时整行不渲染：空 .meta 仍带 16rpx 下内边距，会在标题与正文间
        留下一段莫名其妙的空白（后台把服务时间设为「不显示」时尤其明显）。 -->
@@ -12,8 +12,8 @@
     </block>
   </view>
 </view>
-<view wx:elif="{{error}}" class="error-box">
+<view wx:elif="{{error}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">网络异常，加载失败</view>
   <button class="retry-btn" bindtap="load">重新加载</button>
 </view>
-<view wx:else class="loading">加载中…</view>
+<view wx:else class="loading wc-theme {{themeClass}}">加载中…</view>
