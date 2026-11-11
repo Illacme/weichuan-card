@@ -221,20 +221,24 @@ page {
   --wc-primary-rgb: 140, 35, 88;
 }
 
-/* ===== 布局层：风格 × 模块（P2 先落「顶部名片卡 / 公司简介」两模块） =====
+/* ===== 布局层：风格 × 模块（P2 落前 2 模块，P3 补齐后 2 模块，共 4×4） =====
    P1 之前「风格」只换圆角与阴影 token（不占布局尺寸），四款看起来只是不同色系。
-   两轴化后 style 层要真的决定各模块排布：这里按 4 风格 × 2 模块给出各自的度量。
-   三条硬约束：
+   两轴化后 style 层要真的决定各模块排布：这里按 4 风格 × 4 模块给出各自的度量
+   （顶部名片卡 .emp-card / 公司简介 .mp-profile / 经典业绩 .mp-achievements /
+   业务服务 .mp-services，钩子都在 index.wxml 上）。
+   四条硬约束：
    1. **default 零突变**：.wc-style-default 只逐字复述既有度量，不产生任何视觉变化；
       存量选 classic 的租户升级后看到的就是原来的首页。
-   2. **不改 DOM、不删元素**：规则只调 padding / 尺寸 / 行高 / 圆角 / 背景，
-      绝不 display:none 或改元素顺序。「墨款无图」只能理解为「封面变矮、去圆角、
+   2. **不改 DOM、不删元素**：规则只调列宽 / padding / 尺寸 / 行高 / 圆角 / 背景 /
+      阴影，绝不 display:none 或改元素顺序。「墨款无图」只能理解为「封面变矮、去圆角、
       文字加细描边分隔」，把 .cv 藏掉会让客户上传的公司视频悄悄消失，属于静默失败。
-   3. **作用域锁在模块钩子内**：.emp-card（employee-card 组件，addGlobalClass 可穿透）
-      与 .mp-profile（index.wxml 公司简介 section）；绝不写成全局 .section / .intro，
-      否则二级页、员工页会被一起改掉。
-   P3 再补 .mp-achievements / .mp-services 两模块的同名规则。
-   theme.spec.ts 会断言 4 风格 × 2 模块各有专属选择器，漏一款即变红。 */
+   3. **作用域锁在模块钩子内**：绝不写成全局 .section / .intro / .sec-title，
+      否则二级页、员工页会被一起改掉；组件内部节点靠 addGlobalClass 穿透。
+   4. **服务卡标题烧在图片里**：components/service-grid/index.wxml 有图时只渲染
+      .svc-icon、不渲染 .svc-title。差异化只能改列数 / 间距 / 圆角 / 分隔线，
+      绝不能把 .svc-icon 缩成小图标或改 aspect-ratio——标题会静默变得看不清。
+      占位块 .svc-icon-ph 只在无图时出现，规则必须同时覆盖两者。
+   theme.spec.ts 会断言 4 风格 × 4 模块各有专属选择器、且四风格的同模块声明互不雷同。 */
 
 /* classic（default）：基线，逐字复述现有值 */
 .wc-style-default .emp-card { border-radius: var(--wc-r-card); }
@@ -276,6 +280,55 @@ page {
 .wc-style-teal .mp-profile .cv-video { height: 380rpx; border-radius: 16rpx; }
 .wc-style-teal .mp-profile .company-name { padding-bottom: 24rpx; }
 .wc-style-teal .mp-profile .intro { line-height: 1.85; margin-top: 22rpx; }
+
+/* ===== P3：经典业绩 .mp-achievements / 业务服务 .mp-services =====
+   真实结构：业绩 = .cat-grid（4 列分类图标）+ .featured（2 列精选照片）；
+             服务 = .svc-grid（4 列竖版卡）。
+   下面用**列数**做真正可见的重排（default 4/2/4、ink 5/2/4、warm 2/1/2、
+   teal 3/2/3），而不是只调几个 rpx；同时保留每条硬约束（见本节开头）。 */
+
+/* classic（default）：基线，逐字复述现有列宽与尺寸 */
+.wc-style-default .mp-achievements .cat-item { width: 25%; }
+.wc-style-default .mp-achievements .feat-item { width: 50%; }
+.wc-style-default .mp-achievements .feat-cover { height: 175rpx; border-radius: 12rpx; }
+.wc-style-default .mp-services .svc-item { width: 25%; }
+
+/* 沉稳墨：5 列紧凑分类网格、去圆角、细描边分隔；精选照片压矮；服务 4 列但收紧 */
+.wc-style-ink .mp-achievements .cat-item { width: 20%; padding: 6rpx 4rpx; }
+.wc-style-ink .mp-achievements .cat-icon,
+.wc-style-ink .mp-achievements .cat-placeholder { border-radius: 0; }
+.wc-style-ink .mp-achievements .cat-grid { padding-bottom: 8rpx; border-bottom: 1rpx solid var(--wc-primary-border); }
+.wc-style-ink .mp-achievements .featured { margin-top: 10rpx; }
+.wc-style-ink .mp-achievements .feat-item { padding: 4rpx; }
+.wc-style-ink .mp-achievements .feat-cover { height: 150rpx; border-radius: 0; }
+.wc-style-ink .mp-services .svc-item { width: 25%; padding: 8rpx 4rpx; }
+.wc-style-ink .mp-services .svc-icon,
+.wc-style-ink .mp-services .svc-icon-ph { border-radius: 0; }
+.wc-style-ink .mp-services .svc-title { font-size: 24rpx; margin-top: 6rpx; }
+
+/* 暖金棕：2 列大分类卡 + 单列横向大卡流；服务放宽到 3 列，圆角与留白都加大 */
+.wc-style-warm .mp-achievements .cat-item { width: 50%; padding: 18rpx 14rpx; }
+.wc-style-warm .mp-achievements .cat-icon,
+.wc-style-warm .mp-achievements .cat-placeholder { border-radius: 28rpx; }
+.wc-style-warm .mp-achievements .cat-name { font-size: 26rpx; margin-top: 16rpx; }
+.wc-style-warm .mp-achievements .feat-item { width: 100%; padding: 10rpx 0; }
+.wc-style-warm .mp-achievements .feat-cover { height: 260rpx; border-radius: 32rpx; }
+.wc-style-warm .mp-services .svc-item { width: 33.33%; padding: 20rpx 12rpx; }
+.wc-style-warm .mp-services .svc-icon,
+.wc-style-warm .mp-services .svc-icon-ph { border-radius: 24rpx; }
+.wc-style-warm .mp-services .svc-title { font-size: 26rpx; margin-top: 16rpx; }
+
+/* 松石青：3 列疏排、轻卡片微阴影、细线感；服务同样疏排 */
+.wc-style-teal .mp-achievements .cat-item { width: 33.33%; padding: 18rpx 12rpx; }
+.wc-style-teal .mp-achievements .cat-icon,
+.wc-style-teal .mp-achievements .cat-placeholder { border-radius: 16rpx; }
+.wc-style-teal .mp-achievements .feat-item { padding: 12rpx; }
+.wc-style-teal .mp-achievements .feat-cover { height: 190rpx; border-radius: 16rpx; box-shadow: var(--wc-card-shadow-soft); }
+.wc-style-teal .mp-achievements .sec-title { font-weight: 500; }
+.wc-style-teal .mp-services .svc-item { width: 33.33%; padding: 22rpx 12rpx; }
+.wc-style-teal .mp-services .svc-icon,
+.wc-style-teal .mp-services .svc-icon-ph { border-radius: 16rpx; box-shadow: var(--wc-card-shadow-soft); }
+.wc-style-teal .mp-services .svc-title { margin-top: 18rpx; }
 
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }

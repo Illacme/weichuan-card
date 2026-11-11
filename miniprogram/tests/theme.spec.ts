@@ -206,25 +206,52 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(readFileSync(APP_WXSS, 'utf-8')).not.toMatch(/\.wc-theme-[\w-]+\s*\{/)
   })
 
-  it('4 个风格 × 2 个模块都有专属布局规则，且首页给了模块钩子', () => {
+  it('4 个风格 × 4 个模块都有专属布局规则，且同模块四风格互不雷同', () => {
     const wxss = readFileSync(APP_WXSS, 'utf-8')
-    const rules = Array.from(wxss.matchAll(/^\.wc-style-([a-z0-9_-]+)\s+([^{}]+)\{/gm))
+    // 只取「行首 + 同行带 {」的规则：逗号续行的选择器不参与，避免把注释一起吞进来
+    const rules = Array.from(wxss.matchAll(/^\.wc-style-([a-z0-9_-]+)\s+([^{}\n]+)\{([^{}]*)\}/gm))
+    const hooks = ['.emp-card', '.mp-profile', '.mp-achievements', '.mp-services']
     for (const style of STYLE_IDS) {
-      for (const hook of ['.emp-card', '.mp-profile']) {
+      for (const hook of hooks) {
         expect(
           rules.some((m) => m[1] === style && m[2].includes(hook)),
           `${style} 缺 ${hook} 布局规则`
         ).toBe(true)
       }
     }
+    // 只查「选择器存在」会假绿：四个风格复制粘贴同一套度量，客户等于没换风格。
+    // 逐模块比较每个风格的全部规则体，四份必须两两不同。
+    for (const hook of hooks) {
+      const bodies = STYLE_IDS.map((style) =>
+        rules.filter((m) => m[1] === style && m[2].includes(hook))
+          .map((m) => m[3].trim()).join('|')
+      )
+      expect(bodies.every((b) => b.length > 0), `${hook} 有风格没规则`).toBe(true)
+      expect(new Set(bodies).size, `${hook} 的四风格布局雷同（等于没换风格）`).toBe(STYLE_IDS.length)
+    }
     const wxml = readFileSync(resolve(MP, 'pages/index/index.wxml'), 'utf-8')
     for (const hook of ['mp-card-area', 'mp-profile', 'mp-achievements', 'mp-services']) {
       expect(wxml, `index.wxml 缺模块钩子 ${hook}`).toContain(hook)
     }
-    // 布局规则必须锁在模块钩子内，不能写成全局 .section / .intro（会波及二级页与员工页）
+    // 布局规则必须锁在模块钩子内，不能写成全局 .section / .intro / .sec-title
     for (const m of rules) {
-      expect(m[2], `${m[1]} 的布局规则越界`).toMatch(/\.emp-card|\.mp-profile/)
+      expect(m[2], `${m[1]} 的布局规则越界`)
+        .toMatch(/\.emp-card|\.mp-profile|\.mp-achievements|\.mp-services/)
     }
+  })
+
+  it('服务卡标题烧在图内：布局规则不得改 .svc-icon 尺寸或 aspect-ratio', () => {
+    const wxss = readFileSync(APP_WXSS, 'utf-8')
+    const svc = Array.from(
+      wxss.matchAll(/^\.wc-style-[a-z0-9_-]+\s+[^{}\n]*\.svc-(?:icon|icon-ph)[^{}\n]*\{([^{}]*)\}/gm)
+    )
+    expect(svc.length, '取不到服务卡布局规则').toBeGreaterThan(0)
+    for (const m of svc) {
+      expect(m[1], '改图片尺寸 / 比例会让烧在图内的服务标题静默看不清')
+        .not.toMatch(/(?:^|;)\s*(?:width|height|aspect-ratio|max-height)\s*:/)
+    }
+    const wxml = readFileSync(resolve(MP, 'components/service-grid/index.wxml'), 'utf-8')
+    expect(wxml).toContain('标题已绘制在图内')
   })
 
   it('currentThemeClass 从扁平缓存恢复两轴 class；旧缓存 / 存储不可用都不抛错', () => {

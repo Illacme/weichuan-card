@@ -1,6 +1,6 @@
 # 主题系统两轴化设计（风格 × 色系）
 
-> 状态：**P1（数据/契约层）已实现并测试通过**；**P2（CSS 两层 + 顶部名片卡 / 公司简介布局）已实现并测试通过**；P3–P4（剩余 2 模块布局、后台两步 UI / 预览图重生成 / 白名单树化）待实施。
+> 状态：**P1（数据/契约层）**、**P2（CSS 两层 + 前 2 模块布局）**、**P3（剩余 2 模块布局）均已实现并测试通过**；P4（后台两步 UI / 预览图重生成 / 白名单树化 / 全量真机验收）待实施。
 > 2026-11-11 用户确认方向：整体风格驱动各模块布局、品牌配色作为叠加在风格之上的色系调整；并确认布局深度为「整模块重排版」。
 > 当前实现见 `docs/commercial-readiness.md` 第三十八轮：后端已完成 `StyleID`+`BrandColorID` 双列、`0042` 迁移、PUT/GET 两轴接口与跨风格归属校验，前端/小程序暂不动（`templateId` 兼容列续命）。
 >
@@ -116,12 +116,17 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 > 每格是「该风格下该模块长什么样」的方向描述；落地时由 `app.wxss` 的 `.wc-style-<id> .mp-<module>` 规则 + 前端结构微调实现。这是工作量主体（4×4=16 套模块布局）。
 >
-> ✅ **P2 已落前 2 模块**（顶部名片卡 `.emp-card` / 公司简介 `.mp-profile`）；P3 补业绩 / 服务。
-> 落地口径比方向稿克制，三条硬约束：`default` 逐字复述既有度量（升级零突变）；
+> ✅ **P2 + P3 已落全 4 模块 = 16 套布局**：P2 落顶部名片卡 `.emp-card` / 公司简介
+> `.mp-profile`，P3 落经典业绩 `.mp-achievements` / 业务服务 `.mp-services`。
+> 落地口径比方向稿克制，四条硬约束：`default` 逐字复述既有度量（升级零突变）；
 > **不增删 DOM、不隐藏元素**（「墨款无图」实现为封面压矮去圆角，`display:none` 会让客户
 > 上传的公司视频悄悄消失）；规则一律锁在模块钩子内，绝不写全局 `.section` / `.intro`
-> 去波及二级页与员工页。`index.wxml` 已为四个模块预留 `mp-card-area` / `mp-profile` /
-> `mp-achievements` / `mp-services` 钩子。
+> 去波及二级页与员工页；**服务卡标题烧在图片里**（有图时 `service-grid/index.wxml`
+> 只渲染 `.svc-icon`、不渲染 `.svc-title`），差异化只能改列数 / 间距 / 圆角 / 分隔线，
+> 绝不把 `.svc-icon` 缩成小图标或改 `aspect-ratio`，否则标题静默看不清。
+> `index.wxml` 的四个钩子：`mp-card-area` / `mp-profile` / `mp-achievements` / `mp-services`。
+> P3 用**列数**做真正可见的重排（分类 / 精选 / 服务）：`default` 4/2/4、`ink` 5/2/4、
+> `warm` 2/1/2（精选改单列横向大卡流）、`teal` 3/2/3。
 
 ## 5. 后台 UI（`MpTheme.vue`）
 
@@ -181,13 +186,22 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 - **P2 已做**（原计划放在 P4 的端上守门，因拆层发生在 P2 必须同步，否则全量测试立刻红）：
   - `theme.spec.ts` 的 `readThemeVars()` 改两层合并；「品牌款 7 个版式 token == default」改写为
     **「`.wc-brand-*` 块内不含任何布局 token」+「12 组合合并后版式逐字 == default」**；
-    新增「布局层 18 / 颜色层 11 token 对账」「根节点生成两层 class」「4 风格 × 2 模块
-    选择器 + wxml 模块钩子」「两层合并 token == manifest 快照」以及两轴拆分 / 归一 / 旧缓存用例。
+    新增「布局层 18 / 颜色层 11 token 对账」「根节点生成两层 class」「4 风格 × 模块
+    选择器 + wxml 模块钩子（P3 扩到 4×4）」「两层合并 token == manifest 快照」以及两轴拆分 / 归一 / 旧缓存用例。
   - `themeBootstrap.spec.ts` 改两轴断言（`resolveTheme` 用真实实现，只 mock 广播出口）；
     `types_contract.spec.ts` 的 `HomeLayoutResp` 字段扩到 6 个并逐个对账 Go json tag。
   - 生成脚本新增 `STYLE_BLOCK_RE` / `BRAND_BLOCK_RE` 源码级断言，禁止退回单层解析。
   - **反向验证 4 项必红**：颜色层偷塞版式 token / 退回单层 class / 删某风格模块规则 /
     偷改一个色值；还原后复绿。
+- **P3 已做**：
+  - 守门从 4×2 扩到 **4 风格 × 4 模块**（`.emp-card` / `.mp-profile` /
+    `.mp-achievements` / `.mp-services`）；新增「同模块四风格的规则体两两不同」对账，
+    防止四个风格复制粘贴同一套度量——只查「选择器存在」会假绿，客户等于没换风格。
+  - 新增「服务卡标题烧在图内」守门：`.svc-icon` / `.svc-icon-ph` 的规则体不得出现
+    `width` / `height` / `aspect-ratio` / `max-height`，并钉住 `service-grid/index.wxml`
+    的注释，避免以后有人「顺手优化」把竖版卡缩成小图标。
+  - **反向验证 3 项必红**：删 warm 业绩布局 / warm 服务布局复制 default /
+    把服务卡缩成小图标；还原后复绿。P3 不触碰任何 token，12 组 × 18 与 manifest 仍逐字一致。
 - **P4 待做**：
   - `frontend/src/views/content/MpTheme.spec.ts` / `MpSettings.spec.ts`：payload 改两值、UI 两步选择、源码级守门改断言两轴与两步结构。
   - 预览图改为 4 张布局长图 + 色卡条后，同步改写「12 张 PNG 与 Go 白名单一一对应」一类的守门。
@@ -197,16 +211,23 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 1. ~~**品牌色归属哪个 Style**~~ ✅ **已拍板**：8 款 `brand-*` 全部归 `default` 风格之下（零突变，见 §2.3）。
 2. ~~**树 vs 叉乘**~~ ✅ **已定树形**：色系为每个风格单独调校，保证不撞风格；P1 以 `StyleOfBrand()` 表达归属，物理树化放 P4。
-3. **工作量爆炸**：16 套模块布局 + 真机验收组合（4 风格 × N 色系）。建议验收只覆盖「每风格默认色」+「每风格抽 1 个品牌色」，其余靠单元测试守门。
+3. ~~**工作量爆炸**~~ ✅ **16 套模块布局已在 P2+P3 全部落地**，靠「4 风格 × 4 模块各有专属规则 +
+   同模块布局互不雷同」守门替代人工逐套核对；**真机验收组合仍开放**（建议只覆盖「每风格默认色」
+   +「每风格抽 1 个品牌色」，其余靠单元测试守门）。
 4. **兼容期双写**：P1 起 `template_id` 与两轴列同步写，读路径以两轴为准、未回填行回退 `Split(template_id)`；
    旧端仍读 `templateId`。任何一处漏同步都会造成「后台显示与访客所见不一致且无人报错」，改这块必带反向验证。
-5. **分期**：见 §11，先数据层后视觉层，先 2 模块后 4 模块。
+5. **分期**：见 §11，先数据层后视觉层、先 2 模块后 4 模块 —— P1/P2/P3 已按此走完，只剩 P4。
 
 ## 11. 实施分期（建议）
 
 - **P1 数据/契约层（不改视觉）** ✅ **已完成并测试通过**：`models.go` 双列（`StyleID`+`BrandColorID`） + `0042` 迁移（加两列 + 按映射回填，保留 `template_id` 兼容派生列）+ `mptemplate` 两轴函数（`Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`）+ 接口 GET 下发两值 / PUT 两值与跨风格归属校验 + `openapi` 三处补全 + 后端测试（含跨风格拒绝与高级色系 gate）。前端/小程序暂用 `templateId` 兼容字段，未改动。
 - **P2 CSS 两层 + 顶部名片卡 / 公司简介布局**（2 模块）✅ **已实现并测试通过**：`app.wxss` 拆 `.wc-style-*`（4 风格，18 token + 2 模块布局规则）与 `.wc-brand-*`（8 色系，仅 11 颜色 token）；`theme.ts` 两轴 + 扁平缓存兼容；`index.ts` / `themeBootstrap.ts` / `types.ts` 接线；预览脚本两层合并读取；端上守门改写 + 4 项反向验证。后台与小程序 wxml 的顶层节点无需改动（`wc-theme` 基类保留）。**12 组组合 token 逐字未变，PNG 无需重出。** P2 才会给已选 `ink/warm/teal` 的租户带来首页这两个模块的可见外观变化；`default` 与 8 款 `brand-*` 零突变。
-- **P3 经典业绩 / 业务服务布局**（剩余 2 模块）。
+- **P3 经典业绩 / 业务服务布局**（剩余 2 模块）✅ **已实现并测试通过**：`app.wxss` 补齐
+  `.mp-achievements` / `.mp-services` 的 4 风格规则，用**列数**做真正可见的重排
+  （分类 / 精选 / 服务：default 4/2/4、ink 5/2/4、warm 2/1/2、teal 3/2/3），
+  辅以圆角 / 间距 / 描边 / 微阴影；`default` 逐字复述基线零突变。
+  守门扩到 4×4 + 同模块布局互不雷同 + 服务卡不得缩放；3 项反向验证必红。
+  **未触碰任何颜色 / 版式 token**，预览图与 manifest 保持原样。至此 4 风格 × 4 模块 = 16 套布局全部落地。
 - **P4 后台两步 UI + 预览图重生成 + 守门改写 + 全量真机验收**。
 
 > 每一期独立可交付、可回滚；P1 不触视觉，风险最低，建议先行。

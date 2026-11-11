@@ -843,8 +843,10 @@ Storage 缓存 + 页面栈广播，不含色值。
 
 - `.wc-style-<id>` **布局层**：`default` 继承 `page` 上的 18 个默认 token；`ink` /
   `warm` / `teal` 各给全套 18 个（11 颜色 + 7 圆角 / 阴影），另按风格给出首页各模块的
-  版式规则。P2 已落「顶部名片卡 `.emp-card`」「公司简介 `.mp-profile`」两模块，
-  P3 再补经典业绩 / 业务服务。
+  版式规则。**P2 + P3 已落全 4 模块 = 16 套布局**：顶部名片卡 `.emp-card`、公司简介
+  `.mp-profile`、经典业绩 `.mp-achievements`、业务服务 `.mp-services`。
+  P3 用**列数**做真正可见的重排（分类 / 精选 / 服务）：`default` 4/2/4、ink 5/2/4、
+  warm 2/1/2（精选改单列横向大卡流）、teal 3/2/3。
 - `.wc-brand-<id>` **颜色层**：8 款色系**只给 11 个颜色 token**，一个 `--wc-r-*` /
   `--wc-card-shadow*` 都不许出现。版式由同挂的 style 层决定，所以「换品牌色不会顺手
   改圆角」从结构上成立，不靠人工自觉。颜色层排在布局层之后才能覆盖前者。
@@ -856,14 +858,19 @@ Storage 缓存 + 页面栈广播，不含色值。
   同样收敛，**不允许拼出「墨款布局 + 品牌色」**这种后端会拒绝的组合。
 - `tests/theme.spec.ts` 对这两组分别钉「要有差异」与「不许有差异」两套断言：
   给颜色层塞一个版式 token，或把整体风格款做成只换色，都会变红。还断言
-  4 风格 × 2 模块各有专属规则、首页给了模块钩子、两层合并出的 12 组 token 与预览
-  `manifest.json` 逐字一致（拆层零视觉突变）。
+  4 风格 × 4 模块各有专属规则且**同模块四风格规则体两两不同**（防止复制粘贴同一套度量）、
+  首页给了模块钩子、`.svc-icon` 不得被缩放（标题烧在图内）、两层合并出的 12 组 token 与
+  预览 `manifest.json` 逐字一致（拆层零视觉突变）。
 - **默认 token 写在 `page` 上**，取值与模板功能上线前逐字一致（升级零突变）；
   只有挂了主题 class 的 6 个访客页顶层节点会覆盖，员工 / 管理页保持默认。
 - **布局层可以改盒模型，但必须锁在模块钩子内**：P2 起 `.wc-style-*` 会调
-  `padding` / 尺寸 / 行高 / 圆角，但选择器一律以 `.emp-card` / `.mp-profile` 开头，
-  绝不写全局 `.section` / `.intro` 去波及二级页与员工页；也**不增删 DOM、不隐藏元素**
-  （把公司简介封面 `display:none` 会让客户上传的视频悄悄消失）。
+  `padding` / 列宽 / 尺寸 / 行高 / 圆角 / 阴影，但选择器一律以 `.emp-card` / `.mp-profile` /
+  `.mp-achievements` / `.mp-services` 开头，绝不写全局 `.section` / `.intro` / `.sec-title`
+  去波及二级页与员工页；也**不增删 DOM、不隐藏元素**（把公司简介封面 `display:none`
+  会让客户上传的视频悄悄消失）。
+  **服务卡标题烧在图片里**：`components/service-grid/index.wxml` 有图时只渲染 `.svc-icon`、
+  不渲染 `.svc-title`，所以差异化只能改列数 / 间距 / 圆角 / 分隔线，绝不把竖版卡缩成
+  小图标或改 `aspect-ratio`——标题会静默变得看不清，`tests/theme.spec.ts` 会拦。
   **默认款 `default` 只逐字复述既有度量，零突变**；改 `page` 上的默认值等于给全部
   存量客户换皮，`tests/theme.spec.ts` 会拦。
 - **缓存仍是扁平 `templateId`**（`wc_theme_id`）：`applyTheme(styleId, brandColorId)`
