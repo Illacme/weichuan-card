@@ -383,12 +383,13 @@ describe('content/MpSettings', () => {
   it('标签页切换栏在滚动时固定顶部，且两个按钮与页签在同一行（自有 sticky 栏）', async () => {
     const src = readFileSync(resolve(process.cwd(), 'src/views/content/MpSettings.vue'), 'utf-8')
     expect(src).toMatch(/position:\s*sticky/)
-    expect(src).toMatch(/top:\s*0/)
+    expect(src).toMatch(/top:\s*-16px/)
     expect(src).toContain('.tabs-bar')
     expect(src).toContain('class="tab-actions"')
     expect(src).toContain('hidden-header')
-    // 吸顶要贴到顶栏底边：抵消 .admin-main 的 16px padding，否则吸顶位置偏低、上方漏卡片
+    // 吸顶要贴到顶栏底边：.mp-settings 出血抵消 .admin-main 的 16px padding，
+    // 且顶部不给内边距，否则吸顶栏仍比顶栏低一截、上方漏卡片
     expect(src).toContain('margin: -16px')
-    expect(src).toContain('padding: 16px')
+    expect(src).toContain('padding: 0 16px 16px')
   })
 })

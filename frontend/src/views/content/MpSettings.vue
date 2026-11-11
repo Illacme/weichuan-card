@@ -113,13 +113,14 @@ function onSaveTheme() {
    宽屏下缩在左边、右边一大片空白）。
    el-tabs 的 .el-tabs__content 自带 15px padding，会把卡片左右各缩进一格，
    与页面上其他卡片对不齐——这里清掉，只在页签与卡片之间留间距。 */
-/* 整体出血到 .admin-main 的 padding 边缘（抵消其 16px padding），内部再补回 16px，
-   内容区仍与后台其它页面对齐。关键目的：让 .tabs-bar（position:sticky; top:0）
-   吸顶时直接贴到内容区最顶端、紧贴顶栏底边——否则 .admin-main 的 16px padding-top
-   会让吸顶位置比顶栏低一截，上方留出空隙、滚动时下方卡片会透出来。 */
+/* 整体出血到 .admin-main 的 padding 边缘（抵消其 16px padding），让本页紧贴内容区最顶端，
+   这样 .tabs-bar 静止时直接贴到顶栏底边。吸顶位置再由 .tabs-bar 的 top:-16px 补偿
+   .admin-main 的 padding-top（sticky 的 top 参照是滚动容器「内容区上沿」，比顶栏低 16px），
+   确保滚动吸顶时白底也紧贴顶栏底边、上方不留空隙。内部只补左右 / 底部 16px（顶部不给），
+   内容与后台其它页面对齐、又不把吸顶栏往下挤。 */
 .mp-settings {
   margin: -16px;
-  padding: 16px;
+  padding: 0 16px 16px;
 }
 .mp-settings :deep(.el-tabs__content) {
   padding: 0;
@@ -133,7 +134,11 @@ function onSaveTheme() {
    操作按钮推到最右（.tab-actions 用 margin-left:auto）。 */
 .tabs-bar {
   position: sticky;
-  top: 0;
+  /* 抵消 .admin-main 的 16px padding-top：sticky 的 top 参照是滚动容器「内容区上沿」
+     （比顶栏低 16px），top:0 会让吸顶位比顶栏底边低一截、上方留空隙；
+     top 取 -16px 正好补回，吸顶时白底直接贴到顶栏底边。
+     再配合 .mp-settings 出血，静止（未滚动）时也贴顶。 */
+  top: -16px;
   z-index: 10;
   display: flex;
   align-items: center;
