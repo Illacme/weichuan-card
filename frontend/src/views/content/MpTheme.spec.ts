@@ -183,6 +183,9 @@ describe('content/MpTheme', () => {
     expect(w.find('.preview-zoom').exists()).toBe(true)
     expect(w.find('.zoom-shot').attributes('src')).toContain('theme-previews/ink.png')
     expect(w.find('.zoom-note').text()).toContain('非真机截图')
+    // 750x2600 长图必须放在可滚动容器里，不能被 max-height 压成一条细线
+    expect(w.find('.zoom-scroll').exists()).toBe(true)
+    expect(w.find('.zoom-scroll').find('img.zoom-shot').exists()).toBe(true)
     // 卡片自身有 @click="pick(t)"：查看大图必须 @click.stop，否则「看看」变成「选中」
     expect(cards(w)[1].classes()).not.toContain('selected')
     expect(cards(w)[0].classes()).toContain('selected')

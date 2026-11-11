@@ -1,9 +1,28 @@
 {
   "canvas": [
     375,
-    640
+    1300
   ],
   "scale": 2,
+  "seedAssets": [
+    "avatar-gaolixin.png",
+    "logo.png",
+    "cover-company.jpg",
+    "cover-daxing.jpg",
+    "cover-hospital.jpg",
+    "cat-1.png",
+    "cat-2.png",
+    "cat-3.png",
+    "cat-4.png",
+    "cat-5.png",
+    "cat-6.png",
+    "cat-7.png",
+    "cat-8.png",
+    "svc-1.png",
+    "svc-2.png",
+    "svc-3.png",
+    "svc-4.png"
+  ],
   "source": "miniprogram/app.wxss",
   "tokens": {
     "brand-amber": {

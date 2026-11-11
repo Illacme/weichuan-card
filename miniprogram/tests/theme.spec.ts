@@ -482,7 +482,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     // 模板 id 与顺序必须以 Go 白名单为准，脚本里不能自己再列一份
     expect(script).toContain('mptemplate.go')
 
-    const html = script.slice(script.indexOf('HTML = """'), script.indexOf('def find_chrome'))
+    const html = script.slice(script.indexOf('HTML = Template("""'), script.indexOf('def find_chrome'))
     expect(html.length, '取不到预览 HTML 模板').toBeGreaterThan(1000)
     for (const id of THEME_IDS) {
       const primary = colorOf(readThemeVars()[id], '--wc-primary')
@@ -552,7 +552,7 @@ const HOME_SECTION_ANCHORS = [
 
 function previewHtml(): string {
   const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-  return script.slice(script.indexOf('HTML = """'), script.indexOf('def find_chrome'))
+  return script.slice(script.indexOf('HTML = Template("""'), script.indexOf('def find_chrome'))
 }
 
 describe('小程序风格模板 完整首页示意', () => {
@@ -571,9 +571,16 @@ describe('小程序风格模板 完整首页示意', () => {
     // status 是真机系统状态栏的占位，真实 WXML 里由系统绘制、没有对应节点
     expect(secs.filter((s) => s !== 'status')).toEqual(HOME_SECTION_ANCHORS.map((a) => a.sec))
     expect(html, '不该再用菱形占位代替真实案例卡').not.toContain('◈')
-    for (const label of ['公司简介', '经典业绩', '业务服务', '保存名片', '拨打电话']) {
+    for (const label of ['公司简介', '经典业绩', '业务服务', '一键拨号', '存入通讯录']) {
       expect(html, `预览缺「${label}」`).toContain(label)
     }
+    // 底部按钮的实心 / 描边左右顺序也和 action-bar 组件一致，别再写反
+    expect(html).toMatch(/class="call">一键拨号<\/button><button class="save">存入通讯录/)
+    // 真机首页的 8 个分类图标与 4 张竖版服务卡，不能退回 chips / 横条色块
+    expect(html).toContain('${cat_cards}')
+    expect(html).toContain('${svc_cards}')
+    expect(html).toContain('cover-daxing.jpg')
+    expect(html).toContain('cover-hospital.jpg')
   })
 
   it('18 个 token 全部被预览 HTML 用 var() 引用（定义了却没用 = 假同源）', () => {
@@ -585,16 +592,80 @@ describe('小程序风格模板 完整首页示意', () => {
       expect(css, `${v} 定义了却没被示意图引用`).toContain(`var(${v})`)
     }
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-    expect(script).toContain('css_tokens(active[i])')
-    expect(script).toContain('%(tokens)s')
+    expect(script).toContain('css_tokens(tokens)')
+    expect(script).toContain('build_html(active[i])')
+    expect(script).toContain('${tokens}')
   })
 
-  it('画布必须容得下完整首页，不能压回 375x430 的旧简化版', () => {
+  it('画布按真机 1:3.45 长图出图，不能压回 430 / 640 的旧简化版', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
     expect(Number(dim[1])).toBe(375)
-    expect(Number(dim[2]), '画布高度不足会裁掉业务服务区').toBeGreaterThanOrEqual(600)
-    expect(script).toContain('padding-bottom: 48px;')
+    expect(Number(dim[2]), '画布高度不足会把分类图标网格和服务卡压成色块').toBeGreaterThanOrEqual(1200)
+    expect(Number(dim[2]) / Number(dim[1]), '真机截图纵横比约 3.45').toBeGreaterThan(3.3)
+    expect(script).toContain('padding-bottom: 68px;')
+  })
+
+  it('预览引用仓库自带演示素材，且照片不被主题色染（换模板不该连视频都变色）', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const html = previewHtml()
+    const seed = resolve(REPO, 'backend/internal/demoseed/seedassets')
+    // 分类图标 / 服务卡 / 精选案例 / 头像 / LOGO / 封面，少一张就会退回占位色块
+    for (const name of [
+      'avatar-gaolixin.png', 'logo.png', 'cover-company.jpg',
+      'cover-daxing.jpg', 'cover-hospital.jpg',
+      ...Array.from({ length: 8 }, (_, i) => `cat-${i + 1}.png`),
+      ...Array.from({ length: 4 }, (_, i) => `svc-${i + 1}.png`),
+    ]) {
+      expect(readFileSync(join(seed, name)).length, `缺演示素材 ${name}`).toBeGreaterThan(0)
+    }
+    // 只查名字会假绿：函数定义 / 变量引用里也有这些字样，删掉真正的调用照样放行
+    expect(script).toContain('"seedAssets": SEED_FILES')
+    expect(script).toContain('DEMO_SOURCES')
+    expect(script).toContain('problems = check_sources()')
+    // 8 张分类图 / 4 张服务卡由 build_html() 循环拼出，静态引用则直接写在模板里
+    expect(script).toContain('assets/cat-')
+    expect(script).toContain('assets/svc-')
+    expect(html).toContain('assets/avatar-gaolixin.png')
+    expect(html).toContain('assets/logo.png')
+    expect(html).toContain('assets/cover-company.jpg')
+
+    // 第二十七轮实测发现的坑：cover-shade 曾把主色 rgba() 叠在租户照片上，
+    // 绛红款的封面被整片染红。真机上租户上传的照片/视频不随模板变色。
+    const shade = html.match(/\.cover-shade\s*\{[^}]*\}/)?.[0] || ''
+    expect(shade, '取不到 .cover-shade 规则').not.toBe('')
+    expect(shade, '封面照片被主题色染了').not.toContain('--wc-primary-rgb')
+    expect(shade).toContain('rgba(0,0,0,')
+  })
+
+  it('右缘悬浮音符必须可见，不能被底部操作栏盖住', () => {
+    const html = previewHtml()
+    const rule = html.match(/\.music\s*\{[^}]*\}/)?.[0] || ''
+    expect(rule, '取不到 .music 规则').not.toBe('')
+    expect(rule).toContain('position: absolute')
+    // 第二十七轮实测：bottom:8px 锚到 .phone 底部，被后画的 .bar 整块盖住。
+    // DOM 和 CSS 都在、客户却看不见，是典型静默失败，必须钉死。
+    expect(rule, '音符被压到页面底部会看不见').toContain('top:')
+    expect(rule).not.toContain('bottom:')
+    // 必须是 .phone 的直接子节点：塞回某个 .section 里会跟着卡片裁切/换行
+    const at = html.indexOf('<span class="music">')
+    expect(at).toBeGreaterThan(html.indexOf('data-sec="service"'))
+    expect(html.slice(at, html.indexOf('data-sec="bar"'))).not.toContain('</div>')
+    // 这两个 token 只在音符上用到，别为了「顺便清理」把它们删掉
+    expect(rule).toContain('var(--wc-primary-pcat)')
+    expect(rule).toContain('var(--wc-primary-alt)')
+  })
+
+  it('manifest 记下素材清单，演示数据换了却没重出图会变红', () => {
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const listed = Array.from(script.matchAll(/"(cat-\d\.png|svc-\d\.png|cover-[\w-]+\.jpg|logo\.png|avatar-[\w-]+\.png)"/g))
+      .map((m) => m[1])
+    expect(Array.isArray(manifest.seedAssets)).toBe(true)
+    expect(manifest.seedAssets.length).toBeGreaterThanOrEqual(17)
+    for (const name of listed) {
+      expect(manifest.seedAssets, `manifest 漏记素材 ${name}`).toContain(name)
+    }
   })
 
   it('后台常显「非真机截图」并提供查看大图（改回旧标注会变红）', () => {
@@ -605,7 +676,11 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(vue).toContain('@click.stop="openZoom(t.id)"')
     expect(vue).toContain('class="preview-zoom"')
     expect(vue).toContain('class="zoom-shot"')
-    expect(vue).toContain('object-fit: contain')
+    // 750x2600 长图不能再用 max-height 压成一条细线：固定面板宽度 + 内部纵向滚动
+    expect(vue).toContain('class="zoom-scroll"')
+    expect(vue).toContain('overflow-y: auto')
+    expect(vue).toContain('width: min(420px, 92vw)')
+    expect(vue).toContain('height: auto')
     expect(vue, '说明文案必须写明非真机截图').toContain('首页风格示意，不是真机截图')
   })
 })

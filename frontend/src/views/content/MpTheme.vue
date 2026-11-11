@@ -10,9 +10,11 @@
       「品牌配色」按预设色板只换主色，版式沿用经典蓝，用于对齐企业自有 VI 主色。
       两个系列都随小程序版本内置，后台只记录「选了哪一款」，
       保存后访客端即时生效，不需要重新上传代码或提交微信审核。
-      下方预览图是按小程序样式变量复刻的<strong>首页风格示意，不是真机截图</strong>：
-      准的是配色、圆角、按钮与投影，不体现真实租户内容、真机字体、状态栏与安全区；
-      点卡片右上角「查看大图」可看完整细节，最终观感请以真机验收为准。
+      下方是<strong>按真机首页 1:1 复刻的完整首页风格示意，不是真机截图</strong>：
+      图形用的是仓库自带演示素材，版式、区块、文案与按钮都和小程序一致；
+      换模板时只有主色、页面底色、圆角、按钮与投影会变，照片与插画跟真机上一样保持原样。
+      它不体现真机字体、系统状态栏、安全区与首页背景图；
+      点卡片右上角「查看大图」可滚动看完整长图，最终观感请以真机验收为准。
     </p>
 
     <!-- 授权到期 / 未开通时客户必须知道：不是保存失败，是这一档没买；
@@ -111,7 +113,9 @@
           <span class="zoom-note">风格示意 · 非真机截图</span>
           <el-button size="small" @click="closeZoom">关闭</el-button>
         </div>
-        <img class="zoom-shot" :src="previewUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+        <div class="zoom-scroll">
+          <img class="zoom-shot" :src="previewUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+        </div>
       </div>
     </div>
   </el-card>
@@ -307,13 +311,13 @@ onMounted(load)
   cursor: not-allowed;
   opacity: 0.62;
 }
-/* 预览容器比例与 gen_theme_previews.py 的 375x640 画布一致：这张图画的是
-   完整首页（顶栏 / 名片卡 / 公司简介 / 经典业绩 / 业务服务 / 底部操作栏），
-   比例不对就会被裁回「只有名片区」的旧简化版，而页面不会报任何错。
+/* 预览容器比例与 gen_theme_previews.py 的 375x1300 画布一致：真机首页是
+   约 1:3.45 的长图（状态栏 → 名片卡 → 公司简介 → 经典业绩 → 业务服务 → 底部栏），
+   比例不对就会把 8 个分类图标 / 4 张服务卡 / 底部按钮裁掉，而页面不会报任何错。
    生成脚本的画布尺寸由 theme.spec.ts 与本行对账，改一边必须改两边。 */
 .theme-preview {
   position: relative;
-  aspect-ratio: 375 / 640;
+  aspect-ratio: 375 / 1300;
   overflow: hidden;
 }
 /* 底层示意常驻：img 还在下载 / 404 / 新模板漏补图时都有内容；
@@ -378,8 +382,9 @@ onMounted(load)
 .preview-zoom-btn:hover {
   background: #ecf5ff;
 }
-/* 查看大图浮层：position:fixed 不受 .theme-card 的 overflow:hidden 影响；
-   图片 contain 保证 750x1280 原图完整可见，不裁掉底部操作栏。 */
+/* 查看大图浮层：position:fixed 不受 .theme-card 的 overflow:hidden 影响。
+   预览图是 750x2600 的长图，不能再用 max-height 把它压成一条细线——
+   固定面板宽度、内部纵向滚动，客户才能按真实比例看清首页每一屏。 */
 .preview-zoom {
   position: fixed;
   inset: 0;
@@ -394,7 +399,8 @@ onMounted(load)
 .zoom-panel {
   display: flex;
   flex-direction: column;
-  max-height: 100%;
+  width: min(420px, 92vw);
+  max-height: calc(100vh - 48px);
   padding: 12px;
   background: #fff;
   border-radius: 10px;
@@ -404,6 +410,7 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: none;
   margin-bottom: 10px;
 }
 .zoom-title {
@@ -418,12 +425,16 @@ onMounted(load)
 .zoom-head .el-button {
   margin-left: auto;
 }
+.zoom-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 6px;
+}
 .zoom-shot {
   display: block;
-  max-width: 100%;
-  max-height: calc(100vh - 120px);
-  width: auto;
-  object-fit: contain;
+  width: 100%;
+  height: auto;
 }
 .preview-nav {
   height: 14px;
