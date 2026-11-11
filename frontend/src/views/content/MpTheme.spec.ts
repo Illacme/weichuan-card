@@ -156,15 +156,17 @@ describe('content/MpTheme', () => {
   })
 
   // 完整首页示意图容易被直接当成真机页面效果去验收，而这个误解不会报任何错。
-  // 所以「非真机截图」是**常显**标注，不是只在图片加载失败时才出现的降级角标。
-  it('每张卡常显「非真机截图」标注，图降级后标注仍在', async () => {
+  // 「非真机截图」标注必须存在；但它默认隐藏、仅悬停预览图时浮现，不再常驻遮挡
+  // 示意图与选色对比（降级提示 fallback-tag 仍常显）。默认隐藏/悬停浮现的 CSS 守门
+  // 在 theme.spec.ts 里做源码级对账，改回常驻会变红。
+  it('每张卡有「非真机截图」标注且图降级后仍在 DOM（默认隐藏、悬停才显示）', async () => {
     const w = await mountPage()
 
     for (const c of cards(w)) {
       expect(c.find('.preview-badge').exists()).toBe(true)
       expect(c.find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
     }
-    // 两个角标语义不同：常显的说是示意图，降级的说图没加载出来
+    // 两个角标语义不同：悬停浮现的说是示意图，降级的说图没加载出来
     expect(cards(w)[0].find('.fallback-tag').text()).toBe('示意图')
 
     await cards(w)[1].find('img.preview-shot').trigger('error')

@@ -73,11 +73,13 @@
               decoding="async"
               @error="onPreviewError(t.id)"
             />
-            <!-- 常显标注，不是只在降级时出现：客户最容易把「按 token 复刻的示意图」
-                 直接当成真机页面效果去验收，这个误解不会报错，只能靠标注说清。 -->
+            <!-- 悬停预览图时才显示的标注，默认不遮挡示意图观感：客户最容易把「按 token 复刻的示意图」
+                 直接当成真机页面效果去验收，这个误解不会报错，只能靠标注说清；
+                 常驻反而干扰选色对比，故改为悬停浮现（降级提示 fallback-tag 仍常显）。 -->
             <span class="preview-badge">风格示意 · 非真机截图</span>
-            <!-- 缩略卡只有 230px 宽，完整首页在其中看不清细节。图降级时不给这个入口，
-                 否则点开还是空白；.stop 是必须的，不然「查看大图」会顺手把这款选中。 -->
+            <!-- 缩略卡只有 230px 宽，完整首页在其中看不清细节；默认隐藏、悬停预览图才浮现，
+                 避免常驻遮挡选色对比。图降级时不给这个入口，否则点开还是空白；
+                 .stop 是必须的，不然「查看大图」会顺手把这款选中。 -->
             <button
               v-if="!failedPreviews[t.id]"
               type="button"
@@ -370,6 +372,8 @@ onMounted(load)
   border-radius: 4px;
   padding: 2px 6px;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 .preview-zoom-btn {
   position: absolute;
@@ -384,9 +388,22 @@ onMounted(load)
   border-radius: 4px;
   padding: 2px 6px;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 .preview-zoom-btn:hover {
   background: #ecf5ff;
+}
+/* 角标与查看大图默认隐藏，仅指针悬停预览图（或键盘聚焦）时浮现，
+   不再常驻遮挡示意图与选色对比；降级提示 fallback-tag 仍常显，二者语义不同。
+   生成脚本的悬停约定由 theme.spec.ts 与本块对账，改回常驻会变红。 */
+.theme-preview:hover .preview-badge,
+.theme-preview:focus-within .preview-badge,
+.theme-preview:hover .preview-zoom-btn,
+.theme-preview:focus-within .preview-zoom-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 /* 查看大图浮层：position:fixed 不受 .theme-card 的 overflow:hidden 影响。
    预览图是 750x2420 的长图，不能再用 max-height 把它压成一条细线——

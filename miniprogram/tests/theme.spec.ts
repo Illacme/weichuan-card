@@ -690,7 +690,7 @@ describe('小程序风格模板 完整首页示意', () => {
     }
   })
 
-  it('后台常显「非真机截图」并提供查看大图（改回旧标注会变红）', () => {
+  it('后台「非真机截图」角标与查看大图默认隐藏、悬停预览图才显示（改回常驻会变红）', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     expect(vue).toContain('class="preview-badge"')
     expect(vue).toContain('风格示意 · 非真机截图')
@@ -704,6 +704,10 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(vue).toContain('width: min(420px, 92vw)')
     expect(vue).toContain('height: auto')
     expect(vue, '说明文案必须写明非真机截图').toContain('首页风格示意，不是真机截图')
+    // 默认隐藏、悬停才显示：角标/按钮不再常驻遮挡示意图与选色对比，改回常驻会变红
+    expect(vue).toContain('.theme-preview:hover .preview-badge')
+    expect(vue).toContain('.theme-preview:hover .preview-zoom-btn')
+    expect(vue, '默认态必须隐藏').toContain('opacity: 0')
   })
 })
 
