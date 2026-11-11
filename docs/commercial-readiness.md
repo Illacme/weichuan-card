@@ -2286,3 +2286,23 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
   锁死吸顶贴顶不回退。
 - 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1588 例**（95 文件）/
   `vite build` / `git diff --check` 全绿。
+
+## 第三十四轮：切换栏文字上下留白对称
+
+第三十三轮吸顶贴顶后，用户截图反馈：`.tab` 是 `padding: 0 0 12px`（只有下内边距），
+导致文字上沿紧贴栏顶、文字下沿到 2px 蓝下划线之间空出 12px，上下明显不对称、不协调。
+
+| 项 | 说明 |
+| --- | --- |
+| 根因 | `.tab` 仅 `padding: 0 0 12px`，上边 0、下边 12px；`.tabs-bar` 又 `align-items:center`，文字上沿贴栏顶、下方堆出一段空白才到蓝下划线 |
+| 修复 | `.tabs-bar` 改 `align-items: stretch` 让 `.tab` 撑满整条栏高；`.tab` 改 `padding: 12px 0` 上下对称留白，文字在页签里垂直居中；`.tab.active::after` 维持 `bottom:0`（因 stretch 后 `bottom:0` 即贴栏的 `border-bottom` 底边框），文字上沿与栏顶、下沿（含蓝下划线）与栏底等距。仅改 `MpSettings.vue` 样式，不动结构与守门逻辑 |
+| 守门 | `.tabs-bar` 加 `padding: 12px 0` 上下对称后，栏高在三种页签下一致（都由 `.tab` 的 `12+文字+12` 撑起），蓝下划线始终贴底 |
+
+- 定向：`MpSettings.spec.ts` 在原有「sticky / top:-16px / tabs-bar / tab-actions / hidden-header /
+  margin:-16px / padding:0 16px 16px」守门基础上，新增断言文件含 `align-items: stretch`
+  与 `.tab { ... padding: 12px 0`（用正则 `/\.tab\s*\{[^}]*padding:\s*12px 0/`），锁死上下对称留白不回退。
+- 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1588 例**（95 文件）/
+  `vite build` / `git diff --check` 全绿。
+
+> 注：排查过程中一度在 Read/Grep 输出里看到第 27 行 `:disabled="themeDisabled"` 这种形近串，
+> 经 `git diff` 与码点核对，磁盘实际始终是 `:disabled`（ASCII），系输出层渲染幻影，无真实缺陷，未改动。

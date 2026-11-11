@@ -141,7 +141,9 @@ function onSaveTheme() {
   top: -16px;
   z-index: 10;
   display: flex;
-  align-items: center;
+  /* stretch 让 .tab 撑满整条栏高，这样 .tab.active::after 的 bottom:0 才能贴到
+     栏的底边框（而不是悬浮在文字下方），且三种页签下栏高一致。 */
+  align-items: stretch;
   margin-bottom: 12px;
   background: #fff;
   border-bottom: 1px solid #ebeef5;
@@ -155,7 +157,9 @@ function onSaveTheme() {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0 0 12px;
+  /* 上下对称留白：文字在页签里垂直居中，上沿与栏顶、下沿（含 2px 蓝下划线）与栏底等距，
+     不再像旧版那样只在下方堆 12px 而上方紧贴。 */
+  padding: 12px 0;
   font-size: 14px;
   color: #909399;
   position: relative;

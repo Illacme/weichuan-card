@@ -391,5 +391,10 @@ describe('content/MpSettings', () => {
     // 且顶部不给内边距，否则吸顶栏仍比顶栏低一截、上方漏卡片
     expect(src).toContain('margin: -16px')
     expect(src).toContain('padding: 0 16px 16px')
+    // 页签文字上下留白对称：.tabs-bar 用 stretch 让页签撑满栏高，
+    // .tab 上下各 12px padding，使文字上沿与栏顶、下沿（含蓝下划线）与栏底等距，
+    // 不再只在下方堆 12px 而上方紧贴
+    expect(src).toMatch(/align-items:\s*stretch/)
+    expect(src).toMatch(/\.tab\s*\{[^}]*padding:\s*12px 0/)
   })
 })
