@@ -1,7 +1,9 @@
 <template>
-  <el-card>
-    <div class="page-bar" :class="{ 'only-action': props.embedded }">
-      <h3 v-if="!props.embedded">小程序页面样式</h3>
+    <el-card>
+    <!-- 内嵌在「小程序设置」页签里时，重新加载由父组件切换栏右侧的按钮统一提供，
+         本页不再重复渲染自己的页签栏。独立访问时才需要它。 -->
+    <div v-if="!props.embedded" class="page-bar">
+      <h3>小程序页面样式</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
@@ -80,7 +82,9 @@
       </el-form-item>
 
       <el-form-item>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <!-- 内嵌时保存由父组件切换栏右侧按钮统一提供；独立访问才在本页渲染。
+             「清除背景」是跟背景字段绑定的便捷操作，留在表单内不动。 -->
+        <el-button v-if="!props.embedded" type="primary" :loading="saving" @click="save">保存</el-button>
         <el-button v-if="bgImage" link @click="clearBg">清除背景</el-button>
       </el-form-item>
     </el-form>
@@ -175,6 +179,10 @@ function clearBg() {
 }
 
 onMounted(load)
+
+// 内嵌在「小程序设置」时，父组件用 ref 调这里的 load/save 来驱动切换栏右侧按钮的
+// loading 态；首页样式页无「未填完不可保存」的限制，故不暴露 disabled 判定。
+defineExpose({ load, save, loading, saving })
 </script>
 
 <style scoped>

@@ -379,4 +379,17 @@ describe('content/HomeLayout', () => {
     expect(timeItem(w, '项目案例详情').text()).toContain('小程序效果：不显示时间')
     expect(timeItem(w, '业务服务详情').text()).toMatch(/小程序效果：更新于 \d{4}-\d{2}-\d{2}/)
   })
+
+  it('内嵌在「小程序设置」时，隐藏自身的「保存 / 重新加载」按钮（由父切换栏统一提供）', async () => {
+    const w = mount(HomeLayout, { ...mountOpts, props: { embedded: true } })
+    await flush()
+
+    // 自带页签栏（含「重新加载」）整体不渲染
+    expect(w.find('.page-bar').exists()).toBe(false)
+    // 表单底部的「保存」也不渲染；两个按钮改由父组件切换栏提供，避免一套按钮出现两处
+    const selfActions = w
+      .findAll('.el-button')
+      .filter((b: any) => b.text() === '保存' || b.text() === '重新加载')
+    expect(selfActions.length).toBe(0)
+  })
 })

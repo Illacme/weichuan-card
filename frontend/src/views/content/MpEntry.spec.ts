@@ -309,4 +309,18 @@ describe('content/MpEntry', () => {
     // 失败不刷新，表单保持用户刚选的值，便于改完再存
     expect(mocks.getMpEntry).toHaveBeenCalledTimes(1)
   })
+
+  it('内嵌在「小程序设置」时，隐藏自身的「保存 / 重新加载」按钮（由父切换栏统一提供）', async () => {
+    mocks.getMpEntry.mockResolvedValueOnce({ ...wallCfg })
+    const w = mount(MpEntry, { ...mountOpts, props: { embedded: true } })
+    await flush()
+
+    // 自带页签栏（含「重新加载」）整体不渲染
+    expect(w.find('.page-bar').exists()).toBe(false)
+    // 表单底部的「保存」也不渲染；两个按钮改由父组件切换栏提供，避免一套按钮出现两处
+    const selfActions = w
+      .findAll('.el-button')
+      .filter((b: any) => b.text() === '保存' || b.text() === '重新加载')
+    expect(selfActions.length).toBe(0)
+  })
 })

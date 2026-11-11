@@ -341,20 +341,30 @@ describe('content/MpSettings', () => {
     expect(contentMocks.getHomeLayout).toHaveBeenCalledTimes(2)
   })
 
-  // 「重新加载 / 保存风格」按钮已上移到父组件「小程序设置」的页签切换栏（Teleport 进
-  // .el-tabs__header），只在「风格模板」页显示：切走即消失，避免它们出现在不相关的页签上。
-  it('风格模板页：切换栏右侧出现「保存风格 / 重新加载」，其它页签不显示', async () => {
-    const { w } = await mountPage('?tab=theme')
-    const actions = w.find('.tab-actions')
+  // 「重新加载 / 保存」按钮上移到父组件「小程序设置」的页签切换栏，三个页签共用同一组：
+  // 切到哪个页就操作哪个内嵌子组件的 load/save，所以每个页签右侧都该出现这组按钮
+  // （风格页的保存文案为「保存风格」，其余为「保存」），不再只有风格页才有。
+  it('每个页签的切换栏右侧都出现「保存 / 重新加载」，风格页的保存叫「保存风格」', async () => {
+    const { w } = await mountPage('?tab=entry')
+    let actions = w.find('.tab-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.text()).toContain('保存')
+    expect(actions.text()).toContain('重新加载')
+
+    await pickTab(w, 'appearance')
+    actions = w.find('.tab-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.text()).toContain('保存')
+    expect(actions.text()).toContain('重新加载')
+
+    await pickTab(w, 'theme')
+    actions = w.find('.tab-actions')
     expect(actions.exists()).toBe(true)
     expect(actions.text()).toContain('保存风格')
     expect(actions.text()).toContain('重新加载')
-
-    await pickTab(w, 'entry')
-    expect(w.find('.tab-actions').exists()).toBe(false)
   })
 
-  it('点切换栏上的「重新加载」会重新拉取模板清单（重试预览图）', async () => {
+  it('点切换栏上的「重新加载」会重新拉取模板清单（风格页，重试预览图）', async () => {
     const { w } = await mountPage('?tab=theme')
     const before = contentMocks.getHomeLayout.mock.calls.length
     const reload = w
@@ -367,7 +377,7 @@ describe('content/MpSettings', () => {
     expect(contentMocks.getHomeLayout.mock.calls.length).toBeGreaterThan(before)
   })
 
-  it('点切换栏上的「保存风格」只提交 templateId', async () => {
+  it('点切换栏上的「保存风格」只提交 templateId（风格页）', async () => {
     const { w } = await mountPage('?tab=theme')
     const save = w
       .find('.tab-actions')
@@ -377,6 +387,62 @@ describe('content/MpSettings', () => {
     await save!.trigger('click')
     await flush()
     expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
+  })
+
+  it('点切换栏上的「重新加载」会重新拉取入口配置（访客先看到谁页）', async () => {
+    const { w } = await mountPage('?tab=entry')
+    const before = mpMocks.getMpEntry.mock.calls.length
+    const reload = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('重新加载'))
+    expect(reload).toBeDefined()
+    await reload!.trigger('click')
+    await flush()
+    expect(mpMocks.getMpEntry.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('点切换栏上的「保存」只提交入口配置（访客先看到谁页）', async () => {
+    const { w } = await mountPage('?tab=entry')
+    const save = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('保存') && !b.text().includes('保存风格'))
+    expect(save).toBeDefined()
+    await save!.trigger('click')
+    await flush()
+    expect(mpMocks.saveMpEntry).toHaveBeenCalledWith({ mode: 'wall', staffId: 0 })
+  })
+
+  it('点切换栏上的「重新加载」会重新拉取首页样式（名片页面样式页）', async () => {
+    const { w } = await mountPage('?tab=appearance')
+    const before = contentMocks.getHomeLayout.mock.calls.length
+    const reload = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('重新加载'))
+    expect(reload).toBeDefined()
+    await reload!.trigger('click')
+    await flush()
+    expect(contentMocks.getHomeLayout.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('点切换栏上的「保存」提交完整首页样式（名片页面样式页）', async () => {
+    const { w } = await mountPage('?tab=appearance')
+    const save = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('保存') && !b.text().includes('保存风格'))
+    expect(save).toBeDefined()
+    await save!.trigger('click')
+    await flush()
+    expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({
+      order: ['achievement', 'service'],
+      bgImage: '',
+      bgMask: 0,
+      projectTimeMode: 'date',
+      serviceTimeMode: 'date',
+    })
   })
 
   // 源码级守门：防止「切换栏不再固定顶部」或「按钮又退回卡片里」这类只改样式/位置的回归。
@@ -396,5 +462,13 @@ describe('content/MpSettings', () => {
     // 不再只在下方堆 12px 而上方紧贴
     expect(src).toMatch(/align-items:\s*stretch/)
     expect(src).toMatch(/\.tab\s*\{[^}]*padding:\s*12px 0/)
+    // 保存/重新加载按钮对所有页签共用、始终显示：.tab-actions 不再用
+    // v-if="tab === 'theme'" 限定只在风格页出现（否则另两页的按钮会退回卡片里）
+    expect(src).toContain('class="tab-actions"')
+    expect(src).not.toContain("v-if=\"tab === 'theme'\"")
+    // 三个内嵌子组件都通过 ref 暴露给父组件，驱动切换栏右侧按钮
+    expect(src).toContain('ref="entryRef"')
+    expect(src).toContain('ref="appearanceRef"')
+    expect(src).toContain('ref="themeRef"')
   })
 })

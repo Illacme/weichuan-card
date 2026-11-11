@@ -18,26 +18,27 @@
           @click="tab = t.name"
         >{{ t.label }}</button>
       </div>
-      <!-- 重新加载 / 保存风格只在「风格模板」页有意义（操作该页的模板清单与选中态），
-           所以只在切到该页时显示；切走即随切换栏一起消失，不会出现在不相关的页签上。 -->
-      <div v-if="tab === 'theme'" class="tab-actions">
+      <!-- 三个页签共用同一组「保存 / 重新加载」按钮：操作哪个页就驱动哪个内嵌子组件的
+           load/save（见脚本里的 activeRef）。风格页的保存文案为「保存风格」、且有范围说明，
+           其余页叫「保存」。按钮始终显示，随当前页签切换所作用的子组件。 -->
+      <div class="tab-actions">
         <el-button
           type="primary"
-          :loading="themeSaving"
-          :disabled="themeDisabled"
-          title="仅提交模板选择，不改动首页背景、板块顺序与详情页时间显示。"
-          @click="onSaveTheme"
-        >保存风格</el-button>
-        <el-button :icon="Refresh" :loading="themeLoading" @click="onReloadTheme">重新加载</el-button>
+          :loading="activeSaving"
+          :disabled="activeDisabled"
+          :title="saveTitle"
+          @click="onSaveActive"
+        >{{ saveLabel }}</el-button>
+        <el-button :icon="Refresh" :loading="activeLoading" @click="onReloadActive">重新加载</el-button>
       </div>
     </div>
 
     <el-tabs v-model="tab" class="hidden-header" @tab-change="syncQuery">
       <el-tab-pane label="访客先看到谁" name="entry" lazy>
-        <MpEntry embedded />
+        <MpEntry ref="entryRef" embedded />
       </el-tab-pane>
       <el-tab-pane label="名片页面样式" name="appearance" lazy>
-        <HomeLayout embedded />
+        <HomeLayout ref="appearanceRef" embedded />
       </el-tab-pane>
       <!-- 风格模板独立成第三个页签，不塞进「名片页面样式」里当第四块：
            那一页的三块顺序（首页背景 → 板块顺序 → 详情页时间显示）是产品约定，
@@ -92,19 +93,40 @@ function syncQuery() {
   router.replace({ query: { ...route.query, tab: tab.value } })
 }
 
-// 「风格模板」页的操作按钮（重新加载 / 保存风格）渲染在父组件的页签切换栏右侧，
-// 通过 ref 调用 MpTheme 暴露的 load / save；loading / saving / templates 也来自它，
-// 用于驱动按钮的 loading 与 disabled 态。其它页签激活时 MpTheme 未挂载，ref 为 null，
-// 此时按钮因 v-if="tab==='theme'" 不渲染，点击不会发生。
+// 三个页签各自的内嵌子组件都通过 ref 暴露 load / save（及 loading / saving 等），
+// 父组件用 ref 调它们来驱动切换栏右侧共用的「保存 / 重新加载」按钮。
+const entryRef = ref<InstanceType<typeof MpEntry> | null>(null)
+const appearanceRef = ref<InstanceType<typeof HomeLayout> | null>(null)
 const themeRef = ref<InstanceType<typeof MpTheme> | null>(null)
-const themeLoading = computed(() => (themeRef.value as any)?.loading ?? false)
-const themeSaving = computed(() => (themeRef.value as any)?.saving ?? false)
-const themeDisabled = computed(() => ((themeRef.value as any)?.templates?.length ?? 0) === 0)
-function onReloadTheme() {
-  themeRef.value?.load()
+
+// 当前激活页签对应的子组件实例：切换栏按钮只操作「当前页」，与是否首次激活无关。
+const activeRef = computed(() => {
+  if (tab.value === 'entry') return entryRef.value
+  if (tab.value === 'appearance') return appearanceRef.value
+  return themeRef.value
+})
+const activeLoading = computed(() => (activeRef.value as any)?.loading ?? false)
+const activeSaving = computed(() => (activeRef.value as any)?.saving ?? false)
+// 禁用态按页签不同：入口页看 canSave（未选员工则禁用），风格页看模板是否拉回，
+// 样式页始终可保存。
+const activeDisabled = computed(() => {
+  if (tab.value === 'entry') return !((entryRef.value as any)?.canSave ?? true)
+  if (tab.value === 'theme') return ((themeRef.value as any)?.templates?.length ?? 0) === 0
+  return false
+})
+// 保存按钮文案：风格页叫「保存风格」，其余叫「保存」，与各自独立页保持一致。
+const saveLabel = computed(() => (tab.value === 'theme' ? '保存风格' : '保存'))
+// 仅风格页的保存有「不改动其它设置」的范围说明。
+const saveTitle = computed(() =>
+  tab.value === 'theme'
+    ? '仅提交模板选择，不改动首页背景、板块顺序与详情页时间显示。'
+    : ''
+)
+function onReloadActive() {
+  ;(activeRef.value as any)?.load?.()
 }
-function onSaveTheme() {
-  themeRef.value?.save()
+function onSaveActive() {
+  ;(activeRef.value as any)?.save?.()
 }
 </script>
 

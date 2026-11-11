@@ -1,7 +1,9 @@
 <template>
-  <el-card>
-    <div class="page-bar" :class="{ 'only-action': props.embedded }">
-      <h3 v-if="!props.embedded">小程序入口</h3>
+    <el-card>
+    <!-- 内嵌在「小程序设置」页签里时，重新加载由父组件切换栏右侧的按钮统一提供，
+         本页不再重复渲染自己的页签栏（避免一套按钮出现两处）。独立访问时才需要它。 -->
+    <div v-if="!props.embedded" class="page-bar">
+      <h3>小程序入口</h3>
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
@@ -67,7 +69,9 @@
       </el-form-item>
 
       <el-form-item>
-        <el-button type="primary" :loading="saving" :disabled="!canSave" @click="save">保存</el-button>
+        <!-- 内嵌时保存由父组件切换栏右侧按钮统一提供；独立访问才在本页渲染。
+             未选员工的提示仍保留，切换栏的「保存」会因此处于禁用态。 -->
+        <el-button v-if="!props.embedded" type="primary" :loading="saving" :disabled="!canSave" @click="save">保存</el-button>
         <span v-if="form.mode === 'staff' && !form.staffId" class="field-tip inline">
           请先选择要展示的员工
         </span>
@@ -192,6 +196,10 @@ function fixMismatch() {
 }
 
 onMounted(load)
+
+// 内嵌在「小程序设置」时，父组件用 ref 调这里的 load/save 来驱动切换栏右侧按钮的
+// loading / disabled 态；canSave 决定「保存」是否可点（未选员工时禁用）。
+defineExpose({ load, save, loading, saving, canSave })
 </script>
 
 <style scoped>

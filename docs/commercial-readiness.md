@@ -2306,3 +2306,20 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
 
 > 注：排查过程中一度在 Read/Grep 输出里看到第 27 行 `:disabled="themeDisabled"` 这种形近串，
 > 经 `git diff` 与码点核对，磁盘实际始终是 `:disabled`（ASCII），系输出层渲染幻影，无真实缺陷，未改动。
+
+## 第三十五轮：三个页签共用切换栏右侧的「保存 / 重新加载」
+
+用户要求：「访客先看到谁」「名片页面样式」两页的保存 / 重新加载按钮，也像「风格模板」那样
+放到切换栏右侧，三页一致。此前只有风格页在切换栏有按钮，另两页的按钮各自留在页面体内
+（`MpEntry` / `HomeLayout` 自己的 `.page-bar` 与表单底部「保存」），位置不统一。
+
+| 项 | 说明 |
+| --- | --- |
+| 改动 | `MpEntry` / `HomeLayout` 内嵌时（`:embedded`）隐藏自带的 `.page-bar`（含「重新加载」）与表单底部「保存」按钮，并 `defineExpose({ load, save, loading, saving, canSave })` / `{ load, save, loading, saving }`；父组件 `MpSettings.vue` 给三个 `el-tab-pane` 各加 `ref`（entryRef / appearanceRef / themeRef），用 `activeRef` 指向当前激活页签的子组件，`onSaveActive` / `onReloadActive` 调其 `load` / `save`；`.tab-actions` 改为始终渲染、`activeLoading/activeSaving/activeDisabled` 与 `saveLabel`（风格页叫「保存风格」、其余「保存」）随当前页切换 |
+| 禁用态 | 入口页看 `canSave`（未选员工禁用）、风格页看模板是否拉回、样式页始终可保存；独立访问（非内嵌）仍各自渲染自带按钮，行为不变 |
+| 守门 | `MpSettings.spec.ts` 把「按钮只在风格页显示」翻转为「三个页签都显示」，并新增 entry / appearance 的重新加载与保存用例（保存分别提交 `saveMpEntry({mode:'wall',staffId:0})` 与完整 `saveHomeLayout` 负载）；源码级守门新增 `ref="entryRef"` / `ref="appearanceRef"` / `ref="themeRef"` 且 `.tab-actions` 不再含 `v-if="tab === 'theme'"`；`MpEntry.spec` / `HomeLayout.spec` 各加一条「内嵌时自身保存 / 重新加载按钮隐藏」 |
+
+- 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1594 例**（95 文件，较上一轮 +6）/
+  `vite build` / `git diff --check` 全绿。（构建首次偶发 `CODEBUDDY_BROKER_TIMEOUT` 系环境 broker
+  瞬时网络超时，与代码无关，重跑 `REAL_EXIT=0` 通过。）
+
