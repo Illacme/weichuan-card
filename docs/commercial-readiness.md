@@ -2257,3 +2257,31 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
 - 定向：`MpTheme.spec.ts` 19/19、`MpSettings.spec.ts` 15/15 全绿。
 - 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1588 例**（95 文件）/
   `vite build` / `git diff --check` 全绿；构建残留 `dist-check-theme2` 已清；后端未改。
+
+---
+
+## 第三十三轮：切换栏吸顶贴顶（抵消 el-main 的 16px padding）
+
+### 背景
+
+第三十二轮把「保存风格 / 重新加载」上移到自有 sticky 切换栏，但用户截图反馈：吸顶后切换栏
+上方仍留约 12–16px 空隙，页面滚动时下方风格卡会透出来显示在顶栏与切换栏之间。
+
+### 改动
+
+| 面 | 内容 |
+|---|---|
+| 根因 | `.admin-main`（`el-main`，`overflow:auto`）带 `padding:16px`；吸顶 `position:sticky; top:0` 的参照是内容区上沿（比顶栏低一截的 16px padding 处），吸顶位置比顶栏底边低 16px，留下空隙、滚动时卡片从空隙透出 |
+| 修复 | `.mp-settings` 整体出血 `margin:-16px` 抵消 `.admin-main` 的 padding，内部再 `padding:16px` 把内容拉回与后台其它页面对齐；吸顶栏 `top:0` 因此直接贴到内容区最顶端（顶栏底边），上方不再漏卡片。仅改 `MpSettings.vue` 样式，不动结构与守门逻辑 |
+
+### 边界
+
+纯后台管理端 UI 微调：不动模板白名单 / 接口 / 数据库 / 小程序；保存语义、按钮位置与 sticky
+守门不变。`T1–T16` 真机验收仍是本人要过的一轮，本改动只动后台浏览器 UI。
+
+### 门禁
+
+- 定向：`MpSettings.spec.ts` 在「sticky / top:0 / tabs-bar / tab-actions / hidden-header」
+  源码级守门基础上，新增断言文件含 `margin: -16px` 与 `padding: 16px`，锁死吸顶贴顶不回退。
+- 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1588 例**（95 文件）/
+  `vite build` / `git diff --check` 全绿。

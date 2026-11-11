@@ -113,6 +113,14 @@ function onSaveTheme() {
    宽屏下缩在左边、右边一大片空白）。
    el-tabs 的 .el-tabs__content 自带 15px padding，会把卡片左右各缩进一格，
    与页面上其他卡片对不齐——这里清掉，只在页签与卡片之间留间距。 */
+/* 整体出血到 .admin-main 的 padding 边缘（抵消其 16px padding），内部再补回 16px，
+   内容区仍与后台其它页面对齐。关键目的：让 .tabs-bar（position:sticky; top:0）
+   吸顶时直接贴到内容区最顶端、紧贴顶栏底边——否则 .admin-main 的 16px padding-top
+   会让吸顶位置比顶栏低一截，上方留出空隙、滚动时下方卡片会透出来。 */
+.mp-settings {
+  margin: -16px;
+  padding: 16px;
+}
 .mp-settings :deep(.el-tabs__content) {
   padding: 0;
 }

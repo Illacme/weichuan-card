@@ -387,5 +387,8 @@ describe('content/MpSettings', () => {
     expect(src).toContain('.tabs-bar')
     expect(src).toContain('class="tab-actions"')
     expect(src).toContain('hidden-header')
+    // 吸顶要贴到顶栏底边：抵消 .admin-main 的 16px padding，否则吸顶位置偏低、上方漏卡片
+    expect(src).toContain('margin: -16px')
+    expect(src).toContain('padding: 16px')
   })
 })
