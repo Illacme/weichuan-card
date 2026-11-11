@@ -1,8 +1,38 @@
 <template>
   <div class="mp-settings">
-    <!-- 两页签分开而不是上下堆两块：两页各有自己的「保存」，同屏放两个保存按钮
-         很容易改完上一段去点下一段的保存（而这两处是不同接口、不同数据）。 -->
-    <el-tabs v-model="tab" @tab-change="syncQuery">
+    <!-- 自有的标签页切换栏：① 复用 el-tabs 的页签切换 / lazy 挂载能力，但隐藏其原生
+         header（hidden-header），改用这里的 .tabs-bar 渲染页签，方便把「风格模板」页专属的
+         「保存风格 / 重新加载」按钮放在同一行最右侧；
+         ② .tabs-bar 在页面滚动时固定顶部（sticky），管理员翻阅 12 张风格卡时仍能随时点
+         页签或右侧按钮，不必滚回顶部。tab 同时驱动 el-tabs 的 v-model 与这里的选中态。 -->
+    <div class="tabs-bar">
+      <div class="tabs" role="tablist">
+        <button
+          v-for="t in TABS_META"
+          :key="t.name"
+          type="button"
+          class="tab"
+          :class="{ active: tab === t.name }"
+          role="tab"
+          :aria-selected="tab === t.name"
+          @click="tab = t.name"
+        >{{ t.label }}</button>
+      </div>
+      <!-- 重新加载 / 保存风格只在「风格模板」页有意义（操作该页的模板清单与选中态），
+           所以只在切到该页时显示；切走即随切换栏一起消失，不会出现在不相关的页签上。 -->
+      <div v-if="tab === 'theme'" class="tab-actions">
+        <el-button
+          type="primary"
+          :loading="themeSaving"
+          :disabled="themeDisabled"
+          title="仅提交模板选择，不改动首页背景、板块顺序与详情页时间显示。"
+          @click="onSaveTheme"
+        >保存风格</el-button>
+        <el-button :icon="Refresh" :loading="themeLoading" @click="onReloadTheme">重新加载</el-button>
+      </div>
+    </div>
+
+    <el-tabs v-model="tab" class="hidden-header" @tab-change="syncQuery">
       <el-tab-pane label="访客先看到谁" name="entry" lazy>
         <MpEntry embedded />
       </el-tab-pane>
@@ -14,15 +44,16 @@
            HomeLayout.spec.ts 用源码 indexOf 钉死了，插一块就得改约定。
            页内再按服务端下发的 series 分「整体风格」与「品牌配色」两组。 -->
       <el-tab-pane label="风格模板" name="theme" lazy>
-        <MpTheme embedded />
+        <MpTheme ref="themeRef" embedded />
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Refresh } from '@element-plus/icons-vue'
 import MpEntry from './MpEntry.vue'
 import HomeLayout from './HomeLayout.vue'
 import MpTheme from './MpTheme.vue'
@@ -37,6 +68,12 @@ import MpTheme from './MpTheme.vue'
 
 const TABS = ['entry', 'appearance', 'theme'] as const
 type TabName = (typeof TABS)[number]
+
+const TABS_META: { name: TabName; label: string }[] = [
+  { name: 'entry', label: '访客先看到谁' },
+  { name: 'appearance', label: '名片页面样式' },
+  { name: 'theme', label: '风格模板' },
+]
 
 const route = useRoute()
 const router = useRouter()
@@ -54,6 +91,21 @@ const tab = ref<TabName>(fromQuery())
 function syncQuery() {
   router.replace({ query: { ...route.query, tab: tab.value } })
 }
+
+// 「风格模板」页的操作按钮（重新加载 / 保存风格）渲染在父组件的页签切换栏右侧，
+// 通过 ref 调用 MpTheme 暴露的 load / save；loading / saving / templates 也来自它，
+// 用于驱动按钮的 loading 与 disabled 态。其它页签激活时 MpTheme 未挂载，ref 为 null，
+// 此时按钮因 v-if="tab==='theme'" 不渲染，点击不会发生。
+const themeRef = ref<InstanceType<typeof MpTheme> | null>(null)
+const themeLoading = computed(() => (themeRef.value as any)?.loading ?? false)
+const themeSaving = computed(() => (themeRef.value as any)?.saving ?? false)
+const themeDisabled = computed(() => ((themeRef.value as any)?.templates?.length ?? 0) === 0)
+function onReloadTheme() {
+  themeRef.value?.load()
+}
+function onSaveTheme() {
+  themeRef.value?.save()
+}
 </script>
 
 <style scoped>
@@ -64,7 +116,59 @@ function syncQuery() {
 .mp-settings :deep(.el-tabs__content) {
   padding: 0;
 }
-.mp-settings :deep(.el-tabs__header) {
+/* 原生 el-tabs 的 header 隐藏：页签由上面的 .tabs-bar 渲染，避免两套页签并存。 */
+.hidden-header :deep(.el-tabs__header) {
+  display: none;
+}
+/* 自有的标签页切换栏：滚动时固定顶部（sticky），按钮与页签在同一行、一起固定。
+   白底 + z-index 保证内容滚到下方时被遮住而不是透出来。flex 让页签占满左侧、
+   操作按钮推到最右（.tab-actions 用 margin-left:auto）。 */
+.tabs-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
   margin-bottom: 12px;
+  background: #fff;
+  border-bottom: 1px solid #ebeef5;
+}
+.tabs {
+  display: flex;
+  gap: 28px;
+}
+.tab {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0 12px;
+  font-size: 14px;
+  color: #909399;
+  position: relative;
+}
+.tab:hover {
+  color: #606266;
+}
+.tab.active {
+  color: #1a8cff;
+  font-weight: 500;
+}
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: #1a8cff;
+}
+.tab-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding-left: 16px;
 }
 </style>

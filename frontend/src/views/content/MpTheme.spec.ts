@@ -74,12 +74,6 @@ function cards(w: any) {
   return w.findAll('.theme-card')
 }
 
-function saveButton(w: any) {
-  const btn = w.findAll('.el-button').find((b: any) => b.text().includes('保存风格'))
-  if (!btn) throw new Error('找不到保存按钮')
-  return btn
-}
-
 describe('content/MpTheme', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockClear()
@@ -147,9 +141,9 @@ describe('content/MpTheme', () => {
     await flush()
     expect(cards(w)[1].find('img.preview-shot').exists()).toBe(false)
 
-    const reload = w.findAll('.el-button').find((b: any) => b.text().includes('重新加载'))
-    expect(reload).toBeDefined()
-    await reload!.trigger('click')
+    // 重新加载已上移到父组件「小程序设置」的页签切换栏；这里直接驱动暴露的 load，
+    // 验证「重试预览图、清掉失败标记」的核心逻辑不变。
+    await (w.vm as any).load()
     await flush()
 
     expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
@@ -261,7 +255,7 @@ describe('content/MpTheme', () => {
 
     await cards(w)[2].trigger('click')
     await flush()
-    await saveButton(w).trigger('click')
+    await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'brand-crimson' })
   })
@@ -300,7 +294,7 @@ describe('content/MpTheme', () => {
 
     await cards(w)[1].trigger('click')
     await flush()
-    await saveButton(w).trigger('click')
+    await (w.vm as any).save()
     await flush()
 
     expect(cards(w)[1].classes()).toContain('selected')
@@ -324,7 +318,7 @@ describe('content/MpTheme', () => {
 
     await cards(w)[1].trigger('click')
     await flush()
-    await saveButton(w).trigger('click')
+    await (w.vm as any).save()
     await flush()
 
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
@@ -346,7 +340,7 @@ describe('content/MpTheme', () => {
 
     await cards(w)[0].trigger('click')
     await flush()
-    await saveButton(w).trigger('click')
+    await (w.vm as any).save()
     await flush()
 
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
@@ -356,22 +350,24 @@ describe('content/MpTheme', () => {
     const w = await mountPage({ templateId: 'default', templateEntitled: true, templates: [] })
 
     expect(cards(w)).toHaveLength(0)
-    expect(saveButton(w).attributes('disabled')).toBeDefined()
+    // 保存按钮已上移到父组件切换栏，disabled 由父组件的 themeDisabled 驱动；
+    // 这里验证数据侧护栏：清单为空时 templates 为空，父组件据此禁用保存。
+    expect((w.vm as any).templates.length).toBe(0)
   })
 
   it('拉取失败：不白屏，仍能重新加载', async () => {
     mocks.getHomeLayout.mockRejectedValueOnce(new Error('500'))
     const w = await mountPage()
 
-    expect(saveButton(w).exists()).toBe(true)
-    expect(w.find('.el-button').exists()).toBe(true)
+    // 说明文案仍在，页面没有白屏（重新加载按钮已上移到父组件切换栏）
+    expect(w.find('.desc').exists()).toBe(true)
   })
 
   it('保存失败：不提示成功', async () => {
     mocks.saveHomeLayout.mockRejectedValueOnce(new Error('403'))
     const w = await mountPage()
 
-    await saveButton(w).trigger('click')
+    await (w.vm as any).save()
     await flush()
 
     expect(ElMessage.success).not.toHaveBeenCalled()

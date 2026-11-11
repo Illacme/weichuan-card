@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject, computed } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import MpSettings from './MpSettings.vue'
 import MpEntry from './MpEntry.vue'
 import HomeLayout from './HomeLayout.vue'
@@ -337,5 +339,53 @@ describe('content/MpSettings', () => {
     await pickTab(w, 'theme')
 
     expect(contentMocks.getHomeLayout).toHaveBeenCalledTimes(2)
+  })
+
+  // 「重新加载 / 保存风格」按钮已上移到父组件「小程序设置」的页签切换栏（Teleport 进
+  // .el-tabs__header），只在「风格模板」页显示：切走即消失，避免它们出现在不相关的页签上。
+  it('风格模板页：切换栏右侧出现「保存风格 / 重新加载」，其它页签不显示', async () => {
+    const { w } = await mountPage('?tab=theme')
+    const actions = w.find('.tab-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.text()).toContain('保存风格')
+    expect(actions.text()).toContain('重新加载')
+
+    await pickTab(w, 'entry')
+    expect(w.find('.tab-actions').exists()).toBe(false)
+  })
+
+  it('点切换栏上的「重新加载」会重新拉取模板清单（重试预览图）', async () => {
+    const { w } = await mountPage('?tab=theme')
+    const before = contentMocks.getHomeLayout.mock.calls.length
+    const reload = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('重新加载'))
+    expect(reload).toBeDefined()
+    await reload!.trigger('click')
+    await flush()
+    expect(contentMocks.getHomeLayout.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('点切换栏上的「保存风格」只提交 templateId', async () => {
+    const { w } = await mountPage('?tab=theme')
+    const save = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('保存风格'))
+    expect(save).toBeDefined()
+    await save!.trigger('click')
+    await flush()
+    expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
+  })
+
+  // 源码级守门：防止「切换栏不再固定顶部」或「按钮又退回卡片里」这类只改样式/位置的回归。
+  it('标签页切换栏在滚动时固定顶部，且两个按钮与页签在同一行（自有 sticky 栏）', async () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/views/content/MpSettings.vue'), 'utf-8')
+    expect(src).toMatch(/position:\s*sticky/)
+    expect(src).toMatch(/top:\s*0/)
+    expect(src).toContain('.tabs-bar')
+    expect(src).toContain('class="tab-actions"')
+    expect(src).toContain('hidden-header')
   })
 })

@@ -2220,3 +2220,40 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
 - 定向：新守门绿；**反向验证**（把 `.page` 背景改回写死蓝）必红后自动还原。
 - 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1584 例** /
   `vite build` / `git diff --check` 全绿；后端未改、`go build` `go vet` 仍绿。
+
+---
+
+## 第三十二轮：风格模板操作按钮上移 + 切换栏滚动固定顶部
+
+### 背景
+
+第三十一轮修完小程序首页背景跟随主题 token 后，用户附小程序设置页截图，要求：
+把「重新加载」按钮上移到「访客先看到谁 / 名片页面样式 / 风格模板」标签页切换栏所在行
+的最右侧，「保存风格」移到「重新加载」左侧；并且在页面滚动时，切换栏固定在顶部，
+方便管理员翻阅 12 张风格卡时随时点页签或右侧按钮，不必滚回顶部。
+
+原布局里「保存风格」在 `MpTheme` 卡片区底部、「重新加载」在内容区右上角，与页签栏分离，
+滚下去就够不着。
+
+### 改动
+
+| 面 | 内容 |
+|---|---|
+| 父组件 `MpSettings.vue` | 抛弃 Teleport 进 `.el-tabs__header` 方案（VTU 下桩化 `el-tabs` 让 Teleport 目标解析失败），改为自渲染 sticky `.tabs-bar`：内含自绘页签按钮（`.tab` / `.tab.active` 蓝字 + 2px 蓝下划线）与 `.tab-actions`（保存风格在左、`type=primary`；重新加载在右，带 `Refresh` 图标），二者仅在 `tab==='theme'` 时渲染；`el-tabs` 仅作 lazy 挂载用，原生 header 用 `.hidden-header :deep(.el-tabs__header){display:none}` 隐藏，避免两套页签并存 |
+| sticky 固定 | `.tabs-bar` 设 `position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #ebeef5`；`flex` 让页签占满左侧、`.tab-actions` 用 `margin-left:auto` 推到最右，滚动时整行固定顶部、内容在下方被遮住而非透出 |
+| 子组件 `MpTheme.vue` | 删除自有的顶部 `.page-bar`（h3 标题 + 重新加载）与底部 `.actions`（保存风格 + hint）及对应 CSS；脚本末 `defineExpose({ load, save, loading, saving, templates })` 把操作与状态暴露给父组件 |
+| 父调子 | `MpSettings` 用 `themeRef` + 三个 computed（`themeLoading`/`themeSaving`/`themeDisabled`，从 `themeRef.value` 读 loading/saving/templates 驱动按钮 loading/disabled）；`onReloadTheme`/`onSaveTheme` 调 `themeRef.value?.load()/save()`。非 theme 页时 `MpTheme` 未挂载、ref 为 null，按钮因 `v-if` 不渲染，点击不会发生 |
+| 守门 | `MpSettings.spec.ts` 新增 4 例：切换栏右侧 theme 页显示「保存风格 / 重新加载」且其它页签不显示；点「重新加载」会再调 `getHomeLayout`；点「保存风格」只提交 `{templateId:'default'}`；源码级守门读 `MpSettings.vue` 断言含 `position: sticky` / `top: 0` / `.tabs-bar` / `class="tab-actions"` / `hidden-header`（改回非 sticky 必红）。`MpTheme.spec.ts` 把按钮交互改为直接调 `(w.vm as any).load()/save()`（VTU 本版 `wrapper.vm` 是属性非函数，`w.vm()` 会报 `w.vm is not a function`） |
+
+### 边界
+
+纯后台管理端 UI 调整：不动模板白名单 / 端上 token / 接口契约 / 数据库 / 生成产物 /
+小程序代码。保存语义不变——仍只提交 `templateId`，不冲掉别的页签配置（见主题记忆
+「只提交 templateId 不跨页签覆盖」）。按钮只在「风格模板」页有意义，故不出现在不相关的
+页签上；`T1–T16` 真机验收仍是本人要过的一轮，本改动只动后台浏览器 UI，不影响真机判定。
+
+### 门禁
+
+- 定向：`MpTheme.spec.ts` 19/19、`MpSettings.spec.ts` 15/15 全绿。
+- 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1588 例**（95 文件）/
+  `vite build` / `git diff --check` 全绿；构建残留 `dist-check-theme2` 已清；后端未改。

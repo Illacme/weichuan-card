@@ -1,10 +1,5 @@
 <template>
   <el-card>
-    <div class="page-bar" :class="{ 'only-action': props.embedded }">
-      <h3 v-if="!props.embedded">小程序风格模板</h3>
-      <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
-    </div>
-
     <p class="desc">
       为小程序选择一套内置风格：「整体风格」把主色、卡片圆角、按钮形态与投影质感一并切换；
       「品牌配色」按预设色板只换主色，版式沿用经典蓝，用于对齐企业自有 VI 主色。
@@ -104,13 +99,6 @@
       </div>
     </div>
 
-    <div class="actions">
-      <el-button type="primary" :loading="saving" :disabled="!templates.length" @click="save">
-        保存风格
-      </el-button>
-      <span class="hint">仅提交模板选择，不改动首页背景、板块顺序与详情页时间显示。</span>
-    </div>
-
     <!-- 查看大图：用组件内 fixed 浮层而不是 Teleport，单测可直接断言，
          position:fixed 也不受 .theme-card 的 overflow:hidden 裁剪。
          点遮罩空白处或「关闭」都能收起，图片本身用 contain 不裁切。 -->
@@ -132,11 +120,11 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
 import { getHomeLayout, saveHomeLayout, type ThemeTemplate } from '@/api/content'
 
-// embedded=true：被「小程序设置」页签内嵌时不再重复自己的标题。
-const props = defineProps<{ embedded?: boolean }>()
+// embedded=true：被「小程序设置」页签内嵌时不再重复自己的标题（当前仅用于约定，
+// 标题行与操作按钮已上移到父组件「小程序设置」的页签切换栏，本组件不再自行渲染）。
+defineProps<{ embedded?: boolean }>()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -248,22 +236,15 @@ async function save() {
   }
 }
 
+// 操作按钮（重新加载 / 保存风格）已上移到父组件「小程序设置」的页签切换栏，
+// 通过 ref 调用本组件暴露的 load / save；loading / saving / templates 一并暴露，
+// 供父组件驱动按钮的 loading 与 disabled 态。
+defineExpose({ load, save, loading, saving, templates })
+
 onMounted(load)
 </script>
 
 <style scoped>
-.page-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.page-bar h3 {
-  margin: 0;
-}
-.page-bar.only-action {
-  justify-content: flex-end;
-}
 .desc {
   color: #606266;
   font-size: 13px;
@@ -559,15 +540,5 @@ onMounted(load)
   margin-top: 4px;
   font-size: 12px;
   color: #e6a23c;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 20px;
-}
-.hint {
-  font-size: 12px;
-  color: #909399;
 }
 </style>
