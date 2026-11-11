@@ -7,7 +7,7 @@ import { FALLBACK_BRAND } from '../../utils/brand'
 // 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
 // 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
-import { applyTheme, bindTheme } from '../../utils/theme'
+import { applyTheme, bindTheme, resolveTheme } from '../../utils/theme'
 
 Page({
   data: {
@@ -283,9 +283,11 @@ Page({
         const icon = assetUrl(s.icon)
         return { ...s, icon, iconThumb: thumbnailURL(icon) }
       })
-      // 整体风格模板同样在响应根级：缓存到 Storage 并广播给已渲染的页面栈，
-      // 否则从名片墙点进名片时，那一页还停在默认蓝色（要下次冷启动才统一）。
-      applyTheme(layout.templateId)
+      // 主题两轴同样在响应根级：resolveTheme 优先 styleId/brandColorId，
+      // 旧后端只下发 templateId 时拆成 (style, brand)；缓存到 Storage 并广播给
+      // 已渲染的页面栈，否则从名片墙点进名片时那一页还停在默认蓝（下次冷启动才统一）。
+      const sel = resolveTheme(layout)
+      applyTheme(sel.styleId, sel.brandColorId)
       const order = layout.order && layout.order.length ? layout.order : ['achievement', 'service']
       this.setData({
         employee: cardData.employee,

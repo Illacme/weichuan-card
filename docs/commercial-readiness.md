@@ -2360,3 +2360,50 @@ P1 只动后端数据/契约层，前端与小程序**完全不动**（`template
 > 本轮提交后本地领先远端 **9 个提交**（此前是 8 个提交 + 未提交工作树）；沙箱拦截 `git push`，
 > 需本人手动 `git push origin main`。前端/小程序视觉两轴化在 P2–P4。
 
+## 第三十九轮：主题两轴化 P2（CSS 两层 + 前 2 模块布局）
+
+承接第三十八轮 P1（提交 `e743d38`）与用户拍板的「风格驱动各模块布局、品牌配色叠加其上
++ 整模块重排版」。P2 **只动小程序与预览脚本**，Go 后端与 PC 后台零改动——后台仍发
+`templateId`，由 P1 的兼容派生列兜住，两端零漂移。
+
+| 项 | 说明 |
+| --- | --- |
+| `app.wxss` 拆层 | 12 个 `.wc-theme-*` 全部拆除 → `.wc-style-{ink,warm,teal}`（布局层，全套 18 token + 模块规则；`default` 继承 `page` 不另写一层）+ `.wc-brand-*`（8 款颜色层，**只 11 个颜色 token**，一个版式 token 都不许出现）。颜色层排在布局层之后才能覆盖前者 |
+| 根节点 | `themeClass` 展开**两层** class：`wc-style-<id>` 恒挂（含 default）+ 可选 `wc-brand-<id>`；`wc-theme` 基类保留作语义标记（已无 token 定义）→ **六个访客页 wxml 一行都不用改** |
+| 布局规则 | `4 风格 × 2 模块`（顶部名片卡 `.emp-card` / 公司简介 `.mp-profile`）；`index.wxml` 补 `mp-card-area` / `mp-profile` / `mp-achievements` / `mp-services` 四个钩子（后两个为 P3 铺路） |
+| `theme.ts` 两轴 | `applyTheme(styleId, brandColorId)` / `resolveTheme(信封)` / `splitTheme` / `deriveThemeId` / `normalizeStyle` / `normalizeBrand`；**Storage 仍存扁平 `wc_theme_id`**（旧缓存、旧后端零迁移）；品牌色系端上强制归 `default`，与后端 `BelongsToStyle` 一致 |
+| 接线 | `index.ts` 与 `themeBootstrap.ts` 都走 `resolveTheme`（两轴优先、旧后端拆 `templateId`），不各自猜字段；`types.ts` 的 `HomeLayoutResp` 补 `styleId` / `brandColorId`，`types_contract.spec.ts` 与 `models.go` json tag 逐项对账 |
+| 预览图 | `gen_theme_previews.py` 的 `read_tokens()` 改为 `STYLE_BLOCK_RE` / `BRAND_BLOCK_RE` 两层合并（颜色层 ∪ `default` 的 7 个版式）。**12 组 × 18 token 与 `manifest.json` 逐字相等 → 12 张 PNG 无需重出**，`--check` 保持绿；按风格出 4 张布局长图归 P4 |
+| 守门 | `theme.spec.ts` 的 `readThemeVars()` 同步合并；「品牌款版式 == default」改写为「颜色层不含任何布局 token + 12 组合合并后版式逐字 == default」；新增「布局层 18 / 颜色层 11 token 对账」「根节点生成两层 class」「4 风格 × 2 模块选择器 + wxml 钩子」「两层合并 token == manifest」「两轴拆分归一 / 旧缓存」。`themeBootstrap.spec.ts` 的 `resolveTheme` 用真实实现（只 mock 广播出口）；`types_contract.spec.ts` 字段扩到 6 个 |
+| 反向验证 | ① 颜色层偷塞 `--wc-r-card` ② `themeClass` 退回单层 `wc-theme-*` ③ 删掉 `warm` 的公司简介规则 ④ 偷改一个色值 —— 4 项**必红**，还原后复绿 |
+| 门禁 | **8 项全绿**：`golangci-lint v2.15.0`（0 issues）/ `go test ./...` 全包通过 / `gen_theme_previews.py --check` / `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1600 例（95 文件，较上轮 +6）** / `vite build --outDir dist-check-p2` / `git diff --check`，`SUMMARY` 八项全部 `=0`。后端与 PC 后台本轮零改动，仍全套复跑确认无回归 |
+
+> 关键坑 1（**拆层最容易炸的连锁**）：`theme.spec.ts` 有 850 行守门、
+> `gen_theme_previews.py` 按 `.wc-theme-*` 解析 token、`manifest.json` 记 12 款 token 快照。
+> 直接删单层块会让「预览图 / 可读性 / 版式差异」一整串变红，且必须重出 12 张 PNG
+> （改色值还会给存量租户引入视觉突变）。解法：颜色层删掉的 7 个版式 token 原本就等于
+> `page` 默认值，于是让**生成脚本与测试用同一套「颜色层 ∪ default 版式」合并口径**，
+> 12 组 18 token 逐字不变，PNG 与快照全部原样保留。这也是本轮唯一能做到「视觉零突变」的原因。
+
+> 关键坑 2（**兼容期不要顺手迁移数据结构**）：差点把 Storage 改成存 `{styleId, brandColorId}`
+> 对象。那样所有老版本缓存读出来都是 undefined，冷启动直达二级页的访客会静默回默认蓝。
+> 保持 `wc_theme_id` 存扁平 `templateId`，只在读写两端做 `splitTheme` / `deriveThemeId`，
+> 旧缓存与只下发 `templateId` 的旧后端都原样渲染。
+
+> 关键坑 3（**布局规则的静默失败**）：「墨款无图」若照方向稿写成 `display:none` 封面，
+> 客户上传的公司简介视频会悄悄消失，后台与访客都不会报错。落地改为「封面压矮 + 去圆角 +
+> 文字细描边分隔」；同时所有规则必须以 `.emp-card` / `.mp-profile` 开头，写全局
+> `.section` / `.intro` 会波及二级页与员工页。`default` 只逐字复述既有度量，锁住升级零突变。
+
+> **视觉影响告知**：P2 会让**已选 `ink` / `warm` / `teal`** 的存量租户首页顶部名片卡与
+> 公司简介出现可见外观变化（这是用户确认的「整模块重排版」预期，不是回归）；
+> `default` 与 8 款 `brand-*` 零突变。真机像素级验收仍需人工——本环境无无头浏览器 /
+> 真机截图工具链，只能靠 CSS 机制推理 + 全量门禁。
+
+> 验收结论：**8 项全绿**（`SUMMARY LINT=0 GOTEST=0 PREVIEW=0 ESLINT=0 TSC=0 VITEST=0
+> BUILD=0 DIFFCHECK=0`），全量 Vitest 95 文件 / 1600 例通过，`dist-check-p2` 由
+> `**/dist-check-*/` 忽略、不进提交。反向验证 4 项必红且已还原复绿。
+> 本轮提交后本地领先远端 **10 个提交**；沙箱拦截 `git push`，需本人手动
+> `git push origin main`。P3（业绩 / 服务两模块布局）与 P4（后台两步 UI、预览图重生成、
+> 白名单树化、真机验收）待实施。
+

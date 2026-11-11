@@ -51,8 +51,8 @@
     <block wx:else>
       <!-- id 供自动化/调试寻址用：自定义组件内部元素跨组件选不到（>>> 也不支持），
            有 id 才能用 page.selectComponent('#emp-card') 直接拿到组件实例 -->
-      <employee-card id="emp-card" employee="{{employee}}" company="{{company}}" case-arrow="{{caseArrow}}" bind:entercase="onEnterCase" />
-      <view class="section">
+      <employee-card id="emp-card" class="mp-card-area" employee="{{employee}}" company="{{company}}" case-arrow="{{caseArrow}}" bind:entercase="onEnterCase" />
+      <view class="section mp-profile">
         <!-- 「公司简介」标题按设计稿叠在封面图左上角（见 company-video 组件），此处不再单列。
              视频来源由后端 videoSource 决定，组件内部自行选档 + 失败兜底 -->
         <company-video
@@ -73,7 +73,7 @@
         <text class="intro">{{profile.introText}}</text>
       </view>
       <block wx:for="{{homeOrder}}" wx:key="*this">
-        <view wx:if="{{item === 'achievement'}}" id="sec-achievement" class="section">
+        <view wx:if="{{item === 'achievement'}}" id="sec-achievement" class="section mp-achievements">
           <view class="sec-head">
             <view class="sec-title">经典业绩</view>
             <!-- 「更多案例」：进入全部项目案例列表（列表页带业绩分类切换），
@@ -85,7 +85,7 @@
           <achievement-grid categories="{{categories}}" staffId="{{staffId}}" />
           <featured-projects featured="{{featured}}" staffId="{{staffId}}" />
         </view>
-        <view wx:if="{{item === 'service'}}" class="section">
+        <view wx:if="{{item === 'service'}}" class="section mp-services">
           <view class="sec-title">业务服务</view>
           <view class="line-split sec-title-line"></view>
           <service-grid services="{{services}}" staffId="{{staffId}}" wx:if="{{services.length}}" />

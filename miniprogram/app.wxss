@@ -1,12 +1,16 @@
 /* 全局样式（组件已开启 addGlobalClass，可直接使用这里的类） */
 
-/* ===== 小程序模板主题（配色 + 版式 token） =====
-   默认 token 写在 page 上：没挂主题 class 的页面（员工 / 管理页）取值与
-   模板功能上线前逐字一致，升级零突变。挂了 .wc-theme-* 的访客页由该元素
-   上的同名变量覆盖，子元素按 CSS 自定义属性继承规则自动跟随。
-   不动页面底色 / 卡片底色 / 正文灰度，避免深色主色压低文字对比度；
-   版式只改圆角与阴影（都不占布局尺寸），绝不改 padding / width / flex。
-   每加一款模板必须给齐下面 18 个 token，theme.spec.ts 会逐个核对。 */
+/* ===== 小程序主题：布局层 .wc-style-* + 颜色层 .wc-brand-*（两轴） =====
+   根节点同时挂两层 class（由 utils/theme.ts 生成）：布局来自 style、颜色来自 brand。
+   - page 上是 18 个默认 token（11 颜色 + 7 圆角/阴影）；没挂主题 class 的员工 / 管理页
+     取值与模板功能上线前逐字一致，升级零突变。
+   - .wc-style-<id> 是布局层：4 个风格各自给出全套 18 个 token + 各模块的版式规则。
+     default 不另写 token 块（继承 page，避免两处同值漂移）。
+   - .wc-brand-<id> 是颜色层：8 款色系**只给 11 个颜色 token**，一个 --wc-r-* /
+     --wc-card-shadow* 都不许出现（theme.spec.ts 会拦）。版式由同挂的 style 层决定，
+     所以「换品牌配色不会顺手改掉圆角」这条产品承诺从结构上成立，不靠人工自觉。
+   - 颜色层写在布局层之后：同为单类选择器时后定义者覆盖前者，品牌色才能生效。
+   每加一款模板必须给齐对应层的 token，theme.spec.ts 会逐个核对。 */
 page {
   --wc-primary: #1a8cff;
   --wc-primary-deep: #1b66df;
@@ -29,7 +33,7 @@ page {
   --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 沉稳墨：近直角 + 细描边代替投影，工程 / 制造 / 法律的硬朗感。 */
-.wc-theme-ink {
+.wc-style-ink {
   --wc-primary: #3d4b5c;
   --wc-primary-deep: #2b3745;
   --wc-primary-grad: #1f2a35;
@@ -53,7 +57,7 @@ page {
    主色按 WCAG AA 实测调深过一档：早期 #a5742a 在「白字按钮 / 浅底主色字」
    两处只有 3.27～4.09，换模板反而不如默认款好读；现 12 组关键搭配最低 4.59
    （见 tests/theme.spec.ts）。浅色系保持暖调不变，只压深主色。 */
-.wc-theme-warm {
+.wc-style-warm {
   --wc-primary: #8f6320;
   --wc-primary-deep: #7a521a;
   --wc-primary-grad: #63400f;
@@ -75,7 +79,7 @@ page {
 }
 /* 松石青：中圆角 + 极轻的青色投影，走清爽自然路线，与墨款的硬朗、
    暖款的大圆角都拉开差距。主色 12 组搭配最低 4.71（见 theme.spec.ts）。 */
-.wc-theme-teal {
+.wc-style-teal {
   --wc-primary: #0f766e;
   --wc-primary-deep: #0a5a54;
   --wc-primary-grad: #06453f;
@@ -95,16 +99,17 @@ page {
   --wc-card-shadow-soft: 0 2rpx 10rpx rgba(15, 118, 110, 0.08);
   --wc-card-shadow-bg: 0 4rpx 16rpx rgba(8, 69, 63, 0.16);
 }
-/* ===== 品牌配色预设色板（brand-*，8 款） =====
-   与上面三款「整体风格」不同，这一系列是**只换配色**：7 个版式 token 逐字沿用
-   page 上的默认值，卡片圆角 / 按钮形态 / 投影质感保持经典蓝不变。客户拿它对齐
-   自己的 VI 主色时，不该连带把已经验收过的版式也换掉。这里重复写一遍默认值是
-   刻意的（不靠继承兜底），tests/theme.spec.ts 会反向断言它们与 default 全等，
-   以后谁想给品牌款偷偷改圆角都会变红。
+/* ===== 品牌配色预设色板（颜色层 .wc-brand-*，8 款） =====
+   与上面的「整体风格」不同，这一系列是**纯颜色层**：只给 11 个颜色 token，
+   7 个版式 token 一律不写，由根节点同挂的 .wc-style-<id> 决定。客户拿它对齐
+   自有 VI 主色时，不该连带把已验收过的版式也换掉——P1 的存量映射把 8 款 brand-*
+   全归 default 风格之下，所以它们继承的就是 classic 基线版式，视觉零突变。
    色值按统一算法从主色派生（deep/grad 压暗、alt 提亮、浅色档混白），12 组真实
-   搭配全部实测过 WCAG AA，注释里的最低值由同一套公式算出，不是手挑的「好看组合」。 */
+   搭配全部实测过 WCAG AA，注释里的最低值由同一套公式算出，不是手挑的「好看组合」。
+   theme.spec.ts 反向断言「颜色层体里不含任何布局 token」+「12 组合合并后的版式
+   token 逐字等于 default」，谁想给品牌款偷偷改圆角都会变红。 */
 /* 绛红：节庆、餐饮、国潮与零售品牌；主色 #a01f2e，12 组关键搭配最低 6.16。 */
-.wc-theme-brand-crimson {
+.wc-brand-crimson {
   --wc-primary: #a01f2e;
   --wc-primary-deep: #801925;
   --wc-primary-grad: #63131d;
@@ -116,16 +121,9 @@ page {
   --wc-primary-pcat: #f8eeef;
   --wc-track: #e1dfe6;
   --wc-primary-rgb: 160, 31, 46;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 朱橘：食品、家居与生活方式品牌；主色 #a33d16，12 组关键搭配最低 5.32。 */
-.wc-theme-brand-coral {
+.wc-brand-coral {
   --wc-primary: #a33d16;
   --wc-primary-deep: #823112;
   --wc-primary-grad: #65260e;
@@ -137,16 +135,9 @@ page {
   --wc-primary-pcat: #f8f0ee;
   --wc-track: #e1e1e5;
   --wc-primary-rgb: 163, 61, 22;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 琥珀：酒旅、文创与高端制造品牌；主色 #8a5a08，12 组关键搭配最低 4.95。 */
-.wc-theme-brand-amber {
+.wc-brand-amber {
   --wc-primary: #8a5a08;
   --wc-primary-deep: #6e4806;
   --wc-primary-grad: #563805;
@@ -158,16 +149,9 @@ page {
   --wc-primary-pcat: #f6f3ec;
   --wc-track: #e0e2e4;
   --wc-primary-rgb: 138, 90, 8;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 森绿：农林、健康与户外品牌；主色 #12603a，12 组关键搭配最低 6.18。 */
-.wc-theme-brand-forest {
+.wc-brand-forest {
   --wc-primary: #12603a;
   --wc-primary-deep: #0e4d2e;
   --wc-primary-grad: #0b3c24;
@@ -179,16 +163,9 @@ page {
   --wc-primary-pcat: #edf3f0;
   --wc-track: #d8e3e7;
   --wc-primary-rgb: 18, 96, 58;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 海蓝：物流、科技与专业服务品牌；主色 #0b5585，12 组关键搭配最低 6.42。 */
-.wc-theme-brand-ocean {
+.wc-brand-ocean {
   --wc-primary: #0b5585;
   --wc-primary-deep: #09446a;
   --wc-primary-grad: #073552;
@@ -200,16 +177,9 @@ page {
   --wc-primary-pcat: #edf2f6;
   --wc-track: #d8e2eb;
   --wc-primary-rgb: 11, 85, 133;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 靛蓝：金融、咨询与教育机构；主色 #38429c，12 组关键搭配最低 6.98。 */
-.wc-theme-brand-indigo {
+.wc-brand-indigo {
   --wc-primary: #38429c;
   --wc-primary-deep: #2d357d;
   --wc-primary-grad: #232961;
@@ -221,16 +191,9 @@ page {
   --wc-primary-pcat: #f0f1f8;
   --wc-track: #dbe1ed;
   --wc-primary-rgb: 56, 66, 156;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 堇紫：美业、设计与文化创意品牌；主色 #612a96，12 组关键搭配最低 7.35。 */
-.wc-theme-brand-violet {
+.wc-brand-violet {
   --wc-primary: #612a96;
   --wc-primary-deep: #4e2278;
   --wc-primary-grad: #3c1a5d;
@@ -242,16 +205,9 @@ page {
   --wc-primary-pcat: #f3eff7;
   --wc-track: #dddfec;
   --wc-primary-rgb: 97, 42, 150;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
 /* 玫紫：时尚、母婴与女性消费品牌；主色 #8c2358，12 组关键搭配最低 6.71。 */
-.wc-theme-brand-magenta {
+.wc-brand-magenta {
   --wc-primary: #8c2358;
   --wc-primary-deep: #701c46;
   --wc-primary-grad: #571637;
@@ -263,14 +219,64 @@ page {
   --wc-primary-pcat: #f6eef2;
   --wc-track: #e0dfe9;
   --wc-primary-rgb: 140, 35, 88;
-  --wc-r-card: 20rpx;
-  --wc-r-card-bg: 16rpx;
-  --wc-r-control: 40rpx;
-  --wc-r-chip: 28rpx;
-  --wc-card-shadow: 0 6rpx 18rpx rgba(30, 90, 160, 0.08);
-  --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
-  --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
+
+/* ===== 布局层：风格 × 模块（P2 先落「顶部名片卡 / 公司简介」两模块） =====
+   P1 之前「风格」只换圆角与阴影 token（不占布局尺寸），四款看起来只是不同色系。
+   两轴化后 style 层要真的决定各模块排布：这里按 4 风格 × 2 模块给出各自的度量。
+   三条硬约束：
+   1. **default 零突变**：.wc-style-default 只逐字复述既有度量，不产生任何视觉变化；
+      存量选 classic 的租户升级后看到的就是原来的首页。
+   2. **不改 DOM、不删元素**：规则只调 padding / 尺寸 / 行高 / 圆角 / 背景，
+      绝不 display:none 或改元素顺序。「墨款无图」只能理解为「封面变矮、去圆角、
+      文字加细描边分隔」，把 .cv 藏掉会让客户上传的公司视频悄悄消失，属于静默失败。
+   3. **作用域锁在模块钩子内**：.emp-card（employee-card 组件，addGlobalClass 可穿透）
+      与 .mp-profile（index.wxml 公司简介 section）；绝不写成全局 .section / .intro，
+      否则二级页、员工页会被一起改掉。
+   P3 再补 .mp-achievements / .mp-services 两模块的同名规则。
+   theme.spec.ts 会断言 4 风格 × 2 模块各有专属选择器，漏一款即变红。 */
+
+/* classic（default）：基线，逐字复述现有值 */
+.wc-style-default .emp-card { border-radius: var(--wc-r-card); }
+.wc-style-default .emp-card .ec-avatar { width: 112rpx; height: 112rpx; }
+.wc-style-default .mp-profile .cv { height: 440rpx; border-radius: 12rpx; }
+.wc-style-default .mp-profile .intro { line-height: 1.7; }
+
+/* 沉稳墨：头像缩小、信息紧凑、近直角；公司简介封面压矮去圆角，文字分段密排 */
+.wc-style-ink .emp-card { padding: 20rpx 18rpx 16rpx; }
+.wc-style-ink .emp-card .ec-head { align-items: flex-start; }
+.wc-style-ink .emp-card .ec-avatar { width: 88rpx; height: 88rpx; border-width: 2rpx; }
+.wc-style-ink .emp-card .ec-info { margin-left: 16rpx; }
+.wc-style-ink .emp-card .ec-name { font-size: 32rpx; }
+.wc-style-ink .emp-card .ec-rows { margin-top: 14rpx; }
+.wc-style-ink .emp-card .ec-line { padding: 4rpx 0; }
+.wc-style-ink .mp-profile .cv,
+.wc-style-ink .mp-profile .cv-video { height: 300rpx; border-radius: 0; }
+.wc-style-ink .mp-profile .company-name { font-size: 32rpx; padding-bottom: 14rpx; }
+.wc-style-ink .mp-profile .intro { line-height: 1.6; margin-top: 14rpx; }
+
+/* 暖金棕：头像放大、行距放宽、胶囊按钮更大；封面更高更圆，简介留白充足 */
+.wc-style-warm .emp-card { padding: 30rpx 24rpx 26rpx; }
+.wc-style-warm .emp-card .ec-avatar { width: 136rpx; height: 136rpx; }
+.wc-style-warm .emp-card .ec-info { margin-left: 26rpx; }
+.wc-style-warm .emp-card .ec-rows { margin-top: 28rpx; }
+.wc-style-warm .emp-card .ec-line { padding: 12rpx 0; }
+.wc-style-warm .emp-card .case-btn { height: 32rpx; padding: 0 14rpx; }
+.wc-style-warm .mp-profile .cv,
+.wc-style-warm .mp-profile .cv-video { height: 500rpx; border-radius: 28rpx; }
+.wc-style-warm .mp-profile .company-name { padding-bottom: 26rpx; }
+.wc-style-warm .mp-profile .intro { line-height: 1.9; margin-top: 24rpx; }
+
+/* 松石青：半透磨砂卡、疏排；封面中高、细线分隔感、正文行距透气 */
+.wc-style-teal .emp-card { padding: 28rpx 24rpx; background: rgba(255, 255, 255, 0.88); }
+.wc-style-teal .emp-card .ec-avatar { width: 104rpx; height: 104rpx; }
+.wc-style-teal .emp-card .ec-info { margin-left: 24rpx; }
+.wc-style-teal .emp-card .ec-rows { margin-top: 26rpx; }
+.wc-style-teal .mp-profile .cv,
+.wc-style-teal .mp-profile .cv-video { height: 380rpx; border-radius: 16rpx; }
+.wc-style-teal .mp-profile .company-name { padding-bottom: 24rpx; }
+.wc-style-teal .mp-profile .intro { line-height: 1.85; margin-top: 22rpx; }
+
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
 .disabled-tip { padding: 120rpx 40rpx; text-align: center; color: #999; font-size: 30rpx; }

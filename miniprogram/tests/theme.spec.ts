@@ -5,28 +5,36 @@ import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   THEME_IDS,
+  STYLE_IDS,
   THEME_DEFAULT,
   normalizeTheme,
+  normalizeStyle,
+  normalizeBrand,
+  splitTheme,
+  deriveThemeId,
+  resolveTheme,
   themeClass,
   currentThemeClass,
   applyTheme,
   bindTheme,
 } from '../utils/theme'
 
-// 小程序整体风格模板的跨端契约守门。
+// 小程序主题（两轴：风格 × 色系）的跨端契约守门。
 //
 // 为什么需要它：模板 id 在三个地方出现（Go 白名单 / 后台清单 / 小程序 class），
-// 色值在 app.wxss 的三套变量块里，页面根节点要挂 class 才生效。
-// 任意一处漏改都不会报错——访客只是悄悄看到默认蓝色，后台却显示「已选高级款」，
-// 属于典型的静默失败，只能靠读源码的断言钉住。
+// 色值在 app.wxss 的**两层**块里（.wc-style-* 布局层 + .wc-brand-* 颜色层），
+// 页面根节点要同时挂两层 class 才生效。任意一处漏改都不会报错——访客只是悄悄
+// 看到默认蓝色或错误的版式，后台却显示「已选高级款」，属于典型的静默失败，
+// 只能靠读源码的断言钉住。
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '../..')
 const MP = resolve(REPO, 'miniprogram')
 const GO_TPL = resolve(REPO, 'backend/internal/mptemplate/mptemplate.go')
 const APP_WXSS = resolve(MP, 'app.wxss')
 
-// 两个系列的约束是**相反**的：style 款必须有真实版式差异，brand 款必须完全没有
-// 版式差异（只换配色）。所以守门不能一刀切地「对所有非 default 款都要求差异」。
+// 两个系列的约束是**相反**的：style 款必须有真实版式差异（P2 起还要有 4 风格 ×
+// 模块的布局规则），brand 款必须完全没有版式差异（颜色层块里连一个 --wc-r-* 都
+// 不许出现）。所以守门不能一刀切地「对所有非 default 款都要求差异」。
 // 后台按服务端下发的 series 分组，端上守门按 brand- 前缀分组，两份声明由下面的
 // 用例读 Go 源码对账，任一侧漂移都会变红。
 const BRAND_PREFIX = 'brand-'
@@ -86,9 +94,39 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(normalizeTheme('neon')).toBe(THEME_DEFAULT)
     expect(normalizeTheme('INK')).toBe(THEME_DEFAULT)
     expect(normalizeTheme(' ink ')).toBe('ink')
-    expect(themeClass(THEME_DEFAULT)).toBe('')
-    expect(themeClass('warm')).toBe('wc-theme-warm')
-    expect(themeClass('neon')).toBe('')
+    expect(normalizeStyle('neon')).toBe('default')
+    expect(normalizeStyle('warm')).toBe('warm')
+    expect(normalizeBrand('brand-neon')).toBeNull()
+    expect(normalizeBrand('brand-ocean')).toBe('brand-ocean')
+    expect(themeClass(THEME_DEFAULT)).toBe('wc-style-default')
+    expect(themeClass('warm')).toBe('wc-style-warm')
+    expect(themeClass('neon')).toBe('wc-style-default')
+  })
+
+  it('两轴与扁平 templateId 互拆互合；品牌色系强制归 default 风格', () => {
+    expect(splitTheme('brand-ocean')).toEqual({ styleId: 'default', brandColorId: 'brand-ocean' })
+    expect(splitTheme('ink')).toEqual({ styleId: 'ink', brandColorId: null })
+    expect(splitTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
+    expect(splitTheme('neon')).toEqual({ styleId: 'default', brandColorId: null })
+    expect(deriveThemeId('default', 'brand-ocean')).toBe('brand-ocean')
+    expect(deriveThemeId('teal', null)).toBe('teal')
+    expect(deriveThemeId('neon', 'brand-neon')).toBe('default')
+    // 后端 BelongsToStyle 会拒绝跨风格组合，端上同样收敛，别拼出第三种外观
+    expect(themeClass('ink', 'brand-ocean')).toBe('wc-style-default wc-brand-ocean')
+    expect(themeClass('default', 'brand-ocean')).toBe('wc-style-default wc-brand-ocean')
+    expect(themeClass('default', null)).toBe('wc-style-default')
+  })
+
+  it('resolveTheme 两轴优先，旧后端只有 templateId 时拆成两轴', () => {
+    expect(resolveTheme({ styleId: 'warm', brandColorId: null, templateId: 'brand-amber' }))
+      .toEqual({ styleId: 'warm', brandColorId: null })
+    expect(resolveTheme({ styleId: 'default', brandColorId: 'brand-crimson' }))
+      .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
+    expect(resolveTheme({ templateId: 'brand-crimson' }))
+      .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
+    expect(resolveTheme({ templateId: 'teal' })).toEqual({ styleId: 'teal', brandColorId: null })
+    expect(resolveTheme({})).toEqual({ styleId: 'default', brandColorId: null })
+    expect(resolveTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
   })
 
   it('模板 id 与 Go 白名单一一对应（一端加款忘了同步即变红）', () => {
@@ -100,19 +138,28 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(Array.from(ids).sort()).toEqual([...THEME_IDS].sort())
   })
 
-  it('app.wxss 每套主题都定义齐全同一组 CSS 变量', () => {
+  it('布局层每款风格给齐 18 个 token；颜色层只给 11 个颜色 token', () => {
     const src = readFileSync(APP_WXSS, 'utf-8')
     const defaultBlock = src.match(/page\s*\{([\s\S]*?)\n\}/)
     expect(defaultBlock).not.toBeNull()
     const base = varsOf(defaultBlock![1])
-    expect(base.length).toBeGreaterThanOrEqual(10)
+    expect(base).toHaveLength(18)
+    const isLayout = (v: string) => v.startsWith('--wc-r-') || v.startsWith('--wc-card-shadow')
+    const colorVars = base.filter((v) => !isLayout(v))
+    expect(colorVars).toHaveLength(11)
 
-    const blocks = Array.from(src.matchAll(/\.wc-theme-([a-z0-9_-]+)\s*\{([\s\S]*?)\n\}/g))
-    const themed = blocks.map((m) => m[1]).sort()
-    expect(themed).toEqual([...THEME_IDS].filter((id) => id !== THEME_DEFAULT).sort())
-    for (const m of blocks) {
-      expect(varsOf(m[2])).toEqual(base)
+    // default 由 page 提供 token，不另写一层（避免两处同值漂移）
+    const styleBlocks = Array.from(src.matchAll(/\.wc-style-([a-z0-9_-]+)\s*\{([\s\S]*?)\n\}/g))
+    expect(styleBlocks.map((m) => m[1]).sort()).toEqual([...STYLE_ADVANCED_IDS].sort())
+    for (const m of styleBlocks) expect(varsOf(m[2])).toEqual(base)
+
+    const brandBlocks = Array.from(src.matchAll(/\.wc-brand-([a-z0-9_-]+)\s*\{([\s\S]*?)\n\}/g))
+    expect(brandBlocks.map((m) => 'brand-' + m[1]).sort()).toEqual([...BRAND_IDS].sort())
+    for (const m of brandBlocks) {
+      expect(varsOf(m[2]), `${m[1]} 的颜色层不是 11 个颜色 token`).toEqual(colorVars)
     }
+    // 单层 .wc-theme-* 必须全部拆干净，否则页面挂两层 class 时它是死代码 / 优先级陷阱
+    expect(src).not.toMatch(/\.wc-theme-[\w-]+\s*\{/)
   })
 
   it('全仓 WXSS 不再残留主色硬编码（默认色只能出现在变量定义块里）', () => {
@@ -144,19 +191,56 @@ describe('小程序整体风格模板 utils/theme', () => {
     }
   })
 
-  it('首页从 /api/home-layout 拿到 templateId 后应用并广播', () => {
+  it('首页从 /api/home-layout 根级拿两轴主题后应用并广播（旧后端仍走 templateId）', () => {
     const src = readFileSync(resolve(MP, 'pages/index/index.ts'), 'utf-8')
-    expect(src).toContain('applyTheme(layout.templateId)')
+    expect(src).toContain('resolveTheme(layout)')
+    expect(src).toContain('applyTheme(sel.styleId, sel.brandColorId)')
     expect(src).toContain("request<HomeLayoutResp>('GET', '/api/home-layout')")
   })
 
-  it('currentThemeClass 从 Storage 恢复；存储不可用时也不抛错', () => {
+  it('根节点挂两层 class：theme.ts 生成 wc-style-* 与 wc-brand-*', () => {
+    const src = readFileSync(resolve(MP, 'utils/theme.ts'), 'utf-8')
+    expect(src).toContain("'wc-style-' + sel.styleId")
+    expect(src).toContain("'wc-brand-' + sel.brandColorId.slice(BRAND_PREFIX.length)")
+    expect(src, '不能退回单层 wc-theme-*').not.toContain("'wc-theme-' +")
+    expect(readFileSync(APP_WXSS, 'utf-8')).not.toMatch(/\.wc-theme-[\w-]+\s*\{/)
+  })
+
+  it('4 个风格 × 2 个模块都有专属布局规则，且首页给了模块钩子', () => {
+    const wxss = readFileSync(APP_WXSS, 'utf-8')
+    const rules = Array.from(wxss.matchAll(/^\.wc-style-([a-z0-9_-]+)\s+([^{}]+)\{/gm))
+    for (const style of STYLE_IDS) {
+      for (const hook of ['.emp-card', '.mp-profile']) {
+        expect(
+          rules.some((m) => m[1] === style && m[2].includes(hook)),
+          `${style} 缺 ${hook} 布局规则`
+        ).toBe(true)
+      }
+    }
+    const wxml = readFileSync(resolve(MP, 'pages/index/index.wxml'), 'utf-8')
+    for (const hook of ['mp-card-area', 'mp-profile', 'mp-achievements', 'mp-services']) {
+      expect(wxml, `index.wxml 缺模块钩子 ${hook}`).toContain(hook)
+    }
+    // 布局规则必须锁在模块钩子内，不能写成全局 .section / .intro（会波及二级页与员工页）
+    for (const m of rules) {
+      expect(m[2], `${m[1]} 的布局规则越界`).toMatch(/\.emp-card|\.mp-profile/)
+    }
+  })
+
+  it('currentThemeClass 从扁平缓存恢复两轴 class；旧缓存 / 存储不可用都不抛错', () => {
     vi.stubGlobal('getCurrentPages', () => [])
     vi.stubGlobal('wx', {
       getStorageSync: () => 'ink',
       setStorageSync: vi.fn(),
     })
-    expect(currentThemeClass()).toBe('wc-theme-ink')
+    expect(currentThemeClass()).toBe('wc-style-ink')
+
+    // 旧缓存存的是扁平 templateId：品牌款要拆成 (default, brand-*) 两层
+    vi.stubGlobal('wx', {
+      getStorageSync: () => 'brand-ocean',
+      setStorageSync: vi.fn(),
+    })
+    expect(currentThemeClass()).toBe('wc-style-default wc-brand-ocean')
 
     vi.stubGlobal('wx', {
       getStorageSync: () => {
@@ -164,24 +248,28 @@ describe('小程序整体风格模板 utils/theme', () => {
       },
       setStorageSync: vi.fn(),
     })
-    expect(currentThemeClass()).toBe('')
+    expect(currentThemeClass()).toBe('wc-style-default')
   })
 
-  it('applyTheme 缓存 id 并广播到页面栈；bindTheme 把当前主题写回本页', () => {
+  it('applyTheme 缓存扁平 id 并广播两层 class；bindTheme 把当前主题写回本页', () => {
     const setStorageSync = vi.fn()
     const pageA = { setData: vi.fn() }
     const pageB = { setData: vi.fn() }
     vi.stubGlobal('wx', { getStorageSync: () => 'warm', setStorageSync })
     vi.stubGlobal('getCurrentPages', () => [pageA, pageB])
 
-    applyTheme('ink')
+    applyTheme('ink', null)
     expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'ink')
-    expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-theme-ink' })
-    expect(pageB.setData).toHaveBeenCalledWith({ themeClass: 'wc-theme-ink' })
+    expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-ink' })
+    expect(pageB.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-ink' })
+
+    applyTheme('default', 'brand-crimson')
+    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'brand-crimson')
+    expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-default wc-brand-crimson' })
 
     const page = { setData: vi.fn() }
     bindTheme(page)
-    expect(page.setData).toHaveBeenCalledWith({ themeClass: 'wc-theme-warm' })
+    expect(page.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-warm' })
   })
 })
 
@@ -239,6 +327,13 @@ function contrastRatio(a: string, b: string): number {
 
 type ThemeVars = Record<string, string>
 
+/**
+ * 把 app.wxss 的两层块合并成 12 组完整 token，供可读性 / 预览色 / 版式守门复用。
+ * - default 直接取 page；ink/warm/teal 取 .wc-style-*（全套 18 个）。
+ * - brand-* 取 .wc-brand-* 的 11 个颜色，再补 default 的 7 个版式。
+ * 合并口径必须与 scripts/gen_theme_previews.py 的 read_tokens() 逐字一致，
+ * 否则「预览图守门绿着、真机却是另一套色」又是没人报错的静默失败。
+ */
 function readThemeVars(): Record<string, ThemeVars> {
   const src = readFileSync(APP_WXSS, 'utf-8')
   const parse = (block: string): ThemeVars =>
@@ -247,9 +342,16 @@ function readThemeVars(): Record<string, ThemeVars> {
     )
   const def = src.match(/page\s*\{([^{}]*--wc-primary[^{}]*)\}/)
   if (!def) throw new Error('app.wxss 找不到 page 上的默认主题变量块')
-  const out: Record<string, ThemeVars> = { [THEME_DEFAULT]: parse(def[1]) }
-  for (const m of src.matchAll(/\.wc-theme-([a-z0-9_-]+)\s*\{([^{}]*)\}/g)) {
+  const base = parse(def[1])
+  const layoutTokens = Object.fromEntries(
+    Object.entries(base).filter(([k]) => k.startsWith('--wc-r-') || k.startsWith('--wc-card-shadow'))
+  )
+  const out: Record<string, ThemeVars> = { [THEME_DEFAULT]: base }
+  for (const m of src.matchAll(/\.wc-style-([a-z0-9_-]+)\s*\{([^{}]*)\}/g)) {
     out[m[1]] = parse(m[2])
+  }
+  for (const m of src.matchAll(/\.wc-brand-([a-z0-9_-]+)\s*\{([^{}]*)\}/g)) {
+    out['brand-' + m[1]] = { ...layoutTokens, ...parse(m[2]) }
   }
   return out
 }
@@ -377,9 +479,17 @@ describe('小程序整体风格模板 版式差异', () => {
   })
 
   // 与上面的约束正好相反：品牌配色的卖点是「只对齐主色，版式不动」。
-  // 客户挑完主色发现按钮圆角也变了，或者后来有人顺手给某款加了「更好看」的
-  // 圆角，都是不会报错的静默改版，必须逐字钉住。
-  it('品牌配色 8 款的版式 token 逐字等于 default（只换配色，不动版式）', () => {
+  // P2 拆层后这条从「人工自觉」升级为结构约束：颜色层块里根本不许出现版式 token，
+  // 谁想给品牌款顺手改个圆角都会变红；合并后的版式仍逐字等于 default。
+  it('品牌配色颜色层不含任何版式 token，12 组合合并后版式逐字等于 default', () => {
+    const src = readFileSync(APP_WXSS, 'utf-8')
+    const brandBlocks = Array.from(src.matchAll(/\.wc-brand-([a-z0-9_-]+)\s*\{([\s\S]*?)\n\}/g))
+    expect(brandBlocks).toHaveLength(BRAND_IDS.length)
+    for (const m of brandBlocks) {
+      for (const key of LAYOUT_TOKENS) {
+        expect(m[2], `${m[1]} 的颜色层私自写了 ${key}`).not.toContain(key)
+      }
+    }
     const all = readThemeVars()
     const base = all[THEME_DEFAULT]
     for (const id of BRAND_IDS) {
@@ -479,6 +589,10 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(script).toContain('miniprogram/app.wxss')
     expect(script).toContain('read_tokens()')
     expect(script).toMatch(/TOKEN_RE\s*=\s*re\.compile/)
+    // 两层解析：布局层给全套 token、颜色层只给颜色，合并出 12 组完整 token
+    expect(script).toContain('STYLE_BLOCK_RE')
+    expect(script).toContain('BRAND_BLOCK_RE')
+    expect(script, '不能退回单层 .wc-theme-* 解析').not.toContain('THEME_BLOCK_RE')
     // 模板 id 与顺序必须以 Go 白名单为准，脚本里不能自己再列一份
     expect(script).toContain('mptemplate.go')
 
@@ -556,6 +670,13 @@ describe('小程序整体风格模板 真实预览图', () => {
     const scale = /SCALE\s*=\s*(\d+)/.exec(script)!
     expect(manifest.canvas).toEqual([Number(dim[1]), Number(dim[2])])
     expect(manifest.scale).toBe(Number(scale[1]))
+  })
+
+  it('两层合并出的 12 组 token 逐字等于预览快照（拆层零视觉突变）', () => {
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const merged = readThemeVars()
+    expect(Object.keys(merged).sort(), '组合集合漂移').toEqual(Object.keys(manifest.tokens).sort())
+    expect(merged, '合并口径与生成脚本漂移，或拆层时改了某个色值').toEqual(manifest.tokens)
   })
 })
 

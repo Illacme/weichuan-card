@@ -115,7 +115,8 @@ GO_IDENTITY_RE = re.compile(
 
 TOKEN_RE = re.compile(r"(--wc-[\w-]+)\s*:\s*([^;]+);")
 DEFAULT_BLOCK_RE = re.compile(r"page\s*\{([^{}]*--wc-primary[^{}]*)\}")
-THEME_BLOCK_RE = re.compile(r"\.wc-theme-([a-z0-9_-]+)\s*\{([^{}]*)\}")
+STYLE_BLOCK_RE = re.compile(r"\.wc-style-([a-z0-9_-]+)\s*\{([^{}]*)\}")
+BRAND_BLOCK_RE = re.compile(r"\.wc-brand-([a-z0-9_-]+)\s*\{([^{}]*)\}")
 GO_ID_RE = re.compile(r'ID:\s*(DefaultID|"([a-z0-9_-]+)")')
 GO_DEFAULT_RE = re.compile(r'DefaultID\s*=\s*"([a-z0-9_-]+)"')
 
@@ -126,14 +127,30 @@ def pairs(block: str) -> dict[str, str]:
 
 
 def read_tokens() -> dict[str, dict[str, str]]:
-    """从 app.wxss 读默认块与每套主题块的全部 token（与 theme.spec.ts 同一套解析口径）。"""
+    """从 app.wxss 的两层主题块合并出 12 组 18 token（与 theme.spec.ts 同一口径）。
+
+    P2 起根节点同时挂 .wc-style-*（布局层，给全套 18 个 token）与 .wc-brand-*
+    （颜色层，只给 11 个颜色 token，一个版式 token 都不许有）。后台预览仍按
+    12 款组合各出一张图，所以这里把品牌款的颜色层与 default 的 7 个版式 token
+    合并成完整一组。合并结果必须与拆层前逐字相同——否则 manifest 快照与 12 张
+    PNG 都得重出，还会给存量租户引入视觉突变。
+    """
     src = APP_WXSS.read_text(encoding="utf-8")
     m = DEFAULT_BLOCK_RE.search(src)
     if not m:
         raise SystemExit("app.wxss 找不到 page 上的默认 token 块")
-    out: dict[str, dict[str, str]] = {"default": pairs(m.group(1))}
-    for t in THEME_BLOCK_RE.finditer(src):
+    default = pairs(m.group(1))
+    layout = {
+        k: v for k, v in default.items()
+        if k.startswith("--wc-r-") or k.startswith("--wc-card-shadow")
+    }
+    out: dict[str, dict[str, str]] = {"default": default}
+    for t in STYLE_BLOCK_RE.finditer(src):
         out[t.group(1)] = pairs(t.group(2))
+    for t in BRAND_BLOCK_RE.finditer(src):
+        merged = dict(layout)
+        merged.update(pairs(t.group(2)))
+        out["brand-" + t.group(1)] = merged
     return out
 
 

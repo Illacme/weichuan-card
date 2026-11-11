@@ -7,7 +7,12 @@ import { prefetchTheme } from '../utils/themeBootstrap'
 // 冷启动主题预热：验证「任意入口页都能拿到本租户模板」，以及
 // 不复用 request.ts（模块加载期 getApp() 的时序坑）这两条硬约束。
 const mocks = vi.hoisted(() => ({ applyTheme: vi.fn() }))
-vi.mock('../utils/theme', () => ({ applyTheme: mocks.applyTheme }))
+// 只替掉广播出口，resolveTheme 用真实实现：两轴优先 / 旧后端拆 templateId
+// 的兼容逻辑必须在这个用例里真的跑到，mock 掉等于没测。
+vi.mock('../utils/theme', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/theme')>()
+  return { ...actual, applyTheme: mocks.applyTheme }
+})
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MP = resolve(HERE, '..')
@@ -33,7 +38,18 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     expect(opt.url).toBe('https://card.example/api/home-layout?companyId=7')
     expect(opt.method).toBe('GET')
     opt.success({ data: { code: 0, templateId: 'teal' } })
-    expect(mocks.applyTheme).toHaveBeenCalledWith('teal')
+    expect(mocks.applyTheme).toHaveBeenCalledWith('teal', null)
+  })
+
+  it('两轴响应优先按 (styleId, brandColorId) 应用，不被兼容列 templateId 带偏', () => {
+    prefetchTheme('https://card.example', 7)
+    const opt = request.mock.calls[0][0]
+    opt.success({ data: { code: 0, styleId: 'warm', brandColorId: null, templateId: 'brand-amber' } })
+    expect(mocks.applyTheme).toHaveBeenCalledWith('warm', null)
+
+    mocks.applyTheme.mockClear()
+    opt.success({ data: { code: 0, styleId: 'default', brandColorId: 'brand-ocean' } })
+    expect(mocks.applyTheme).toHaveBeenCalledWith('default', 'brand-ocean')
   })
 
   it('平台模式无租户绑定时不带 companyId；基址末尾斜杠不会拼出 //api', () => {
@@ -56,8 +72,8 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     ok.success({ data: { code: 1, msg: 'fail' } })
     expect(mocks.applyTheme).not.toHaveBeenCalled()
 
-    ok.success({ data: { code: 0 } }) // 老后端不下发 templateId
-    expect(mocks.applyTheme).toHaveBeenCalledWith(undefined)
+    ok.success({ data: { code: 0 } }) // 老后端不下发任何主题字段
+    expect(mocks.applyTheme).toHaveBeenCalledWith('default', null)
 
     mocks.applyTheme.mockClear()
     prefetchTheme('https://card.example', 1)
@@ -72,6 +88,8 @@ describe('冷启动预热的源码级守门', () => {
     const src = readFileSync(resolve(MP, 'utils/themeBootstrap.ts'), 'utf-8')
     expect(src).not.toMatch(/from\s+['"][^'"]*request['"]/)
     expect(src).toContain("from './theme'")
+    expect(src).toContain('resolveTheme(d)')
+    expect(src).toContain('applyTheme(sel.styleId, sel.brandColorId)')
     expect(src).toContain('wx.request(')
   })
 

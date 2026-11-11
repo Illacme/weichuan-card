@@ -828,40 +828,65 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 - **员工 token**：登录后存 `wx.storage('empToken')`（access，15 分钟）+ `empRefreshToken`（refresh，30 天），`request.ts` 自动注入；`code=401` 先用 refresh 令牌静默换发并重试一次，失败再清 token 引导重新登录。改密 / 被禁用会令旧令牌立即失效。（小程序走 Bearer 头鉴权；PC 管理后台则改用 httpOnly Cookie，见前端 README。）
 - **状态语义**：员工 `status=disabled` 时首页整页提示「已停用」；名片修改走「提交申请 → 超管审核通过后公开生效」。
 
-## 风格模板（整体风格 + 品牌配色）
+## 风格模板（风格 × 色系两轴）
 
-后台「小程序设置 → 风格模板」只存一个 `templateId`，真值分两端对账：
-id 白名单在 `backend/internal/mptemplate`（12 款），端上色值与版式全部随版本内置在
-`app.wxss` 的 18 个 `--wc-*` CSS 变量里（11 个颜色 + 7 个圆角 / 阴影）。
-`utils/theme.ts` 只做 `id → class` 映射 + Storage 缓存 + 页面栈广播，不含色值。
+后台「小程序设置 → 风格模板」现在存的是 `(styleId, brandColorId)` 两轴，仍保留
+`templateId` 兼容派生列（P1 起同步反推），真值分两端对账：id 白名单在
+`backend/internal/mptemplate`（扁平 12 款，P4 才物理树化），端上色值与版式随版本
+内置在 `app.wxss` 的两层块里。`utils/theme.ts` 只做 `两轴 → 两层 class` 映射 +
+Storage 缓存 + 页面栈广播，不含色值。
 
-清单按服务端 `Series` 分两组，约束**正好相反**：
+**根节点同时挂两层 class**：`class="wc-theme {{themeClass}}"` 里的 `wc-theme` 是保留的
+语义基类（已无 token 定义），`themeClass` 变量展开为 `wc-style-<id>`（布局层，恒挂，
+含 default）+ 可选的 `wc-brand-<id>`（颜色层）。六个访客页的 wxml 因此一行都不用改，
+主题 class 仍直接挂在已有顶层 view 上，**绝不额外包一层 view**（会动布局）。
 
-- `style`「整体风格」4 款（`default` 免费 + `ink` / `warm` / `teal` 高级）：配色与
-  版式一起换，每款至少 4 项版式 token 不同于 default。
-- `brand`「品牌配色」8 款（全部高级）：**只换配色**，7 个版式 token 逐字沿用
-  default。这是「客户按自有 VI 主色挑一款」的落地方式，仍走白名单，
-  **不是运行时自由色值注入**（端上不能动态加载 WXSS）。8 款主色按统一算法派生，
-  12 组真实搭配实测最低对比度 4.95。
+- `.wc-style-<id>` **布局层**：`default` 继承 `page` 上的 18 个默认 token；`ink` /
+  `warm` / `teal` 各给全套 18 个（11 颜色 + 7 圆角 / 阴影），另按风格给出首页各模块的
+  版式规则。P2 已落「顶部名片卡 `.emp-card`」「公司简介 `.mp-profile`」两模块，
+  P3 再补经典业绩 / 业务服务。
+- `.wc-brand-<id>` **颜色层**：8 款色系**只给 11 个颜色 token**，一个 `--wc-r-*` /
+  `--wc-card-shadow*` 都不许出现。版式由同挂的 style 层决定，所以「换品牌色不会顺手
+  改圆角」从结构上成立，不靠人工自觉。颜色层排在布局层之后才能覆盖前者。
+- 清单按服务端 `Series` 分两组，约束**正好相反**：`style` 4 款（`default` 免费 +
+  `ink` / `warm` / `teal` 高级）每款至少 4 项版式 token 不同于 default、且各有模块布局；
+  `brand` 8 款（全部高级）只换配色。仍走白名单，**不是运行时自由色值注入**
+  （端上不能动态加载 WXSS）。8 款主色按统一算法派生，12 组真实搭配实测最低 4.95。
+- P1 的存量映射把 8 款 `brand-*` 全归 `default` 风格之下；端上 `normalizeSelection`
+  同样收敛，**不允许拼出「墨款布局 + 品牌色」**这种后端会拒绝的组合。
 - `tests/theme.spec.ts` 对这两组分别钉「要有差异」与「不许有差异」两套断言：
-  给品牌款顺手改个圆角，或把整体风格款做成只换色，都会变红。
+  给颜色层塞一个版式 token，或把整体风格款做成只换色，都会变红。还断言
+  4 风格 × 2 模块各有专属规则、首页给了模块钩子、两层合并出的 12 组 token 与预览
+  `manifest.json` 逐字一致（拆层零视觉突变）。
 - **默认 token 写在 `page` 上**，取值与模板功能上线前逐字一致（升级零突变）；
-  只有挂了 `.wc-theme-*` 的 6 个访客页顶层节点会覆盖，员工 / 管理页保持默认。
-  主题 class 直接挂在已有的顶层 view 上，**绝不额外包一层 view**（会动布局）。
-- **不改 DOM 也不改盒模型**：版式只调圆角与阴影；`padding` / `width` / `flex`
-  不进 token。改默认款变量等于给全部存量客户换皮，`tests/theme.spec.ts` 会拦。
+  只有挂了主题 class 的 6 个访客页顶层节点会覆盖，员工 / 管理页保持默认。
+- **布局层可以改盒模型，但必须锁在模块钩子内**：P2 起 `.wc-style-*` 会调
+  `padding` / 尺寸 / 行高 / 圆角，但选择器一律以 `.emp-card` / `.mp-profile` 开头，
+  绝不写全局 `.section` / `.intro` 去波及二级页与员工页；也**不增删 DOM、不隐藏元素**
+  （把公司简介封面 `display:none` 会让客户上传的视频悄悄消失）。
+  **默认款 `default` 只逐字复述既有度量，零突变**；改 `page` 上的默认值等于给全部
+  存量客户换皮，`tests/theme.spec.ts` 会拦。
+- **缓存仍是扁平 `templateId`**（`wc_theme_id`）：`applyTheme(styleId, brandColorId)`
+  写入前用 `deriveThemeId` 合回去，`currentThemeClass()` 读出后用 `splitTheme` 拆成两轴。
+  旧缓存、只下发 `templateId` 的旧后端都能原样渲染；`resolveTheme(信封)` 是两轴优先 /
+  兼容回退的唯一入口，首页 `loadAll` 与冷启动 `prefetchTheme` 都走它。
 - **可读性有硬门槛**：新增模板的 12 组「白字 / 主色按钮」「主色字 / 浅底」搭配
   对比度必须 ≥4.5（WCAG AA 正文级），由 `theme.spec.ts` 按相对亮度公式实算。
   `default` 是历史基线，只锁「不许变差」。`--wc-primary-rgb` 必须与
   `--wc-primary` 同色，否则 `rgba(var(--wc-primary-rgb), …)` 的阴影会错色。
-- **加一款模板要改 4 处**：Go 白名单（含 `Series`）、`app.wxss` 变量块、
-  `THEME_IDS`、重跑 `scripts/gen_theme_previews.py`
-  出 `frontend/public/theme-previews/<id>.png`；只有加「整体风格」款才需要第 5 处
+- **加一款模板仍要改 4 处**，但两层的落点不同：Go 白名单（含 `Series`）、
+  `app.wxss` 的对应层（加**风格**：`.wc-style-<id>` 给全套 18 token + 各模块布局规则；
+  加**色系**：`.wc-brand-<id>` **只给 11 个颜色 token**）、`THEME_IDS` / `STYLE_IDS` /
+  `BRAND_IDS`、重跑 `scripts/gen_theme_previews.py` 出
+  `frontend/public/theme-previews/<id>.png`；只有加「整体风格」款才需要第 5 处
   ——`MpTheme.vue` 的 `.layout-<id>` 兜底示意（品牌配色款不许有，守门会拦）。
   `tests/theme.spec.ts` 逐项对账，漏一处即变红。加款后必须随小程序**重新提审发版**，
   端上不能热加载 WXSS。
 - **后台预览图不是第二套样式**：`scripts/gen_theme_previews.py` 直接解析本文件
-  （`app.wxss`）的 18 个 `--wc-*` token，注入一份**按真机首页复刻版式**的完整首页
+  （`app.wxss`）两层块并合并出 18 个 `--wc-*` token（P2 起用 `STYLE_BLOCK_RE` /
+  `BRAND_BLOCK_RE`：颜色层只给 11 个颜色，缺的 7 个版式由 `default` 补齐）。合并结果与
+  拆层前逐字相同，所以 `manifest.json` 与 12 张 PNG **都不用重出**，`--check` 保持绿。
+  脚本注入一份**按真机首页复刻版式**的完整首页
   HTML（`data-sec` 顺序与 `pages/index/index.wxml` 一致：状态栏 / 顶栏 / 名片卡 /
   公司简介 / 经典业绩 / 业务服务 / 底部操作栏）。画布按内容自然收口为 **375×1210**
   （实测内容底部 1130 + 20px 呼吸 + 60px 底栏），无头 Chrome 2x 出 12 张
@@ -887,7 +912,9 @@ id 白名单在 `backend/internal/mptemplate`（12 款），端上色值与版�
 - **冷启动预热**：`app.ts` 的 `onLaunch` 在租户绑定之后调
   `utils/themeBootstrap.prefetchTheme()` 拉一次公开 `/api/home-layout`，
   写缓存并广播到页面栈。访客从分享链接**直达二级页**时首页 `loadAll` 不会执行，
-  不预热就会停在默认蓝。该模块刻意**不 import `utils/request.ts`**——后者在模块
+  不预热就会停在默认蓝。P2 起这里用 `resolveTheme(d)` 两轴优先、旧后端拆
+  `templateId`，再调 `applyTheme(sel.styleId, sel.brandColorId)`；与首页共用同一套
+  解析，不各自猜字段。该模块刻意**不 import `utils/request.ts`**——后者在模块
   加载期执行 `getApp()`，由 `app.ts` 静态引入会让请求层永久丢掉后台下发的
   `baseUrl` 覆盖；这里用裸 `wx.request` + 调用方传入已解析的基址 / 租户。
 

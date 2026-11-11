@@ -1,6 +1,6 @@
 # 主题系统两轴化设计（风格 × 色系）
 
-> 状态：**P1（数据/契约层）已实现并测试通过**；P2–P4（视觉两轴化：CSS 两层 + 各模块布局）待实施。
+> 状态：**P1（数据/契约层）已实现并测试通过**；**P2（CSS 两层 + 顶部名片卡 / 公司简介布局）已实现并测试通过**；P3–P4（剩余 2 模块布局、后台两步 UI / 预览图重生成 / 白名单树化）待实施。
 > 2026-11-11 用户确认方向：整体风格驱动各模块布局、品牌配色作为叠加在风格之上的色系调整；并确认布局深度为「整模块重排版」。
 > 当前实现见 `docs/commercial-readiness.md` 第三十八轮：后端已完成 `StyleID`+`BrandColorID` 双列、`0042` 迁移、PUT/GET 两轴接口与跨风格归属校验，前端/小程序暂不动（`templateId` 兼容列续命）。
 >
@@ -84,8 +84,22 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 **守门（替换现有 `theme.spec.ts:382`「品牌款版式==default」）**：`.wc-brand-*` 选择器体内**不得出现**任何 `--wc-r-*` / `--wc-card-shadow*` 等布局 token——颜色层只动颜色。
 
 ### 3.3 迁移
-- 删除现有 `app.wxss` 里 `.wc-theme-<templateId>` 全部 12 个块（`miniprogram/app.wxss:56` 起），拆成「布局层 × 颜色层」两类。
-- `miniprogram/utils/theme.ts` 的 `applyTheme(id)` 改为 `applyTheme(styleId, brandColorId)`，根节点写两个 class。
+> ✅ **P2 已落地**（实现细节比上面的方向稿更保守，都是有原因的取舍）：
+> - `app.wxss` 里 12 个 `.wc-theme-<id>` 块已全部拆除，改为 `.wc-style-ink/warm/teal`
+>   （布局层，各给全套 18 个 token + 模块布局规则）+ `.wc-brand-<8 款>`（颜色层，
+>   **只给 11 个颜色 token**）。`default` 不另写 token 块，直接继承 `page` 的 18 个默认值。
+> - 颜色层排在布局层之后，同为单类选择器时后定义者覆盖前者，品牌色才会生效。
+> - 根节点 `wc-theme {{themeClass}}` 里的 `wc-theme` 基类**保留作语义标记**（已无 token
+>   定义），`themeClass` 变量展开成**两层** class：`wc-style-<id>` 恒挂（含 default），
+>   有品牌色系时再加 `wc-brand-<id>`。六个访客页的 wxml 因此一行都不用改。
+> - `utils/theme.ts` 的 `applyTheme(styleId, brandColorId)` 改两轴；**Storage 仍存扁平
+>   `templateId`**（`wc_theme_id`），旧缓存 / 旧后端靠 `splitTheme` 拆、`deriveThemeId` 合，
+>   兼容期不做数据结构迁移。`resolveTheme(信封)` 统一两轴优先 / 旧后端拆 `templateId`，
+>   首页 `loadAll` 与冷启动 `prefetchTheme` 都走它，不各自猜字段。
+> - **12 组组合 token 逐字不变**：颜色层删掉的 7 个版式 token 原本就等于 `page` 默认值，
+>   预览脚本 `read_tokens()` 与 `theme.spec.ts` 的 `readThemeVars()` 都按「颜色层 ∪ default
+>   版式」合并出 12 组 18 token，与 `manifest.json` 快照逐字相等 → **12 张 PNG 无需重出、
+>   存量配色零突变**。真正按风格重出 4 张布局长图是 P4 的事。
 
 ## 4. 各模块 × 各风格的布局语言（设计核心，方向稿非像素定稿）
 
@@ -101,6 +115,13 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 | **teal**（松石青） | 清爽、透气 | 中圆角、半透磨砂卡、极轻投影 | 图文上下、留白大、细线分隔 | 轻卡片、微阴影、疏排 | 线性图标、疏排网格 |
 
 > 每格是「该风格下该模块长什么样」的方向描述；落地时由 `app.wxss` 的 `.wc-style-<id> .mp-<module>` 规则 + 前端结构微调实现。这是工作量主体（4×4=16 套模块布局）。
+>
+> ✅ **P2 已落前 2 模块**（顶部名片卡 `.emp-card` / 公司简介 `.mp-profile`）；P3 补业绩 / 服务。
+> 落地口径比方向稿克制，三条硬约束：`default` 逐字复述既有度量（升级零突变）；
+> **不增删 DOM、不隐藏元素**（「墨款无图」实现为封面压矮去圆角，`display:none` 会让客户
+> 上传的公司视频悄悄消失）；规则一律锁在模块钩子内，绝不写全局 `.section` / `.intro`
+> 去波及二级页与员工页。`index.wxml` 已为四个模块预留 `mp-card-area` / `mp-profile` /
+> `mp-achievements` / `mp-services` 钩子。
 
 ## 5. 后台 UI（`MpTheme.vue`）
 
@@ -118,6 +139,11 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
   - 色系以**色卡条**形式叠加渲染（同一布局 + 不同主色），不再为每 (风格×色系) 各出一张整图。
 - 后台卡片：风格卡显示布局长图；色系卡显示「该布局 + 此色」的局部应用小图。
 
+> **P2 现状**：仍是 12 张按组合出的长图，只把 `read_tokens()` 改成两层合并读取
+> （`.wc-style-*` 全套 + `.wc-brand-*` 颜色 ∪ default 版式）。合并出的 18 token 逐字未变，
+> `manifest.json` 与 12 张 PNG **全部无需重出**，`--check` 保持绿。上面「4 张布局长图 +
+> 色卡条」是 **P4 目标**，随后台两步 UI 一起做。
+
 ## 7. 接口契约（`docs/openapi.yaml`）
 
 > ✅ **P1 已落地**：公开/管理 GET 根级下发 `styleId` + `brandColorId`，并保留 `templateId` 派生兼容列；
@@ -125,6 +151,10 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 > `styleId`，否则 `code=1`；高级风格/高级色系「新选」按 `mp_template_advanced` 回 `code=403`。
 > `openapi.yaml` 三处（公开 GET / 管理 GET / 管理 PUT）已补两轴字段。
 
+- **P2 已落地**：小程序 `utils/types.ts` 的 `HomeLayoutResp` 补 `styleId` / `brandColorId`
+  （`types_contract.spec.ts` 与 `models.go` json tag 对账）；首页 `loadAll` 与冷启动
+  `prefetchTheme` 都经 `resolveTheme` 消费两值并兼容旧后端。后台 `MpTheme.vue` 仍发
+  `templateId`，由 P1 的兼容派生列兜住，两边零漂移。
 - **P4 待做**：`templateId` enum 收敛、清单从扁平 `templates[]` 改为 `styles[]` + 每风格 `brandColors[]`
   （P1 刻意**保留扁平 12 款清单与 `series` 分组**，后台 UI 零改动；树化随两步 UI 一起做，避免单侧漂移）。
 
@@ -148,10 +178,19 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 - **P1 已加**：后端 `handler_test.go` 两轴子测试（跨风格拒绝、未知 id 拒绝、只交 brandColorId 默认落 `default`、
   高级品牌色系 gate 403）、`mptemplate_test.go` 两轴函数单测、`migrate` 清单比对；反向验证（neutralize 归属校验必红）已做。
+- **P2 已做**（原计划放在 P4 的端上守门，因拆层发生在 P2 必须同步，否则全量测试立刻红）：
+  - `theme.spec.ts` 的 `readThemeVars()` 改两层合并；「品牌款 7 个版式 token == default」改写为
+    **「`.wc-brand-*` 块内不含任何布局 token」+「12 组合合并后版式逐字 == default」**；
+    新增「布局层 18 / 颜色层 11 token 对账」「根节点生成两层 class」「4 风格 × 2 模块
+    选择器 + wxml 模块钩子」「两层合并 token == manifest 快照」以及两轴拆分 / 归一 / 旧缓存用例。
+  - `themeBootstrap.spec.ts` 改两轴断言（`resolveTheme` 用真实实现，只 mock 广播出口）；
+    `types_contract.spec.ts` 的 `HomeLayoutResp` 字段扩到 6 个并逐个对账 Go json tag。
+  - 生成脚本新增 `STYLE_BLOCK_RE` / `BRAND_BLOCK_RE` 源码级断言，禁止退回单层解析。
+  - **反向验证 4 项必红**：颜色层偷塞版式 token / 退回单层 class / 删某风格模块规则 /
+    偷改一个色值；还原后复绿。
 - **P4 待做**：
-  - `miniprogram/tests/theme.spec.ts`：删除「品牌款 7 个版式 token == default」（`theme.spec.ts:382`）→ 改为
-    「`.wc-brand-*` 不含任何布局 token」「布局差异来自 `.wc-style-*`」；新增 4 风格 × 4 模块选择器互不相同对账。
   - `frontend/src/views/content/MpTheme.spec.ts` / `MpSettings.spec.ts`：payload 改两值、UI 两步选择、源码级守门改断言两轴与两步结构。
+  - 预览图改为 4 张布局长图 + 色卡条后，同步改写「12 张 PNG 与 Go 白名单一一对应」一类的守门。
   - 全量门禁（eslint / vue-tsc / Vitest / vite build / git diff --check）与**反向验证必做**（改回旧单层模型必红）。
 
 ## 10. 风险与待确认项
@@ -166,7 +205,7 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 ## 11. 实施分期（建议）
 
 - **P1 数据/契约层（不改视觉）** ✅ **已完成并测试通过**：`models.go` 双列（`StyleID`+`BrandColorID`） + `0042` 迁移（加两列 + 按映射回填，保留 `template_id` 兼容派生列）+ `mptemplate` 两轴函数（`Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`）+ 接口 GET 下发两值 / PUT 两值与跨风格归属校验 + `openapi` 三处补全 + 后端测试（含跨风格拒绝与高级色系 gate）。前端/小程序暂用 `templateId` 兼容字段，未改动。
-- **P2 CSS 两层 + 顶部名片卡 / 公司简介布局**（2 模块）：`app.wxss` 拆两层、4 风格 × 2 模块的 `.wc-style-*` 规则、小程序 `theme.ts` 改两 class、真机验收这 2 模块。
+- **P2 CSS 两层 + 顶部名片卡 / 公司简介布局**（2 模块）✅ **已实现并测试通过**：`app.wxss` 拆 `.wc-style-*`（4 风格，18 token + 2 模块布局规则）与 `.wc-brand-*`（8 色系，仅 11 颜色 token）；`theme.ts` 两轴 + 扁平缓存兼容；`index.ts` / `themeBootstrap.ts` / `types.ts` 接线；预览脚本两层合并读取；端上守门改写 + 4 项反向验证。后台与小程序 wxml 的顶层节点无需改动（`wc-theme` 基类保留）。**12 组组合 token 逐字未变，PNG 无需重出。** P2 才会给已选 `ink/warm/teal` 的租户带来首页这两个模块的可见外观变化；`default` 与 8 款 `brand-*` 零突变。
 - **P3 经典业绩 / 业务服务布局**（剩余 2 模块）。
 - **P4 后台两步 UI + 预览图重生成 + 守门改写 + 全量真机验收**。
 

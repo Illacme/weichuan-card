@@ -1,4 +1,4 @@
-// 冷启动预热「整体风格」：把本租户选中的模板写进缓存，并广播给页面栈。
+// 冷启动预热「整体风格 / 品牌配色」：把本租户选中的主题写进缓存，并广播给页面栈。
 //
 // 为什么需要它：首页 loadAll 拿到 /api/home-layout 后会调 applyTheme，但访客常从
 // 分享 / 小程序码**直接进二级页**（名片墙、案例详情、服务详情），首页根本没被打开过。
@@ -10,7 +10,7 @@
 // undefined，请求层会永久丢掉后台下发的 baseUrl 覆盖（utils/config.ts 的引导机制失效）。
 // 所以这里用裸 wx.request，由调用方把已解析好的 baseUrl / companyId 传进来，
 // 既不触发那个时序坑，也不需要登录态（/api/home-layout 是公开接口）。
-import { applyTheme } from './theme'
+import { applyTheme, resolveTheme, type ThemePayload } from './theme'
 
 export function prefetchTheme(baseUrl: string, companyId: number): void {
   const base = String(baseUrl || '').trim().replace(/\/+$/, '')
@@ -21,10 +21,14 @@ export function prefetchTheme(baseUrl: string, companyId: number): void {
     method: 'GET',
     timeout: 5000,
     success: (res) => {
-      const d = res.data as { code?: number; templateId?: string } | null
-      // 只认 code:0；失败 / 旧后端 / 未授权回落 default 都交给 normalizeTheme 处理。
+      const d = res.data as (ThemePayload & { code?: number }) | null
+      // 只认 code:0；失败 / 旧后端 / 未授权回落 default 都交给 resolveTheme 处理。
+      // 两轴优先、只有 templateId 时拆它——新旧后端都走同一套解析，不在这里另猜字段。
       // 纯展示配置，任何一种异常都不该弹错或拖住启动。
-      if (d && d.code === 0) applyTheme(d.templateId)
+      if (d && d.code === 0) {
+        const sel = resolveTheme(d)
+        applyTheme(sel.styleId, sel.brandColorId)
+      }
     },
     fail: () => {
       /* 静默：保留上次缓存，没有缓存就按缺省款渲染 */

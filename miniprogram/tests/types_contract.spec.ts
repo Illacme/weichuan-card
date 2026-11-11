@@ -96,10 +96,15 @@ describe('小程序类型契约与 Go 模型对账', () => {
   it('四个根级字段信封声明了根级字段（不在 data 里）', () => {
     expect(tsFields('CardResp')).toEqual(['company', 'employee', 'profile'])
     expect(tsFields('AchievementsResp')).toEqual(['categories', 'featured'])
-    expect(tsFields('HomeLayoutResp')).toEqual(['bgImage', 'bgMask', 'order', 'templateId'])
-    // HomeLayoutResp 是根级信封：templateId 必须真实存在于 Go 模型的 json tag 里，
-    // 否则端上会读到一个后端根本不下发的字段，主题功能静默失效。
-    expect(goJSONFields('HomeLayout')).toContain('templateId')
+    expect(tsFields('HomeLayoutResp')).toEqual([
+      'bgImage', 'bgMask', 'brandColorId', 'order', 'styleId', 'templateId',
+    ])
+    // HomeLayoutResp 是根级信封：三个主题字段必须真实存在于 Go 模型的 json tag 里，
+    // 否则端上会读到后端根本不下发的字段，主题功能静默失效。
+    // P1 起后端根级下发两轴，templateId 保留作兼容派生列（端上 resolveTheme 会拆它）。
+    for (const key of ['styleId', 'brandColorId', 'templateId']) {
+      expect(goJSONFields('HomeLayout'), key).toContain(key)
+    }
   })
 
   it('types.ts 至少被一个业务文件 import（否则就是又一份零引用的死契约）', () => {
