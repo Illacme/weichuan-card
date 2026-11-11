@@ -1,12 +1,21 @@
 {
   "canvas": [
     375,
-    1300
+    1210
   ],
+  "placeholders": {
+    "address": "示例地址 · 仅用于版式示意",
+    "email": "name@example.com",
+    "full_name": "示例企业全称有限公司",
+    "intro": "这里是企业简介的示例文字，用于展示本区域的排版密度与行距；正式使用时由企业在后台自行填写，示意图不包含任何真实客户资料。",
+    "person": "示例联系人",
+    "phone": "138-0000-0000",
+    "short_name": "示例企业",
+    "tel": "0000-00000000",
+    "title": "示例职务"
+  },
   "scale": 2,
   "seedAssets": [
-    "avatar-gaolixin.png",
-    "logo.png",
     "cover-company.jpg",
     "cover-daxing.jpg",
     "cover-hospital.jpg",

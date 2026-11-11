@@ -597,38 +597,48 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(script).toContain('${tokens}')
   })
 
-  it('画布按真机 1:3.45 长图出图，不能压回 430 / 640 的旧简化版', () => {
+  it('画布按内容自然收口：区块齐全、尾部不留大空白、底栏不会盖住服务卡', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
-    expect(Number(dim[1])).toBe(375)
-    expect(Number(dim[2]), '画布高度不足会把分类图标网格和服务卡压成色块').toBeGreaterThanOrEqual(1200)
-    expect(Number(dim[2]) / Number(dim[1]), '真机截图纵横比约 3.45').toBeGreaterThan(3.3)
-    expect(script).toContain('padding-bottom: 68px;')
+    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)
+    const parts = /CONTENT_BOTTOM,\s*TAIL_GAP,\s*BAR_HEIGHT\s*=\s*(\d+),\s*(\d+),\s*(\d+)/.exec(script)
+    expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
+    expect(parts, '画布必须由「内容底部 + 呼吸 + 底栏」三项算出，别留一条大尾巴').not.toBeNull()
+    const [content, gap, bar] = parts!.slice(1).map(Number)
+    expect(Number(dim![1])).toBe(375)
+    expect(Number(dim![2]), '不能压回 430 / 640 的旧简化版').toBeGreaterThanOrEqual(1150)
+    expect(Number(dim![2]), '尾部空白不该再回到 1300 的长尾巴').toBeLessThanOrEqual(1250)
+    expect(Number(dim![2])).toBe(content + gap + bar)
+    expect(gap, '呼吸超过 24px 就会让按钮和服务卡重新割裂').toBeLessThanOrEqual(24)
+    // CSS 必须吃同一组常量，不能脚本算一套、样式写死另一套 60px
+    expect(script).toContain('padding-bottom: ${tail_gap}px')
+    expect(script).toContain('height: ${bar_h}px')
+    // 改了占位文案 / 区块高度，absolute 底栏会静默盖住服务卡：出图前必须实测
+    expect(script).toContain('measure_content_bottom(chrome, build_html(')
+    expect(script).toContain('bottom + TAIL_GAP > bar_top')
   })
 
-  it('预览引用仓库自带演示素材，且照片不被主题色染（换模板不该连视频都变色）', () => {
+  it('预览只引用通用行业素材，且照片不被主题色染（换模板不该连视频都变色）', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const html = previewHtml()
     const seed = resolve(REPO, 'backend/internal/demoseed/seedassets')
-    // 分类图标 / 服务卡 / 精选案例 / 头像 / LOGO / 封面，少一张就会退回占位色块
+    // 分类图标 / 服务卡 / 精选案例 / 公司简介封面，少一张就会退回占位色块。
+    // 真人头像与带企业名的 LOGO 刻意不在此列：见下方「通用平台脱敏」守门。
     for (const name of [
-      'avatar-gaolixin.png', 'logo.png', 'cover-company.jpg',
-      'cover-daxing.jpg', 'cover-hospital.jpg',
+      'cover-company.jpg', 'cover-daxing.jpg', 'cover-hospital.jpg',
       ...Array.from({ length: 8 }, (_, i) => `cat-${i + 1}.png`),
       ...Array.from({ length: 4 }, (_, i) => `svc-${i + 1}.png`),
     ]) {
-      expect(readFileSync(join(seed, name)).length, `缺演示素材 ${name}`).toBeGreaterThan(0)
+      expect(readFileSync(join(seed, name)).length, `缺通用素材 ${name}`).toBeGreaterThan(0)
     }
     // 只查名字会假绿：函数定义 / 变量引用里也有这些字样，删掉真正的调用照样放行
     expect(script).toContain('"seedAssets": SEED_FILES')
     expect(script).toContain('DEMO_SOURCES')
-    expect(script).toContain('problems = check_sources()')
+    expect(script).toContain('check_sources() + check_no_identity(build_html(')
     // 8 张分类图 / 4 张服务卡由 build_html() 循环拼出，静态引用则直接写在模板里
     expect(script).toContain('assets/cat-')
     expect(script).toContain('assets/svc-')
-    expect(html).toContain('assets/avatar-gaolixin.png')
-    expect(html).toContain('assets/logo.png')
     expect(html).toContain('assets/cover-company.jpg')
+    expect(html).toContain('assets/cover-daxing.jpg')
 
     // 第二十七轮实测发现的坑：cover-shade 曾把主色 rgba() 叠在租户照片上，
     // 绛红款的封面被整片染红。真机上租户上传的照片/视频不随模板变色。
@@ -656,15 +666,27 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(rule).toContain('var(--wc-primary-alt)')
   })
 
-  it('manifest 记下素材清单，演示数据换了却没重出图会变红', () => {
+  it('manifest 记下通用素材与占位文案，换了素材 / 文案却没重出图会变红', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-    const listed = Array.from(script.matchAll(/"(cat-\d\.png|svc-\d\.png|cover-[\w-]+\.jpg|logo\.png|avatar-[\w-]+\.png)"/g))
+    const listed = Array.from(script.matchAll(/"(cat-\d\.png|svc-\d\.png|cover-[\w-]+\.jpg)"/g))
       .map((m) => m[1])
     expect(Array.isArray(manifest.seedAssets)).toBe(true)
-    expect(manifest.seedAssets.length).toBeGreaterThanOrEqual(17)
+    expect(manifest.seedAssets, '身份素材不能出现在素材清单里').not.toContain('logo.png')
+    expect(manifest.seedAssets.length, '8 分类 + 4 服务 + 3 照片').toBe(15)
     for (const name of listed) {
       expect(manifest.seedAssets, `manifest 漏记素材 ${name}`).toContain(name)
+    }
+    // 占位文案也要留快照：改了「示例企业」却没重出图，图片会停在旧文案上而没人报错
+    const ph = manifest.placeholders as Record<string, string> | undefined
+    expect(ph, 'manifest 缺占位文案快照').toBeDefined()
+    expect(Object.keys(ph!).sort()).toEqual(
+      ['short_name', 'full_name', 'address', 'person', 'title', 'phone', 'tel', 'email', 'intro'].sort()
+    )
+    expect(ph!.email).toBe('name@example.com')
+    for (const v of Object.values(ph!)) {
+      expect(v, '占位文案里混进了真实客户身份').not.toContain('朗汇')
+      expect(v).not.toContain('廊坊')
     }
   })
 
@@ -682,5 +704,122 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(vue).toContain('width: min(420px, 92vw)')
     expect(vue).toContain('height: auto')
     expect(vue, '说明文案必须写明非真机截图').toContain('首页风格示意，不是真机截图')
+  })
+})
+
+// ===== 通用平台脱敏 + 底部收口 =====
+//
+// 第二十八轮用户反馈：这是通用平台产品，示意图里出现「廊坊市朗汇机电设备有限公司 /
+// 高立新 / 13832603521 / 真实 LOGO」会让客户误以为这是别人的真实案例；业务服务区底部
+// 一大片空白又把图内按钮和卡片外的模板名称连成一片。两件事都不会报错，只能靠
+// 读源码 + 读产物快照的断言钉住。
+const DEMO_GO = resolve(REPO, 'backend/internal/demoseed/demoseed.go')
+
+function identityBlacklist(): string[] {
+  const go = readFileSync(DEMO_GO, 'utf-8')
+  const literals = [
+    '廊坊', '紫金城', '0316-', '@163.com', '成立于 2015', 'langhui',
+    '13832603521', '高立新', '朗汇',
+  ]
+  const fromGo = Array.from(go.matchAll(
+    /Demo(?:CompanyName|ShortName|LoginCode|EmployeePhone|EmployeeName|AdminUser)\s*=\s*"([^"]+)"/g
+  )).map((m) => m[1])
+  return [...literals, ...fromGo]
+}
+
+describe('小程序风格模板 通用平台脱敏', () => {
+  it('预览 HTML 与占位文案里不出现任何真实或演示客户身份', () => {
+    const html = previewHtml()
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const placeholders = Object.values(manifest.placeholders as Record<string, string>)
+    for (const token of identityBlacklist()) {
+      expect(html, `预览 HTML 出现真实客户身份「${token}」`).not.toContain(token)
+      for (const v of placeholders) {
+        expect(v, `占位文案出现真实客户身份「${token}」`).not.toContain(token)
+      }
+    }
+    // 身份素材连引用都不许有：logo.png 里画着企业名，真人头像也是具体客户的人
+    expect(html).not.toContain('assets/avatar-')
+    expect(html).not.toContain('assets/logo.png')
+    // 只查 SEED_FILES 清单，不查整份脚本：黑名单常量里本来就有这些字面量
+    const seedBlock = script.match(/SEED_FILES\s*=\s*\[([\s\S]*?)\]/)?.[1] || ''
+    expect(seedBlock, '取不到 SEED_FILES 清单').not.toBe('')
+    expect(seedBlock, '素材清单混进了真人头像').not.toContain('avatar-')
+    expect(seedBlock, '素材清单混进了企业 LOGO').not.toContain('logo.')
+  })
+
+  it('企业 / 联系人 / 联系方式全部换成明显的中性占位，且保留原版式密度', () => {
+    const html = previewHtml()
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const ph = manifest.placeholders as Record<string, string>
+    for (const key of ['short_name', 'full_name', 'person', 'title', 'phone', 'tel', 'email', 'address', 'intro']) {
+      expect(ph[key], `缺占位 ${key}`).toBeTruthy()
+    }
+    // 头像 / LOGO 用 CSS 画占位，不能退回真实素材
+    expect(html).toContain('class="avatar-ph"')
+    expect(html).toContain('class="logo-ph"')
+    expect(html).toContain('<span class="logo-ph">LOGO</span>')
+    expect(html).toContain('class="me-avatar"')
+    // 脱敏不能顺手把上一轮复刻好的版式密度简化掉
+    expect(html).toContain('${cat_cards}')
+    expect(html).toContain('${svc_cards}')
+    expect(html).toContain('data-sec="company"')
+  })
+
+  it('占位文案字典本身也不含真实客户身份（改了字典却没重出图也要能发现）', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    // 反向验证抓到过一次假绿：HTML 模板里只有 ${short_name}，manifest 还是旧快照，
+    // 于是把字典改回「朗汇机电」时 --check 会红、端上守门却全绿。必须直接查字典。
+    const block = script.match(/PLACEHOLDER_TEXT\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || ''
+    expect(block, '取不到 PLACEHOLDER_TEXT 字典').not.toBe('')
+    for (const token of identityBlacklist()) {
+      expect(block, `占位文案字典出现真实客户身份「${token}」`).not.toContain(token)
+    }
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    expect(manifest.placeholders.short_name).toBe('示例企业')
+    expect(manifest.placeholders.person).toBe('示例联系人')
+  })
+
+  it('脱敏守门真的被调用，且查的是最终 HTML 而不是脚本源码', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    // 第二十七轮的教训：只断言函数 / 变量名字，删掉真正调用照样全绿
+    expect(script).toContain('check_sources() + check_no_identity(build_html(active[ids[0]]))')
+    expect(script).toContain('for token in identity_tokens():')
+    expect(script).toContain('GO_IDENTITY_RE.finditer(DEMO_GO.read_text(')
+    expect(script).toContain('PLACEHOLDER_TEXT[key] not in html')
+  })
+
+  it('后台说明写明「通用平台 / 不含真实客户资料」', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue).toContain('本产品是通用平台')
+    expect(vue).toContain('不含任何真实企业客户资料')
+  })
+})
+
+describe('小程序风格模板 预览区与名称区的视觉分隔', () => {
+  it('预览图底部有硬边界、名称区用浅灰底，图内按钮不再和模板说明连成一片', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    const preview = vue.match(/\.theme-preview\s*\{[^}]*\}/)?.[0] || ''
+    const meta = vue.match(/\.theme-meta\s*\{[^}]*\}/)?.[0] || ''
+    expect(preview, '取不到 .theme-preview 规则').not.toBe('')
+    expect(meta, '取不到 .theme-meta 规则').not.toBe('')
+    expect(preview, '预览区与名称区没有分界线').toContain('border-bottom:')
+    expect(meta, '名称区仍是纯白底，会和图内白色操作栏混在一起').toContain('background:')
+    expect(meta).toContain('#f8fafc')
+  })
+
+  it('底栏自身也要有清晰的顶边，长图尾部不再是一整片纯底色', () => {
+    const html = previewHtml()
+    // 不能用 /\.bar\s*\{[^}]*\}/：规则里有 ${bar_h}，正则会被变量自带的 } 截断，
+    // 拿半条规则去断言 border-top 必然是假红。按下一条 .bar button 规则切片。
+    const start = html.indexOf('.bar {')
+    const next = html.indexOf('.bar button', start)
+    expect(start, '取不到 .bar 规则').toBeGreaterThan(-1)
+    expect(next, '取不到 .bar 规则结束位置').toBeGreaterThan(start)
+    const bar = html.slice(start, next)
+    expect(bar, '底栏没有顶部分界线').toContain('border-top: 1px solid #d8dee6')
+    expect(bar, '底栏缺少「页面到此结束」的层次').toContain('box-shadow: 0 -3px 12px')
+    expect(bar).toContain('height: ${bar_h}px')
   })
 })

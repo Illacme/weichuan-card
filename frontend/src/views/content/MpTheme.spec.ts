@@ -172,6 +172,15 @@ describe('content/MpTheme', () => {
     expect(cards(w)[1].find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
   })
 
+  // 通用平台产品的示意图不能出现真实 / 演示企业客户信息。这个语义必须真的渲染到
+  // 页面上：只写在脚本注释里，客户看不到，也不会有任何报错。
+  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图」', async () => {
+    const w = await mountPage()
+    expect(w.text()).toContain('本产品是通用平台')
+    expect(w.text()).toContain('不含任何真实企业客户资料')
+    expect(w.text()).toContain('不是真机截图')
+  })
+
   it('查看大图：打开原尺寸浮层，且不会顺手把这款模板选中', async () => {
     const w = await mountPage()
     expect(w.find('.preview-zoom').exists()).toBe(false)

@@ -2,18 +2,19 @@
 """生成后台「风格模板」页用的**小程序首页风格示意图**。
 
 **它不是真机截图**：后台是普通网页，跑不了小程序组件树；模板又随小程序版本提审，
-没法在浏览器里动态加载 WXSS。但第二十七轮起，它按**真机截图 1:1 复刻版式**：
-画布比例照真机 556x1920（≈1:3.45）取 375x1300，区块顺序、卡片密度、字号层级、
-视频控件与底部按钮都与 `pages/index/index.wxml` 及首页组件一致。
+没法在浏览器里动态加载 WXSS。第二十七轮起，它按真机截图复刻首页版式：
+区块顺序、卡片密度、字号层级、视频控件与底部按钮都与 `pages/index/index.wxml`
+及首页组件一致。
 
-图形素材**直接引用 `backend/internal/demoseed/seedassets/`**：分类图标 / 服务卡 /
-精选案例封面的标题文字本来就绘制在图片里（见各组件 WXML 的「标题已绘制在图内，
-不重复渲染文字」），所以引用真实素材而不是手画第二套，预览才和真机对得上。
-这些是仓库自带的公开演示数据，不是生产客户数据；素材里的照片与插画跟真机一样
-**不随模板换色**（租户上传的内容本来就不受主题影响）。
+**通用平台产品，示意图里不能出现任何真实 / 演示企业客户信息**（第二十八轮）：
+企业名、简称、LOGO、人名、电话、座机、邮箱、地址、公司简介一律换成明显的中性
+占位；真人头像换成剪影，带企业名的 LOGO 换成「LOGO」占位块。`demoseed.go` 里的
+演示身份值会在 --check 时反向核对，出现任意一个就拒绝出图。
+保留的是 8 张分类图标 / 4 张服务插画 / 3 张通用行业照片：它们不含企业标识，
+租户自己上传的内容本来也不随主题换色。
 
 准的是：18 个 `--wc-*` token 驱动的页面底色 / 主色 / 圆角 / 按钮 / 投影，
-以及真实素材带来的版式与密度。不准的是：真机字体渲染、系统状态栏图标、
+以及通用素材带来的版式与密度。不准的是：真机字体渲染、系统状态栏图标、
 微信胶囊的真实质感、视频号播放器的真实画面、首页背景图与安全区。
 **最终观感必须走 `docs/real-device-acceptance.md` §7 的真机验收**，示意图不能替代。
 
@@ -22,9 +23,10 @@
     python3 scripts/gen_theme_previews.py --check    # 只校验产物（CI / 提交前用）
 
 --check 不需要浏览器，查「每款模板都有图 / PNG 合法 / 尺寸一致 / token 快照与
-app.wxss 同版 / 演示素材齐全 / 演示文案与源码同源」。生成需要本机 Chrome
-（可用 THEME_PREVIEW_CHROME 指定路径）。**改了 app.wxss 配色或圆角、改了首页区块、
-换了演示素材、或加了一款模板，都必须重跑本脚本**：否则图片会悄悄停在旧样式。
+app.wxss 同版 / 通用素材齐全 / 区块与按钮文案同源 / 不含任何真实客户身份」。
+生成需要本机 Chrome（可用 THEME_PREVIEW_CHROME 指定路径）。**改了 app.wxss 配色
+或圆角、改了首页区块、换了素材、改了占位文案、或加了一款模板，都必须重跑本脚本**：
+否则图片会悄悄停在旧样式。
 """
 from __future__ import annotations
 
@@ -51,18 +53,24 @@ OUT_DIR = ROOT / "frontend/public/theme-previews"
 MANIFEST = OUT_DIR / "manifest.json"
 
 # 画布按 iPhone 逻辑像素 375pt 设计；小程序 750rpx = 屏宽，故 1rpx = 0.5px。
-# 1300 不是随手取的：真机截图 556x1920，按宽度折算 1920 * 375 / 556 ≈ 1295。
-# 早期版本压到 375x430 / 375x640，把整页内容压扁一半以上，分类图标网格、视频控件、
-# 4 张竖版服务卡全被简化成色块，客户认不出这是自己的小程序——这是用户实测指出的差距。
-WIDTH, HEIGHT = 375, 1300
+# 第二十八轮改为**按内容自然收口**：无头 Chrome 实测业务服务卡底部 y=1129，
+# 取 1130 作基线，留 20px 呼吸后直接接 60px 底栏，不再保留真机截图尾部的滚动余量。
+# 出图前会再实测一次（measure_content_bottom）：改了占位文案 / 区块高度让内容变长时，
+# 底栏会悄悄盖住业务服务卡，光靠常量算不出来，必须显式拒绝出图。
+# 早期 375x430 / 375x640 把分类图标网格、视频控件、4 张竖版服务卡全压成色块，
+# 客户认不出这是自己的小程序，也不能再退回去。
+WIDTH, HEIGHT = 375, 1210
+CONTENT_BOTTOM, TAIL_GAP, BAR_HEIGHT = 1130, 20, 60
+if HEIGHT != CONTENT_BOTTOM + TAIL_GAP + BAR_HEIGHT:
+    raise SystemExit("画布高度必须由「内容底部 + 呼吸 + 底栏」算出，别再手填一个带大尾巴的数")
 RPX_TO_PX = 0.5
-SCALE = 2  # 2x 出图 750x2600，后台缩小显示仍可辨识，也可直接当销售材料用
+SCALE = 2  # 2x 出图 750x2420，后台缩小显示仍可辨识，也可直接当销售材料用
 
-# 真机截图里出现的图形，全部来自仓库自带演示素材。少一个文件就别出图：
-# 静默换成占位色块正是上一轮被用户指出的问题。
+# 只引用**通用行业素材**：分类图标、服务插画、公司简介封面与两张案例建筑照片。
+# 它们不含企业名 / 人名 / LOGO；照片与插画跟真机一样不随模板换色。
+# 刻意不引用真人头像与带企业名的 LOGO（见 check_no_identity）：我们是通用平台产品，
+# 示意图里出现具体客户身份，客户会误以为这是别人的真实案例。
 SEED_FILES = [
-    "avatar-gaolixin.png",
-    "logo.png",
     "cover-company.jpg",
     "cover-daxing.jpg",
     "cover-hospital.jpg",
@@ -70,29 +78,40 @@ SEED_FILES = [
     *[f"svc-{i}.png" for i in range(1, 5)],
 ]
 
-# 演示文案逐字抄自源码，--check 会回查三处真值，防止 demoseed / 组件改了而图没跟上。
-# 它们是仓库公开的演示数据，不是真实客户资料；静态资源里不新增任何生产数据。
-DEMO_TEXT = {
-    "short_name": "朗汇机电",
-    "full_name": "廊坊市朗汇机电设备有限公司",
-    "address": "廊坊市广阳区紫金城商住楼1-2-1911",
-    "person": "高立新",
-    "title": "业务经理",
-    "phone": "13832603521",
-    "tel": "0316-8023950",
-    "email": "13832603521@163.com",
-    "intro": "成立于 2015 年 11 月，专注于电梯销售、安装、维修保养与改造服务，"
-             "为住宅、政务中心、医疗、商业、公共交通、生产制造与仓储物流等多场景提供机电一体化解决方案。",
+# 全部是明显的中性占位：一眼能看出是示意图，不会让客户误以为这是某个真实客户。
+# 字数 / 行数刻意贴近真实内容的密度（名片两列联系表、公司简介 4 行），
+# 这样脱敏不会把上一轮刚复刻好的版式又压扁。
+PLACEHOLDER_TEXT = {
+    "short_name": "示例企业",
+    "full_name": "示例企业全称有限公司",
+    "address": "示例地址 · 仅用于版式示意",
+    "person": "示例联系人",
+    "title": "示例职务",
+    "phone": "138-0000-0000",
+    "tel": "0000-00000000",
+    "email": "name@example.com",
+    "intro": "这里是企业简介的示例文字，用于展示本区域的排版密度与行距；正式使用时由企业在后台自行填写，示意图不包含任何真实客户资料。",
 }
+
+# 只回查**不含身份信息**的区块标题 / 按钮文案 / 组件注释，防止首页改了而图没跟上。
 DEMO_SOURCES = {
-    # Email 在 Go 里是 DemoEmployeePhone + "@163.com" 拼出来的，查字面后缀即可
-    DEMO_GO: ["short_name", "full_name", "address", "person", "title", "phone", "tel", "intro", '@163.com'],
     INDEX_WXML: ["经典业绩", "更多案例", "业务服务"],
     ACTION_WXML: ["一键拨号", "存入通讯录"],
     # 首页组件把标题画进图片里，这两处注释必须还在，否则预览可能退回占位块
     ROOT / "miniprogram/components/achievement-grid/index.wxml": ["标题已绘制在图内"],
     ROOT / "miniprogram/components/service-grid/index.wxml": ["标题已绘制在图内"],
 }
+
+# 真实 / 演示客户身份的硬黑名单。前半段静态兜底（地址、座机、邮箱后缀、简介片段、
+# 身份素材名），后半段由 demoseed.go 的 Demo* 常量动态补齐：以后谁改了演示企业名，
+# 不用同步改这里也能拦住。注意别把「示例」两个字加进来。
+IDENTITY_LITERALS = [
+    "廊坊", "紫金城", "0316-", "@163.com", "成立于 2015", "langhui",
+    "avatar-gaolixin.png", "logo.png", "13832603521", "高立新", "朗汇",
+]
+GO_IDENTITY_RE = re.compile(
+    r'Demo(?:CompanyName|ShortName|LoginCode|EmployeePhone|EmployeeName|AdminUser)\s*=\s*"([^"]+)"'
+)
 
 TOKEN_RE = re.compile(r"(--wc-[\w-]+)\s*:\s*([^;]+);")
 DEFAULT_BLOCK_RE = re.compile(r"page\s*\{([^{}]*--wc-primary[^{}]*)\}")
@@ -119,12 +138,13 @@ def read_tokens() -> dict[str, dict[str, str]]:
 
 
 def manifest_payload(tokens: dict[str, dict[str, str]]) -> dict:
-    """随图写 token / 素材快照：改了 app.wxss 或换了素材却没重出图，守门能查出图旧了。"""
+    """随图写 token / 素材 / 占位文案快照：改了任一样却没重出图，守门能查出图旧了。"""
     return {
         "source": "miniprogram/app.wxss",
         "canvas": [WIDTH, HEIGHT],
         "scale": SCALE,
         "seedAssets": SEED_FILES,
+        "placeholders": PLACEHOLDER_TEXT,
         "tokens": tokens,
     }
 
@@ -137,22 +157,45 @@ def write_manifest(tokens: dict[str, dict[str, str]]) -> None:
 
 
 def check_sources() -> list[str]:
-    """出图依赖的素材与演示文案必须还在，且和源码逐字同源。"""
+    """出图依赖的通用素材必须还在，区块 / 按钮文案仍与小程序源码逐字同源。"""
     problems = []
     for name in SEED_FILES:
         if not (SEED_DIR / name).is_file():
-            problems.append(f"缺演示素材：seedassets/{name}")
+            problems.append(f"缺通用素材：seedassets/{name}")
+        elif name.startswith("avatar-") or name.startswith("logo."):
+            problems.append(f"通用素材清单里混进了身份素材：{name}")
     for path, keys in DEMO_SOURCES.items():
         if not path.is_file():
             problems.append(f"预览依赖的源码不存在：{path.relative_to(ROOT)}")
             continue
         src = path.read_text(encoding="utf-8")
         for key in keys:
-            text = DEMO_TEXT.get(key, key)
-            # Go 里简介是多行字符串拼接，按前半段比对即可，别把换行差异当漂移
-            probe = text[:24] if key == "intro" else text
-            if probe not in src:
-                problems.append(f"{path.name} 里找不到演示文案「{probe}」")
+            text = PLACEHOLDER_TEXT.get(key, key)
+            if text not in src:
+                problems.append(f"{path.name} 里找不到区块 / 按钮文案「{text}」")
+    return problems
+
+
+def identity_tokens() -> list[str]:
+    """静态黑名单 + demoseed.go 里所有演示身份常量值，二者取并集。"""
+    out = list(IDENTITY_LITERALS)
+    out.extend(m.group(1) for m in GO_IDENTITY_RE.finditer(DEMO_GO.read_text(encoding="utf-8")))
+    return out
+
+
+def check_no_identity(html: str) -> list[str]:
+    """通用平台产品：示意图里出现任何真实 / 演示客户身份都必须拒绝出图。
+
+    查的是**代入占位文案后的最终 HTML**，不是脚本源码：脚本为了守门会列出黑名单
+    字面量，查源码只会得到「永远通过」的假绿（第二十七轮踩过同样的坑）。
+    """
+    problems = []
+    for token in identity_tokens():
+        if token and token in html:
+            problems.append(f"示意图出现真实客户身份信息「{token}」")
+    for key in ("short_name", "full_name", "person", "email"):
+        if PLACEHOLDER_TEXT[key] not in html:
+            problems.append(f"示意图缺中性占位「{key}={PLACEHOLDER_TEXT[key]}」")
     return problems
 
 
@@ -170,6 +213,8 @@ def check_manifest(tokens: dict[str, dict[str, str]]) -> list[str]:
         problems.append("manifest 画布参数与脚本不一致")
     if data.get("seedAssets") != SEED_FILES:
         problems.append("manifest 的素材清单与脚本不一致")
+    if data.get("placeholders") != PLACEHOLDER_TEXT:
+        problems.append("manifest 的占位文案与脚本不一致：换了示意图文案却没重出图")
     if data.get("source") != "miniprogram/app.wxss":
         problems.append("manifest 的 token 来源被改掉了")
     return problems
@@ -210,7 +255,7 @@ HTML = Template("""<!doctype html>
   body { color: #222; font: 12px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
   /* 真机整页是浅蓝底 + 白卡浮于其上，不是灰白底：这是上一版最刺眼的差异之一 */
   .phone {
-    width: ${w}px; height: ${h}px; position: relative; padding-bottom: 68px;
+    width: ${w}px; height: ${h}px; position: relative; padding-bottom: ${tail_gap}px;
     background: linear-gradient(180deg, var(--wc-primary-soft), var(--wc-primary-tint));
 ${tokens}
   }
@@ -223,7 +268,8 @@ ${tokens}
   .me { display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px 0 3px;
         border: 1px solid var(--wc-primary-border); border-radius: var(--wc-r-chip);
         background: #fff; color: var(--wc-primary); font-size: 10px; }
-  .me img { width: 20px; height: 20px; border-radius: 50%; }
+  .me-avatar { width: 20px; height: 20px; border-radius: 50%; flex: none;
+               background: var(--wc-primary-chip); border: 1px solid var(--wc-primary-border); }
   .nav-title { position: absolute; left: 0; right: 0; text-align: center;
                font-size: 14px; font-weight: 700; color: #1a1a1a; pointer-events: none; }
   .wx-capsule { width: 76px; height: 28px; border-radius: 15px; background: rgba(255,255,255,.92);
@@ -240,13 +286,24 @@ ${tokens}
 
   /* ---- 名片卡：头像 / 姓名职位 / 企业 LOGO / 公司全称 / 查看案例 / 地址 / 两列联系表 ---- */
   .ec-head { display: flex; align-items: flex-start; }
-  .ec-avatar { width: 50px; height: 50px; border-radius: 50%; flex: none;
-               background: var(--wc-primary-tint); border: 2px solid #fff;
-               box-shadow: 0 2px 6px rgba(var(--wc-primary-rgb), .18); object-fit: cover; }
+  /* 头像与 LOGO 用中性占位，不引用真人照片 / 带企业名的标识：
+     通用平台产品的示意图不能让客户误以为这是某家真实企业的名片。 */
+  .avatar-ph { width: 50px; height: 50px; border-radius: 50%; flex: none; position: relative;
+               overflow: hidden; background: var(--wc-primary-tint); border: 2px solid #fff;
+               box-shadow: 0 2px 6px rgba(var(--wc-primary-rgb), .18); }
+  .avatar-ph::before { content: ""; position: absolute; left: 50%; top: 10px;
+               transform: translateX(-50%); width: 15px; height: 15px; border-radius: 50%;
+               background: var(--wc-primary-border); }
+  .avatar-ph::after { content: ""; position: absolute; left: 50%; bottom: -6px;
+               transform: translateX(-50%); width: 30px; height: 22px;
+               border-radius: 15px 15px 0 0; background: var(--wc-primary-border); }
   .ec-info { flex: 1; min-width: 0; margin-left: 10px; }
   .ec-line1 { display: flex; align-items: center; justify-content: space-between; }
   .ec-name { font-size: 17px; font-weight: 700; color: #222; }
-  .ec-logo { width: 64px; height: 23px; object-fit: contain; flex: none; }
+  .logo-ph { width: 64px; height: 23px; flex: none; display: flex; align-items: center;
+             justify-content: center; font-size: 11px; font-weight: 700; letter-spacing: 1px;
+             color: var(--wc-primary-deep); background: var(--wc-primary-soft);
+             border: 1px dashed var(--wc-primary-border); border-radius: var(--wc-r-chip); }
   .ec-title { color: #6b7a89; font-size: 11px; margin-top: 1px; }
   .ec-line3 { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 6px; }
   .ec-cname { color: var(--wc-primary-deep); font-size: 12.5px; font-weight: 700;
@@ -311,9 +368,12 @@ ${tokens}
            box-shadow: var(--wc-card-shadow-soft);
            color: var(--wc-primary-alt); font-size: 13px; text-align: center; line-height: 24px; }
 
-  /* ---- 底部固定操作栏：真机是「一键拨号」实心在左、「存入通讯录」描边在右 ---- */
-  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 60px;
-         background: #fff; border-top: 1px solid #eef1f5; display: flex;
+  /* ---- 底部固定操作栏：真机是「一键拨号」实心在左、「存入通讯录」描边在右 ----
+     高度由 BAR_HEIGHT 注入，和画布收口常量同源；明显的顶边 + 上投影给出「页面到此结束」
+     的边界，缩略卡里图内按钮才不会和卡片外的模板名称连成一片。 */
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: ${bar_h}px;
+         background: #fff; border-top: 1px solid #d8dee6;
+         box-shadow: 0 -3px 12px rgba(0,0,0,.06); display: flex;
          align-items: center; gap: 10px; padding: 0 10px; }
   .bar button { flex: 1; height: 38px; font-size: 12px; font-weight: 700;
                 border-radius: var(--wc-r-control); }
@@ -323,16 +383,16 @@ ${tokens}
 <div class="phone">
   <div class="status" data-sec="status"><span>09:01</span><span class="sys">▪ ▪ 4G ▮ 21</span></div>
   <div class="nav" data-sec="nav">
-    <div class="me"><img src="assets/avatar-gaolixin.png" alt=""><span>我的</span></div>
+    <div class="me"><span class="me-avatar"></span><span>我的</span></div>
     <div class="nav-title">${short_name}</div>
     <div class="wx-capsule"><span>···</span><span class="sep"></span><span class="dot"></span></div>
   </div>
 
   <div class="card" data-sec="card">
     <div class="ec-head">
-      <img class="ec-avatar" src="assets/avatar-gaolixin.png" alt="">
+      <div class="avatar-ph" aria-hidden="true"></div>
       <div class="ec-info">
-        <div class="ec-line1"><span class="ec-name">${person}</span><img class="ec-logo" src="assets/logo.png" alt=""></div>
+        <div class="ec-line1"><span class="ec-name">${person}</span><span class="logo-ph">LOGO</span></div>
         <div class="ec-title">${title}</div>
         <div class="ec-line3"><span class="ec-cname">${full_name}</span><span class="case-btn">查看案例 ▸</span></div>
         <div class="ec-addr">${address}</div>
@@ -396,6 +456,39 @@ def find_chrome() -> str | None:
     return next((c for c in candidates if c and Path(c).exists()), None)
 
 
+def measure_content_bottom(chrome: str, html: str) -> int:
+    """出图前实测业务服务卡底部，防止固定底栏悄悄盖住内容。
+
+    改了占位文案长度 / 区块密度，内容会变长，而 HEIGHT 是常量：底栏是 absolute
+    定位，内容被盖住不会报任何错，客户只会在缩略卡里看到半张服务卡。让浏览器
+    报一次真实布局，比在注释里写「注意别改文案」可靠。
+    """
+    probe = (
+        '<script>window.addEventListener("load",function(){'
+        'var s=document.querySelector(\'[data-sec="service"]\');'
+        'document.body.setAttribute("data-wc-bottom",'
+        'String(Math.round(s.getBoundingClientRect().bottom)));});</script>'
+    )
+    with tempfile.TemporaryDirectory(prefix="wc-theme-measure-") as td:
+        page = Path(td) / "measure.html"
+        assets = Path(td) / "assets"
+        assets.mkdir()
+        for name in SEED_FILES:
+            shutil.copy2(SEED_DIR / name, assets / name)
+        page.write_text(html.replace("</body>", probe + "</body>"), encoding="utf-8")
+        cmd = [
+            chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+            "--hide-scrollbars", "--allow-file-access-from-files",
+            "--virtual-time-budget=2500", f"--window-size={WIDTH},{HEIGHT}",
+            "--dump-dom", page.as_uri(),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        m = re.search(r'data-wc-bottom="(\d+)"', r.stdout)
+        if r.returncode != 0 or not m:
+            raise SystemExit(f"实测首页内容高度失败：{r.stderr[-400:]}")
+        return int(m.group(1))
+
+
 def render(chrome: str, html: str, out: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="wc-theme-preview-") as td:
         page = Path(td) / "preview.html"
@@ -436,8 +529,9 @@ def build_html(tokens: dict[str, str]) -> str:
         f'<img src="assets/svc-{i}.png" alt="">' for i in range(1, 5)
     )
     return HTML.substitute(
-        w=WIDTH, h=HEIGHT, tokens=css_tokens(tokens),
-        cat_cards=cat_cards, svc_cards=svc_cards, **DEMO_TEXT,
+        w=WIDTH, h=HEIGHT, bar_h=BAR_HEIGHT, tail_gap=TAIL_GAP,
+        tokens=css_tokens(tokens), cat_cards=cat_cards, svc_cards=svc_cards,
+        **PLACEHOLDER_TEXT,
     )
 
 
@@ -457,7 +551,9 @@ def main() -> int:
         return 1
     active = {i: tokens[i] for i in ids}
 
-    problems = check_sources()
+    # 12 张图共用同一套 HTML（只有 token 不同），抽第一张验证脱敏即可；
+    # 查的是代入占位文案后的最终 HTML，不能只查模板源码，否则是假绿。
+    problems = check_sources() + check_no_identity(build_html(active[ids[0]]))
     if problems:
         for p in problems:
             print(f"✗ {p}", file=sys.stderr)
@@ -496,6 +592,13 @@ def main() -> int:
     if not chrome:
         print("✗ 找不到 Chrome；设 THEME_PREVIEW_CHROME=/path/to/chrome 后重试", file=sys.stderr)
         return 1
+    bottom = measure_content_bottom(chrome, build_html(active[ids[0]]))
+    bar_top = HEIGHT - BAR_HEIGHT
+    if bottom + TAIL_GAP > bar_top:
+        print(f"✗ 底栏会盖住业务服务卡：内容底部 {bottom} + 呼吸 {TAIL_GAP} "
+              f"> 底栏顶 {bar_top}；请同步调大 CONTENT_BOTTOM / HEIGHT 后重出图", file=sys.stderr)
+        return 1
+    print(f"✓ 内容底部实测 {bottom}，底栏顶 {bar_top}，尾部留白 {bar_top - bottom}px")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for i in ids:
         out = OUT_DIR / f"{i}.png"
