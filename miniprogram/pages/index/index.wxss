@@ -75,8 +75,9 @@
   color: var(--wc-primary);
 }
 
-/* 首页背景：无后台背景图时按设计稿铺浅蓝→白渐变；有背景图时由
-   page-bg（fixed + 负 z-index）整幅覆盖，渐变自然被盖住。 */
+/* 首页背景：无后台背景图时跟随风格模板的浅色调（与后台预览图一致，
+   切模板背景随之变色）；有「首页背景」图时由 page-bg（fixed + 负 z-index）
+   整幅覆盖，主题渐变自然被盖住。两者都是主题 token，未设背景图即生效。 */
 .page {
   position: relative;
   min-height: 100vh;
@@ -85,7 +86,7 @@
      固定部分（按钮+padding）≈107rpx 写死，安全区用 env() 随设备；+16rpx 呼吸感，
      既不被遮挡也不留大片空白（用户 2026-10-20 反馈 260rpx 留太多） */
   padding-bottom: calc(123rpx + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, #d5e7fa 0%, #e7f1fc 24%, #f4f7fb 52%, #f4f7fb 100%);
+  background: linear-gradient(180deg, var(--wc-primary-soft), var(--wc-primary-tint));
 }
 .page-bg { position: fixed; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; z-index: -1; }
 .page-bg-mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: #000; z-index: -1; }

@@ -2189,3 +2189,34 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
   本轮比例守门更新）。
 - 全量门禁照旧：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest / `vite build`，
   后端未改。
+
+## 第三十一轮：小程序首页背景跟随风格模板主题 token
+
+### 背景
+
+第二十九 / 三十轮只动了后台预览卡的呈现（角标悬停、手机窗口滚动、间距）。用户发来
+小程序名片页截图，反馈「更换风格模板后首页背景色没看到变化」——后台预览图每款背景不同，
+真机却始终是同一片蓝。
+
+根因：小程序首页 `.page` 背景写死蓝渐变 `#d5e7fa...`，没接任何主题 token；后台预览图
+`.phone` 用 `var(--wc-primary-soft), var(--wc-primary-tint)`，两端对不上。经
+`AskUserQuestion` 确认切模板时首页背景「跟随主题（推荐）」。
+
+### 改动
+
+| 面 | 内容 |
+|---|---|
+| 小程序首页 | `miniprogram/pages/index/index.wxss` 的 `.page` 背景由写死蓝渐变改为 `linear-gradient(180deg, var(--wc-primary-soft), var(--wc-primary-tint))`，与后台预览图同源；保留「首页背景」图由 `page-bg`（fixed + 负 z-index）整幅覆盖优先——有背景图时主题渐变自然被盖住，两者都是 token，未设图即生效 |
+| 守门 | `theme.spec.ts` 新增 1 例「小程序首页背景跟随主题 token，与后台预览一致（改回写死蓝会变红）」：断言 `.page` 规则含 `var(--wc-primary-soft)` / `var(--wc-primary-tint)`、不含 `#d5e7fa`，且生成脚本含 `var(--wc-primary-soft), var(--wc-primary-tint)` |
+
+### 边界
+
+纯小程序端呈现 + 跨端守门，不动模板白名单 / 端上 token / 接口契约 / 数据库 / 生成产物。
+守门与「真实预览图」一套逻辑同源：切模板后真机首页背景随主色变化，正是 `T1` 判定的
+加固项；真机观感仍由本人在真机过一轮确认。
+
+### 门禁
+
+- 定向：新守门绿；**反向验证**（把 `.page` 背景改回写死蓝）必红后自动还原。
+- 全量门禁：前端 `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1584 例** /
+  `vite build` / `git diff --check` 全绿；后端未改、`go build` `go vet` 仍绿。

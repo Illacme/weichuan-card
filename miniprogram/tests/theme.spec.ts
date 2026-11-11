@@ -491,6 +491,21 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(html.split('var(--wc-').length - 1, '预览 HTML 没有真正用 token').toBeGreaterThanOrEqual(15)
   })
 
+  // 第二十八轮之后用户实测：后台预览每款背景色不同，但小程序首页背景是写死蓝渐变，
+  // 切模板背景不变——预览与真机对不上。首页背景必须跟随主题 token（与预览一致），
+  // 且「首页背景」图仍由 page-bg 整幅覆盖优先。改回写死蓝会变红。
+  it('小程序首页背景跟随主题 token，与后台预览一致（改回写死蓝会变红）', () => {
+    const wxss = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxss'), 'utf-8')
+    const page = wxss.match(/\.page\s*\{[^}]*\}/)?.[0] || ''
+    expect(page, '取不到 .page 规则').not.toBe('')
+    expect(page, '首页背景没用主题 token，切模板不会变色').toContain('var(--wc-primary-soft)')
+    expect(page, '首页背景没用主题 token，切模板不会变色').toContain('var(--wc-primary-tint)')
+    expect(page, '首页背景仍是写死蓝，与后台预览不一致').not.toContain('#d5e7fa')
+    // 后台预览 .phone 同样用这两个 token，两端一致
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    expect(script).toContain('var(--wc-primary-soft), var(--wc-primary-tint)')
+  })
+
   it('后台预览卡是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')

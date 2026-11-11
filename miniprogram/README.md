@@ -264,7 +264,7 @@ miniprogram/
 
 ## 首页背景图（商业化美化包装，可选）
 - PC 后台「小程序设置 → 名片首页样式」可设置首页背景图（支持从内置素材库「背景」分类直接选用 750×1334 竖幅素材），并可调节遮罩浓度 0~100。后端经 `GET /api/home-layout` 在**响应根级**下发 `bgImage` / `bgMask`（与 `order` 同级）。
-- 首页 `pages/index` 收到非空 `bgImage` 时：铺一层全屏背景（`mode="aspectFill"`），其上叠 `bgMask/100` 透明度的黑色蒙层，白色内容卡片浮于其上形成层次；`bgImage` 为空即保持默认灰底布局，不渲染背景层。
+- 首页 `pages/index` 收到非空 `bgImage` 时：铺一层全屏背景（`mode="aspectFill"`），其上叠 `bgMask/100` 透明度的黑色蒙层，白色内容卡片浮于其上形成层次；`bgImage` 为空即不渲染背景层，此时首页背景跟随**当前风格模板的主题 token**（`var(--wc-primary-soft)` → `var(--wc-primary-tint)` 浅色渐变，与后台「风格模板」预览图一致，切模板随之变色），由 `index.wxss` 的 `.page` 背景驱动。
 - 背景层与蒙层用 `position: fixed` + 负 `z-index` 铺在最底层，内容按常规流绘制天然在其上方，不会互相遮挡；有背景时顶栏改为半透明白、板块卡片加圆角阴影（`.has-bg`）。
 
 ## 腾讯视频档（`company-video` 的 txv 分支）
