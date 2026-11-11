@@ -10,6 +10,9 @@
       「品牌配色」按预设色板只换主色，版式沿用经典蓝，用于对齐企业自有 VI 主色。
       两个系列都随小程序版本内置，后台只记录「选了哪一款」，
       保存后访客端即时生效，不需要重新上传代码或提交微信审核。
+      下方预览图是按小程序样式变量复刻的<strong>首页风格示意，不是真机截图</strong>：
+      准的是配色、圆角、按钮与投影，不体现真实租户内容、真机字体、状态栏与安全区；
+      点卡片右上角「查看大图」可看完整细节，最终观感请以真机验收为准。
     </p>
 
     <!-- 授权到期 / 未开通时客户必须知道：不是保存失败，是这一档没买；
@@ -66,6 +69,17 @@
               decoding="async"
               @error="onPreviewError(t.id)"
             />
+            <!-- 常显标注，不是只在降级时出现：客户最容易把「按 token 复刻的示意图」
+                 直接当成真机页面效果去验收，这个误解不会报错，只能靠标注说清。 -->
+            <span class="preview-badge">风格示意 · 非真机截图</span>
+            <!-- 缩略卡只有 230px 宽，完整首页在其中看不清细节。图降级时不给这个入口，
+                 否则点开还是空白；.stop 是必须的，不然「查看大图」会顺手把这款选中。 -->
+            <button
+              v-if="!failedPreviews[t.id]"
+              type="button"
+              class="preview-zoom-btn"
+              @click.stop="openZoom(t.id)"
+            >查看大图</button>
           </div>
           <div class="theme-meta">
             <div class="theme-name">
@@ -85,6 +99,20 @@
         保存风格
       </el-button>
       <span class="hint">仅提交模板选择，不改动首页背景、板块顺序与详情页时间显示。</span>
+    </div>
+
+    <!-- 查看大图：用组件内 fixed 浮层而不是 Teleport，单测可直接断言，
+         position:fixed 也不受 .theme-card 的 overflow:hidden 裁剪。
+         点遮罩空白处或「关闭」都能收起，图片本身用 contain 不裁切。 -->
+    <div v-if="zoomId" class="preview-zoom" @click.self="closeZoom">
+      <div class="zoom-panel">
+        <div class="zoom-head">
+          <span class="zoom-title">{{ zoomName }} · 首页风格示意</span>
+          <span class="zoom-note">风格示意 · 非真机截图</span>
+          <el-button size="small" @click="closeZoom">关闭</el-button>
+        </div>
+        <img class="zoom-shot" :src="previewUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+      </div>
     </div>
   </el-card>
 </template>
@@ -150,6 +178,18 @@ function previewUrl(id: string): string {
 
 function onPreviewError(id: string) {
   failedPreviews.value = { ...failedPreviews.value, [id]: true }
+  // 大图用的是同一个 URL：这张图坏了，别让浮层停在一片空白上
+  if (zoomId.value === id) zoomId.value = ''
+}
+
+// 查看大图只改一个 id，不复制图片数据；关闭时一并清掉，避免下次打开闪出上一款。
+const zoomId = ref('')
+const zoomName = computed(() => templates.value.find((t) => t.id === zoomId.value)?.name || '')
+function openZoom(id: string) {
+  zoomId.value = id
+}
+function closeZoom() {
+  zoomId.value = ''
 }
 
 // 未开通授权时禁止「新选」高级款；但**当前已在用**的那一款不能锁——
@@ -168,6 +208,7 @@ async function load() {
   // 「重新加载」也该给预览图一次重试机会：例如刚补上漏生成的 PNG，
   // 或上一轮只是临时网络抖动，不能让客户一直停在示意图上。
   failedPreviews.value = {}
+  zoomId.value = ''
   try {
     const d = await getHomeLayout()
     templates.value = Array.isArray(d?.templates) ? d.templates : []
@@ -266,12 +307,13 @@ onMounted(load)
   cursor: not-allowed;
   opacity: 0.62;
 }
-/* 预览容器比例与 gen_theme_previews.py 的 375x430 画布一致：图片下载完成前后
-   都不跳版，所有卡保持对齐。生成脚本刻意把高度收到 430，就是为了让底部按钮
-   （各款圆角差异最大的一处）完整可见，这里不能再裁切。 */
+/* 预览容器比例与 gen_theme_previews.py 的 375x640 画布一致：这张图画的是
+   完整首页（顶栏 / 名片卡 / 公司简介 / 经典业绩 / 业务服务 / 底部操作栏），
+   比例不对就会被裁回「只有名片区」的旧简化版，而页面不会报任何错。
+   生成脚本的画布尺寸由 theme.spec.ts 与本行对账，改一边必须改两边。 */
 .theme-preview {
   position: relative;
-  aspect-ratio: 375 / 430;
+  aspect-ratio: 375 / 640;
   overflow: hidden;
 }
 /* 底层示意常驻：img 还在下载 / 404 / 新模板漏补图时都有内容；
@@ -302,6 +344,86 @@ onMounted(load)
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* 常显标注盖在真实图之上（DOM 顺序在 img 后面 + z-index）：降级时 .fallback-tag
+   说「示意图」，正常时这枚说「非真机截图」，两个语义不能合并成一个角标。 */
+.preview-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 2;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #606266;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  padding: 2px 6px;
+  pointer-events: none;
+}
+.preview-zoom-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 3;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #409eff;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #d9ecff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.preview-zoom-btn:hover {
+  background: #ecf5ff;
+}
+/* 查看大图浮层：position:fixed 不受 .theme-card 的 overflow:hidden 影响；
+   图片 contain 保证 750x1280 原图完整可见，不裁掉底部操作栏。 */
+.preview-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.55);
+}
+.zoom-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  padding: 12px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.zoom-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.zoom-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+.zoom-note {
+  font-size: 12px;
+  color: #909399;
+}
+.zoom-head .el-button {
+  margin-left: auto;
+}
+.zoom-shot {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  width: auto;
+  object-fit: contain;
 }
 .preview-nav {
   height: 14px;

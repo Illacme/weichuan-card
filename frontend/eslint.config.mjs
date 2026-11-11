@@ -18,7 +18,20 @@ import globals from 'globals'
 export default tseslint.config(
   // components.d.ts 由 unplugin-vue-components 自动生成（每次构建覆写），
   // 检查生成物只会产出「无人会去改」的告警。
-  { ignores: ['dist/**', 'dist-check/**', 'node_modules/**', 'coverage/**', 'src/components.d.ts'] },
+  // `dist-check-*/**` 不能省：本地用 `vite build --outDir dist-check-<用途>` 做验证时
+  // 会留下带后缀的压缩产物，固定名只忽略 `dist-check/**` 会让 eslint 对着
+  // 压缩后的单行 JS 刷出上千条 no-unused-vars / no-empty 假红（它们不是源码，
+  // 没人会去改），把真正的 lint 信号淹没。.gitignore 也已同步加同类通配。
+  {
+    ignores: [
+      'dist/**',
+      'dist-check/**',
+      'dist-check-*/**',
+      'node_modules/**',
+      'coverage/**',
+      'src/components.d.ts',
+    ],
+  },
   js.configs.recommended,
   // 只取 base（parser + plugin，不带规则集）：recommended 里的 no-explicit-any
   // 会命中测试桩里大量的 any，逼着一处处加 disable，反而淹没有效信号。

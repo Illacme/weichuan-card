@@ -534,3 +534,78 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(manifest.scale).toBe(Number(scale[1]))
   })
 })
+
+// ===== 完整首页示意 =====
+//
+// 早期版本为了在 375x430 里保住底部按钮的圆角差异，把公司简介 / 业务服务区
+// 整个裁掉，还用「◈」菱形当案例占位——客户在后台看到的根本认不出是自己的小程序。
+// 现在按 index.wxml 的区块顺序复刻完整首页。这些守门防止有人「为了卡片好看」
+// 又退回简化版：页面不会报错，客户只是拿到一张不准确的示意图，属于静默失败。
+const HOME_SECTION_ANCHORS = [
+  { sec: 'nav', pattern: 'class="custom-nav"' },
+  { sec: 'card', pattern: '<employee-card' },
+  { sec: 'company', pattern: '<company-video' },
+  { sec: 'achievement', pattern: "item === 'achievement'" },
+  { sec: 'service', pattern: "item === 'service'" },
+  { sec: 'bar', pattern: '<action-bar' },
+] as const
+
+function previewHtml(): string {
+  const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+  return script.slice(script.indexOf('HTML = """'), script.indexOf('def find_chrome'))
+}
+
+describe('小程序风格模板 完整首页示意', () => {
+  it('预览 HTML 复刻首页全部区块，且顺序与 index.wxml 一致', () => {
+    const wxml = readFileSync(resolve(MP, 'pages/index/index.wxml'), 'utf-8')
+    let cursor = -1
+    for (const a of HOME_SECTION_ANCHORS) {
+      const at = wxml.indexOf(a.pattern)
+      expect(at, `index.wxml 找不到 ${a.sec} 锚点`).toBeGreaterThan(-1)
+      expect(at, `index.wxml 里 ${a.sec} 的相对顺序变了`).toBeGreaterThan(cursor)
+      cursor = at
+    }
+
+    const html = previewHtml()
+    const secs = Array.from(html.matchAll(/data-sec="([a-z]+)"/g)).map((m) => m[1])
+    // status 是真机系统状态栏的占位，真实 WXML 里由系统绘制、没有对应节点
+    expect(secs.filter((s) => s !== 'status')).toEqual(HOME_SECTION_ANCHORS.map((a) => a.sec))
+    expect(html, '不该再用菱形占位代替真实案例卡').not.toContain('◈')
+    for (const label of ['公司简介', '经典业绩', '业务服务', '保存名片', '拨打电话']) {
+      expect(html, `预览缺「${label}」`).toContain(label)
+    }
+  })
+
+  it('18 个 token 全部被预览 HTML 用 var() 引用（定义了却没用 = 假同源）', () => {
+    const html = previewHtml()
+    const css = html.slice(0, html.indexOf('</style>'))
+    const vars = Object.keys(readThemeVars()[THEME_DEFAULT])
+    expect(vars, '主题 token 数量变了').toHaveLength(18)
+    for (const v of vars) {
+      expect(css, `${v} 定义了却没被示意图引用`).toContain(`var(${v})`)
+    }
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    expect(script).toContain('css_tokens(active[i])')
+    expect(script).toContain('%(tokens)s')
+  })
+
+  it('画布必须容得下完整首页，不能压回 375x430 的旧简化版', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
+    expect(Number(dim[1])).toBe(375)
+    expect(Number(dim[2]), '画布高度不足会裁掉业务服务区').toBeGreaterThanOrEqual(600)
+    expect(script).toContain('padding-bottom: 48px;')
+  })
+
+  it('后台常显「非真机截图」并提供查看大图（改回旧标注会变红）', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue).toContain('class="preview-badge"')
+    expect(vue).toContain('风格示意 · 非真机截图')
+    expect(vue).toContain('class="preview-zoom-btn"')
+    expect(vue).toContain('@click.stop="openZoom(t.id)"')
+    expect(vue).toContain('class="preview-zoom"')
+    expect(vue).toContain('class="zoom-shot"')
+    expect(vue).toContain('object-fit: contain')
+    expect(vue, '说明文案必须写明非真机截图').toContain('首页风格示意，不是真机截图')
+  })
+})

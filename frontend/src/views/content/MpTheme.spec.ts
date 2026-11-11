@@ -155,6 +155,73 @@ describe('content/MpTheme', () => {
     expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
   })
 
+  // 完整首页示意图容易被直接当成真机页面效果去验收，而这个误解不会报任何错。
+  // 所以「非真机截图」是**常显**标注，不是只在图片加载失败时才出现的降级角标。
+  it('每张卡常显「非真机截图」标注，图降级后标注仍在', async () => {
+    const w = await mountPage()
+
+    for (const c of cards(w)) {
+      expect(c.find('.preview-badge').exists()).toBe(true)
+      expect(c.find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
+    }
+    // 两个角标语义不同：常显的说是示意图，降级的说图没加载出来
+    expect(cards(w)[0].find('.fallback-tag').text()).toBe('示意图')
+
+    await cards(w)[1].find('img.preview-shot').trigger('error')
+    await flush()
+    expect(cards(w)[1].find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
+  })
+
+  it('查看大图：打开原尺寸浮层，且不会顺手把这款模板选中', async () => {
+    const w = await mountPage()
+    expect(w.find('.preview-zoom').exists()).toBe(false)
+    expect(cards(w)[0].classes()).toContain('selected')
+
+    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await flush()
+
+    expect(w.find('.preview-zoom').exists()).toBe(true)
+    expect(w.find('.zoom-shot').attributes('src')).toContain('theme-previews/ink.png')
+    expect(w.find('.zoom-note').text()).toContain('非真机截图')
+    // 卡片自身有 @click="pick(t)"：查看大图必须 @click.stop，否则「看看」变成「选中」
+    expect(cards(w)[1].classes()).not.toContain('selected')
+    expect(cards(w)[0].classes()).toContain('selected')
+  })
+
+  it('查看大图可关闭；图加载失败的卡不再显示大图入口', async () => {
+    const w = await mountPage()
+
+    await cards(w)[2].find('img.preview-shot').trigger('error')
+    await flush()
+    expect(cards(w)[2].find('.preview-zoom-btn').exists()).toBe(false)
+
+    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await flush()
+    const closeBtn = w.findAll('.el-button').find((b: any) => b.text().includes('关闭'))
+    expect(closeBtn).toBeDefined()
+    await closeBtn!.trigger('click')
+    await flush()
+    expect(w.find('.preview-zoom').exists()).toBe(false)
+
+    // 点遮罩空白处也能收起
+    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await flush()
+    await w.find('.preview-zoom').trigger('click')
+    await flush()
+    expect(w.find('.preview-zoom').exists()).toBe(false)
+  })
+
+  it('大图正在看的那张图降级时自动收起，不停在空白浮层', async () => {
+    const w = await mountPage()
+    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await flush()
+    expect(w.find('.preview-zoom').exists()).toBe(true)
+
+    await cards(w)[1].find('img.preview-shot').trigger('error')
+    await flush()
+    expect(w.find('.preview-zoom').exists()).toBe(false)
+  })
+
   it('按服务端 series 分两组渲染，品牌配色组说明「只换主色」且可选中', async () => {
     const w = await mountPage({
       templateId: 'default',
