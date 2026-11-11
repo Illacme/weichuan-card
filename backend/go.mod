@@ -1,6 +1,6 @@
 module weichuan
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
