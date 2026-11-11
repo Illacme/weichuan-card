@@ -793,6 +793,14 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 加款不需要改数据库。授权 gate 只卡 PUT 里的「切到高级款」这一步，**读接口不拦**：
 到期时访客回落默认款，但库里的 id 保留，续费自动恢复。
 
+**两轴化（P1，数据/契约层）**：`migrations/0042_mp_theme_two_axis.sql` 再加 `style_id`（缺省 `default`）
+与 `brand_color_id`（NULL = 用该风格默认色）两列，把旧 `template_id` 拆成「风格 × 色系」；
+8 款 `brand-*` 全部归 `default` 风格之下。`template_id` **保留为兼容派生列**（写入时由两轴反推、
+旧端继续读它），不删除。后台/公开 GET 同时下发 `styleId` + `brandColorId` + `templateId`；
+PUT 只在显式带了任一风格字段时才写这三列（三个页签各存各的，见 `content.go` 的 `themeTouched`），
+并校验 `brandColorId` 必须属于该 `styleId`。白名单一仍是扁平 12 款，物理树化与前端两步 UI 属后续阶段。
+设计见 `docs/theming-two-axis-design.md`，落地记录见 `docs/commercial-readiness.md` 第三十八轮。
+
 冷启动主题统一：`app.ts` 的 `onLaunch` 在租户绑定之后调 `utils/themeBootstrap.prefetchTheme()`
 拉一次本接口，写缓存并广播到页面栈——访客直接从分享链接进二级页时首页 `loadAll` 不会执行，
 不预热就会一直停在默认蓝。该模块**刻意不 import `utils/request.ts`**：后者在模块加载期取

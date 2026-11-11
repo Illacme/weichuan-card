@@ -2323,3 +2323,40 @@ A 的产品表达是「按自有 VI 主色挑一款」，而不是「随便填�
   `vite build` / `git diff --check` 全绿。（构建首次偶发 `CODEBUDDY_BROKER_TIMEOUT` 系环境 broker
   瞬时网络超时，与代码无关，重跑 `REAL_EXIT=0` 通过。）
 
+## 第三十八轮：主题两轴化 P1（数据/契约层，不改视觉）
+
+用户确认方向（第三十七轮）后，选择「现在出完整设计 + 整模块重排版」，并拍板 **P1 的存量映射：
+8 款 `brand-*` 全部归 `default` 风格之下**（`(default, brand-*)`，`default/ink/warm/teal` → `(同名, nil)`），
+存量租户视觉零突变。基础风格的**真实 id 是 `default`**（即 `mptemplate.DefaultID`），设计稿里的标签名
+「classic」即指 `default`，不是字面 `classic`。
+
+P1 只动后端数据/契约层，前端与小程序**完全不动**（`templateId` 兼容派生列续命）。
+
+| 项 | 说明 |
+| --- | --- |
+| 数据模型 | `model.HomeLayout`：`TemplateID` 单列 → 保留作**兼容派生列**（写入时由两轴反推、便于回滚锚点）+ 新增 `StyleID string`（无 DB 默认，便于 SQLite/存量回退）+ `BrandColorID *string`（nil=风格默认色） |
+| 迁移 `0042` | `home_layouts` 加 `style_id`（MySQL `NOT NULL DEFAULT 'default'`）、`brand_color_id`（NULL）两列，按映射回填（brand-* → `style_id='default', brand_color_id=模板id`）；SQLite 走 AutoMigrate 无默认值，靠读路径回退 |
+| `mptemplate.go` | 保留 `IsAdvanced(id)`（既有测试依赖）并内部改走两轴；新增 `Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`/`StyleOfBrand`。白名单仍是扁平 12 款（P1 不改 `templates` 清单形状，前端按 `series` 分组逻辑不变） |
+| `content.go` GET | 管理/公开都从两轴列算 `styleId`/`brandColorId`（存量未回填行回退 `Split(template_id)`），并**仍下发 `templateId` 派生兼容列** |
+| `content.go` PUT | 请求体新增 `styleId`/`brandColorId`（指针语义）；两者都缺时回退拆 `templateId`（兼容旧前端/小程序）；写入同步三列；授权 gate 改为两轴 `IsAdvancedCombo` + 「新选高级款」判定（`changed` 比较两轴值） |
+| `handler.go` 公开读 | `publicTemplateID` 重构为 `publicStyleBrand(styleID, brandColorID)`：未开通高级款时整体回落 `(default, nil)`，不抹库 |
+| `openapi.yaml` | 公开 GET / 管理 GET / 管理 PUT 三处补充 `styleId`、`brandColorId` 字段（保留 `templateId` 兼容描述） |
+| 守门（源码级） | `manifest_gen.go` 追加 `0042`（启动守门比对迁移目录，漏则误报——本仓库 python 生成脚本不在本地，直接补清单项）；`handler_test.go` 新增「风格两轴」子测试（读写两值、跨风格拒绝 code=1、未知风格/色系拒绝、只交 brandColorId 默认落 default、高级品牌色系 gate 403）；`mptemplate_test.go` 新增 `Split/Derive/归属/高级` 单测 |
+| 反向验证 | ① 临时 neutralize 跨风格 `BelongsToStyle` 校验 → 「色系不可跨风格」用例必红；② 临时去掉 `themeTouched` 条件 → 「只改板块顺序不应冲掉风格」必红；两处均还原后复绿 |
+| 门禁 | **全绿收口**：`golangci-lint v2.15.0`（0 issues）/ `go test ./...` 全包通过（含 `TestManifestMatchesMigrationsDir`、`TestAPIFlow`）/ `gofmt -l` 为空 / `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **1594 例（95 文件）** / `vite build --outDir dist-check-p1` / `git diff --check`，7 项 `SUMMARY ...=0` 全绿（本轮前端零改动，全套复跑确认无回归）。`dist-check-p1` 由 `.gitignore:20 **/dist-check-*/` 正确忽略，`git status` 无污染 |
+
+> 关键坑 1：**基础风格真值是 `default` 不是 `classic`**。初版迁移与测试误写 `classic`，导致
+> `NormalizeStyle("classic")==""`（未知风格）使基线 PUT 返回 code=1、`BelongsToStyle("classic",brand)` 永假。
+> 全部改为 `default` 后通过。设计稿已加「classic 即 default」命名澄清。
+
+> 关键坑 2（**静默数据丢失，收尾复核时抓到**）：初版把风格三列 `style_id` / `brand_color_id` /
+> `template_id` 放在 PUT 的 `upd` 里无条件写入，而原实现只在 `req.TemplateID != nil` 时才写。
+> 结果是「名片页面样式」页签保存（payload 只有 `order`/`bgImage`/`bgMask`/两个时间档位）会把客户
+> 选好的高级风格**静默冲回 `default`**——没人报错、后台与访客所见悄悄不一致。修法：引入
+> `themeTouched := req.StyleID != nil || req.BrandColorID != nil || req.TemplateID != nil`，
+> 只有显式带风格字段时才做校验 / 授权 gate / 写三列；新建行仍落合法缺省值。补「只改 order /
+> 只改 bgMask 不冲掉风格与品牌色系」断言并做反向验证。这是本项目「静默失败优先判」纪律的典型命中。
+
+> 本轮提交后本地领先远端 **9 个提交**（此前是 8 个提交 + 未提交工作树）；沙箱拦截 `git push`，
+> 需本人手动 `git push origin main`。前端/小程序视觉两轴化在 P2–P4。
+

@@ -911,7 +911,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 
 		// 案例关掉、服务到分：两列独立，不能互相带偏
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
-			"order": []string{"achievement", "service"},
+			"order":           []string{"achievement", "service"},
 			"projectTimeMode": "hidden", "serviceTimeMode": "minute",
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
@@ -1041,6 +1041,121 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		license.SetCurrent(prev)
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.Equal(t, "ink", body["templateId"], "恢复授权后无需重选即自动生效")
+	})
+
+	// ===== 7d. 风格两轴（styleId / brandColorId）：布局族 + 颜色层，色系不可跨风格 =====
+	t.Run("风格两轴 styleId/brandColorId", func(t *testing.T) {
+		prev := license.Current()
+		license.SetCurrent(nil)
+		defer license.SetCurrent(prev)
+
+		// 基线：经典蓝（default, nil），只提交 styleId 即写两轴列
+		_, body := c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"achievement", "service"}, "styleId": "default",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		hl := body["data"].(map[string]interface{})
+		require.Equal(t, "default", hl["styleId"])
+		require.Nil(t, hl["brandColorId"], "未选色系应返回 nil（用风格默认色）")
+		require.Equal(t, mptemplate.DefaultID, hl["templateId"], "派生兼容列应等于风格 id")
+
+		// 选品牌色系：挂在 default 之下，两轴值都下发，派生 templateId = 品牌色系 id
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "default", "brandColorId": "brand-ocean",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "default", hl["styleId"])
+		require.Equal(t, "brand-ocean", hl["brandColorId"])
+		require.Equal(t, "brand-ocean", hl["templateId"], "派生兼容列应等于品牌色系 id")
+
+		// 公开接口根级同样下发两轴值
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "default", body["styleId"])
+		require.Equal(t, "brand-ocean", body["brandColorId"])
+		require.Equal(t, "brand-ocean", body["templateId"])
+
+		// 切到 ink 风格（无品牌色系）：styleId=ink、brandColorId=nil、templateId=ink
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "ink",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "ink", hl["styleId"])
+		require.Nil(t, hl["brandColorId"])
+		require.Equal(t, "ink", hl["templateId"])
+
+		// 色系不可跨风格：brand-ocean 归 default，配 ink 必须拒绝
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "ink", "brandColorId": "brand-ocean",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"], "品牌色系不属于所选风格必须拒绝")
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "ink", body["data"].(map[string]interface{})["styleId"], "被拒绝的跨风格组合不应落库")
+
+		// 未知风格 / 未知色系一律拒绝
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "neon",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"brandColorId": "brand-neon",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+
+		// 只提交 brandColorId（不提交 styleId）：缺省落到 default 风格
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"brandColorId": "brand-crimson",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "default", hl["styleId"], "未提交 styleId 时应默认 default")
+		require.Equal(t, "brand-crimson", hl["brandColorId"])
+
+		// 高级品牌色系受 mp_template_advanced 约束：未开通不得「新选」
+		license.SetCurrent(&license.Entitlement{Features: []string{"content_sec"}})
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "default", "brandColorId": "brand-violet",
+		}, adminToken)
+		require.EqualValues(t, 403, body["code"], "高级品牌色系受授权 gate 约束")
+
+		// 关键不变量「三个页签各存各的」：只提交样式页字段（不带任何风格字段）时，
+		// 已选的高级风格 / 品牌色系三列都必须原样保留。否则后台不报错、访客端
+		// 却悄悄回到 default，属于典型的静默数据丢失，必须靠断言钉住。
+		license.SetCurrent(nil)
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "ink",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"order": []string{"service", "achievement"},
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "ink", hl["styleId"], "只改板块顺序不应冲掉风格")
+		require.Nil(t, hl["brandColorId"])
+		require.Equal(t, "ink", hl["templateId"], "兼容派生列同样不应被冲掉")
+
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "default", "brandColorId": "brand-ocean",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"bgMask": 60,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "default", hl["styleId"], "只改遮罩不应冲掉风格")
+		require.Equal(t, "brand-ocean", hl["brandColorId"], "只改遮罩不应冲掉品牌色系")
+		require.Equal(t, "brand-ocean", hl["templateId"])
+		license.SetCurrent(prev)
 	})
 
 	// ===== 8. 文件上传与存储增强（本地驱动回退分支） =====

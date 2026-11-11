@@ -73,11 +73,11 @@ var templates = []Template{
 		PreviewSoft:    "#e8edf2",
 	},
 	{
-		ID:             "warm",
-		Name:           "暖金棕",
-		Description:    "金棕主色 + 大圆角胶囊按钮，适合餐饮、文旅、家居等品牌",
-		Series:         SeriesStyle,
-		Advanced:       true,
+		ID:          "warm",
+		Name:        "暖金棕",
+		Description: "金棕主色 + 大圆角胶囊按钮，适合餐饮、文旅、家居等品牌",
+		Series:      SeriesStyle,
+		Advanced:    true,
 		// 与 miniprogram/app.wxss 的 .wc-theme-warm --wc-primary 保持一致；
 		// theme.spec.ts 会逐款对账，端上调深后后台预览不能还显示旧的浅金色。
 		PreviewPrimary: "#8f6320",
@@ -191,11 +191,100 @@ func Normalize(v string) string {
 	return ""
 }
 
-// IsAdvanced 判断某款是否需要 FeatureAdvanced 授权。
+// IsAdvanced 判断某款（单列 template_id 形态）是否需要 FeatureAdvanced 授权。
+// 两轴化后新代码应改用 IsAdvancedCombo(styleID, brandColorID)；本函数保留以
+// 兼容旧调用与既有测试，内部按 Split 拆两轴再判定。
 func IsAdvanced(id string) bool {
+	s, b := Split(id)
+	return IsAdvancedCombo(s, b)
+}
+
+// NormalizeStyle 校验整体风格 id（白名单 SeriesStyle），未知返回空串。
+// 与 Normalize 同理：不做静默兜底，未知值由调用方拒绝。
+func NormalizeStyle(id string) string {
+	id = strings.TrimSpace(id)
 	for _, t := range templates {
-		if t.ID == id && t.Advanced {
+		if t.ID == id && t.Series == SeriesStyle {
+			return id
+		}
+	}
+	return ""
+}
+
+// IsKnownBrandColor 判断某 id 是否为已知品牌色系（SeriesBrand）。
+func IsKnownBrandColor(id string) bool {
+	id = strings.TrimSpace(id)
+	for _, t := range templates {
+		if t.ID == id && t.Series == SeriesBrand {
 			return true
+		}
+	}
+	return false
+}
+
+// StyleOfBrand 返回某品牌色系所属的整体风格；非品牌色系返回空串。
+// P1 全部 brand-* 归 classic（用户确认的迁移映射，存量视觉零突变）；
+// 其余风格各自的调校色系是后续阶段的增强，不在 P1 范围。
+func StyleOfBrand(id string) string {
+	if IsKnownBrandColor(id) {
+		return DefaultID
+	}
+	return ""
+}
+
+// BelongsToStyle 校验 brandColorID（若非 nil）是否属于 styleID 这棵子树。
+// 这是两轴「树形」模型的核心不变式：色系不能跨风格乱配。
+func BelongsToStyle(styleID string, brandColorID *string) bool {
+	if brandColorID == nil {
+		return true
+	}
+	return StyleOfBrand(*brandColorID) == styleID
+}
+
+// Split 把旧的单列 template_id 拆成 (styleID, brandColorID)：
+// 品牌款 brand-* → (classic, brand-*)；风格款 → (id, nil)；缺省/空 → (classic, nil)。
+// 反向由 DeriveTemplateID 完成；两者保证新旧两形态可无损互转。
+func Split(id string) (string, *string) {
+	id = strings.TrimSpace(id)
+	if id == "" || id == DefaultID {
+		return DefaultID, nil
+	}
+	if IsBrand(id) {
+		b := id
+		return DefaultID, &b
+	}
+	if NormalizeStyle(id) != "" {
+		return id, nil
+	}
+	return "", nil
+}
+
+// DeriveTemplateID 由两轴值反推兼容用的单列 template_id：
+// 选了品牌色系 → 该色系 id；否则 → 风格 id；风格为空兜底 classic。
+func DeriveTemplateID(styleID string, brandColorID *string) string {
+	if brandColorID != nil {
+		return *brandColorID
+	}
+	if styleID == "" {
+		return DefaultID
+	}
+	return styleID
+}
+
+// IsAdvancedCombo 判断 (styleID, brandColorID) 组合是否属高级款：
+// 风格本身高级，或所选品牌色系高级。两轴任一高级即高级。
+func IsAdvancedCombo(styleID string, brandColorID *string) bool {
+	if brandColorID != nil {
+		for _, t := range templates {
+			if t.ID == *brandColorID && t.Series == SeriesBrand {
+				return t.Advanced
+			}
+		}
+		return false
+	}
+	for _, t := range templates {
+		if t.ID == styleID && t.Series == SeriesStyle {
+			return t.Advanced
 		}
 	}
 	return false

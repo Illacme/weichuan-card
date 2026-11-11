@@ -48,4 +48,5 @@ var expectedMigrations = []string{
 	"0039_admin_wx_openid.sql",
 	"0040_detail_time_display.sql",
 	"0041_miniprogram_theme.sql",
+	"0042_mp_theme_two_axis.sql",
 }

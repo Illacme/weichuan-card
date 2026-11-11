@@ -340,17 +340,21 @@ func New(db *gorm.DB) *gin.Engine {
 		order := []string{"achievement", "service"}
 		var bgImage string
 		var bgMask int
-		templateID := mptemplate.DefaultID
+		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
 		if l, err := repository.GetHomeLayout(db, cid); err == nil {
 			if l.Order != "" {
 				_ = json.Unmarshal([]byte(l.Order), &order)
 			}
 			bgImage, bgMask = l.BgImage, l.BgMask
-			templateID = publicTemplateID(c, cid, l.TemplateID)
+			// 两轴：优先读 style_id / brand_color_id，未回填回退 template_id 反推。
+			styleID, brandColorID = effectiveStyleBrand(l)
+			// 授权到期 / 未开通高级款时访客回落默认配色，但不抹库里的值。
+			styleID, brandColorID = publicStyleBrand(c, cid, styleID, brandColorID)
 		}
+		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": bgImage, "bgMask": bgMask,
-			"templateId": templateID,
+			"styleId": styleID, "brandColorId": brandColorID, "templateId": templateID,
 		})
 	})
 
@@ -400,21 +404,20 @@ func New(db *gorm.DB) *gin.Engine {
 	return r
 }
 
-// publicTemplateID 公开读路径的授权回落。
+// publicStyleBrand 公开读路径的授权回落（两轴形态）。
 //
-// 授权到期 / 未开通高级款时访客回默认配色，但**不抹库里的 template_id**：
-// 续费后 ResolveFor 每次请求重新查库，客户无需重选即可自动恢复。
+// 授权到期 / 未开通高级款时访客整体回落默认配色 (classic, nil)，但**不抹库里的
+// 两轴值**：续费后 ResolveFor 每次请求重新查库，客户无需重选即可自动恢复。
 // 读路径绝不因为展示配置报错或拦请求——与 detailTimeMode() 同一原则，
 // 纯展示开关不该让访客连名片都打不开。
-func publicTemplateID(c *gin.Context, cid int64, raw string) string {
-	id := mptemplate.Normalize(raw)
-	if id == "" || !mptemplate.IsAdvanced(id) {
-		return mptemplate.DefaultID
+func publicStyleBrand(c *gin.Context, cid int64, styleID string, brandColorID *string) (string, *string) {
+	if !mptemplate.IsAdvancedCombo(styleID, brandColorID) {
+		return styleID, brandColorID
 	}
 	if license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
-		return id
+		return styleID, brandColorID
 	}
-	return mptemplate.DefaultID
+	return mptemplate.DefaultID, nil
 }
 
 // detailTimeMode 取本租户详情页「更新于」的展示档位（项目案例 / 业务服务各一列）。

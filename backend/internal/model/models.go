@@ -277,7 +277,15 @@ type HomeLayout struct {
 	// 空串按 default 渲染：0041 之前建的行由迁移默认值补上，升级零突变。
 	// 授权未开通高级款时库里的值**保留不抹**（续费自动恢复），只由公开接口
 	// 在读取时回落 default，见 handler.go 的 publicTemplateID()。
+	// 两轴化后本列作为「兼容派生列」保留：写入时由 (StyleID, BrandColorID)
+	// 反推，便于回滚锚点；新逻辑以 StyleID / BrandColorID 为准（见 mptemplate）。
 	TemplateID string `gorm:"column:template_id;size:32;default:default" json:"templateId"`
+	// StyleID 整体风格（布局族）：classic/ink/warm/teal，缺省 classic（零突变）。
+	// 两轴模型第一轴，决定小程序各模块布局语言；P1 起取代 TemplateID 成为存储真值。
+	StyleID string `gorm:"column:style_id;size:32" json:"styleId"`
+	// BrandColorID 品牌色系（颜色层），叠加在所选风格之上；nil = 用该风格默认色。
+	// 两轴模型第二轴；P1 仅 classic 下挂 8 款 brand-*，其余风格暂仅默认色。
+	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 }
 
 // StatEvent 埋点原始事件
@@ -302,16 +310,16 @@ type StatEvent struct {
 //   - company_id = 0：平台超级管理员，可见/管理全部租户（企业管理入口仅对其开放）；
 //   - company_id > 0：企业管理员，仅可见/管理本企业的数据（登录时校验企业未停用）。
 type Admin struct {
-	ID           int64     `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	CompanyID    int64     `gorm:"column:company_id;index" json:"companyId"` // 0=平台超管
-	Username     string    `gorm:"column:username" json:"username"`
-	PasswordHash string    `gorm:"column:password_hash" json:"-"`
-	TokenVersion int       `gorm:"column:token_version;default:0" json:"-"` // 安全戳：改密自增，令旧令牌失效
+	ID           int64  `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	CompanyID    int64  `gorm:"column:company_id;index" json:"companyId"` // 0=平台超管
+	Username     string `gorm:"column:username" json:"username"`
+	PasswordHash string `gorm:"column:password_hash" json:"-"`
+	TokenVersion int    `gorm:"column:token_version;default:0" json:"-"` // 安全戳：改密自增，令旧令牌失效
 	// WXOpenID：小程序端管理员免密登录用的微信 openid。
 	// 与 Employee.OpenID 同构（明文列、覆盖写），但绝不出现在任何响应体里——
 	// 它是「持有这个微信号即可签发管理员令牌」的凭据，泄露等于口令泄露。
-	WXOpenID     string    `gorm:"column:wx_openid;index" json:"-"`
-	CreatedAt    time.Time `gorm:"column:created_at" json:"createdAt"`
+	WXOpenID  string    `gorm:"column:wx_openid;index" json:"-"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"createdAt"`
 }
 
 // RevokedSession 已吊销会话黑名单（单设备精确吊销）。

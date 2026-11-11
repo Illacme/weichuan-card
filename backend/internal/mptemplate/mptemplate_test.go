@@ -92,3 +92,56 @@ func TestDefaultIDMatchesModelAndMigration(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(sql), "DEFAULT '"+DefaultID+"'")
 }
+
+// 两轴拆分 / 反推：保证新旧两形态（单列 template_id ↔ (styleId, brandColorId)）
+// 可无损互转，且不变量在单测层钉死。
+func TestTwoAxisSplitAndDerive(t *testing.T) {
+	// Split：品牌款 → (classic, brand-*)；风格款 → (id, nil)；缺省/空 → (classic, nil)
+	s, b := Split("brand-ocean")
+	require.Equal(t, DefaultID, s)
+	require.NotNil(t, b)
+	require.Equal(t, "brand-ocean", *b)
+
+	s, b = Split("ink")
+	require.Equal(t, "ink", s)
+	require.Nil(t, b)
+
+	s, b = Split("")
+	require.Equal(t, DefaultID, s)
+	require.Nil(t, b)
+
+	s, b = Split("default")
+	require.Equal(t, DefaultID, s)
+	require.Nil(t, b)
+
+	// 未知值拆分失败（调用方据此拒绝，不静默兜底）
+	s, b = Split("neon")
+	require.Equal(t, "", s)
+	require.Nil(t, b)
+
+	// DeriveTemplateID：有品牌色系取其 id，否则取风格 id，风格为空兜底 classic
+	bc := "brand-crimson"
+	require.Equal(t, "brand-crimson", DeriveTemplateID("classic", &bc))
+	require.Equal(t, "ink", DeriveTemplateID("ink", nil))
+	require.Equal(t, DefaultID, DeriveTemplateID("", nil))
+}
+
+// 树形不变式 + 高级款判定（两轴形态）。
+func TestTwoAxisOwnershipAndAdvanced(t *testing.T) {
+	// 树形：P1 全部 brand-* 归 default（经典蓝基线）；色系不可跨风格乱配
+	bc := "brand-ocean"
+	require.True(t, BelongsToStyle(DefaultID, &bc))
+	require.False(t, BelongsToStyle("ink", &bc), "品牌色系不可跨风格")
+	require.True(t, BelongsToStyle(DefaultID, nil), "无品牌色系恒合法")
+	require.True(t, BelongsToStyle("ink", nil), "无品牌色系恒合法")
+
+	require.True(t, IsKnownBrandColor("brand-magenta"))
+	require.False(t, IsKnownBrandColor("neon"))
+	require.Equal(t, "warm", NormalizeStyle("warm"))
+	require.Equal(t, "", NormalizeStyle("neon"))
+
+	// 高级款判定：品牌色系高级、风格高级；default 默认色非高级
+	require.True(t, IsAdvancedCombo(DefaultID, &bc))
+	require.True(t, IsAdvancedCombo("ink", nil))
+	require.False(t, IsAdvancedCombo(DefaultID, nil))
+}

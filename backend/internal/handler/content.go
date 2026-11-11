@@ -447,7 +447,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
-		templateID := mptemplate.DefaultID
+		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
 		if db.First(&hl, "company_id = ?", cid).Error == nil {
 			if hl.Order != "" {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
@@ -457,18 +457,19 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
 			serviceMode = model.NormalizeTimeMode(hl.ServiceTimeMode)
-			// 0041 之前建的行 template_id 为空，按缺省款回；脏值同样不让前端
-			// 渲染出「一个都没选中」的模板列表。
-			if v := mptemplate.Normalize(hl.TemplateID); v != "" {
-				templateID = v
-			}
+			// 两轴：优先读 style_id / brand_color_id；未回填（SQLite AutoMigrate
+			// 或 0042 迁移前）的行回退从 template_id 反推，保证存量配色不丢。
+			styleID, brandColorID = effectiveStyleBrand(hl)
 		}
+		// 兼容派生列：新前端读 styleId/brandColorId，旧前端仍读 templateId。
+		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
 		// 清单与授权态一并下发：后台不必自己硬编码模板，且能直接把「未开通」
 		// 的高级款置灰并说明原因，而不是等保存时才被拒。
 		entitled := license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
+			"styleId": styleID, "brandColorId": brandColorID,
 			"templateId": templateID, "templates": mptemplate.All(),
 			"templateEntitled": entitled,
 		}})
@@ -487,7 +488,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
-			// 风格模板 id：三个页签各存各的，未提供时保持原值。
+			// 两轴风格 / 色系（P1 起的新写入形态）：styleId 决定布局族、
+			// brandColorId 只覆盖颜色（nil = 用该风格默认色）。两者都未提供时
+			// 才回退看 TemplateID（兼容旧前端 / 小程序仍只发单列 templateId）。
+			StyleID      *string `json:"styleId"`
+			BrandColorID *string `json:"brandColorId"`
+			// 风格模板 id（兼容字段）：新前端请改用 styleId / brandColorId。
 			TemplateID *string `json:"templateId"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
@@ -510,32 +516,68 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 		}
 
-		// 模板 id 走白名单：未知值直接拒绝，不落库。
-		templateID := ""
-		if req.TemplateID != nil {
-			templateID = mptemplate.Normalize(*req.TemplateID)
-			if templateID == "" {
+		// ===== 风格 / 色系（两轴）=====
+		// styleId 决定布局族；brandColorId 只覆盖颜色，且必须属于所选风格
+		// （树形模型：色系不能跨风格乱配）。前端 / 小程序若仍只发 templateId，
+		// 兼容分支拆成 (style, brand)，保证升级零突变、旧端不崩。
+		//
+		// themeTouched 是「三个页签各存各的」不变量的开关：只有本次请求**显式带了**
+		// 任一风格字段，才允许写风格三列。「名片页面样式」页签只提交
+		// order/背景/时间档位，若这里无条件写缺省值，会把客户选好的高级风格
+		// 静默冲回 default——没人报错、后台与访客所见悄悄不一致。
+		themeTouched := req.StyleID != nil || req.BrandColorID != nil || req.TemplateID != nil
+		styleID := mptemplate.DefaultID
+		var brandColorID *string
+		if req.StyleID != nil {
+			if sid := mptemplate.NormalizeStyle(*req.StyleID); sid == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "整体风格无效"})
+				return
+			} else {
+				styleID = sid
+			}
+		}
+		if req.BrandColorID != nil {
+			bc := *req.BrandColorID
+			if bc != "" {
+				if !mptemplate.IsKnownBrandColor(bc) {
+					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "品牌色系无效"})
+					return
+				}
+				if !mptemplate.BelongsToStyle(styleID, &bc) {
+					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该品牌色系不属于所选整体风格"})
+					return
+				}
+				brandColorID = &bc
+			}
+			// 显式传空串 = 用该风格默认色（brandColorID 保持 nil）。
+		}
+		// 兼容：两个新字段都缺失时才看旧 templateId，拆成 (style, brand)。
+		if req.StyleID == nil && req.BrandColorID == nil && req.TemplateID != nil {
+			s, b := mptemplate.Split(*req.TemplateID)
+			if s == "" {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "风格模板无效"})
 				return
 			}
-			// 授权只卡「切到高级款」这一个动作，不把整个 PUT 挂 RequireFeature：
-			// 后者会连首页背景、板块顺序、时间档位一起拦掉，没买高级模板的客户
-			// 连基础展示设置都保存不了。
-			// 已在用高级款但授权到期时，带着同一个 id 保存其它设置仍放行；
-			// 切回 default 也放行——降级只禁止「新选」，不破坏客户既有配置。
-			if mptemplate.IsAdvanced(templateID) {
-				var cur model.HomeLayout
-				current := mptemplate.DefaultID
-				if db.First(&cur, "company_id = ?", cid).Error == nil {
-					if v := mptemplate.Normalize(cur.TemplateID); v != "" {
-						current = v
-					}
-				}
-				if templateID != current &&
-					!license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
-					c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通高级风格模板，请联系服务商升级"})
-					return
-				}
+			styleID, brandColorID = s, b
+		}
+		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
+
+		// 授权只卡「新选高级款」这一个动作，不把整个 PUT 挂 RequireFeature：
+		// 后者会连首页背景、板块顺序、时间档位一起拦掉，没买高级模板的客户
+		// 连基础展示设置都保存不了。
+		// 已在用高级款但授权到期时，带着同一个组合保存其它设置仍放行；
+		// 切回默认也放行——降级只禁止「新选」，不破坏客户既有配置。
+		if themeTouched && mptemplate.IsAdvancedCombo(styleID, brandColorID) {
+			var cur model.HomeLayout
+			curStyle, curBrand := mptemplate.DefaultID, (*string)(nil)
+			if db.First(&cur, "company_id = ?", cid).Error == nil {
+				curStyle, curBrand = effectiveStyleBrand(cur)
+			}
+			changed := curStyle != styleID || !brandEqual(curBrand, brandColorID)
+			if changed &&
+				!license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced) {
+				c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通高级风格模板，请联系服务商升级"})
+				return
 			}
 		}
 
@@ -563,6 +605,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				ProjectTimeMode: model.DefaultTimeMode,
 				ServiceTimeMode: model.DefaultTimeMode,
 				TemplateID:      createdTemplate,
+				StyleID:         styleID,
+				BrandColorID:    brandColorID,
 			}
 			if req.BgImage != nil {
 				created.BgImage = *req.BgImage
@@ -597,10 +641,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if serviceMode != "" {
 				upd["service_time_mode"] = serviceMode
 			}
-			if templateID != "" {
+			// 只在本次显式提交了风格字段时才写风格三列：否则只提交 order / 背景 /
+			// 时间档位的页签会把客户选好的模板静默冲回 default（见 themeTouched 注释）。
+			// 三列同步写：style_id / brand_color_id 为真值，template_id 为兼容派生列；
+			// brand_color_id 是 *string，nil 即写 NULL（用风格默认色）。
+			if themeTouched {
+				upd["style_id"] = styleID
+				upd["brand_color_id"] = brandColorID
 				upd["template_id"] = templateID
 			}
-			// 三个页签各存各的：只带 templateId 的 payload 只改 template_id 一列，
+			// 三个页签各存各的：只带风格字段的 payload 只改风格三列，
 			// 其余展示配置一律不动。upd 为空说明没带任何可写字段，直接回成功即可。
 			if len(upd) > 0 {
 				if err := db.Model(&hl).Updates(upd).Error; err != nil {
@@ -622,6 +672,24 @@ func clampMask(v int) int {
 		return 100
 	}
 	return v
+}
+
+// effectiveStyleBrand 返回某行的有效两轴值：优先读 style_id / brand_color_id，
+// 未回填（SQLite AutoMigrate 或 0042 迁移前）的行回退从 template_id 反推，
+// 保证存量租户配色在迁移完成前也不丢。
+func effectiveStyleBrand(hl model.HomeLayout) (string, *string) {
+	if hl.StyleID != "" {
+		return hl.StyleID, hl.BrandColorID
+	}
+	return mptemplate.Split(hl.TemplateID)
+}
+
+// brandEqual 比较两个 *string 色系是否相等（均 nil 视为相等）。
+func brandEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // registerSortRoute 注册「批量排序」接口，项目案例 / 业绩分类 / 业务服务共用。

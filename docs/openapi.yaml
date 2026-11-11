@@ -585,7 +585,16 @@ paths:
                   templateId:
                     type: string
                     enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                    description: 当前生效的整体风格模板 id；未知/未授权一律回 default
+                    description: 当前生效的整体风格模板 id；未知/未授权一律回 default。
+                  styleId:
+                    type: string
+                    enum: [default, ink, warm, teal]
+                    description: 两轴第一轴「整体风格（布局族）」，决定各模块布局；缺省 default（经典蓝基线）。与 brandColorId 共同取代 templateId 成为存储真值。
+                  brandColorId:
+                    type: string
+                    nullable: true
+                    enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                    description: 两轴第二轴「品牌色系（纯颜色层）」；null（缺省）= 用该风格默认色。P1 仅 default 风格下挂品牌色系；色系不可跨风格。
 
   /api/team:
     get:
@@ -2795,6 +2804,15 @@ paths:
                         type: string
                         enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
                         description: 当前选中的风格模板；存量行（0041 前）缺省为 `default`。
+                      styleId:
+                        type: string
+                        enum: [default, ink, warm, teal]
+                        description: 两轴第一轴「整体风格（布局族）」；缺省 default。
+                      brandColorId:
+                        type: string
+                        nullable: true
+                        enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                        description: 两轴第二轴「品牌色系（纯颜色层）」；null = 用该风格默认色。P1 仅 default 风格下挂品牌色系。
                       templates:
                         type: array
                         description: 后台模板页的可选清单，随二进制内置（端上不硬编码）；按 `series` 分两组展示。
@@ -2869,7 +2887,18 @@ paths:
                 templateId:
                   type: string
                   enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                  description: 风格模板 id；非法值 code=1，未授权高级款「新选」code=403。
+                  description: |
+                    风格模板 id（兼容字段）；非法值 code=1，未授权高级款「新选」code=403。
+                    新前端请改用 styleId / brandColorId；两者都缺时本字段拆成 (风格, 色系)。
+                styleId:
+                  type: string
+                  enum: [default, ink, warm, teal]
+                  description: 两轴第一轴「整体风格（布局族）」；缺省 default。仅本字段也能定风格。
+                brandColorId:
+                  type: string
+                  nullable: true
+                  enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                  description: 两轴第二轴「品牌色系（纯颜色层）」；省略或 null = 用该风格默认色。必须属于所选风格（P1 仅 default 下挂品牌色系），否则 code=1。
       responses:
         "200":
           description: code=0 成功；code=1 参数错误或枚举取值无效；code=403 未开通高级模板
