@@ -16,7 +16,7 @@
       图形只取通用行业图标与照片，换模板时只有主色、页面底色、圆角、按钮与投影会变，
       照片与插画跟真机上一样保持原样。
       它不体现真机字体、系统状态栏、安全区与首页背景图；
-      点卡片右上角「查看大图」可滚动看完整长图，最终观感请以真机验收为准。
+      卡片内可上下滚动查看完整首页，悬停卡片后点右上角「查看大图」可放大查看，最终观感请以真机验收为准。
     </p>
 
     <!-- 授权到期 / 未开通时客户必须知道：不是保存失败，是这一档没买；
@@ -65,14 +65,18 @@
               </div>
               <span class="fallback-tag">示意图</span>
             </div>
-            <img
-              v-if="!failedPreviews[t.id]"
-              class="preview-shot"
-              :src="previewUrl(t.id)"
-              :alt="t.name + ' 小程序首页预览'"
-              decoding="async"
-              @error="onPreviewError(t.id)"
-            />
+            <!-- 长图放在滚动窗口里：默认露出手机窗口高度，管理员滚动看完整首页；
+                 窗口比例由 .theme-preview 控制，与长图自身比例（375x1210）无关。 -->
+            <div class="preview-scroll">
+              <img
+                v-if="!failedPreviews[t.id]"
+                class="preview-shot"
+                :src="previewUrl(t.id)"
+                :alt="t.name + ' 小程序首页预览'"
+                decoding="async"
+                @error="onPreviewError(t.id)"
+              />
+            </div>
             <!-- 悬停预览图时才显示的标注，默认不遮挡示意图观感：客户最容易把「按 token 复刻的示意图」
                  直接当成真机页面效果去验收，这个误解不会报错，只能靠标注说清；
                  常驻反而干扰选色对比，故改为悬停浮现（降级提示 fallback-tag 仍常显）。 -->
@@ -269,7 +273,7 @@ onMounted(load)
   margin-bottom: 16px;
 }
 .theme-group + .theme-group {
-  margin-top: 24px;
+  margin-top: 40px;
 }
 .group-head {
   display: flex;
@@ -294,7 +298,7 @@ onMounted(load)
 .theme-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 28px;
   margin-top: 8px;
 }
 .theme-card {
@@ -315,16 +319,16 @@ onMounted(load)
   cursor: not-allowed;
   opacity: 0.62;
 }
-/* 预览容器比例与 gen_theme_previews.py 的 375x1210 画布一致：区块必须完整显示，
-   比例不对就会把 8 个分类图标 / 4 张服务卡 / 底部按钮裁掉，而页面不会报任何错。
-   画布按内容自然收口（实测内容底部 1130 + 20px 呼吸 + 60px 底栏），不再保留真机
-   截图尾部的大片空白滚动余量：那块空白会把图内按钮和卡片外的模板名称连成一片。
-   生成脚本的画布尺寸由 theme.spec.ts 与本行对账，改一边必须改两边。
-   border-bottom 是「示意图到此结束」的硬边界：图内底栏是白底，下面的名称区也是白底，
-   没有这条线客户会以为按钮和模板说明是同一块内容。 */
+/* 预览容器是**手机窗口**而非整张长图：窄于 1:3.2 的长图，默认只露出约两屏高度，
+   完整首页靠内部滚动查看——比把整张长图压扁在卡片里更贴近真机预览。
+   比例必须落在手机竖屏范围（约 1:1.6 ~ 1:2.3），超出会被 theme.spec.ts 判红；
+   退回 375/1210 长条也会变红。border-bottom 仍是「窗口到此结束」的硬边界：
+   窗口底部（图内底栏白底）下面的名称区也是白底，没有这条线客户会以为
+   按钮和模板说明是同一块内容。长图本身的画布比例由 gen_theme_previews.py 的
+   375x1210 决定，与窗口比例无关。 */
 .theme-preview {
   position: relative;
-  aspect-ratio: 375 / 1210;
+  aspect-ratio: 375 / 750;
   overflow: hidden;
   border-bottom: 1px solid #dcdfe6;
 }
@@ -349,13 +353,19 @@ onMounted(load)
   border-radius: 4px;
   padding: 1px 6px;
 }
-.preview-shot {
+/* 长图滚动窗口：填满手机窗口，超出部分纵向滚动；overscroll-behavior 防止滚动
+   穿透到页面。图按原始比例显示（height: auto），不会裁掉下半部，也不会压扁。 */
+.preview-scroll {
   position: absolute;
   inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.preview-shot {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
 }
 /* 常显标注盖在真实图之上（DOM 顺序在 img 后面 + z-index）：降级时 .fallback-tag
    说「示意图」，正常时这枚说「非真机截图」，两个语义不能合并成一个角标。 */

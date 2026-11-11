@@ -491,14 +491,23 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(html.split('var(--wc-').length - 1, '预览 HTML 没有真正用 token').toBeGreaterThanOrEqual(15)
   })
 
-  it('后台容器比例与生成画布一致，否则真实图会被裁切/拉伸', () => {
+  it('后台预览卡是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
+    // 长图自身画布仍由脚本决定（375x1210），产物比例与脚本一致由 --check 守门
+    expect([Number(dim[1]), Number(dim[2])]).toEqual([375, 1210])
+    // 卡片是手机窗口：窄于长图、靠滚动看完整页；比例必须落在手机竖屏范围
     const ratio = /aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/.exec(vue)
     expect(ratio, '后台预览容器缺 aspect-ratio，图没加载完会跳版').not.toBeNull()
-    expect([Number(ratio![1]), Number(ratio![2])]).toEqual([Number(dim[1]), Number(dim[2])])
-    expect(vue).toContain('object-fit: cover')
+    const r = Number(ratio![2]) / Number(ratio![1])
+    expect(r, '卡片应接近手机竖屏比例，而不是把整张长图压扁').toBeGreaterThanOrEqual(1.6)
+    expect(r, '卡片高度不应超过约 2.3 个屏宽，否则又变回长条').toBeLessThanOrEqual(2.3)
+    // 长图在窗口内可滚动，并按原始比例显示（cover 会裁掉下半部、压扁会变形）
+    expect(vue).toContain('class="preview-scroll"')
+    expect(vue).toContain('overflow-y: auto')
+    expect(vue).toContain('class="preview-shot"')
+    expect(vue, '长图必须按原始比例显示才能滚动，cover 会裁掉下半部').toContain('height: auto')
   })
 
   it('后台确实渲染真实图并保留按张降级的兜底（改回色块示意会变红）', () => {
