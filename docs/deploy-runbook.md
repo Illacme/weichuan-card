@@ -939,11 +939,16 @@ curl -sI https://<域名>/assets/<任一hash文件>.js | grep -iE 'cache-control
 > 浏览器却可能按 `Last-Modified` 做启发式缓存（典型为文件年龄的 10%），
 > 发版后部分用户会拿到旧壳去加载已被删除的旧资源。
 
-> ⚠️ **验证时要分清 MISS 与 HIT**：设了「边缘/浏览器 TTL = 1 年」之后，CF 会**重写**
+> ⚠️ **验证时要分清 MISS 与 HIT**：设了「边缘/浏览器 TTL = 1 年」之后，CF 有时会**重写**
 > 缓存命中响应的 `Cache-Control`——只留下 `max-age=31536000`，`public` 和 `immutable`
-> 都被去掉。所以看到 HIT 上少了 `immutable` 并不代表 nginx 配错了，
+> 都被去掉。所以看到 HIT 上少了 `immutable` 不必立刻怀疑 nginx，
 > 判断 nginx 是否生效要看**回源那一次**：`curl -sI "...js?cb=$RANDOM"`
 > 强制 MISS，期望完整的 `public, max-age=31536000, immutable`。
+>
+> **2026-11-12 实测修正**：Cache Rule 里的浏览器 TTL 选「接受源服务器 TTL」时，
+> HIT 响应**会完整保留** `public, max-age=31536000, immutable`（不再被改写）。
+> 所以上面那条「一定被改写」只适用于把 TTL 写死的情况，别当成通例——
+> 判据仍是「MISS 那次对不对」。
 
 ### 5.2.5 uploads 长缓存：让源站的 immutable 真的透传到浏览器
 
@@ -1135,6 +1140,22 @@ curl -sI "https://<域名>/theme-previews/nope-$RANDOM.png" | grep -i cache-cont
 # 期望：cache-control: no-store
 # 若仍是 max-age=14400 → 本段没生效（配置没换/没 reload），或 CF 缓存没 Purge
 ```
+
+**线上实测记录（2026-11-12 18:50，本方案生效后）**：
+
+```
+200  default--default.png?probe=…        cache-control: public, max-age=31536000, immutable   cf-cache-status: MISS
+200  default--default.thumb.png?probe=…  cache-control: public, max-age=31536000, immutable   cf-cache-status: MISS   content-length: 131041
+404  nope-…png                           cache-control: no-store                              cf-cache-status: BYPASS
+200  同 URL 第 2/3 次                     cf-cache-status: HIT，age: 3 → 10（immutable 仍在）
+200  ink--brand-crimson.png?v=aaabbb / ?v=cccddd   各自 MISS → 查询串确实参与缓存键
+```
+
+最后一条是这个方案能否成立的**前提**：若 CF 的 Cache Level 被设成「Ignore query string」，
+所有 `?v=` 变体会被折叠成同一个缓存对象，旧图立刻回来且不报错。
+判断方法就是拿同一张图随便换两个 `v` 打两次，各自 MISS 才说明查询串进了键。
+
+线上图字节数与仓库一致（原图 `1109522`、缩略图 `131041`），可确认跑的是当前版本两档图。
 
 **改完 nginx 后必须清一次 CDN**（旧的 4 小时副本不会自己变短）：
 
