@@ -15,9 +15,15 @@ const (
 	// 即可在大多数屏上无损观感，体积却降数倍（压缩的主要来源就是这一步缩放）。
 	FullMaxEdge = 2000
 	// ThumbMaxEdge 缩略图长边上限：列表/宫格用，远小于原图即可。
+	//
+	// 注意它是**上限**不是**目标尺寸**：原图本来就 ≤480px 时 resizeContain 会原样
+	// 返回（不缩）。这类小图的体积下降靠「PNG 调色板量化」而不是少画像素——
+	// 详见 quantizePNG / encodeThumbPNG。别把这个值调小去「按显示尺寸出图」：
+	// warm 风格的分类图标在 3x 屏上显示宽约 545 物理像素，比 256px 的原图还大，
+	// 强行缩到 128px 只会糊，并不会省出多少字节。
 	ThumbMaxEdge = 480
 	// full/thumb 的 JPEG 编码质量（0-100）。原图略高保留细节，缩略图可更狠。
-	fullJPEGQuality = 85
+	fullJPEGQuality  = 85
 	thumbJPEGQuality = 80
 )
 
@@ -42,10 +48,10 @@ func ProcessImage(ext string, data []byte) ([]byte, error) {
 //     （这类本就原样透传，不生成缩略图，列表页改用原图即可）。
 //
 // 关于 fail-open（与 ProcessImage 同口径，不可改为 fail-closed）：
-//   1. 不引入上传回归——任何通过 checkFile 校验的文件仍照常上传，安全姿态不弱于
-//      改造前（改造前本就不过滤元数据）；
-//   2. 仅对极小比例「标准库无法解析的合法图片」放弃处理，绝大多数真实上传
-//      （手机 JPEG、截图 PNG）都能被 stdlib 正常解码并完成压缩/缩略图。
+//  1. 不引入上传回归——任何通过 checkFile 校验的文件仍照常上传，安全姿态不弱于
+//     改造前（改造前本就不过滤元数据）；
+//  2. 仅对极小比例「标准库无法解析的合法图片」放弃处理，绝大多数真实上传
+//     （手机 JPEG、截图 PNG）都能被 stdlib 正常解码并完成压缩/缩略图。
 //
 // 这样上传头像/案例图时，用户手机相册里的 GPS 坐标不会随名片外泄（PIPL 最小化
 // 收集），同时原图体积大幅下降、列表页用缩略图显著省流量。
@@ -57,10 +63,18 @@ func ProcessUpload(ext string, data []byte) (full, thumb []byte, err error) {
 		if e1 != nil {
 			return data, nil, nil // 压缩失败：原样透传，不阻断
 		}
-		thumb, e2 := processResize(ext, data, ThumbMaxEdge, thumbJPEGQuality)
+		thumb, e2 := processThumb(ext, data, ThumbMaxEdge, thumbJPEGQuality)
 		if e2 != nil {
 			// 缩略图失败不影响主图：仅丢缩略图，列表页回退原图
 			return full, nil, nil
+		}
+		// 绝不写出比**落盘原图**更大的「缩略图」，与 BackfillThumbs 的兜底同源。
+		// 量化后的 PNG 偶尔反而更大（原图本身已是调色板图、或只有几种颜色），
+		// 此时让 _thumb 直接复制 full：体积没省，但端上不会 404 再回退一次，
+		// 省掉的正是那次失败请求。注意比的是 full 不是上传原始 data——
+		// 列表页回退取的是 /uploads/<name>（即 full），拿上传原始字节比会误判。
+		if len(thumb) >= len(full) {
+			thumb = full
 		}
 		return full, thumb, nil
 	default:
@@ -70,8 +84,8 @@ func ProcessUpload(ext string, data []byte) (full, thumb []byte, err error) {
 }
 
 // Thumbnail 只生成缩略图（不重编码原图），供「存量图回填」复用。
-// 与 ProcessUpload 的 thumb 同源同参数（ThumbMaxEdge / thumbJPEGQuality），
-// 保证回填出来的缩略图与新上传时生成的完全一致。
+// 与 ProcessUpload 的 thumb **走同一个 processThumb**（同样的尺寸上限、
+// 同样的量化器、同样的 quality），保证回填出来的缩略图与新上传时逐字节一致。
 //
 // 与上传路径的 fail-open 语义不同：这里失败必须返回 nil + error。回填是离线批处理，
 // 若把「解码失败的图」的原字节当成缩略图写出去，等于用原图冒充缩略图（体积不变、
@@ -80,14 +94,29 @@ func Thumbnail(ext string, data []byte) ([]byte, error) {
 	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
 	switch ext {
 	case "jpg", "jpeg", "png":
-		img, err := decodeImage(ext, data)
-		if err != nil {
-			return nil, err
-		}
-		return encodeImage(ext, resizeContain(img, ThumbMaxEdge), thumbJPEGQuality)
+		return processThumb(ext, data, ThumbMaxEdge, thumbJPEGQuality)
 	default:
 		return nil, errUnsupportedImage{ext}
 	}
+}
+
+// processThumb 解码 →（必要时等比缩到 maxEdge）→ 缩略图专用编码。
+// 与 processResize 的差异只在编码那一步：PNG 走调色板量化，JPEG 不变。
+func processThumb(ext string, data []byte, maxEdge, quality int) ([]byte, error) {
+	img, err := decodeImage(ext, data)
+	if err != nil {
+		return nil, err
+	}
+	return encodeThumb(ext, resizeContain(img, maxEdge), quality)
+}
+
+// encodeThumb 缩略图编码：PNG 走 ≤256 色量化（见 png8.go），JPEG 维持原 quality。
+// PNG 量化失败由 encodeThumbPNG 内部回退无损编码，不让 _thumb 凭空消失。
+func encodeThumb(ext string, img image.Image, quality int) ([]byte, error) {
+	if ext == "png" {
+		return encodeThumbPNG(img)
+	}
+	return encodeImage(ext, img, quality)
 }
 
 // processResize 解码 →（必要时缩放）→ 重编码。maxEdge≤0 表示不缩放（仅脱敏重编码）。

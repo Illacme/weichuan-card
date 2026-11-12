@@ -133,13 +133,18 @@ func TestBackfillThumbsForceRegenerates(t *testing.T) {
 	}
 }
 
-// 原图本就比缩略图规格小（≤ ThumbMaxEdge）或压缩率已到极限时，重编码只会更大。
+// 原图压缩率已到极限（只有 1~2 种颜色）时，量化后的调色板 PNG 反而更大。
 // 此时直接存原图字节：体积虽没省，但 _thumb **存在**——端上不再先 404 再回退，
 // 省掉的是那次失败请求（实测每次 0.3-0.5s），这才是回填对小图的主要收益。
+//
+// 2026-11-13 改：老实现里「≤ ThumbMaxEdge 的小图」一律走这个分支（PNG 无损重编码
+// 只会更大）。加了调色板量化后，**照片类小图也能变小**（见下方
+// TestBackfillTinyPhotoNowShrinks），所以这里改用真正的单色图来覆盖兜底分支；
+// 继续拿 photoLike 当「小图」会走 Generated，等于把兜底分支测丢了。
 func TestBackfillThumbsCopiesTinyOriginal(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "avatar.png")
-	writePNG(t, src, 120, 120)
+	writeFlatPNG(t, src, 8, 8)
 
 	res, err := BackfillThumbs(dir, BackfillOptions{})
 	if err != nil {
@@ -164,6 +169,48 @@ func TestBackfillThumbsCopiesTinyOriginal(t *testing.T) {
 	// 且绝不写出比原图更大的东西
 	if len(tb) > len(orig) {
 		t.Fatalf("缩略图 %d 字节 > 原图 %d 字节，回填反而变大了", len(tb), len(orig))
+	}
+}
+
+// 量化带来的新收益：**没有缩放**的照片类小图（≤ ThumbMaxEdge）现在也能变小。
+// 老实现里它会被判成 Copied（原样存一份），体积一字不降。这条用例把「小图
+// 到底有没有真的被优化」钉住——只改尺寸参数不会让它变绿。
+func TestBackfillTinyPhotoNowShrinks(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "tiny.png")
+	writePNG(t, src, 120, 120)
+
+	res, err := BackfillThumbs(dir, BackfillOptions{})
+	if err != nil {
+		t.Fatalf("BackfillThumbs: %v", err)
+	}
+	if res.Scanned != 1 || res.Generated != 1 || res.Copied != 0 || res.Failed != 0 {
+		t.Fatalf("小图量化后应走生成分支: %+v", res)
+	}
+	if res.BytesSaved <= 0 {
+		t.Fatalf("小图量化应省下传输量，实际 %+v", res)
+	}
+	orig, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumb, err := os.ReadFile(filepath.Join(dir, "tiny_thumb.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oi, err := png.Decode(bytes.NewReader(orig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ti, err := png.Decode(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ti.Bounds() != oi.Bounds() {
+		t.Fatalf("量化不该改尺寸：原图 %v，缩略图 %v", oi.Bounds(), ti.Bounds())
+	}
+	if _, ok := ti.(*image.Paletted); !ok {
+		t.Fatalf("小图缩略图也必须是调色板 PNG，实际 %T", ti)
 	}
 }
 

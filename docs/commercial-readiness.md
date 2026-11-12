@@ -3022,3 +3022,102 @@ CDN 取哪个不确定，而**从响应上根本看不出「到底生效没」**
 | P2 | 缩略图按显示尺寸出图（图标 256→128 + PNG8，改 `thumbbackfill` 规格 + 存量回填） | `cat-*` 8 张 291KB 完全没优化，是唯一有实测收益的前端项 |
 | P3 | 后台多页拆包（登录页 / 后台两入口） | 唯一能真正降首屏的方向，但要动构建与路由结构 |
 | P4 | 接入路径（国内 CDN / 备案 / 源站访问控制重构） | 收益最大但成本最高，且依赖外部条件 |
+
+## 第四十九轮：P2 缩略图不改尺寸、改编码（PNG 调色板量化，2026-11-13）
+
+上一轮评估里写的 P2 是「缩略图按显示尺寸出图（**图标 256→128** + PNG8，改
+`thumbbackfill` 规格 + 存量回填）」。动手前先做了完整评估，发现那个 128 是错的，
+用户确认后改成「保持尺寸、只做 PNG8 量化」。
+
+### 一、被推翻的假设：不存在「按显示尺寸下采样」这回事
+
+| 位置 | CSS 显示宽 | 3x 屏物理像素 |
+| --- | --- | --- |
+| 分类图标 `.cat-icon`（warm 风格 `.cat-item` 50%） | ≈347rpx | **≈545px** |
+| 服务图标 `.svc-icon`（25% 列） | ≈170rpx | ≈267px |
+| 精选封面 `.feat-cover`（50% 列） | ≈375rpx | ≈589px |
+| 项目列表 `.item .cover` | 160rpx | ≈251px |
+| 团队头像 `.team-avatar` | 120rpx | ≈188px |
+
+256×256 的原图**本来就小于**这些显示尺寸。缩到 128 只会让图标更糊，而且不会报错——
+属于典型的「为了省字节牺牲画质，还以为自己在做适配」。
+
+真正的根因在编码侧：`resizeContain` 在原图 `≤ ThumbMaxEdge(480)` 时**原样返回**，
+`encodeImage` 又对 PNG 走无损 `png.Encode`，于是 256×256 的图标被原封不动重存一份，
+`_thumb` 与原件体积一字不差。JPEG 分支一直正常（缩 + q80，实测 680×400 的封面
+67KB → 32KB，省约 50%），**不用动**。
+
+### 二、三种方案的实测（16 张演示 PNG，合计 951.2 KB）
+
+| 方案 | 结果 | 画质 |
+| --- | --- | --- |
+| 现状（无损重编码） | 951.2 KB → 约 951 KB | 无损，等于白存一份 |
+| 缩到 128px + PNG8 | 53.6 KB（5.6%） | 明显糊 |
+| **保持尺寸 + PNG8 256 色量化（采用）** | **199.9 KB（21%）** | 三张代表性图目视无可见差异 |
+
+ImageMagick 原型先验证了量化收益（951→292KB），Go 生产版用中位切分把调色板
+选得更准，最终 199.9KB。内置素材库 748 张图标单独跑：**6986 KB → 2793 KB（40%）**，
+全量耗时 9.7 秒。
+
+### 三、实现（`backend/internal/storage/png8.go` + `image.go`）
+
+- **中位切分量化**：5bit/通道直方图 → 按「最大通道跨度 × 桶数」反复切盒 →
+  盒内加权平均色作调色板 → 逐像素写 `ColorIndex`；输出 `image.Paletted` +
+  `png.BestCompression`，保留 alpha（图标普遍带透明背景与抗锯齿半透明边缘，
+  只按 RGB 切会让边缘出脏色）。纯标准库，后端二进制不依赖 ImageMagick。
+- **两条链路收敛到同一个 `processThumb`**：`ProcessUpload`（新上传）与
+  `Thumbnail`（存量回填）此前是两份几乎一样的代码，改规格极易只改一边；
+  现在逐字节一致，并有测试守门。
+- **上传路径补兜底**：回填路径早有「绝不写出比原图更大的缩略图」，上传路径没有。
+  8×8 单色图实测量化后 82 → 87 字节，兜底让它直接复制 `full`（`_thumb` 仍存在，
+  端上不会 404 再回退一次）。
+- **量化失败回退无损 PNG**（fail-open），不让 `_thumb` 凭空消失。
+- `ThumbMaxEdge` **保持 480 不动**，并在 `image.go` 注释里写清「别把它调小去按
+  显示尺寸出图」的理由，防止以后有人照着 128 这个旧数字改回来。
+
+### 四、守门与反向验证
+
+`png8_test.go` 新增 7 条：真实图标体积至少减半且**尺寸不变**、输出必须是
+`*image.Paletted` 且 ≤256 色、透明背景不丢、平均通道误差 ≤24、上传/回填逐字节一致
+（PNG + JPEG 两路）、上传绝不写出更大的 thumb、JPEG 路径不受波及、16 张素材
+总收益 ≤40%、连续三次量化确定性；`backfill_test.go` 把「小图一律原样存」的旧用例
+改成真正的单色图（继续覆盖兜底），另加一条「照片类小图现在也能变小」。
+
+**反向验证三条，全部确认会红**：
+
+1. 把 `encodeThumb` 的 PNG 分支改回 `encodeImage`（关掉量化）→
+   `TestBackfillTinyPhotoNowShrinks` / `TestThumbPNGQuantizesWithoutResizing` /
+   `TestThumbPNGSavesAcrossSeedAssets` 三条红。
+2. 去掉上传路径的体积兜底 → `TestProcessUploadNeverWritesBiggerThumb` 红
+   （`缩略图 87 字节 > 落盘原图 82 字节`）。
+3. 去掉直方图按 key 排序（直接用 `range map`）→ `TestQuantizePNGDeterministic`
+   与 `TestProcessUploadAndThumbnailAgree` 双双红，且 `-count=2` 稳定复现。
+
+第 3 条是**本轮抓到的真 bug**，不是假想：Go 的 map 迭代顺序随机，桶的初始顺序会
+影响中位切分里「相等元素」的相对位置，同一张图两次量化差 31~335 字节。视觉上完全
+一样，但 `-force` 回填会反复改写文件、无谓打掉 CDN 缓存，上传与回填也对不上。
+「同源一致」这条断言本来是为了防链路漂移，结果把确定性也一起守住了。
+
+### 五、运维动作（runbook §4.5.1）
+
+**必须 `-force` + Purge，缺一件就是静默失败**：
+
+```bash
+cd backend
+go run ./cmd/thumbbackfill -dry-run -force
+go run ./cmd/thumbbackfill -force
+# Cloudflare → Caching → Purge：/uploads/*
+```
+
+原因：`/uploads/` 的 200 响应是 `public, max-age=31536000, immutable`（§5.2.5），
+而 `-force` 是**原地覆盖同名文件**、URL 一个字都不变。不清 CDN，边缘会继续喂一年前的
+旧 thumb，页面全 200、控制台零报错，只是流量一点没省——与第四十七轮预览图事故同类。
+验证用 PNG 头第 26 字节的 color type（3 = 调色板），只依赖 Python 标准库。
+
+另记一条既有事实：素材采用走 `SaveBytes("library/<id>.<ext>")`，只写原图不生成
+`_thumb`，端上派生会先 404 再回退。采用新素材后跑一次不带 `-force` 的回填即可补齐；
+回填会扫到 `uploads/library/` 子目录。
+
+**用户侧待办**：① `git push origin main`；② 线上按 §4.5.1 跑 `-force` 回填；
+③ **Cloudflare Purge `/uploads/*`**；④ 上一轮 P1 的第 5 条 Cache Rule 若还没加，
+一并补上（runbook §5.2.7）。

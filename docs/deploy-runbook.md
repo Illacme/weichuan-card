@@ -748,21 +748,79 @@ go run ./cmd/thumbbackfill              # 确认后正式回填
 ```
 
 - `生成`：缩略图比原图小，正常写入；
-- `原样存`：原图已 ≤ 480px 或压缩率到顶，重编码反而更大 → 直接存原图字节。
-  体积没省，但 `_thumb` **存在**，端上就不会再 404 回退一次；
+- `原样存`：原图压缩率已到顶（如只有 1~2 种颜色），连调色板量化都反而更大 →
+  直接存原图字节。体积没省，但 `_thumb` **存在**，端上就不会再 404 回退一次；
+  注意 **≤480px 的小图不再自动落进这一支**（2026-11-13 起 PNG 走调色板量化，
+  见 §4.5.1）；
 - `失败`（同时打 `[WARN] 跳过 <path>`）：解码失败/读不了，跳过不中断整轮，需要人工看一眼。
 
 常用开关：
 
 ```bash
 go run ./cmd/thumbbackfill -dir /www/wwwroot/weichuan/uploads   # 显式指定目录
-go run ./cmd/thumbbackfill -force                               # 全部重生成（调整 ThumbMaxEdge 后）
+go run ./cmd/thumbbackfill -dry-run -force                      # 换规格前先看量
+go run ./cmd/thumbbackfill -force                               # 全部重生成（缩略图规格变更后必跑）
 ```
 
 **可以随时多次执行**：已存在且 mtime 不早于原图的缩略图会被跳过（幂等），原图只读、
 绝不改写或删除。新上传的图自带缩略图，所以日常无需常驻，只在「升级后 / 换规格后」
 手动跑一次即可。对象存储（MinIO/OSS/S3）的对象不在本地目录，本工具会直接拒绝
 （除非显式 `-dir` 指定某个本地目录）。
+
+### 4.5.1 缩略图规格变更（2026-11-13）：PNG 改调色板量化，**必须 -force + Purge**
+
+老生成器的 PNG 分支是「等比缩到长边 ≤480 → `png.Encode` 无损重编码」。问题在
+`resizeContain` 对**本来就 ≤480px 的图原样返回**，于是 256×256 的分类图标被
+原封不动再存一份，`_thumb` 和原图体积一字不差——白占一份存储、零收益。
+JPEG 分支一直是正常的（缩 + q80，实测省约 50%），不用动。
+
+现在 PNG 缩略图改成 **≤256 色调色板量化**（`storage/png8.go` 的中位切分 + 保留
+alpha + `BestCompression`）：每像素从 3~4 字节变成 1 字节索引，尺寸**一点不缩**。
+演示素材 16 张 PNG 实测 **951.2 KB → 199.9 KB（21%）**；内置素材库 748 张图标
+**6986 KB → 2793 KB（40%）**，全量生成约 10 秒。三张代表性图（分类图标 / 服务竖卡 /
+LOGO）与原件目视对比无可见差异。
+
+> **为什么没有把图标缩到 128px**：分类图标在 warm 风格下显示宽约 347rpx，
+> 3x 屏换算约 **545 物理像素**，比 256px 的原图还大。缩到 128 只会糊，而收益本来就
+> 几乎全在编码侧（不缩尺寸的量化已经省了 79%）。`ThumbMaxEdge=480` 保持不动。
+
+**升级到这一版后必须做两件事，缺一件就是静默失败**：
+
+```bash
+# 1) 用新规格重生成全部存量缩略图（-force 不可省：已有的 _thumb mtime 更新，
+#    不加 -force 会被当成「已是最新」整批跳过）
+cd backend
+go run ./cmd/thumbbackfill -dry-run -force
+go run ./cmd/thumbbackfill -force
+
+# 2) Cloudflare Purge /uploads/*  ← 关键
+```
+
+第 2 步不能省：`/uploads/` 的 200 响应是 `public, max-age=31536000, immutable`
+（见 §5.2.5），而 `-force` 是**原地覆盖同名文件**、URL 一个字都不变。不清 CDN 的话
+边缘节点会继续喂一年前的旧 `_thumb`，页面全 200、控制台零报错，只是流量一点没省
+——和 §5.2.6 那次预览图事故是同一类静默失败。浏览器 Ctrl+F5 只清本地，不算验收。
+
+**验证**（Purge 之后）：
+
+```bash
+# 强制 MISS 取一张真实缩略图，看它确实是调色板 PNG
+curl -s "https://<域名>/uploads/<某个随机名>_thumb.png?cb=$RANDOM" -o /tmp/t.png
+python3 -c "b=open('/tmp/t.png','rb').read(26); print('PNG color type =', b[25], '(3 = 调色板)')"
+# 期望 3；若是 2/6（真彩）说明拿到的还是旧副本，Purge 没生效
+
+# 同一 URL 再打一次，看 cf-cache-status: HIT
+curl -sI "https://<域名>/uploads/<同一个>_thumb.png?cb=<同一个随机值>" \
+  | grep -iE 'cache-control|cf-cache-status'
+```
+
+服务器装了 ImageMagick 的话也可以 `magick identify -format '%[channels] %[colors] colors\n'
+/tmp/t.png`，期望 ≤256 colors；上面的 Python 只依赖标准库，任何机器都能跑。
+
+> **内置素材库采用后仍要回填**：素材采用走 `SaveBytes("library/<id>.<ext>")`，
+> 这条路径只写原图、不生成 `_thumb`（端上派生会先 404 再回退）。所以每次采用一批
+> 新素材后，跑一次不带 `-force` 的回填即可把缺的补齐；只有换了生成规格才需要 `-force`。
+> 回填会连 `uploads/library/` 子目录一起扫到。
 
 ## 5. HTTPS（生产必须，小程序合法域名的前提）
 
