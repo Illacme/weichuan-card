@@ -230,12 +230,24 @@ page {
    两轴化后 style 层要真的决定各模块排布：这里按 4 风格 × 4 模块给出各自的度量
    （顶部名片卡 .emp-card / 公司简介 .mp-profile / 经典业绩 .mp-achievements /
    业务服务 .mp-services，钩子都在 index.wxml 上）。
+
+   **P6（2026-11-12）起的口径：名片区与公司简介区要做到「版式级」差异，不是只改尺寸。**
+   用户原话：「印刷的名片也有很多种布局样式啊，为什么你就没有更多灵活性的考虑呢」。
+   只调头像直径 / 行距的四个风格，客户换风格后只会觉得「好像大了点」，看不出换了版式。
+   所以这两个模块允许 **纯 CSS 结构重排**——改 flex 方向、改栏数、改对齐方式、改分栏
+   归属（见下），仍然不碰 DOM 顺序、不隐藏任何元素。四种版式族对应关系：
+     · default  横版左图右文 + 两列联系表 + 上图下文简介（基线）
+     · ink      工牌单栏款：联系表单列四行、方角小头像、简介区左窄栏公司名 / 右通栏简介
+     · warm     竖版居中款：头像顶部居中，姓名 / LOGO / 公司名 / 按钮上下叠放，简介区居中
+     · teal     左色块侧栏款：卡片左缘通高色块、头像移到右侧、简介区左图右文两栏
+
    四条硬约束：
    1. **default 零突变**：.wc-style-default 只逐字复述既有度量，不产生任何视觉变化；
       存量选 classic 的租户升级后看到的就是原来的首页。
-   2. **不改 DOM、不删元素**：规则只调列宽 / padding / 尺寸 / 行高 / 圆角 / 背景 /
-      阴影，绝不 display:none 或改元素顺序。「墨款无图」只能理解为「封面变矮、去圆角、
-      文字加细描边分隔」，把 .cv 藏掉会让客户上传的公司视频悄悄消失，属于静默失败。
+   2. **不改 DOM、不删元素**：允许改 flex-direction / 栏数 / 对齐 / 分栏归属与
+      padding / 尺寸 / 行高 / 圆角 / 背景 / 阴影，但绝不 display:none、也不改元素顺序。
+      把 .cv 藏掉会让客户上传的公司视频悄悄消失，属于静默失败——「无图款」只能靠
+      「封面压成窄条」表达，不能靠隐藏。同理 .ec-contact 只改栏数、不能删某一列。
    3. **作用域锁在模块钩子内**：绝不写成全局 .section / .intro / .sec-title，
       否则二级页、员工页会被一起改掉；组件内部节点靠 addGlobalClass 穿透。
    4. **服务卡标题烧在图片里**：components/service-grid/index.wxml 有图时只渲染
@@ -250,40 +262,65 @@ page {
 .wc-style-default .mp-profile .cv { height: 440rpx; border-radius: 12rpx; }
 .wc-style-default .mp-profile .intro { line-height: 1.7; }
 
-/* 紧凑信息：头像缩小、信息紧凑、近直角；公司简介封面压矮去圆角，文字分段密排 */
-.wc-style-ink .emp-card { padding: 20rpx 18rpx 16rpx; }
+/* 紧凑信息 · 工牌单栏款：方角小头像、整卡去圆角；联系表由「两列」改成**单列四行**，
+   行间用 1rpx 细线分隔（像贴在工牌背面的通讯录）；公司简介封面压成通栏窄条，
+   文字区改成「左窄栏：公司名 + 分隔线 / 右通栏：简介」两栏，不再是竖排三段。 */
+.wc-style-ink .emp-card { padding: 20rpx 18rpx 16rpx; border-radius: 0; }
 .wc-style-ink .emp-card .ec-head { align-items: flex-start; }
-.wc-style-ink .emp-card .ec-avatar { width: 88rpx; height: 88rpx; border-width: 2rpx; }
+.wc-style-ink .emp-card .ec-avatar { width: 80rpx; height: 80rpx; border-radius: 8rpx; border-width: 2rpx; }
 .wc-style-ink .emp-card .ec-info { margin-left: 16rpx; }
 .wc-style-ink .emp-card .ec-name { font-size: 32rpx; }
-.wc-style-ink .emp-card .ec-rows { margin-top: 14rpx; }
-.wc-style-ink .emp-card .ec-line { padding: 4rpx 0; }
+.wc-style-ink .emp-card .ec-rows { margin-top: 16rpx; }
+.wc-style-ink .emp-card .ec-contact { flex-direction: column; }
+.wc-style-ink .emp-card .ec-contact .ec-col,
+.wc-style-ink .emp-card .ec-contact .ec-col-r { flex: 0 0 auto; width: 100%; max-width: 100%; margin-left: 0; }
+.wc-style-ink .emp-card .ec-line { padding: 6rpx 0; border-bottom: 1rpx solid var(--wc-primary-border); }
 .wc-style-ink .mp-profile .cv,
-.wc-style-ink .mp-profile .cv-video { height: 300rpx; border-radius: 0; }
-.wc-style-ink .mp-profile .company-name { font-size: 32rpx; padding-bottom: 14rpx; }
-.wc-style-ink .mp-profile .intro { line-height: 1.6; margin-top: 14rpx; }
+.wc-style-ink .mp-profile .cv-video { height: 240rpx; border-radius: 0; }
+.wc-style-ink .mp-profile .pf-text { display: grid; grid-template-columns: 34% 1fr; column-gap: 20rpx; align-items: start; }
+.wc-style-ink .mp-profile .company-name { grid-area: 1 / 1 / 2 / 2; font-size: 30rpx; padding-bottom: 12rpx; margin-top: 18rpx; }
+.wc-style-ink .mp-profile .company-name-line { grid-area: 2 / 1 / 3 / 2; }
+.wc-style-ink .mp-profile .intro { grid-area: 1 / 2 / 3 / 3; line-height: 1.6; margin-top: 18rpx; }
 
-/* 宽松亲和：头像放大、行距放宽、胶囊按钮更大；封面更高更圆，简介留白充足 */
-.wc-style-warm .emp-card { padding: 30rpx 24rpx 26rpx; }
-.wc-style-warm .emp-card .ec-avatar { width: 136rpx; height: 136rpx; }
-.wc-style-warm .emp-card .ec-info { margin-left: 26rpx; }
-.wc-style-warm .emp-card .ec-rows { margin-top: 28rpx; }
-.wc-style-warm .emp-card .ec-line { padding: 12rpx 0; }
-.wc-style-warm .emp-card .case-btn { height: 32rpx; padding: 0 14rpx; }
+/* 宽松亲和 · 竖版居中款：头像移到顶部居中，姓名与 LOGO、公司名与「查看案例」全部
+   由左右并排改成**上下叠放**；联系表单列且整体居中；简介区文字居中，分隔线缩成居中短线。 */
+.wc-style-warm .emp-card { padding: 32rpx 26rpx 28rpx; }
+.wc-style-warm .emp-card .ec-head { flex-direction: column; align-items: center; }
+.wc-style-warm .emp-card .ec-avatar { width: 136rpx; height: 136rpx; margin-bottom: 18rpx; }
+.wc-style-warm .emp-card .ec-info { flex: 0 0 auto; width: 100%; margin-left: 0; text-align: center; }
+.wc-style-warm .emp-card .ec-line1 { flex-direction: column; align-items: center; justify-content: center; }
+.wc-style-warm .emp-card .ec-logo { margin-left: 0; margin-top: 12rpx; }
+.wc-style-warm .emp-card .ec-line3 { flex-direction: column; align-items: center; margin-top: 14rpx; }
+.wc-style-warm .emp-card .ec-cname { flex: none; }
+.wc-style-warm .emp-card .case-btn { margin-left: 0; margin-top: 14rpx; height: 34rpx; padding: 0 16rpx; }
+.wc-style-warm .emp-card .ec-rows { margin-top: 26rpx; }
+.wc-style-warm .emp-card .ec-contact { flex-direction: column; }
+.wc-style-warm .emp-card .ec-contact .ec-col,
+.wc-style-warm .emp-card .ec-contact .ec-col-r { flex: 0 0 auto; width: 100%; max-width: 100%; margin-left: 0; }
+.wc-style-warm .emp-card .ec-line { justify-content: center; padding: 10rpx 0; }
+.wc-style-warm .mp-profile { text-align: center; }
 .wc-style-warm .mp-profile .cv,
 .wc-style-warm .mp-profile .cv-video { height: 500rpx; border-radius: 28rpx; }
-.wc-style-warm .mp-profile .company-name { padding-bottom: 26rpx; }
+.wc-style-warm .mp-profile .company-name { padding-bottom: 22rpx; }
+.wc-style-warm .mp-profile .company-name-line { width: 260rpx; margin: 0 auto; }
 .wc-style-warm .mp-profile .intro { line-height: 1.9; margin-top: 24rpx; }
 
-/* 疏排透气：半透磨砂卡、疏排；封面中高、细线分隔感、正文行距透气 */
-.wc-style-teal .emp-card { padding: 28rpx 24rpx; background: rgba(255, 255, 255, 0.88); }
+/* 疏排透气 · 左色块侧栏款：卡片左缘一条通高品牌色块，头像移到**右侧**（row-reverse，
+   印刷名片里常见的「头像在右、信息在左」排法）；联系表仍是两列，但加一道竖分隔线
+   变成表格式；公司简介改**左图右文**两栏，封面固定占 42% 宽。 */
+.wc-style-teal .emp-card { border-left: 12rpx solid var(--wc-primary); padding: 28rpx 22rpx 26rpx 26rpx; background: rgba(255, 255, 255, 0.9); }
+.wc-style-teal .emp-card .ec-head { flex-direction: row-reverse; }
+.wc-style-teal .emp-card .ec-info { margin-left: 0; margin-right: 24rpx; }
 .wc-style-teal .emp-card .ec-avatar { width: 104rpx; height: 104rpx; }
-.wc-style-teal .emp-card .ec-info { margin-left: 24rpx; }
-.wc-style-teal .emp-card .ec-rows { margin-top: 26rpx; }
+.wc-style-teal .emp-card .ec-rows { margin-top: 24rpx; }
+.wc-style-teal .emp-card .ec-contact .ec-col-r { border-left: 1rpx solid var(--wc-primary-border); padding-left: 20rpx; }
+.wc-style-teal .mp-profile { display: flex; align-items: flex-start; }
+.wc-style-teal .mp-profile .company-video { flex: 0 0 42%; width: 42%; }
 .wc-style-teal .mp-profile .cv,
-.wc-style-teal .mp-profile .cv-video { height: 380rpx; border-radius: 16rpx; }
-.wc-style-teal .mp-profile .company-name { padding-bottom: 24rpx; }
-.wc-style-teal .mp-profile .intro { line-height: 1.85; margin-top: 22rpx; }
+.wc-style-teal .mp-profile .cv-video { height: 320rpx; border-radius: 16rpx; }
+.wc-style-teal .mp-profile .pf-text { flex: 1; min-width: 0; margin-left: 22rpx; }
+.wc-style-teal .mp-profile .company-name { font-size: 30rpx; padding-bottom: 18rpx; }
+.wc-style-teal .mp-profile .intro { line-height: 1.85; margin-top: 18rpx; }
 
 /* ===== P3：经典业绩 .mp-achievements / 业务服务 .mp-services =====
    真实结构：业绩 = .cat-grid（4 列分类图标）+ .featured（2 列精选照片）；

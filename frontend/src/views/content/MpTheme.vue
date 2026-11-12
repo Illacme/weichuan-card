@@ -750,8 +750,10 @@ onMounted(load)
   border-radius: 6px;
 }
 /* 版式示意（与端上 --wc-r-* token 同向，px 只是后台缩略图尺度）：
-   紧凑信息 = 近直角 + 细描边代替投影；宽松亲和 = 大圆角 + 胶囊按钮；
-   疏排透气 = 中圆角 + 极轻投影。真实预览图已按同一风格出图，这里只服务降级兜底。
+   P6 起不只改圆角，还要示意「版式族」——端上名片区已经是
+   ink 单列四行 / warm 竖版居中 / teal 头像在右 + 左色块，降级示意必须同向，
+   否则真图挂了以后管理员看到的是一张说不上区别的灰卡。
+   真实预览图已按同一风格出图，这里只服务降级兜底。
    风格名按布局特色命名、不含颜色词；加新模板必须补一条 .layout-<id>，
    theme.spec.ts 会逐个对账。 */
 .layout-ink .preview-nav,
@@ -760,12 +762,27 @@ onMounted(load)
 .layout-ink .preview-card {
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgba(61, 75, 92, 0.22);
+  /* 工牌单栏款：三段信息拉通单列，行与行之间加 1px 细线（对应 .ec-line 的 border-bottom） */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.layout-ink .preview-line,
+.layout-ink .preview-btn { width: 100%; }
+.layout-ink .preview-line + .preview-line {
+  margin-top: 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(61, 75, 92, 0.18);
 }
 .layout-warm .preview-nav,
 .layout-warm .preview-line { border-radius: 8px; }
 .layout-warm .preview-card {
   border-radius: 16px;
   box-shadow: 0 6px 14px rgba(143, 99, 32, 0.16);
+  /* 竖版居中款：对应端上 .ec-head { flex-direction: column; align-items: center } */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .layout-warm .preview-btn { border-radius: 999px; }
 .layout-teal .preview-nav,
@@ -773,6 +790,11 @@ onMounted(load)
 .layout-teal .preview-card {
   border-radius: 6px;
   box-shadow: 0 1px 5px rgba(15, 118, 110, 0.14);
+  /* 左色块侧栏款：对应端上 .emp-card 的左缘通高色块 + 头像移到右侧（内容整体右倾） */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  border-left: 4px solid rgba(15, 118, 110, 0.75);
 }
 .layout-teal .preview-btn { border-radius: 10px; }
 

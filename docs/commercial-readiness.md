@@ -2588,3 +2588,54 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 全量 Vitest / vite build dist-check-43 / git diff --check）实跑全绿。本轮提交后由本人手动
 > `git push origin main`（沙箱拦截 push）。**主题系统存储彻底收敛为两轴，无单列近似残留**。
 
+## 第四十四轮：名片区 / 企业介绍区的「版式级」差异（P6，2026-11-12）
+
+承接第四十三轮（提交 `b0f9a7f`）。用户在看过 36 张预览图后直接批评：
+
+> 「我看现在整体风格中对于小程序页面顶部的名片信息区和企业介绍区并没有做什么布局调整啊，
+> 只是元素高度有点不同而已，比如印刷的名片也有很多种布局样式啊，为什么你就没有更多灵活性的考虑呢」
+
+判断准确。P2/P3 当时给自己定的口径是「只调列宽 / padding / 尺寸 / 行高 / 圆角 / 背景 / 阴影，
+绝不改 DOM」，落到 `.emp-card` 与 `.mp-profile` 上就退化成「四个风格共用一套结构，只差尺寸」：
+`.wc-style-ink/warm/teal` 对 `.emp-card` 只动 padding、头像直径、行距、圆角，
+对 `.mp-profile` 只动封面高度与圆角。客户换风格只会觉得「好像大了点」。
+
+本轮把这两个模块升级为**版式级差异**（允许纯 CSS 结构重排），四个模块里的后两个
+（经典业绩 / 业务服务）P3 已经是用列数做的真重排，不动。
+
+| 项 | 说明 |
+| --- | --- |
+| 名片区 · default | 横版左图右文 + 两列联系表（基线，逐字零突变） |
+| 名片区 · ink | **工牌单栏款**：`.ec-head{align-items:flex-start}`、方角小头像 80rpx、整卡 `border-radius:0`；`.ec-contact{flex-direction:column}` 把两列联系表压成**单列四行**，`.ec-line` 加 `border-bottom:1rpx` 行间细线 |
+| 名片区 · warm | **竖版居中款**：`.ec-head{flex-direction:column;align-items:center}`，头像 136rpx 顶部居中；`.ec-line1` 与 `.ec-line3` 也改纵向居中，姓名与 LOGO、公司名与「查看案例」全部**上下叠放**；`.ec-info{flex:0 0 auto}` 防列向 `flex:1` 塌高；联系表单列且 `justify-content:center` |
+| 名片区 · teal | **左色块侧栏款**：`.emp-card{border-left:12rpx solid var(--wc-primary)}` 左缘通高竖条；`.ec-head{flex-direction:row-reverse}` 头像**移到右侧**；`.ec-col-r{border-left:1rpx}` 给两列联系表加竖分隔线变表格式 |
+| 简介区 · default | 上图下文（封面 440rpx、名 → 线 → 简介竖排），零突变 |
+| 简介区 · ink | 封面压成 240rpx 通栏窄条去圆角；`.pf-text{display:grid;grid-template-columns:34% 1fr}` 左窄栏放「公司名 + 分隔线」、右通栏放简介（`grid-area` 显式定位，不是两段竖排） |
+| 简介区 · warm | 封面 500rpx 大圆角；`.mp-profile{text-align:center}` 文字居中，`.company-name-line` 缩成 260rpx 居中短线 |
+| 简介区 · teal | `.mp-profile{display:flex}` + `.company-video{flex:0 0 42%}`，简介区变**左图右文**两栏，封面 320rpx |
+| DOM 改动（唯一一处） | `pages/index/index.wxml` 的 `.mp-profile` 内新增**纯版式分组容器 `.pf-text`**，把「公司名 / 分隔线 / 简介」三个原平级节点包成一栏。**顺序与可见性完全不变**；`default` 款不给它写任何规则，它是普通块级容器，视觉零变化。没有它就做不出「左图右文」与「左窄栏 + 右通栏」 |
+| 硬约束未松 | 仍然**绝不 `display:none`**（把 `.cv` 藏掉会让客户上传的公司视频悄悄消失）；`.ec-contact` 只改栏数、不删列；规则仍全部锁在 `.emp-card` / `.mp-profile` 钩子内 |
+| 守门升级 | `tests/theme.spec.ts` 新增「结构指纹」断言：逐款钉住 `.ec-head` / `.ec-contact` 的 `flex-direction`、卡片左缘色块、`.mp-profile` 与 `.pf-text` 的 `display`、封面分栏宽度、对齐方式，并断言四款指纹**两两不同**；另断言任何布局规则不得出现 `display:none`、`index.wxml` 必须真有 `.pf-text` |
+| 后端文案 | `mptemplate.go` 四款 `Description` 改写为版式描述（工牌单栏款 / 竖版居中款 / 侧栏款 …），仍满足 `TestStyleNamesDescribeLayout`（不含颜色词 + 含布局词） |
+| 后台降级示意 | `MpTheme.vue` 的 `.layout-ink/warm/teal` 同步改成结构示意（ink 单列拉通 + 行间细线、warm 居中、teal 内容右倾 + 左缘竖条），真图挂掉时的兜底不再是一张说不上区别的灰卡 |
+| 预览脚本修正 | `scripts/gen_theme_previews.py` 修了三处「预览 DOM 与真机不同构」：① `.ec-rows-line` 原来在 `.ec-rows` **外面**、`.ec-rows` 自己 flex 两列（真机是 `.ec-rows > .ec-rows-line + .ec-contact > .ec-col ×2`），导致针对 `.ec-contact` 的版式规则在图上根本落不下去；② 缺 `.company-video` 与 `.pf-text` 两个容器；③ `.ec-line` 上下内边距 1px→4px。另加 `@container (max-width: 200px)`：teal 封面只有 42% 宽，图上的「走进 XX」大字与假进度条要换小号装饰，否则叠成一团、时间码溢出右缘 |
+| 画布上界 | `CONTENT_BOTTOM 2340→2500`、`HEIGHT 2420→2580`。warm 变竖版居先后内容底部 2326→**2492**，若不抬上界，`position:absolute` 的底栏会**静默盖住业务服务卡**——脚本的逐风格实测会在出图前直接拒绝 |
+
+> 关键坑（**假绿守门**）：原来那条「4 风格 × 4 模块，同模块四风格规则体两两不同」的断言是假绿。
+> 把 padding 从 24rpx 改成 30rpx、头像从 112rpx 改成 136rpx，规则体就已经不同了，断言全绿，
+> 可客户看到的仍然是同一种版式。本轮把它升级成**结构指纹**：只有 flex 方向、栏数、分栏归属、
+> 对齐方式这些字段变了才算换版式，纯尺寸调整不再能让守门变绿。
+
+> 反向验证：① 把 teal 的 `.ec-head{flex-direction:row-reverse}` 改回 `align-items:flex-start`、
+> 把 ink 的 `.pf-text{display:grid}` 改回 `display:block` 后，新增用例立即变红并打印
+> 「teal 要头像在右：头部 row-reverse: expected 'row' to be 'row-reverse'」，
+> 同时布局快照用例（`manifest.layouts` 漂移）一起变红；② 还原后 54 个用例全绿。
+> 逐张核对预览图：default 横版两列 / ink 单列四行 + 左窄栏分栏 / warm 竖版居中 /
+> teal 左侧竖条 + 头像在右 + 左图右文，四张结构确实不同，无溢出与破版。
+
+> 验收结论：预览重出 36 张，逐风格实测内容底部 `1214/1102/2492/1649` → 画布
+> `1294/1182/2572/1729`，2x PNG `750×2588 / 2364 / 5144 / 3458`，
+> `gen_theme_previews.py --check` 通过。8 项门禁（gofmt 仅校验改动文件 / golangci-lint v2.15.0
+> 0 issues / `go test ./...` 全绿，handler 50.9s / `--check` 通过 / eslint 通过 / vue-tsc 通过 /
+> 全量 Vitest **95 文件 1612 例** / `vite build dist-check-44` 1m25s / `git diff --check` 干净）实跑全绿。
+> 本轮提交后由本人手动 `git push origin main`（沙箱拦截 push）。

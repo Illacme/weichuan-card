@@ -67,10 +67,18 @@
           cover="{{profile.cover}}"
           staffId="{{staffId}}"
         />
-        <view class="company-name">{{company.fullName}}</view>
-        <!-- 企业名下分隔线：左蓝右灰分段线，与名片卡横线（ec-rows-line）同款 -->
-        <view class="line-split company-name-line"></view>
-        <text class="intro">{{profile.introText}}</text>
+        <!-- .pf-text 是纯版式分组容器：dom 上仍按「公司名 → 分隔线 → 简介」原顺序，
+             不隐藏任何节点，只为让风格层能把它当成一整栏处理。没有它，.mp-profile 的
+             四个子节点平级，就做不出「左图右文」（teal）与「左窄栏公司名 / 右通栏简介」
+             （ink）这两种版式，四款风格只剩尺寸差异（用户 2026-11-12 批评的原话：
+             「印刷的名片也有很多种布局样式啊，为什么你就没有更多灵活性的考虑呢」）。
+             default 款不给 .pf-text 写任何规则，它就是普通块级容器，视觉零变化。 -->
+        <view class="pf-text">
+          <view class="company-name">{{company.fullName}}</view>
+          <!-- 企业名下分隔线：左蓝右灰分段线，与名片卡横线（ec-rows-line）同款 -->
+          <view class="line-split company-name-line"></view>
+          <text class="intro">{{profile.introText}}</text>
+        </view>
       </view>
       <block wx:for="{{homeOrder}}" wx:key="*this">
         <view wx:if="{{item === 'achievement'}}" id="sec-achievement" class="section mp-achievements">

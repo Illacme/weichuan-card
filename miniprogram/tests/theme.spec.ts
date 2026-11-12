@@ -263,6 +263,101 @@ describe('小程序整体风格模板 utils/theme', () => {
     }
   })
 
+  // 上一条只查「四风格同模块规则体两两不同」，这是个会漏的守门：
+  // 只要把 padding 从 24rpx 改成 30rpx、头像从 112rpx 改成 136rpx，规则体就已经不同了，
+  // 断言全绿——可客户看到的仍然是同一种版式，只是元素大了一圈。
+  // 2026-11-12 用户就是照这个假绿打回来的：「印刷的名片也有很多种布局样式啊，
+  // 为什么你就没有更多灵活性的考虑呢」。所以这里改查**结构指纹**：
+  // 名片区看 .ec-head / .ec-contact 的 flex 方向与卡片色块，公司简介区看
+  // .mp-profile 与 .pf-text 的 display、封面分栏宽度、对齐方式。这些字段一变，
+  // 版式就真的换了族；只改尺寸则纹丝不动。
+  it('名片区与公司简介区是版式级差异：结构指纹四款互不相同，且不是只改了尺寸', () => {
+    const rules = Array.from(
+      readFileSync(APP_WXSS, 'utf-8')
+        .matchAll(/^\.wc-style-([a-z0-9_-]+)\s+([^{}\n]+)\{([^{}]*)\}/gm)
+    )
+    // 选择器 → { 属性: 值 }，选择器去掉 .wc-style-<id> 前缀，逗号续行的拆开逐条记
+    const declOf = (style: string, selector: string) => {
+      const decl: Record<string, string> = {}
+      for (const m of rules) {
+        if (m[1] !== style) continue
+        const hit = m[2]
+          .split(',')
+          .map((s) => s.trim().replace(/^\.wc-style-[a-z0-9_-]+\s+/, ''))
+          .includes(selector)
+        if (!hit) continue
+        for (const part of m[3].split(';')) {
+          const i = part.indexOf(':')
+          if (i > 0) decl[part.slice(0, i).trim()] = part.slice(i + 1).trim()
+        }
+      }
+      return (prop: string, fallback: string) => decl[prop] ?? fallback
+    }
+
+    // 默认值取 app.wxss 基线（.ec-head/.ec-contact 是 row、.emp-card 无左边框、
+    // .ec-avatar 是 50% 圆形、.mp-profile/.pf-text 是普通块级）
+    const card = (style: string) => {
+      const d = declOf(style, '.emp-card')
+      const head = declOf(style, '.emp-card .ec-head')
+      const contact = declOf(style, '.emp-card .ec-contact')
+      const avatar = declOf(style, '.emp-card .ec-avatar')
+      return {
+        head: head('flex-direction', 'row'),
+        contact: contact('flex-direction', 'row'),
+        spine: d('border-left', 'none'),
+        avatar: avatar('border-radius', '50%'),
+      }
+    }
+    const profile = (style: string) => {
+      const box = declOf(style, '.mp-profile')
+      const text = declOf(style, '.mp-profile .pf-text')
+      const video = declOf(style, '.mp-profile .company-video')
+      return {
+        display: box('display', 'block'),
+        align: box('text-align', 'left'),
+        textDisplay: text('display', 'block'),
+        videoBasis: video('flex', 'auto'),
+      }
+    }
+
+    // 逐款钉住版式族，改回「只调尺寸」必红
+    expect(card('default'), 'default 必须是横版左图右文 + 两列联系表').toEqual({
+      head: 'row', contact: 'row', spine: 'none', avatar: '50%',
+    })
+    expect(card('ink').contact, 'ink 的联系表要真的变成单列四行').toBe('column')
+    expect(card('ink').head, 'ink 仍保持头像在左，靠单列联系表与行间细线区分').toBe('row')
+    expect(card('warm').head, 'warm 要竖版居中：头部改纵向').toBe('column')
+    expect(card('warm').contact, 'warm 的联系表也要单列居中').toBe('column')
+    expect(card('teal').head, 'teal 要头像在右：头部 row-reverse').toBe('row-reverse')
+    expect(card('teal').contact, 'teal 保留两列表格式').toBe('row')
+    expect(card('teal').spine, 'teal 要有左缘通高色块').toContain('solid')
+
+    expect(profile('default').display, 'default 简介区必须是上图下文').toBe('block')
+    expect(profile('ink').textDisplay, 'ink 简介区要拆成左右两栏').toBe('grid')
+    expect(profile('teal').display, 'teal 简介区要左图右文').toBe('flex')
+    expect(profile('teal').videoBasis, 'teal 封面要定宽成左栏').toContain('42%')
+    expect(profile('warm').align, 'warm 简介区要居中').toBe('center')
+
+    // 指纹整体两两不同：以后谁把某一款改回「和别款只是尺寸差」会在这里变红
+    for (const [name, fp] of [
+      ['名片区', card],
+      ['简介区', profile],
+    ] as const) {
+      const prints = STYLE_IDS.map((s) => JSON.stringify(fp(s)))
+      expect(new Set(prints).size, `${name} 的四款结构指纹有重复（等于只换了尺寸）`)
+        .toBe(STYLE_IDS.length)
+    }
+
+    // 结构重排不得靠隐藏元素实现：公司视频、任一联系列被 display:none 就是静默失败
+    for (const m of rules) {
+      expect(m[3], `${m[1]} 用 display:none 藏内容`).not.toMatch(/display\s*:\s*none/)
+    }
+    // CSS 里的 .pf-text 必须真的存在于页面结构，否则版式规则是死的
+    const wxml = readFileSync(resolve(MP, 'pages/index/index.wxml'), 'utf-8')
+    expect(wxml, 'index.wxml 缺 .pf-text 分组容器，ink/teal 的简介版式落不下去')
+      .toContain('class="pf-text"')
+  })
+
   it('服务卡标题烧在图内：布局规则不得改 .svc-icon 尺寸或 aspect-ratio', () => {
     const wxss = readFileSync(APP_WXSS, 'utf-8')
     const svc = Array.from(

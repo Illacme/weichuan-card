@@ -68,7 +68,7 @@ var templates = []Template{
 	{
 		ID:             DefaultID,
 		Name:           "标准均衡",
-		Description:    "标准列数与间距、中等圆角，四个模块均衡排布，适合大多数行业",
+		Description:    "横版名片 + 两列联系表、封面在上、简介竖排；标准列距与中等圆角，四个模块均衡排布，适合大多数行业",
 		Series:         SeriesStyle,
 		Advanced:       false,
 		PreviewPrimary: "#1a8cff",
@@ -77,7 +77,7 @@ var templates = []Template{
 	{
 		ID:             "ink",
 		Name:           "紧凑信息",
-		Description:    "近直角细描边、紧凑列宽与高信息密度，适合工程、制造、法律等专业形象",
+		Description:    "工牌单栏款：联系表改为单列四行、方角小头像、简介拆成左窄栏与右通栏；高信息密度，适合工程、制造、法律等专业形象",
 		Series:         SeriesStyle,
 		Advanced:       true,
 		PreviewPrimary: "#3d4b5c",
@@ -86,7 +86,7 @@ var templates = []Template{
 	{
 		ID:          "warm",
 		Name:        "宽松亲和",
-		Description: "大圆角胶囊按钮、单列精选大图与宽松留白，适合餐饮、文旅、家居等品牌",
+		Description: "竖版居中款：头像居中、姓名与公司名上下叠放、联系表居中；大圆角胶囊按钮与宽松留白，适合餐饮、文旅、家居等品牌",
 		Series:      SeriesStyle,
 		Advanced:    true,
 		// 与 miniprogram/app.wxss 的 .wc-style-warm --wc-primary 保持一致；
@@ -97,7 +97,7 @@ var templates = []Template{
 	{
 		ID:             "teal",
 		Name:           "疏排透气",
-		Description:    "中圆角轻投影、疏排网格与大留白，适合健康、教育、环保等品牌",
+		Description:    "侧栏款：卡片左缘一条通高竖条、头像靠右、简介左图右文；疏排网格与大留白，适合健康、教育、环保等品牌",
 		Series:         SeriesStyle,
 		Advanced:       true,
 		PreviewPrimary: "#0f766e",

@@ -70,10 +70,12 @@ MANIFEST = OUT_DIR / "manifest.json"
 # 「内容底部 + 呼吸 + 底栏」算出，绝不手填一个带大尾巴的数。
 # 出图前会逐风格实测一次（measure_content_bottom）：改了布局让某风格内容变长时，
 # 底栏会悄悄盖住业务服务卡，光靠常量算不出来，必须显式拒绝出图。
-WIDTH, HEIGHT = 375, 2420
+WIDTH, HEIGHT = 375, 2580
 # CONTENT_BOTTOM 是允许的**上界**（实测最大底部 + 一点余量），不是精确值：
 # Chrome 版本 / 字体渲染差 1~2px 不该让出图直接失败。
-CONTENT_BOTTOM, TAIL_GAP, BAR_HEIGHT = 2340, 20, 60
+# P6（2026-11-12）名片区改成版式级差异后，warm 的竖版居中名片把姓名 / LOGO /
+# 公司名 / 按钮全部上下叠放，实测内容底部从 2326 抬到 2490，上界同步上调到 2500。
+CONTENT_BOTTOM, TAIL_GAP, BAR_HEIGHT = 2500, 20, 60
 if HEIGHT != CONTENT_BOTTOM + TAIL_GAP + BAR_HEIGHT:
     raise SystemExit("画布高度必须由「内容底部 + 呼吸 + 底栏」算出，别再手填一个带大尾巴的数")
 # 实测时给 .phone 一个足够高的临时画布，让内容自然流完再读 service 的真实 bottom；
@@ -486,20 +488,44 @@ ${tokens}
               background: var(--wc-primary-soft); border: 1px solid var(--wc-primary-border);
               border-radius: var(--wc-r-chip); padding: 2px 6px; }
   .ec-addr { color: #5f6f80; font-size: 9.5px; margin-top: 4px; }
-  .ec-rows-line, .line-split { height: 2px; margin: 10px 0 8px;
-    background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 28%,
-                var(--wc-track) 28%, var(--wc-track) 100%); }
-  .line-split { width: 46px; margin: 7px 0 9px; }
-  .ec-rows { display: flex; justify-content: space-between; gap: 8px; }
-  .ec-col { flex: 1; min-width: 0; }
-  .ec-line { display: flex; align-items: baseline; font-size: 10.5px; color: #333; padding: 1px 0; }
+  /* 联系表：与真机同构——.ec-rows 里先是通栏双色分隔线，再是 .ec-contact 两列
+     （左列手机/副号、右列座机/邮箱）。曾经把 .ec-rows-line 放到 .ec-rows 外面、
+     且让 .ec-rows 自己 flex 两列，于是 app.wxss 里针对 .ec-contact 的版式规则
+     （ink/warm 的「单列四行」）在预览图上完全落不下去，图就成了第二套布局。 */
+  .ec-rows { margin-top: 11px; }
+  /* 分隔线高度刻意写 2px 而不是严格 2rpx→1px：真机上它是 2rpx，在 3x 屏渲染成 3 个
+     物理像素，是一条清晰的细线；预览按 2x 出图、后台还要缩到卡片里显示，1px 会整条消失。
+     宽度 / 分段比例 / 外边距仍与 index.wxss 一致（通栏、左 34% 品牌色）。 */
+  .ec-rows-line { height: 2px; width: 100%; margin-bottom: 8px;
+    background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 34%,
+                var(--wc-track) 34%, var(--wc-track) 100%); }
+  .ec-contact { display: flex; align-items: flex-start; }
+  .ec-col { min-width: 0; }
+  .ec-contact-short .ec-col { flex: 0 0 50%; }
+  .ec-line { display: flex; align-items: baseline; font-size: 10.5px; color: #333; padding: 4px 0; }
   .ec-label { width: 28px; flex: none; color: #98a6b5; font-size: 10px; }
   .ec-val { white-space: nowrap; }
+
+  /* 左蓝右灰分段线：与 pages/index/index.wxss 的 .line-split 同源。
+     企业名牌下那条是通栏且紧贴名称（margin 0），板块标题下那条只有短一截（.sec-line）。
+     高度同 .ec-rows-line 一样刻意取 2px，理由见上。 */
+  .line-split { height: 2px;
+    background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 34%,
+                var(--wc-track) 34%, var(--wc-track) 100%); }
+  .company-name-line { margin: 0; }
+  /* .pf-text 与真机 index.wxml 同构：把「公司名 / 分隔线 / 简介」三节点包成一栏，
+     风格层才做得出来「左图右文」（teal）与「左窄栏公司名 + 右通栏简介」（ink）。
+     default 款不给它写规则，视觉零变化。 */
+  .pf-text { min-width: 0; }
 
   /* ---- 公司简介：真实封面图 + 视频控件 + 黑色粗体公司名 + 4 行简介 ----
      .cv / .cv-video / .company-name / .intro 的高度与行距由布局规则注入。 */
   .cv { position: relative; height: 220px; border-radius: var(--wc-r-card-bg);
-        overflow: hidden; box-shadow: var(--wc-card-shadow-bg); }
+        overflow: hidden; box-shadow: var(--wc-card-shadow-bg);
+        /* 封面宽度不再恒等于卡片宽：teal 的「左图右文」把它压到 42%。
+           图上的「走进 XX」大字与假进度条是按通栏宽度画的装饰，窄栏里会叠成一团，
+           所以这里建一个内联尺寸容器，窄于 200px 时换一套小号装饰（见文件末尾）。 */
+        container-type: inline-size; }
   .cv > img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* 封面是租户上传的照片/视频帧，真机上**不随模板换色**。这里只加中性暗角
      让白色大字可读，绝不能用主色去染它——否则客户会以为换了风格连视频也变色。 */
@@ -520,6 +546,17 @@ ${tokens}
   .v-track { flex: 1; height: 2px; background: var(--wc-primary-chip); border-radius: 2px; position: relative; }
   .v-track::after { content: ""; position: absolute; left: 0; top: -2px; width: 6px; height: 6px;
                      border-radius: 50%; background: #fff; }
+  /* 窄封面（teal 的左图右文把封面压到 42%，约 137px）里，「走进 XX」大字和假进度条
+     按通栏尺寸画会叠成一团、时间码还会溢出右缘。装饰整体降一档，字号与播放键同步缩小。
+     真机上这块是客户的真实封面 / 视频，宽度不同时由 video 自己的控件适配，
+     所以这套缩小只服务示意图，不进 app.wxss。 */
+  @container (max-width: 200px) {
+    .cover-word { font-size: 12px; top: 8px; left: 8px; right: 8px; }
+    .play { width: 26px; height: 26px; }
+    .play::after { border-left-width: 9px; border-top-width: 6px; border-bottom-width: 6px; }
+    .video-bar { height: 14px; padding: 0 4px; gap: 3px; font-size: 6px; }
+    .v-track::after { width: 4px; height: 4px; top: -1px; }
+  }
   .company-name { font-size: 14.5px; font-weight: 700; color: #1a1a1a; margin-top: 10px; }
   .intro { font-size: 13px; line-height: 1.75; color: #4b5563; }
 
@@ -583,27 +620,36 @@ ${tokens}
         <div class="ec-addr">${address}</div>
       </div>
     </div>
-    <div class="ec-rows-line"></div>
     <div class="ec-rows">
-      <div class="ec-col"><div class="ec-line"><span class="ec-label">手机</span><span class="ec-val">${phone}</span></div></div>
-      <div class="ec-col">
-        <div class="ec-line"><span class="ec-label">座机</span><span class="ec-val">${tel}</span></div>
-        <div class="ec-line"><span class="ec-label">邮箱</span><span class="ec-val">${email}</span></div>
+      <div class="ec-rows-line"></div>
+      <div class="ec-contact ec-contact-short">
+        <div class="ec-col">
+          <div class="ec-line"><span class="ec-label">手机</span><span class="ec-val">${phone}</span></div>
+          <div class="ec-line"><span class="ec-label"></span><span class="ec-val">138-0000-0001</span></div>
+        </div>
+        <div class="ec-col ec-col-r">
+          <div class="ec-line"><span class="ec-label">座机</span><span class="ec-val">${tel}</span></div>
+          <div class="ec-line"><span class="ec-label">邮箱</span><span class="ec-val">${email}</span></div>
+        </div>
       </div>
     </div>
   </div>
 
   <div class="section mp-profile" data-sec="company">
-    <div class="cv cover">
-      <img src="assets/cover-company.jpg" alt="">
-      <div class="cover-shade"></div>
-      <div class="cover-word"><span>走进</span><span>${short_name}</span></div>
-      <div class="play"></div>
-      <div class="video-bar"><span>▶</span><span>00:00</span><span class="v-track"></span><span>01:15</span><span>⛶</span></div>
+    <div class="company-video">
+      <div class="cv cover">
+        <img src="assets/cover-company.jpg" alt="">
+        <div class="cover-shade"></div>
+        <div class="cover-word"><span>走进</span><span>${short_name}</span></div>
+        <div class="play"></div>
+        <div class="video-bar"><span>▶</span><span>00:00</span><span class="v-track"></span><span>01:15</span><span>⛶</span></div>
+      </div>
     </div>
-    <div class="company-name">${full_name}</div>
-    <div class="line-split"></div>
-    <div class="intro">${intro}</div>
+    <div class="pf-text">
+      <div class="company-name">${full_name}</div>
+      <div class="line-split company-name-line"></div>
+      <div class="intro">${intro}</div>
+    </div>
   </div>
 
   <div class="section mp-achievements" data-sec="achievement">
