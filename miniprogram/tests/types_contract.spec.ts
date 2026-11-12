@@ -99,10 +99,11 @@ describe('小程序类型契约与 Go 模型对账', () => {
     expect(tsFields('HomeLayoutResp')).toEqual([
       'bgImage', 'bgMask', 'brandColorId', 'order', 'styleId', 'templateId',
     ])
-    // HomeLayoutResp 是根级信封：三个主题字段必须真实存在于 Go 模型的 json tag 里，
-    // 否则端上会读到后端根本不下发的字段，主题功能静默失效。
-    // P1 起后端根级下发两轴，templateId 保留作兼容派生列（端上 resolveTheme 会拆它）。
-    for (const key of ['styleId', 'brandColorId', 'templateId']) {
+    // HomeLayoutResp 是根级信封：主题两轴 (styleId / brandColorId) 必须真实存在于
+    // Go 模型的 json tag 里，否则端上会读到后端根本不下发的字段，主题功能静默失效。
+    // templateId 是端上兼容旧后端 / 旧缓存的可选字段（resolveTheme 仍按它拆两轴），
+    // 后端 0043 已删除该列、不再下发，故不进「后端必须 emit」的强约束。
+    for (const key of ['styleId', 'brandColorId']) {
       expect(goJSONFields('HomeLayout'), key).toContain(key)
     }
   })

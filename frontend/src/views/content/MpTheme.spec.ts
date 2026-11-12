@@ -32,7 +32,6 @@ const comboId = (s: string, b: string | null) => `${s}--${b || 'default'}`
 const DEFAULT_LAYOUT = {
   styleId: 'default',
   brandColorId: null,
-  templateId: 'default',
   templateEntitled: true,
   templates: [...STYLE_ITEMS, ...BRAND_ITEMS],
 }
@@ -260,10 +259,10 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     expect(w.find('.pane-combo-line').text()).toContain('使用中')
   })
 
-  it('load 优先读两轴，忽略旧的 templateId 派生列', async () => {
+  it('load 读回两轴，预览与保存都只用两轴', async () => {
     const w = await mountPage({
       ...DEFAULT_LAYOUT,
-      styleId: 'teal', brandColorId: null, templateId: 'default',
+      styleId: 'teal', brandColorId: null,
     })
 
     expect(styleCards(w)[3].classes()).toContain('selected')
@@ -276,7 +275,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
   it('P5：load 读回跨风格组合，预览与保存都不丢两轴中的任何一维', async () => {
     const w = await mountPage({
       ...DEFAULT_LAYOUT,
-      styleId: 'ink', brandColorId: 'brand-ocean', templateId: 'brand-ocean',
+      styleId: 'ink', brandColorId: 'brand-ocean',
     })
 
     expect(styleCards(w)[1].classes()).toContain('selected')
@@ -289,27 +288,9 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     })
   })
 
-  // 旧后端（P1 之前）只下发兼容派生列 templateId：brand-* 必须拆回
-  // (default, brand-*)，否则客户已选的品牌色会在升级后被静默冲掉。
-  it('旧后端只下发 templateId：按前缀拆回两轴，预览与保存都不丢色系', async () => {
-    const w = await mountPage({
-      ...DEFAULT_LAYOUT,
-      styleId: undefined, brandColorId: undefined, templateId: 'brand-ocean',
-    })
-
-    expect(previewSrc(w)).toContain('default--brand-ocean.png')
-    expect(styleCards(w)[0].classes()).toContain('selected')
-    expect(colorOptions(w)[5].classes()).toContain('selected')
-    await (w.vm as any).save()
-    await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'default', brandColorId: 'brand-ocean',
-    })
-  })
-
   it('旧后端不下发 series：卡片不丢失，色系区给出升级提示', async () => {
     const w = await mountPage({
-      styleId: 'default', brandColorId: null, templateId: 'default', templateEntitled: true,
+      styleId: 'default', brandColorId: null, templateEntitled: true,
       templates: STYLE_ITEMS.map(({ id, name, description, advanced, previewPrimary, previewSoft }) =>
         ({ id, name, description, advanced, previewPrimary, previewSoft })),
     })
@@ -390,7 +371,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
   it('授权到期但已选中高级风格：该款不锁，仍可保存或切回默认款', async () => {
     const w = await mountPage({
       ...DEFAULT_LAYOUT,
-      styleId: 'ink', brandColorId: null, templateId: 'ink', templateEntitled: false,
+      styleId: 'ink', brandColorId: null, templateEntitled: false,
     })
 
     expect(styleCards(w)[1].classes()).not.toContain('locked')

@@ -184,17 +184,16 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
-import { getHomeLayout, saveHomeLayout, type HomeLayoutData, type ThemeTemplate } from '@/api/content'
+import { getHomeLayout, saveHomeLayout, type ThemeTemplate } from '@/api/content'
 
 // embedded=true：被「小程序设置」页签内嵌时不再重复自己的标题（当前仅用于约定，
 // 标题行与操作按钮已上移到父组件「小程序设置」的页签切换栏，本组件不再自行渲染）。
 defineProps<{ embedded?: boolean }>()
 
 // P5 两轴真值与后端 internal/mptemplate 一致：任意风格 × 任意已知色系都合法，
-// 色系不再隶属于某个风格。旧后端只下发兼容派生列 templateId 时按前缀反推，
-// 那条扁平列只是旧端近似值，两轴列才是真值。
+// 色系不再隶属于某个风格。后端直接下发 styleId / brandColorId 两轴，存储真值唯一
+// （0043 已删除 template_id 兼容派生列，端上旧缓存经小程序 splitTheme 零迁移读取）。
 const DEFAULT_STYLE = 'default'
-const BRAND_PREFIX = 'brand-'
 const FALLBACK_PRIMARY = '#1a8cff'
 const FALLBACK_SOFT = '#e8f1fb'
 
@@ -220,7 +219,7 @@ const activeBrand = computed(() => brandTemplates.value.find((t) => t.id === bra
 const defaultPrimary = computed(() => activeStyle.value?.previewPrimary || FALLBACK_PRIMARY)
 
 // P5：36 个组合各有一张 PNG，文件名 <styleId>--<brandColorId 或 default>.png。
-// 12 个扁平 templateId 装不下 36 个组合，绝不能再拿它当预览图名。
+// 旧 12 款平铺模板 id 装不下 36 个组合，预览图必须按两轴组合命名，绝不能回退到旧 id。
 function comboId(s: string, b: string | null): string {
   return `${s}--${b || 'default'}`
 }
@@ -306,19 +305,8 @@ function syncZoom() {
   if (zoomId.value) zoomId.value = currentId.value
 }
 
-// 旧后端（P1 之前）只下发 templateId 兼容派生列：它是**旧端近似值**，12 个扁平
-// id 装不下 P5 的 36 个组合，只能按前缀拆回 (default, brand-*)。
-// 两轴齐备时以两轴为准；缺 styleId 才看 templateId，避免旧值把新值盖掉。
-function splitThemeId(d?: HomeLayoutData | null): { styleId: string; brandColorId: string | null } {
-  if (d?.styleId) {
-    return { styleId: d.styleId, brandColorId: d.brandColorId || null }
-  }
-  const id = d?.templateId || DEFAULT_STYLE
-  return id.startsWith(BRAND_PREFIX)
-    ? { styleId: DEFAULT_STYLE, brandColorId: id }
-    : { styleId: id, brandColorId: null }
-}
-
+// 后端直接下发 styleId / brandColorId 两轴（0043 已删除 template_id 兼容派生列），
+// load 只需原样读两轴，不再需要单列 id 反推。
 async function load() {
   loading.value = true
   // 「重新加载」也该给预览图一次重试机会：例如刚补上漏生成的 PNG，
@@ -329,11 +317,11 @@ async function load() {
     const d = await getHomeLayout()
     templates.value = Array.isArray(d?.templates) ? d.templates : []
     templateEntitled.value = d?.templateEntitled !== false
-    const sel = splitThemeId(d)
-    styleId.value = sel.styleId
-    brandColorId.value = sel.brandColorId
-    savedStyleId.value = sel.styleId
-    savedBrandColorId.value = sel.brandColorId
+    // 后端直接下发两轴：styleId 缺省回 default，brandColorId 缺失回 null（用风格默认色）。
+    styleId.value = d?.styleId || DEFAULT_STYLE
+    brandColorId.value = d?.brandColorId || null
+    savedStyleId.value = styleId.value
+    savedBrandColorId.value = brandColorId.value
   } catch {
     /* 拦截器已提示 */
   } finally {

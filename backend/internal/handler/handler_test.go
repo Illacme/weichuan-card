@@ -954,19 +954,20 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		license.SetCurrent(nil)
 		defer license.SetCurrent(prev)
 
-		// 先立一份可核对的基线：四个展示字段都是非缺省值，后面只提交 templateId
+		// 先立一份可核对的基线：四个展示字段都是非缺省值，后面只提交 styleId
 		// 时任何一个被冲掉都能被断言抓到（order 曾因无条件写库被冲成 null）。
 		_, body := c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgMask": 25,
 			"projectTimeMode": "hidden", "serviceTimeMode": "minute",
-			"templateId": mptemplate.DefaultID,
+			"styleId": mptemplate.DefaultID,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		hl := body["data"].(map[string]interface{})
-		require.Equal(t, mptemplate.DefaultID, hl["templateId"])
+		require.Equal(t, mptemplate.DefaultID, hl["styleId"])
+		require.Nil(t, hl["brandColorId"], "未选色系应返回 nil（用风格默认色）")
 		require.Equal(t, true, hl["templateEntitled"], "缺省授权应视为全部开通")
 		require.Len(t, hl["templates"], len(mptemplate.All()))
 		require.Equal(t, mptemplate.DefaultID, hl["templates"].([]interface{})[0].(map[string]interface{})["id"])
@@ -985,43 +986,48 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		}
 		require.Equal(t, 8, brandCount, "品牌配色 8 款都要随清单下发")
 
-		// 品牌配色款同样走白名单：选中的 id 必须原样出现在公开接口根级，
+		// 品牌配色款同样走白名单：选中的两轴值必须原样出现在公开接口根级，
 		// 否则端上 normalizeTheme 会静默回 default，后台却显示「使用中」。
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "brand-ocean"}, adminToken)
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "default", "brandColorId": "brand-ocean",
+		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, "brand-ocean", body["templateId"])
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": mptemplate.DefaultID}, adminToken)
-		require.EqualValues(t, 0, body["code"])
+		require.Equal(t, "default", body["styleId"])
+		require.Equal(t, "brand-ocean", body["brandColorId"])
 
-		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, mptemplate.DefaultID, body["templateId"], "公开接口应在响应根级下发 templateId")
-
-		// 切到高级款：只提交 templateId，其余四列必须原样不动
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "ink"}, adminToken)
+		// 切到高级款：只提交 styleId（并显式清空色系），其余四列必须原样不动
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "ink", "brandColorId": "",
+		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		hl = body["data"].(map[string]interface{})
-		require.Equal(t, "ink", hl["templateId"])
+		require.Equal(t, "ink", hl["styleId"])
+		require.Nil(t, hl["brandColorId"])
 		require.EqualValues(t, []interface{}{"service", "achievement"}, hl["order"])
 		require.EqualValues(t, 25, hl["bgMask"])
 		require.Equal(t, "hidden", hl["projectTimeMode"])
 		require.Equal(t, "minute", hl["serviceTimeMode"])
 		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, "ink", body["templateId"])
+		require.Equal(t, "ink", body["styleId"])
+		require.Nil(t, body["brandColorId"])
 
 		// 非法 id：直接拒绝且不落库
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "neon"}, adminToken)
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"styleId": "neon"}, adminToken)
 		require.EqualValues(t, 1, body["code"])
 		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, "ink", body["templateId"], "被拒绝的非法值不应落库")
+		require.Equal(t, "ink", body["styleId"], "被拒绝的非法值不应落库")
+		require.Nil(t, body["brandColorId"])
 
 		// 授权收紧：未开通不得「新选」高级款，品牌配色预设色板同样不能漏网
 		// （它是按增值能力卖的，漏一个就是白送）。
 		license.SetCurrent(&license.Entitlement{Features: []string{"content_sec"}})
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "warm"}, adminToken)
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"styleId": "warm"}, adminToken)
 		require.EqualValues(t, 403, body["code"])
-		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{"templateId": "brand-ocean"}, adminToken)
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "default", "brandColorId": "brand-ocean",
+		}, adminToken)
 		require.EqualValues(t, 403, body["code"], "品牌配色款也必须受 mp_template_advanced 约束")
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, false, body["data"].(map[string]interface{})["templateEntitled"])
@@ -1029,21 +1035,24 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 授权到期后带着「当前正在用的」高级款保存其它设置仍放行，切回 default 也放行：
 		// 授权 gate 只卡「新选」，不能把基础展示设置一起锁死。
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
-			"templateId": "ink", "projectTimeMode": "date",
+			"styleId": "ink", "projectTimeMode": "date",
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, mptemplate.DefaultID, body["templateId"], "未开通高级款时读路径回落默认款")
+		require.Equal(t, mptemplate.DefaultID, body["styleId"], "未开通高级款时读路径回落默认款")
+		require.Nil(t, body["brandColorId"])
 
-		// 关键：回落只发生在读路径，库里的 id 不抹；续费后自动恢复。
+		// 关键：回落只发生在读路径，库里的两轴值不抹；续费后自动恢复。
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
-		require.Equal(t, "ink", body["data"].(map[string]interface{})["templateId"], "授权到期不应抹掉客户已选模板")
+		require.Equal(t, "ink", body["data"].(map[string]interface{})["styleId"], "授权到期不应抹掉客户已选模板")
+		require.Nil(t, body["data"].(map[string]interface{})["brandColorId"])
 		license.SetCurrent(prev)
 		_, body = c.do("GET", "/api/home-layout", nil, "")
-		require.Equal(t, "ink", body["templateId"], "恢复授权后无需重选即自动生效")
+		require.Equal(t, "ink", body["styleId"], "恢复授权后无需重选即自动生效")
+		require.Nil(t, body["brandColorId"])
 	})
 
-	// ===== 7d. 风格两轴（styleId / brandColorId）：布局族 + 颜色层，色系不可跨风格 =====
+	// ===== 7d. 风格两轴（styleId / brandColorId）：布局族 + 颜色层，P5 起全叉乘 =====
 	t.Run("风格两轴 styleId/brandColorId", func(t *testing.T) {
 		prev := license.Current()
 		license.SetCurrent(nil)
@@ -1059,9 +1068,8 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl := body["data"].(map[string]interface{})
 		require.Equal(t, "default", hl["styleId"])
 		require.Nil(t, hl["brandColorId"], "未选色系应返回 nil（用风格默认色）")
-		require.Equal(t, mptemplate.DefaultID, hl["templateId"], "派生兼容列应等于风格 id")
 
-		// 选品牌色系：挂在 default 之下，两轴值都下发，派生 templateId = 品牌色系 id
+		// 选品牌色系：挂在 default 之下，两轴值都下发
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"styleId": "default", "brandColorId": "brand-ocean",
 		}, adminToken)
@@ -1070,15 +1078,13 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl = body["data"].(map[string]interface{})
 		require.Equal(t, "default", hl["styleId"])
 		require.Equal(t, "brand-ocean", hl["brandColorId"])
-		require.Equal(t, "brand-ocean", hl["templateId"], "派生兼容列应等于品牌色系 id")
 
 		// 公开接口根级同样下发两轴值
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.Equal(t, "default", body["styleId"])
 		require.Equal(t, "brand-ocean", body["brandColorId"])
-		require.Equal(t, "brand-ocean", body["templateId"])
 
-		// 切到 ink 风格（无品牌色系）：styleId=ink、brandColorId=nil、templateId=ink
+		// 切到 ink 风格（无品牌色系）：styleId=ink、brandColorId=nil
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"styleId": "ink",
 		}, adminToken)
@@ -1087,7 +1093,6 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl = body["data"].(map[string]interface{})
 		require.Equal(t, "ink", hl["styleId"])
 		require.Nil(t, hl["brandColorId"])
-		require.Equal(t, "ink", hl["templateId"])
 
 		// P5 全叉乘：ink 布局 + brand-ocean 色系必须能保存并原样读回。
 		// 旧树形模型会回 code=1，客户只看到一句「保存失败」却不知道为什么。
@@ -1099,7 +1104,6 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl = body["data"].(map[string]interface{})
 		require.Equal(t, "ink", hl["styleId"])
 		require.Equal(t, "brand-ocean", hl["brandColorId"])
-		require.Equal(t, "brand-ocean", hl["templateId"], "兼容列是旧端近似值：只留色系 id，两轴列才是真值")
 
 		// 公开接口同样下发两轴，访客端才能同时挂 .wc-style-ink 与 .wc-brand-ocean
 		_, body = c.do("GET", "/api/home-layout", nil, "")
@@ -1155,7 +1159,6 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl = body["data"].(map[string]interface{})
 		require.Equal(t, "ink", hl["styleId"], "只改板块顺序不应冲掉风格")
 		require.Nil(t, hl["brandColorId"])
-		require.Equal(t, "ink", hl["templateId"], "兼容派生列同样不应被冲掉")
 
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"styleId": "default", "brandColorId": "brand-ocean",
@@ -1169,7 +1172,6 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl = body["data"].(map[string]interface{})
 		require.Equal(t, "default", hl["styleId"], "只改遮罩不应冲掉风格")
 		require.Equal(t, "brand-ocean", hl["brandColorId"], "只改遮罩不应冲掉品牌色系")
-		require.Equal(t, "brand-ocean", hl["templateId"])
 		license.SetCurrent(prev)
 	})
 

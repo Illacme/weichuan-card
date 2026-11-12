@@ -549,16 +549,14 @@ paths:
         字段都在**响应根级**，不在 `data` 里。首页 `loadAll` 一次拿到这四组配置，
         不需要再为详情页时间档位或整体风格多打一次请求。
 
-        `templateId` 是内置风格模板 id（白名单见 `internal/mptemplate`），为**旧端兼容字段**。
         P5 起主题是两轴全叉乘：`style`「整体风格」按布局特色命名，决定四个模块的列数 /
         间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，8 款色系在 4 个
         风格上取值逐字一致，可叠加在**任意**风格之上，只覆盖颜色 token 不改版式。
         合法组合 = 4 风格 × (1 个默认色 + 8 款品牌色) = 36 种。两者都走白名单，
         **不是运行时自由色值注入**：小程序代码随版本审核，端上不能动态加载 WXSS，
         这里只下发 id，由端上映射到随包内置的 CSS 变量。
-        `styleId` / `brandColorId` 是存储真值；12 个扁平 `templateId` 装不下 36 个
-        组合，因此它只是**旧端近似值**（选了色系时只写色系 id，旧端会看到 default
-        布局 + 该色），旧端 / 存量未回填行的表现以此为准。未开通高级模板授权时
+        `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
+        兼容派生列，本接口不再下发也不接受 `templateId`）。未开通高级模板授权时
         读路径回落 `default`，但后台保存的两轴值不抹——续费后自动恢复。
         访客从分享链接直达二级页时，`app.ts` 冷启动也会拉本接口预热主题。
       parameters:
@@ -586,14 +584,10 @@ paths:
                     minimum: 0
                     maximum: 100
                     description: 背景遮罩浓度 0~100
-                  templateId:
-                    type: string
-                    enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                    description: 旧端兼容用的扁平 id，是两轴组合的**近似值**；36 个组合无法用它无损表达。新端一律读 styleId / brandColorId。
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]
-                    description: 两轴第一轴「整体风格（布局族）」，决定各模块布局；缺省 default（标准均衡）。与 brandColorId 共同取代 templateId 成为存储真值。
+                    description: 两轴第一轴「整体风格（布局族）」，决定各模块布局；缺省 default（标准均衡）。与 brandColorId 共同作为存储真值。
                   brandColorId:
                     type: string
                     nullable: true
@@ -2804,10 +2798,6 @@ paths:
                         type: string
                         enum: [hidden, date, minute]
                         description: 业务服务详情页的档位，与案例**分开控制**，互不影响。
-                      templateId:
-                        type: string
-                        enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                        description: 旧端兼容的扁平 id（两轴组合的近似值）；存量行（0041 前）缺省为 `default`。
                       styleId:
                         type: string
                         enum: [default, ink, warm, teal]
@@ -2861,8 +2851,8 @@ paths:
         时间档位与主题 id 传枚举外的值一律拒绝（code=1），不做静默兜底。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 9 = 36 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
-        `styleId` / `brandColorId` 是存储真值，`templateId` 同步写一份旧端近似值
-        （36 个组合无法用 12 个扁平 id 无损表达，见公开 GET 说明）。
+        `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
+        兼容派生列，本接口不再接受 `templateId`）。
         高级款按租户校验 `mp_template_advanced`：风格与色系**任一为高级**即受约束，
         未开通且属于「新选」时回 code=403；已在用的高级组合带着同值保存其它设置、
         或切回 `default`，都放行（授权降级只禁止新选，不锁死基础展示设置）。
@@ -2892,12 +2882,6 @@ paths:
                 serviceTimeMode:
                   type: string
                   enum: [hidden, date, minute]
-                templateId:
-                  type: string
-                  enum: [default, ink, warm, teal, brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                  description: |
-                    风格模板 id（旧端兼容字段）；非法值 code=1，未授权高级款「新选」code=403。
-                    新前端请改用 styleId / brandColorId；两者都缺时本字段拆成 (风格, 色系)。
                 styleId:
                   type: string
                   enum: [default, ink, warm, teal]

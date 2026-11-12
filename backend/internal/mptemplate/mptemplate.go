@@ -12,8 +12,9 @@
 // .wc-brand-* 两层同时挂在根节点，颜色层后定义因而覆盖风格自带的默认色。
 // **仍然走白名单，不是运行时自由色值注入**；后台按 series 分组渲染，不猜 id 前缀。
 //
-// 兼容列 template_id 只有 12 个扁平 id，装不下 36 个组合：style_id / brand_color_id
-// 才是存储真值，兼容列只给旧端一个近似值（见 DeriveTemplateID），不是可逆编码。
+// 两轴 (style_id + brand_color_id) 是存储真值，任意风格 × 任意色系（含 nil）都合法，
+// 见 IsValidCombo。0043 已删除 0041 引入的 template_id 兼容派生列，端上旧缓存
+// （miniprogram/utils/theme.ts 的 splitTheme）仅做零迁移读取，不再回写单列 id。
 //
 // 为什么模板定义在代码里而不让后台上传 WXML/CSS：小程序代码是编译后上传审核的，
 // 端上不能动态加载 WXSS；自由 CSS 还会把内部类名变成对客户的长期承诺，以后改版
@@ -24,7 +25,7 @@ package mptemplate
 import "strings"
 
 const (
-	// DefaultID 是升级零突变的缺省款：存量租户 template_id 为空时按它渲染，
+	// DefaultID 是升级零突变的缺省款：存量租户 style_id 为空时按它渲染，
 	// 视觉与模板功能上线前逐字一致。
 	DefaultID = "default"
 
@@ -201,14 +202,6 @@ func Normalize(v string) string {
 	return ""
 }
 
-// IsAdvanced 判断某款（单列 template_id 形态）是否需要 FeatureAdvanced 授权。
-// 两轴化后新代码应改用 IsAdvancedCombo(styleID, brandColorID)；本函数保留以
-// 兼容旧调用与既有测试，内部按 Split 拆两轴再判定。
-func IsAdvanced(id string) bool {
-	s, b := Split(id)
-	return IsAdvancedCombo(s, b)
-}
-
 // NormalizeStyle 校验整体风格 id（白名单 SeriesStyle），未知返回空串。
 // 与 Normalize 同理：不做静默兜底，未知值由调用方拒绝。
 func NormalizeStyle(id string) string {
@@ -247,44 +240,6 @@ func IsValidCombo(styleID string, brandColorID *string) bool {
 		return true
 	}
 	return IsKnownBrandColor(*brandColorID)
-}
-
-// Split 把旧的单列 template_id 拆成 (styleID, brandColorID)：
-// 品牌款 brand-* → (default, brand-*)；风格款 → (id, nil)；缺省/空 → (default, nil)。
-//
-// 注意：这个拆分**只在存量未回填行 / 旧端请求上使用**。P5 的 36 个组合里，
-// 「非 default 风格 + 品牌色系」无法用 12 个扁平 id 表达，Split 只能还原成
-// (default, 色系)，属于有损近似；新的两轴列不会经过这里。
-func Split(id string) (string, *string) {
-	id = strings.TrimSpace(id)
-	if id == "" || id == DefaultID {
-		return DefaultID, nil
-	}
-	if IsBrand(id) {
-		b := id
-		return DefaultID, &b
-	}
-	if NormalizeStyle(id) != "" {
-		return id, nil
-	}
-	return "", nil
-}
-
-// DeriveTemplateID 由两轴值反推兼容用的单列 template_id：
-// 选了品牌色系 → 该色系 id；否则 → 风格 id；风格为空兜底 default。
-//
-// P5 起这是**旧端近似值，不是可逆编码**：36 个组合塞不进 12 个扁平 id，
-// 「ink + brand-crimson」会写成 brand-crimson，旧端看到的是 default 布局 +
-// 绛红色。两轴列才是真值，读路径 effectiveStyleBrand 优先读两轴列，
-// 只有未回填的存量行才回退 Split。契约文档必须写明这个边界。
-func DeriveTemplateID(styleID string, brandColorID *string) string {
-	if brandColorID != nil {
-		return *brandColorID
-	}
-	if styleID == "" {
-		return DefaultID
-	}
-	return styleID
 }
 
 // IsAdvancedCombo 判断 (styleID, brandColorID) 组合是否属高级款：

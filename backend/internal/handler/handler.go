@@ -329,9 +329,9 @@ func New(db *gorm.DB) *gin.Engine {
 	// 背景图是可选增强：bg_image 为空即保持原有灰底布局，小程序端据此决定是否
 	// 铺背景层与遮罩。bg_mask（0~100）为黑色蒙层浓度，用于压暗花哨背景、
 	// 保证白色内容卡片与文字的可读性。
-	// templateId 是内置整体风格模板 id（字段与 order/bgImage 一样在**响应根级**）。
-	// 小程序代码随版本审核，端上不能动态加载 WXSS，所以这里只下发 id，
-	// 由 utils/theme.ts 映射到随包内置的 CSS 变量。
+	// styleId / brandColorId 是内置整体风格两轴（字段与 order/bgImage 一样在**响应根级**）。
+	// 小程序代码随版本审核，端上不能动态加载 WXSS，所以这里只下发两轴 id，
+	// 由 utils/theme.ts 映射到随包内置的 CSS 变量（旧缓存仍可经 splitTheme 零迁移读取）。
 	r.GET("/api/home-layout", func(c *gin.Context) {
 		cid, ok := publicCompanyID(c, db)
 		if !ok {
@@ -346,15 +346,14 @@ func New(db *gorm.DB) *gin.Engine {
 				_ = json.Unmarshal([]byte(l.Order), &order)
 			}
 			bgImage, bgMask = l.BgImage, l.BgMask
-			// 两轴：优先读 style_id / brand_color_id，未回填回退 template_id 反推。
+			// 两轴：优先读 style_id / brand_color_id（0043 已删 template_id 兼容列）。
 			styleID, brandColorID = effectiveStyleBrand(l)
 			// 授权到期 / 未开通高级款时访客回落默认配色，但不抹库里的值。
 			styleID, brandColorID = publicStyleBrand(c, cid, styleID, brandColorID)
 		}
-		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": bgImage, "bgMask": bgMask,
-			"styleId": styleID, "brandColorId": brandColorID, "templateId": templateID,
+			"styleId": styleID, "brandColorId": brandColorID,
 		})
 	})
 

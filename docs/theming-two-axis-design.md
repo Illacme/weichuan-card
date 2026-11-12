@@ -2,7 +2,8 @@
 
 > 状态：**P1（数据/契约层）/ P2（CSS 两层 + 前 2 模块布局）/ P3（剩余 2 模块布局）/ P4（后台两步 UI + 预览图按风格重出）/ P5（全叉乘 + 36 组合）均已实现并通过全量门禁**。
 > **P5 修订已落地**：用户反馈后把「树形归属」改为「4 风格 × 9 色档全叉乘」，并把风格改按布局特色命名；决策与分期见 §12，§1/§2.3/§10 的树形描述保留作历史事实。
-> P4 的实际范围是「固定预览区 + 两步选择 + 12 张图按 4 风格布局重出 + 守门改写」；**刻意未做**白名单物理树化、删 `template_id` 兼容列、真机像素级验收，这三项留作后续阶段（见 §7 / §8 / §10），不是漏做。P5 未改数据库结构、未删兼容列。
+> P4 的实际范围是「固定预览区 + 两步选择 + 12 张图按 4 风格布局重出 + 守门改写」；**刻意未做**白名单物理树化、真机像素级验收，这二项留作后续阶段（见 §7 / §8 / §10），不是漏做。删 `template_id` 兼容列已在 P5 之后经迁移 `0043` 落地（见 §2.1 / §8 / §12.2），不再属于「未做项」。
+> **迁移 `0043` 全局口径**：全文档 P1–P5 期间凡描述「`template_id` 保留作兼容派生列 / 旧端靠它兜住 / `splitThemeId()` 拆它」之处，均为彼时事实；该列已于 `0043` 删除，对应写链路（前端 `splitThemeId`、后端 `DeriveTemplateID`/`Split` 对外写）一并移除。仅小程序 `utils/theme.ts` 的 `splitTheme` 保留，用于解析**真正旧版本后端 / 旧缓存**，且不再回写 `template_id`。
 > 2026-11-11 用户确认方向：整体风格驱动各模块布局、品牌配色作为叠加在风格之上的色系调整；并确认布局深度为「整模块重排版」。
 > 分期记录见 `docs/commercial-readiness.md` 第三十八～四十一轮：P1 完成 `StyleID`+`BrandColorID` 双列、`0042` 迁移与两轴接口；P2/P3 完成 4 风格 × 4 模块布局；P4 完成后台与预览图收口。
 >
@@ -13,8 +14,8 @@
 - **风格（Style）** 决定小程序各功能模块的**布局语言**（顶部名片卡区、公司简介、经典业绩、业务服务的结构与排布各有特色）。
 - **色系（BrandColor）** 是叠加在所选风格之上的**纯颜色层**，不改布局。
 - 不破坏既有不变量：
-  - 保存**只提交风格/色系**，不跨页签覆盖（P4 起 `MpTheme.save()` 只发 `{ styleId, brandColorId }`；P1–P3 期间发的是 `{ templateId }`，由后端兼容派生列兜住）。
-  - 后端 PUT 指针语义（`backend/internal/handler/content.go:491` `TemplateID *string`），未提供字段保持原值。
+  - 保存**只提交风格/色系**，不跨页签覆盖（P4 起 `MpTheme.save()` 只发 `{ styleId, brandColorId }`；更早的 P1–P3 期间曾发 `{ templateId }`，当时由后端 `template_id` 兼容派生列兜住，**该列已于迁移 `0043` 删除**，新后端只认两轴）。
+  - 后端 PUT 指针语义（`backend/internal/handler/content.go` 的 `StyleID` / `BrandColorID` 指针），未提供的字段保持原值——不存在 `templateId` 字段，不再有单列兼容分支。
   - 保存后访客端即时生效，无需重新上传代码或提审（`MpTheme.vue:4-7` 既有承诺）。
 
 ## 1. 概念模型（两轴 + 树形）
@@ -38,13 +39,13 @@ Style (布局族)               BrandColor (颜色层，叠加在 Style 之上)
 
 ## 2. 数据模型
 
-### 2.1 现状（`backend/internal/model/models.go:280`）
-```go
-TemplateID string `gorm:"column:template_id;size:32;default:default" json:"templateId"`
-```
-单一字符串列 + 后端白名单 `backend/internal/mptemplate/mptemplate.go`（扁平 12 款，靠 `series` 分组）。
+### 2.1 历史形态（已删除）
 
-### 2.2 目标
+> 早期（`0041`）`HomeLayout` 只有一个 `template_id` 单列（扁平 12 款内置配色）。`0042` 升级为两轴
+> `style_id` + `brand_color_id`，并把 `template_id` 保留作「兼容派生列」。**迁移 `0043` 已删除
+> `template_id` 列**，当前 `models.go` 只有 `StyleID` / `BrandColorID` 两轴（见 §2.2），不再存在单列近似。
+
+### 2.2 目标 / 现状（已落地）
 ```go
 StyleID      string   `gorm:"column:style_id;size:32;default:classic" json:"styleId"`
 BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"` // nil = 用风格默认色
@@ -66,7 +67,7 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 - 8 款 `brand-*`：**全部归 `default` 风格之下**作色系，即 `(default, brand-*)`.
   —— 用户确认的零突变方案：brand-* 现有形态就是「配色换、版式沿用 default」，归入 default 子树不改动任何存量租户外观。
   （设计稿早期草案曾提「按色温分散到多风格」，已弃用；那样会让存量选了 brand-* 的租户从 default 版式跳到目标风格版式，产生视觉突变。）
-- 迁移脚本（`0042`）把旧 `template_id` 拆成 `(style_id, brand_color_id)`；`template_id` 列保留作兼容派生列（写入时由两轴反推），便于回滚锚点。
+- 迁移脚本（`0042`）把旧 `template_id` 拆成 `(style_id, brand_color_id)`；`template_id` 列当时保留作兼容派生列（写入时由两轴反推），便于回滚锚点。**迁移 `0043` 已删除该列**，当前存储只有两轴。
 
 ## 3. CSS 架构（两层解耦）
 
@@ -181,10 +182,10 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 ## 7. 接口契约（`docs/openapi.yaml`）
 
-> ✅ **P1 已落地**：公开/管理 GET 根级下发 `styleId` + `brandColorId`，并保留 `templateId` 派生兼容列；
-> PUT 接受 `{ styleId?, brandColorId? }`（两者都缺时兼容拆 `templateId`）；`brandColorId` 必须属于该
-> `styleId`，否则 `code=1`；高级风格/高级色系「新选」按 `mp_template_advanced` 回 `code=403`。
-> `openapi.yaml` 三处（公开 GET / 管理 GET / 管理 PUT）已补两轴字段。
+> ✅ **P1 已落地**：公开/管理 GET 根级下发 `styleId` + `brandColorId`；PUT 接受 `{ styleId?, brandColorId? }`
+> （两者都缺时不接受 `templateId`，已是 P1–P5 的口径；`brandColorId` 任意风格可叠加，未知 id `code=1`；
+> 高级风格/高级色系「新选」按 `mp_template_advanced` 回 `code=403`）。`template_id` 兼容派生列已于
+> 迁移 `0043` 删除，当前接口只认两轴（`openapi.yaml` 三处已移除 `templateId` 字段）。
 
 - **P2 已落地**：小程序 `utils/types.ts` 的 `HomeLayoutResp` 补 `styleId` / `brandColorId`
   （`types_contract.spec.ts` 与 `models.go` json tag 对账）；首页 `loadAll` 与冷启动
@@ -201,18 +202,19 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 ## 8. 后端 handler / model / 迁移
 
 > ✅ **P1 已落地**（与下面「最终形态」的差异是刻意的兼容取舍，不是漏做）：
-> - `models.go`：新增 `StyleID` + `BrandColorID`，**保留 `TemplateID` 作兼容派生列**（回滚锚点 + 旧端续命）。
+> - `models.go`：新增 `StyleID` + `BrandColorID`（当前已是唯一存储形态；早期 `TemplateID` 兼容派生列已于迁移 `0043` 删除）。
 > - `mptemplate.go`：白名单**仍是扁平 12 款**（`IsBrand`/`SeriesOf` 保留），另加一组两轴纯函数
 >   `Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`/`StyleOfBrand`；
 >   归属判定由 `StyleOfBrand()` 提供（P1 全部返回 `default`），**未做物理树化**。
 > - `content.go`：GET 下发两值 + 兼容列；PUT 两轴解析 + 归属校验；授权 gate 改为两轴 `IsAdvancedCombo` + `changed` 比较。
 > - `handler.go`：`publicTemplateID` → `publicStyleBrand(styleID, brandColorID)`，未开通时回落 `(default, nil)` 且不抹库。
 > - 迁移 `0042_mp_theme_two_axis.sql`：加 `style_id`（DEFAULT `'default'`）/ `brand_color_id`（NULL）两列 + 按 §2.3 回填；
->   `template_id` **保留不删**（P1 写入时同步反推），`manifest_gen.go` 追加清单项。
+>   随后迁移 `0043_drop_template_id.sql` 删除 `template_id` 列，`manifest_gen.go` 追加清单项。
 > - `handler_test.go` 新增「风格两轴」子测试；`mptemplate_test.go` 新增两轴函数单测；`gofmt` / `go test ./...` 全绿。
 
 - **后续阶段（P4 未纳入，不是漏做）**：白名单物理树化并删除 `IsBrand` 平面判定、列表接口改返回树、
-  前端两步 UI 改为消费树、确认无旧端后再删 `template_id` 列与兼容字段。
+  前端两步 UI 改为消费树。删 `template_id` 列与兼容字段已在迁移 `0043` 落地（小程序端 `splitTheme`
+  仍保留以兼容真正旧版本后端 / 旧缓存，不回写 `template_id`）。
   P4 只做后台 UX 与预览图收口，**后端 `mptemplate` / 迁移 / OpenAPI 零改动**，
   这样两轴化全程不引入新的数据库或接口变更风险。
 
@@ -264,14 +266,14 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 3. ~~**工作量爆炸**~~ ✅ **16 套模块布局已在 P2+P3 全部落地**，靠「4 风格 × 4 模块各有专属规则 +
    同模块布局互不雷同」守门替代人工逐套核对；**真机验收组合仍开放**（建议只覆盖「每风格默认色」
    +「每风格抽 1 个品牌色」，其余靠单元测试守门）。
-4. **兼容期双写**：P1 起 `template_id` 与两轴列同步写，读路径以两轴为准、未回填行回退 `Split(template_id)`；
-   旧端仍读 `templateId`。任何一处漏同步都会造成「后台显示与访客所见不一致且无人报错」，改这块必带反向验证。
+4. **（历史）兼容期双写**：P1–P5 期间 `template_id` 与两轴列同步写，读路径以两轴为准、未回填行回退 `Split(template_id)`；
+   旧端仍读 `templateId`。**迁移 `0043` 已删除 `template_id` 列，后端不再写也不读它**；小程序端 `splitTheme` 仅用于兼容真正旧版本后端 / 旧缓存，不再回写 `template_id`。改动这块必带反向验证。
 5. **分期**：见 §11，先数据层后视觉层、先 2 模块后 4 模块 —— P1/P2/P3/P4 已按此走完；
    剩下的不是分期内的实施项，而是**独立的后续工作**（白名单树化 / 删兼容列 / 真机像素级验收）。
 
 ## 11. 实施分期（建议）
 
-- **P1 数据/契约层（不改视觉）** ✅ **已完成并测试通过**：`models.go` 双列（`StyleID`+`BrandColorID`） + `0042` 迁移（加两列 + 按映射回填，保留 `template_id` 兼容派生列）+ `mptemplate` 两轴函数（`Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`）+ 接口 GET 下发两值 / PUT 两值与跨风格归属校验 + `openapi` 三处补全 + 后端测试（含跨风格拒绝与高级色系 gate）。前端/小程序暂用 `templateId` 兼容字段，未改动。
+- **P1 数据/契约层（不改视觉）** ✅ **已完成并测试通过**：`models.go` 双列（`StyleID`+`BrandColorID`） + `0042` 迁移（加两列 + 按映射回填，当时保留 `template_id` 兼容派生列）+ `mptemplate` 两轴函数（`Split`/`DeriveTemplateID`/`IsAdvancedCombo`/`BelongsToStyle`/`NormalizeStyle`/`IsKnownBrandColor`）+ 接口 GET 下发两值 / PUT 两值与跨风格归属校验 + `openapi` 三处补全 + 后端测试（含跨风险拒绝与高级色系 gate）。前端/小程序暂用 `templateId` 兼容字段，未改动。后续迁移 `0043` 已删除 `template_id` 列、移除了 `DeriveTemplateID`/`Split` 对外的写链路。
 - **P2 CSS 两层 + 顶部名片卡 / 公司简介布局**（2 模块）✅ **已实现并测试通过**：`app.wxss` 拆 `.wc-style-*`（4 风格，18 token + 2 模块布局规则）与 `.wc-brand-*`（8 色系，仅 11 颜色 token）；`theme.ts` 两轴 + 扁平缓存兼容；`index.ts` / `themeBootstrap.ts` / `types.ts` 接线；预览脚本两层合并读取；端上守门改写 + 4 项反向验证。后台与小程序 wxml 的顶层节点无需改动（`wc-theme` 基类保留）。**12 组组合 token 逐字未变，PNG 无需重出。** P2 才会给已选 `ink/warm/teal` 的租户带来首页这两个模块的可见外观变化；`default` 与 8 款 `brand-*` 零突变。
 - **P3 经典业绩 / 业务服务布局**（剩余 2 模块）✅ **已实现并测试通过**：`app.wxss` 补齐
   `.mp-achievements` / `.mp-services` 的 4 风格规则，用**列数**做真正可见的重排
@@ -285,8 +287,7 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
   12 张 PNG 全部重出并按每风格实测高度收口，`manifest.json` 增布局/画布快照；
   `MpTheme.spec.ts` / `MpSettings.spec.ts` / `theme.spec.ts` 改写，8 项反向验证必红、
   8 项全量门禁全绿。**本轮不动后端 / 迁移 / OpenAPI / 数据库。**
-  **未纳入本期的后续工作**：白名单物理树化 + 删 `template_id` 兼容列、`openapi` enum 收敛、
-  真机像素级验收（本环境无真机截图工具链，预览图只是复刻示意、不能替代）。
+  **未纳入本期的后续工作**：白名单物理树化、`openapi` enum 收敛、真机像素级验收（本环境无真机截图工具链，预览图只是复刻示意、不能替代）。删 `template_id` 兼容列已在迁移 `0043` 落地，不再列于此。
 
 > 每一期独立可交付、可回滚；P1 不触视觉，风险最低，建议先行。
 
@@ -318,14 +319,14 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 | 颜色层 | 8 款色系在 4 个风格上取值**逐字一致**（统一色板），不做逐风格调校；风格只管布局 |
 | 默认色 | `brandColorId = null` 仍用该风格自带的默认色，存量租户零突变；它不是统一色板的一员 |
 | 风格命名 | 显示名改为布局特色（标准均衡 / 紧凑信息 / 宽松亲和 / 疏排透气），**内部 id 不变**；说明文字不得含颜色词，由 Go 单测钉住 |
-| 兼容列 | `template_id` 只有 12 个扁平 id，装不下 36 组合 → 两轴列是真值，兼容列是**旧端近似值**（选色系时只写色系 id，旧端看到 default 布局 + 该色）；`Split()` 只用于存量未回填行 |
+| 兼容列（已删） | `template_id` 早期只有 12 个扁平 id，装不下 36 组合 → 两轴列是真值。该兼容列已于迁移 `0043` 删除；`splitTheme` 仅保留在端上用于解析真正旧版本后端 / 旧缓存，不再有后端写链路。 |
 | 端上缓存 | `wc_theme_id` 升级为带前缀的两轴格式，旧格式仍按老规则解析，旧缓存零迁移 |
 | 预览图 | 按组合出 36 张（4 风格 × 9 色档），文件名用组合键；布局按 style、颜色按组合；manifest 改为 12 套色板 + combos 映射 |
 | 授权 | 风格或色系**任一高级**即受 `mp_template_advanced` 约束（修掉 brand 短路） |
 
 ### 12.3 不变的东西
 
-不改数据库结构（两轴列已在 `0042`）、不动 4×4=16 套布局规则、不动 `app.wxss` 的两层机制、
+不改动两轴列本身（两轴列已在 `0042` 引入、`0043` 删除兼容列）、不动 4×4=16 套布局规则、不动 `app.wxss` 的两层机制、
 不改 12 个 id 集合、不做运行时自由色值注入。存量 `(default, brand-*)`、`(ink, nil)` 等
 组合逐字不变。
 

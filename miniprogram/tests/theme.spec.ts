@@ -441,9 +441,10 @@ describe('小程序风格模板 系列分组', () => {
     expect(vue, '不能退回非 default 禁用色卡').not.toContain('if (styleId.value !== DEFAULT_STYLE) return')
     expect(vue, '不能退回按风格置灰色卡').not.toContain('disabled: styleId !== DEFAULT_STYLE')
     expect(vue, '不能退回树形提示').not.toContain('暂无可用品牌配色')
-    // 旧后端只下发兼容派生列时按前缀拆回两轴
-    expect(vue).toContain('id.startsWith(BRAND_PREFIX)')
-    expect(vue).toContain('splitThemeId(d)')
+    // 后端直接下发两轴，前端 load 原样读取两轴；不再有「旧后端只发单列 id 按前缀拆」的分支
+    // （templateId 兼容列已在 0043 删除，端上旧缓存经小程序 splitTheme 零迁移读取，与前端无关）。
+    expect(vue).toContain('d?.styleId')
+    expect(vue).toContain('d?.brandColorId')
   })
 })
 

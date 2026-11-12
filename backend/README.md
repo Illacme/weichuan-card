@@ -718,8 +718,8 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/services | 新增业务服务 |
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
-| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`** + `templateId` 兼容派生列、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
-| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**P5 起 PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`，旧端只发 `templateId` 时后端按 `Split()` 拆回两轴；三列同步写，但仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法 id 回 code=1；**任意风格 × 任意已知色系（含 nil）都合法，4 × 9 = 36 组合**，`IsValidCombo` 只挡未知 id；未开通 `mp_template_advanced` 且「风格与色系任一高级」并「新选」回 code=403 |
+| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`**、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
+| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`；仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法 id 回 code=1；**任意风格 × 任意已知色系（含 nil）都合法，4 × 9 = 36 组合**，`IsValidCombo` 只挡未知 id；未开通 `mp_template_advanced` 且「风格与色系任一高级」并「新选」回 code=403 |
 
 小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，12 个扁平 id），按服务端下发的
 `Series` 分两组，后台据此分组渲染、不靠 id 前缀猜：
@@ -731,14 +731,13 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 
 **P5 起两轴全叉乘**：风格按布局特色命名（标准均衡 / 紧凑信息 / 宽松亲和 / 疏排透气，
 内部 id 不变），8 款色系在 4 个风格上取值逐字一致，任意组合都合法；`styleId` 与
-`brandColorId` 两列是存储真值，`template_id` 只是**旧端近似值**（12 个扁平 id 装不下
-36 个组合，`ink + brand-crimson` 会写成 `brand-crimson`，旧端看到的是 default 布局 +
-绛红色）。授权 gate 也是两轴 OR：风格或色系任一高级且未开通，就不许新选。
+`brandColorId` 两列是存储真值（早期 `template_id` 兼容派生列已于迁移 `0043` 删除，
+后端不再下发也不接受它）。授权 gate 也是两轴 OR：风格或色系任一高级且未开通，就不许新选。
 
 `brand-*` 是「客户自定义主色」的落地方式：**预设色板 + 白名单**，不是运行时自由色值
 注入——小程序代码随版本审核，端上不能动态加载 WXSS，自由 CSS 还会把内部类名变成对
-客户的长期承诺。数据库存 `style_id` / `brand_color_id` / `template_id` 三列（迁移 0042），
-加款不需要改表结构。
+客户的长期承诺。数据库存 `style_id` / `brand_color_id` 两列（迁移 `0042` 引入；早期的
+`template_id` 兼容派生列已于迁移 `0043` 删除），加款不需要改表结构。
 端上 18 个 CSS 变量（11 个色值 + 7 个版式）随版本内置在 `miniprogram/app.wxss`：
 默认 token 写在 `page` 上，取值与模板功能上线前逐字一致（升级零突变）；
 挂了 `.wc-style-*` + 可选 `.wc-brand-*` 两层 class 的 6 个访客页才覆盖，员工 / 管理页保持默认。
@@ -796,18 +795,19 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 只锁「不许变差」）。品牌配色 8 款实测最低 4.95（琥珀款），最高 7.35。
 `--wc-primary-rgb` 必须与 `--wc-primary` 同色，否则阴影和按钮会错色。
 
-`migrations/0041_miniprogram_theme.sql` 只加 `home_layouts.template_id` 一列，缺省 `default`；
-该 SQL 的 COMMENT 里列的 id 是**上线当时的快照**，真实白名单以 `mptemplate.All()` 为准，
-加款不需要改数据库。授权 gate 只卡 PUT 里的「切到高级款」这一步，**读接口不拦**：
-到期时访客回落默认款，但库里的 id 保留，续费自动恢复。
+`migrations/0041_miniprogram_theme.sql` 只加 `home_layouts.template_id` 一列，缺省 `default`
+（历史迁移，保留作记录；该列已于迁移 `0043` 删除）；该 SQL 的 COMMENT 里列的 id 是**上线当时的快照**，
+真实白名单以 `mptemplate.All()` 为准，加款不需要改数据库。授权 gate 只卡 PUT 里的「切到高级款」这一步，
+**读接口不拦**：到期时访客回落默认款，但库里的两轴值保留，续费自动恢复。
 
 **两轴化（P1，数据/契约层）**：`migrations/0042_mp_theme_two_axis.sql` 再加 `style_id`（缺省 `default`）
 与 `brand_color_id`（NULL = 用该风格默认色）两列，把旧 `template_id` 拆成「风格 × 色系」；
-8 款 `brand-*` 全部归 `default` 风格之下。`template_id` **保留为兼容派生列**（写入时由两轴反推、
-旧端继续读它），不删除。后台/公开 GET 同时下发 `styleId` + `brandColorId` + `templateId`；
-PUT 只在显式带了任一风格字段时才写这三列（三个页签各存各的，见 `content.go` 的 `themeTouched`），
-并校验 `brandColorId` 必须属于该 `styleId`。白名单一仍是扁平 12 款，物理树化与前端两步 UI 属后续阶段。
-设计见 `docs/theming-two-axis-design.md`，落地记录见 `docs/commercial-readiness.md` 第三十八轮。
+8 款 `brand-*` 全部归 `default` 风格之下。随后迁移 `0043_drop_template_id.sql` **删除 `template_id`
+列**（两轴已是唯一存储真值，不再有单列近似）；`Split`/`DeriveTemplateID` 对外写链路一并移除，
+仅小程序端 `splitTheme` 保留以兼容真正旧版本后端 / 旧缓存。后台/公开 GET 只下发 `styleId` +
+`brandColorId`；PUT 只在显式带了任一风格字段时才写这两列（三个页签各存各的，见 `content.go` 的
+`themeTouched`）。白名单一仍是扁平 12 款，物理树化与前端两步 UI 属后续阶段。
+设计见 `docs/theming-two-axis-design.md`，落地记录见 `docs/commercial-readiness.md` 第三十八轮、第四十三轮。
 
 冷启动主题统一：`app.ts` 的 `onLaunch` 在租户绑定之后调 `utils/themeBootstrap.prefetchTheme()`
 拉一次本接口，写缓存并广播到页面栈——访客直接从分享链接进二级页时首页 `loadAll` 不会执行，

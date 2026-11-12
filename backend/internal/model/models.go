@@ -273,16 +273,11 @@ type HomeLayout struct {
 	// 时间往往不是一个答案，共用一个开关会逼客户二选一。
 	ProjectTimeMode string `gorm:"column:project_time_mode;size:16;default:date" json:"projectTimeMode"`
 	ServiceTimeMode string `gorm:"column:service_time_mode;size:16;default:date" json:"serviceTimeMode"`
-	// TemplateID 小程序整体风格模板 id（白名单真值见 internal/mptemplate）。
-	// 空串按 default 渲染：0041 之前建的行由迁移默认值补上，升级零突变。
-	// 授权未开通高级款时库里的值**保留不抹**（续费自动恢复），只由公开接口
-	// 在读取时回落 default，见 handler.go 的 publicTemplateID()。
-	// 两轴化后本列作为「兼容派生列」保留：写入时由 (StyleID, BrandColorID)
-	// 反推，便于回滚锚点；新逻辑以 StyleID / BrandColorID 为准（见 mptemplate）。
-	TemplateID string `gorm:"column:template_id;size:32;default:default" json:"templateId"`
-	// StyleID 整体风格（布局族）：classic/ink/warm/teal，缺省 classic（零突变）。
-	// 两轴模型第一轴，决定小程序各模块布局语言；P1 起取代 TemplateID 成为存储真值。
-	StyleID string `gorm:"column:style_id;size:32" json:"styleId"`
+	// StyleID 整体风格（布局族）：default/ink/warm/teal，缺省 default
+	// （0042 迁移 MySQL 端 DEFAULT 'default'；SQLite 走 GORM AutoMigrate 同一默认值）。
+	// 两轴模型第一轴，决定小程序各模块布局语言；与 BrandColorID 共同构成唯一存储真值，
+	// 0043 已删除 0041 的 template_id 兼容派生列，不再有单列近似。
+	StyleID string `gorm:"column:style_id;size:32;default:default" json:"styleId"`
 	// BrandColorID 品牌色系（颜色层），叠加在所选风格之上；nil = 用该风格默认色。
 	// 两轴模型第二轴；P1 仅 classic 下挂 8 款 brand-*，其余风格暂仅默认色。
 	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`

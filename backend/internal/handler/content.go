@@ -457,12 +457,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
 			serviceMode = model.NormalizeTimeMode(hl.ServiceTimeMode)
-			// 两轴：优先读 style_id / brand_color_id；未回填（SQLite AutoMigrate
-			// 或 0042 迁移前）的行回退从 template_id 反推，保证存量配色不丢。
+			// 两轴：优先读 style_id / brand_color_id；0042 已回填存量行，
+			// style_id 在 MySQL 端与 SQLite AutoMigrate 均有 DEFAULT 'default'，
+			// 空串兜底见 effectiveStyleBrand。
 			styleID, brandColorID = effectiveStyleBrand(hl)
 		}
-		// 兼容派生列：新前端读 styleId/brandColorId，旧前端仍读 templateId。
-		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
 		// 清单与授权态一并下发：后台不必自己硬编码模板，且能直接把「未开通」
 		// 的高级款置灰并说明原因，而不是等保存时才被拒。
 		entitled := license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced)
@@ -470,14 +469,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
 			"styleId": styleID, "brandColorId": brandColorID,
-			"templateId": templateID, "templates": mptemplate.All(),
+			"templates":        mptemplate.All(),
 			"templateEntitled": entitled,
 		}})
 	})
 	r.PUT("/api/admin/home-layout", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var req struct {
-			// Order 也必须是指针：新增「风格模板」页签后，模板页只提交 templateId，
+			// Order 也必须是指针：新增「风格模板」页签后，模板页只提交风格两轴，
 			// 若仍无条件写 order_col，会把客户配好的板块顺序冲成 "null"——
 			// 没人报错、前台只是悄悄回到默认顺序，属于典型的静默数据丢失。
 			Order *[]string `json:"order"`
@@ -488,13 +487,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
-			// 两轴风格 / 色系（P1 起的新写入形态）：styleId 决定布局族、
-			// brandColorId 只覆盖颜色（nil = 用该风格默认色）。两者都未提供时
-			// 才回退看 TemplateID（兼容旧前端 / 小程序仍只发单列 templateId）。
+			// 两轴风格 / 色系（P5 起的新写入形态）：styleId 决定布局族、
+			// brandColorId 只覆盖颜色（nil = 用该风格默认色）。
 			StyleID      *string `json:"styleId"`
 			BrandColorID *string `json:"brandColorId"`
-			// 风格模板 id（兼容字段）：新前端请改用 styleId / brandColorId。
-			TemplateID *string `json:"templateId"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -518,14 +514,13 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 		// ===== 风格 / 色系（两轴，P5 起全叉乘）=====
 		// styleId 决定布局族，brandColorId 只覆盖颜色；任意风格 × 任意已知色系都合法
-		// （4 × 9 = 36 种）。前端 / 小程序若仍只发 templateId，兼容分支拆成
-		// (style, brand)，保证升级零突变、旧端不崩。
+		// （4 × 9 = 36 种）。两轴是唯一写入形态，不存在单列 templateId 兼容分支。
 		//
 		// themeTouched 是「三个页签各存各的」不变量的开关：只有本次请求**显式带了**
 		// 任一风格字段，才允许写风格三列。「名片页面样式」页签只提交
 		// order/背景/时间档位，若这里无条件写缺省值，会把客户选好的高级风格
 		// 静默冲回 default——没人报错、后台与访客所见悄悄不一致。
-		themeTouched := req.StyleID != nil || req.BrandColorID != nil || req.TemplateID != nil
+		themeTouched := req.StyleID != nil || req.BrandColorID != nil
 		styleID := mptemplate.DefaultID
 		var brandColorID *string
 		if req.StyleID != nil {
@@ -553,16 +548,6 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			// 显式传空串 = 用该风格默认色（brandColorID 保持 nil）。
 		}
-		// 兼容：两个新字段都缺失时才看旧 templateId，拆成 (style, brand)。
-		if req.StyleID == nil && req.BrandColorID == nil && req.TemplateID != nil {
-			s, b := mptemplate.Split(*req.TemplateID)
-			if s == "" {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "风格模板无效"})
-				return
-			}
-			styleID, brandColorID = s, b
-		}
-		templateID := mptemplate.DeriveTemplateID(styleID, brandColorID)
 
 		// 授权只卡「新选高级款」这一个动作，不把整个 PUT 挂 RequireFeature：
 		// 后者会连首页背景、板块顺序、时间档位一起拦掉，没买高级模板的客户
@@ -591,22 +576,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		var hl model.HomeLayout
 		if db.First(&hl, "company_id = ?", cid).Error != nil {
-			// 新行：没显式提交 order / templateId 时也要落成合法缺省值，
-			// 不能写 "null" 或空串（端上会把空 id 当成不认识的模板）。
+			// 新行：没显式提交 order 时也要落成合法缺省值，不能写 "null"
+			// （端上会把空 id 当成不认识的模板）。风格两轴由 styleID（缺省 DefaultID）
+			// / brandColorID 直接写入，不再有单列 templateId 派生。
 			createdOrder := orderJSON
 			if createdOrder == "" {
 				createdOrder = `["achievement","service"]`
-			}
-			createdTemplate := templateID
-			if createdTemplate == "" {
-				createdTemplate = mptemplate.DefaultID
 			}
 			created := model.HomeLayout{
 				CompanyID:       cid,
 				Order:           createdOrder,
 				ProjectTimeMode: model.DefaultTimeMode,
 				ServiceTimeMode: model.DefaultTimeMode,
-				TemplateID:      createdTemplate,
 				StyleID:         styleID,
 				BrandColorID:    brandColorID,
 			}
@@ -643,14 +624,13 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if serviceMode != "" {
 				upd["service_time_mode"] = serviceMode
 			}
-			// 只在本次显式提交了风格字段时才写风格三列：否则只提交 order / 背景 /
+			// 只在本次显式提交了风格字段时才写风格两列：否则只提交 order / 背景 /
 			// 时间档位的页签会把客户选好的模板静默冲回 default（见 themeTouched 注释）。
-			// 三列同步写：style_id / brand_color_id 为真值，template_id 为兼容派生列；
-			// brand_color_id 是 *string，nil 即写 NULL（用风格默认色）。
+			// style_id / brand_color_id 是存储真值；brand_color_id 是 *string，
+			// nil 即写 NULL（用风格默认色）。
 			if themeTouched {
 				upd["style_id"] = styleID
 				upd["brand_color_id"] = brandColorID
-				upd["template_id"] = templateID
 			}
 			// 三个页签各存各的：只带风格字段的 payload 只改风格三列，
 			// 其余展示配置一律不动。upd 为空说明没带任何可写字段，直接回成功即可。
@@ -676,14 +656,15 @@ func clampMask(v int) int {
 	return v
 }
 
-// effectiveStyleBrand 返回某行的有效两轴值：优先读 style_id / brand_color_id，
-// 未回填（SQLite AutoMigrate 或 0042 迁移前）的行回退从 template_id 反推，
-// 保证存量租户配色在迁移完成前也不丢。
+// effectiveStyleBrand 返回某行的有效两轴值：优先读 style_id / brand_color_id。
+// style_id 在 0042 迁移与 SQLite AutoMigrate 均有 DEFAULT 'default'，存量行已回填，
+// 理论上非空；空串兜底按 DefaultID 渲染（视觉与上线前逐字一致），不再依赖已删除的
+// template_id 兼容列（见迁移 0043）。
 func effectiveStyleBrand(hl model.HomeLayout) (string, *string) {
 	if hl.StyleID != "" {
 		return hl.StyleID, hl.BrandColorID
 	}
-	return mptemplate.Split(hl.TemplateID)
+	return mptemplate.DefaultID, nil
 }
 
 // brandEqual 比较两个 *string 色系是否相等（均 nil 视为相等）。

@@ -2536,10 +2536,10 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 关键坑 4（**端上测试桩假绿**）：P5-2 早期把 `wx.getStorageSync` stub 成字符串而非函数，
 > 异常被 `catch` 吞后回落 default，导致针对性用例错误通过；修正为传入函数后复绿（69 例）。
 
-> **本轮刻意未做（留作后续独立阶段）**：删 `template_id` 兼容列（需动数据库迁移 + 模型 +
-> 回填收敛，按项目纪律需显式批准才动）、OpenAPI 的 `templateId` enum 收敛（当前保留作旧端近似，
+> **本轮刻意未做（留作后续独立阶段）**：OpenAPI 的 `templateId` enum 收敛（当前保留作旧端近似，
 > 属刻意）、删 `IsBrand` 平面判定、清单改 `styles[]` + `brandColors[]` 形态。真机像素级验收
-> 仍需人工（本环境无真机截图工具链）。
+> 仍需人工（本环境无真机截图工具链）。**「删 `template_id` 兼容列」已在第四十三轮落地**
+> （迁移 `0043` + 模型/接口/前端/OpenAPI 全链路收敛，经用户显式批准动数据库结构）。
 
 > 验收结论：反向验证 6 项必红且已还原复绿（针对性 Vitest + `--check` 复绿），全量 Vitest
 > 95 文件 / **1612 例**通过，`dist-check-p5` 由 `**/dist-check-*/` 忽略、不进提交。本轮提交
@@ -2552,4 +2552,39 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 风格名描述布局特色（`TestStyleNamesDescribeLayout` 钉住），**白名单与全叉乘一致，无需改代码**。
 > 本变更仅触及 `docs/commercial-readiness.md` 一个 Markdown 文件，不进任何测试读路径，故只跑
 > `git diff --check` 一项门禁即可。
+
+## 第四十三轮：删除 `home_layouts.template_id` 兼容派生列（迁移 0043，全链路收敛）
+
+承接第四十二轮 P5（提交 `b42bd6d`）。P5 收口时把「删 `template_id` 兼容列」列为刻意未做项
+（动数据库结构按项目纪律需显式批准）。本轮经用户**显式批准动数据库结构**，把 0041 引入、0042
+保留的 `template_id` 兼容派生列彻底删除，只保留两轴 `style_id` / `brand_color_id` 作为存储真值，
+结束「两轴 ↔ 单列近似」的折返。
+
+> **动 DB 边界（显式批准）**：本轮回填收敛不涉及任何数据搬移——0042 已完成「两轴列是真值」的回填，
+> `template_id` 列自 0042 起只是两轴反推的近似副本。0043 只做 `DROP COLUMN`，升级零突变：
+> 旧行无 `template_id` 不影响任何读路径（读路径早已以两轴列为准），SQLite 走 GORM AutoMigrate、
+> MySQL 走迁移 0043。
+
+| 项 | 说明 |
+| --- | --- |
+| 迁移 `0043` | 新建 `backend/migrations/0043_drop_template_id.sql`：`ALTER TABLE home_layouts DROP COLUMN IF EXISTS template_id;`（MySQL 8.0 幂等 DROP，列已不存在静默跳过）；`backend/internal/migrate/manifest_gen.go` 的 `expectedMigrations` 追加 `"0043_drop_template_id.sql"`（`TestManifestMatchesMigrationsDir` 守门） |
+| 模型 | `backend/internal/model/models.go` 删除 `HomeLayout.TemplateID` 字段；`StyleID` gorm tag 显式加 `default:default`（与迁移 0042 一致，保证不变量测试有效） |
+| `mptemplate.go` | 删除 `Split(id)` / `DeriveTemplateID(styleID, brandColorID)` / `IsAdvanced(id)` 三个对外函数；改用 `IsAdvancedCombo(id, nil)` 取代单参数 `IsAdvanced`；包注释更新为「两轴是唯一存储真值，0043 已删 template_id」 |
+| 后端接口 | `content.go`：GET 不再下发 `templateId`（`effectiveStyleBrand` 直接读两轴，不再调 `DeriveTemplateID`）；PUT 请求结构体删除 `TemplateID *string` 字段、`themeTouched` 改为「`StyleID` 或 `BrandColorID` 任一非空」、update map 不再写 `template_id`；`handler.go` 公开 GET 同样只下发两轴 |
+| 前端收敛 | `frontend/src/api/content.ts` 删 `templateId` 字段；`MpTheme.vue` 删 `BRAND_PREFIX` / `splitThemeId()`，直接读两轴；`MpTheme.spec.ts` / `MpSettings.spec.ts` 删 `templateId` fixture |
+| 小程序保留 | `miniprogram/utils/theme.ts` 的 `splitTheme` + 可选 `templateId?` 字段**保留**（P5-2 旧缓存零迁移承诺，不破坏）；`types_contract.spec.ts` 的 `HomeLayoutResp` 仍声明 `templateId` 为 optional（兼容真正旧版本后端），强约束循环只强约束 `styleId` / `brandColorId`；`theme.spec.ts` 断言改为 `d?.styleId` / `d?.brandColorId` |
+| OpenAPI | `docs/openapi.yaml` 删除三处 `templateId` schema（公开 GET 响应 / 管理 GET 响应 / 管理 PUT 请求体），公开 GET 描述与 PUT 描述改为「迁移 0043 已删除 template_id，本接口不再下发也不接受 templateId」；`styleId` 描述去掉「取代 templateId」措辞 |
+| 刻意不动 | `backend/internal/wechat/subscribe.go` 的 `TemplateID` 是**微信订阅消息模板 ID**（`TPL-AUDIT`），与主题列无关，严禁触碰；其相关测试 `subscribe_test.go` 一并保留 |
+| 后端测试 | `mptemplate_test.go`：`IsAdvanced` 调用改为 `IsAdvancedCombo(..., nil)`；不变量测试 `TestDefaultIDMatchesModelAndMigration` 改校验 `StyleID` 字段 + 读迁移 `0042` 的 `DEFAULT 'default'`（原校验 `TemplateID` + 迁移 `0041`）；删 `TestTwoAxisSplitAndDerive`；`handler_test.go` 子测试 7c/7d 全部 `templateId` 断言改为 `styleId` / `brandColorId` |
+| 反向验证 | grep 全仓确认：除 `wechat/subscribe.go` 的 `TemplateID`（微信消息模板，正确保留）外，无 `DeriveTemplateID` / `Split` / `HomeLayout.TemplateID` 残留引用；`frontend/src` 无残留；`miniprogram` 端 `templateId` 为刻意 optional 兼容字段（保留） |
+
+> 关键坑（**静默失败优先判**）：删 `templateId` 后若有调用方仍依赖它，用户不会看到报错——因为读路径早已
+> 以两轴列为准，缺 `templateId` 只是字段消失，不触发任何错误。因此反向验证以 **grep 全仓残留**为硬证据，
+> 而非靠测试偶然通过；`wechat` 的 `TemplateID` 与小程序 `splitTheme` 是必须区分的「同名不同物」。
+
+> 验收结论：后端 `go build` + `go test ./...` 全绿（handler 约 48.7s、migrate、mptemplate 等）；前端 /
+> 小程序 fixture 与 compat 断言同步改写；OpenAPI 三处 `templateId` 已移除；8 项全量门禁（gofmt /
+> golangci-lint v2.15.0 / go test ./... / gen_theme_previews.py --check / eslint / vue-tsc /
+> 全量 Vitest / vite build dist-check-43 / git diff --check）实跑全绿。本轮提交后由本人手动
+> `git push origin main`（沙箱拦截 push）。**主题系统存储彻底收敛为两轴，无单列近似残留**。
 

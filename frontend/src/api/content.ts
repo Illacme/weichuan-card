@@ -186,8 +186,6 @@ export interface HomeLayoutData {
   styleId: string
   /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P5 起任意风格 × 任意色系都合法（36 组合） */
   brandColorId: string | null
-  /** 兼容派生列：旧端近似值（12 个扁平 id 装不下 36 组合），旧后端只有它时按 brand- 前缀拆回两轴 */
-  templateId: string
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
   templateEntitled: boolean
@@ -205,7 +203,6 @@ export function getHomeLayout() {
           serviceTimeMode: 'date',
           styleId: 'default',
           brandColorId: null,
-          templateId: 'default',
           templates: [],
           templateEntitled: true,
         }) as HomeLayoutData

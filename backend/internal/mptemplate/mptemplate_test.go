@@ -41,10 +41,10 @@ func TestIDsAreUniqueAndDefaultFirst(t *testing.T) {
 		}
 	}
 	require.Equal(t, 8, brands, "品牌配色预设色板固定 8 款；加款要同步改这个断言与 openapi enum")
-	require.False(t, IsAdvanced(DefaultID), "缺省款必须免费，否则升级后客户会被降级")
-	require.True(t, IsAdvanced("ink"))
-	require.True(t, IsAdvanced("warm"))
-	require.True(t, IsAdvanced("teal"))
+	require.False(t, IsAdvancedCombo(DefaultID, nil), "缺省款必须免费，否则升级后客户会被降级")
+	require.True(t, IsAdvancedCombo("ink", nil))
+	require.True(t, IsAdvancedCombo("warm", nil))
+	require.True(t, IsAdvancedCombo("teal", nil))
 }
 
 // Series 与 brand- 前缀是两份独立声明：后台按前者分组，端上守门按后者分组。
@@ -76,55 +76,26 @@ func TestNormalize(t *testing.T) {
 	require.Equal(t, "", Normalize("INK"), "大小写不敏感会让端上 class 名对不上")
 }
 
-func TestIsAdvancedUnknownIsFalse(t *testing.T) {
-	require.False(t, IsAdvanced("neon"))
-	require.False(t, IsAdvanced(""))
+func TestIsAdvancedComboUnknownIsFalse(t *testing.T) {
+	require.False(t, IsAdvancedCombo("neon", nil))
+	require.False(t, IsAdvancedCombo("", nil))
 }
 
-// 三处默认值必须一致：包常量、GORM 模型 tag、MySQL 迁移。
-// 任一侧漏改都会让「新租户 / 存量行」在某个环境里读到空 id 或别的款。
+// 三处默认值必须一致：包常量、GORM 模型 tag、MySQL 迁移（0042 引入 style_id）。
+// 任一侧漏改都会让「新租户 / 存量行」在某个环境里读到空 style_id 或别的款。
+// 0043 已删除 template_id 兼容列，存储真值收敛到 style_id / brand_color_id 两轴。
 func TestDefaultIDMatchesModelAndMigration(t *testing.T) {
-	f, ok := reflect.TypeOf(model.HomeLayout{}).FieldByName("TemplateID")
-	require.True(t, ok, "HomeLayout 必须有 TemplateID 列")
+	f, ok := reflect.TypeOf(model.HomeLayout{}).FieldByName("StyleID")
+	require.True(t, ok, "HomeLayout 必须有 StyleID 列")
 	require.Contains(t, string(f.Tag.Get("gorm")), "default:"+DefaultID)
 
-	sql, err := os.ReadFile("../../migrations/0041_miniprogram_theme.sql")
+	sql, err := os.ReadFile("../../migrations/0042_mp_theme_two_axis.sql")
 	require.NoError(t, err)
 	require.Contains(t, string(sql), "DEFAULT '"+DefaultID+"'")
 }
 
-// 两轴拆分 / 反推：保证新旧两形态（单列 template_id ↔ (styleId, brandColorId)）
-// 可无损互转，且不变量在单测层钉死。
-func TestTwoAxisSplitAndDerive(t *testing.T) {
-	// Split：品牌款 → (classic, brand-*)；风格款 → (id, nil)；缺省/空 → (classic, nil)
-	s, b := Split("brand-ocean")
-	require.Equal(t, DefaultID, s)
-	require.NotNil(t, b)
-	require.Equal(t, "brand-ocean", *b)
-
-	s, b = Split("ink")
-	require.Equal(t, "ink", s)
-	require.Nil(t, b)
-
-	s, b = Split("")
-	require.Equal(t, DefaultID, s)
-	require.Nil(t, b)
-
-	s, b = Split("default")
-	require.Equal(t, DefaultID, s)
-	require.Nil(t, b)
-
-	// 未知值拆分失败（调用方据此拒绝，不静默兜底）
-	s, b = Split("neon")
-	require.Equal(t, "", s)
-	require.Nil(t, b)
-
-	// DeriveTemplateID：有品牌色系取其 id，否则取风格 id，风格为空兜底 classic
-	bc := "brand-crimson"
-	require.Equal(t, "brand-crimson", DeriveTemplateID("classic", &bc))
-	require.Equal(t, "ink", DeriveTemplateID("ink", nil))
-	require.Equal(t, DefaultID, DeriveTemplateID("", nil))
-}
+// 两轴形态已是唯一存储真值（0043 删除 template_id 兼容列后，不再有单列 ↔ 两轴互转），
+// 拆分 / 反推的往返测试已无意义，移除；组合合法性与高级款判定见 TestCrossProductComboAndAdvanced。
 
 // 全叉乘组合合法性 + 高级款判定（P5）。
 func TestCrossProductComboAndAdvanced(t *testing.T) {

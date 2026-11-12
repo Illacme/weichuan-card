@@ -227,7 +227,6 @@ describe('content/MpSettings', () => {
       bgMask: 0,
       styleId: 'default',
       brandColorId: null,
-      templateId: 'default',
       templateEntitled: true,
       templates: [
         { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },

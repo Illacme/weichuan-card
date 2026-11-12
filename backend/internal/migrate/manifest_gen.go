@@ -49,4 +49,5 @@ var expectedMigrations = []string{
 	"0040_detail_time_display.sql",
 	"0041_miniprogram_theme.sql",
 	"0042_mp_theme_two_axis.sql",
+	"0043_drop_template_id.sql",
 }
