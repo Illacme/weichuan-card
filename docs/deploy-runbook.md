@@ -1083,6 +1083,69 @@ add_header Cache-Control $uploads_cache always;
    （新部署默认不缓存，天然没有本雷）——参考版与线上版在这块是**有意不同**，
    若要给参考版也补长缓存，须连 `map` 与四个安全头重声明一起搬。
 
+### 5.2.6 主题预览图：与 `/assets/` **正好相反**，绝不长缓存
+
+> 这一节是 2026-11-12 线上事故的直接产物。结论先写：**不是发版文件不全，是缓存**。
+> 事故现象、误判过程与两处修复见 `docs/commercial-readiness.md` 第四十四轮。
+
+`/theme-previews/` 下 36 张后台「整体风格 × 品牌配色」预览图，是唯一一类
+**文件名不含内容 hash** 的构建产物：名字就是组合键
+`<风格>--<色系>.png`（如 `ink--brand-crimson.png`）。改完版式重新出图后，
+文件名一个字都不变，URL 完全一样。
+
+于是它必须按「会被原地覆盖」来对待，和 `/uploads/wxacode/`（小程序码）同类，
+而与 `/assets/`（hash 文件名，可 immutable 一年）**恰好相反**。
+
+**三层防护，缺一层就会重现事故**：
+
+| 层 | 做什么 | 在哪 |
+|---|---|---|
+| 1. 前端 URL 带构建戳 | `previewUrl()` 拼 `?v=__APP_BUILD__`（vite `define` 注入发版时间戳），每次发版 URL 都变 | `frontend/src/views/content/MpTheme.vue`、`frontend/vite.config.ts` |
+| 2. 源站显式 no-cache | `location ^~ /theme-previews/` 发 `Cache-Control: no-cache`，并用 `try_files $uri =404` 把「缺图真 404」钉死 | `deploy/baota/nginx-site.live.conf`（线上）、`nginx-site.conf`、`frontend/nginx.conf` |
+| 3. CDN 侧不拦 | CF 的 Browser Cache TTL 若被设成「覆盖源站」，第 2 层白做；见 §5.2.5 方案 A（Respect Existing Headers） | Cloudflare 面板 |
+
+**验证（务必强制 MISS，否则你看到的是缓存里的旧副本）**：
+
+```bash
+curl -sI "https://<域名>/theme-previews/default--default.png?cb=$RANDOM" \
+  | grep -iE 'cache-control|content-type|cf-cache-status'
+# 期望：content-type: image/png
+#       cache-control: no-cache
+#       cf-cache-status: MISS
+# 若仍是 max-age=14400 → 本段没生效（配置没换/没 reload），或 CF 缓存没 Purge
+```
+
+**改完 nginx 后必须清一次 CDN**（否则 4 小时内的旧副本照旧供着）：
+
+- Cloudflare → Caching → **Configuration → Purge Cache → Custom Purge** →
+  `https://<域名>/theme-previews/*`（Purge 是按 URL 的，可以用通配符路径）；
+- 或临时全量 Purge Everything（站点小，代价可接受）。
+
+> ⚠️ **别只在浏览器里按 Ctrl+F5 验收**。强刷只清本地，清不掉 CF 边缘节点——
+> 你会以为修好了，换台设备/换个网络一看还是旧图。判断依据只有 `cf-cache-status`。
+
+**为什么用 `no-cache` 而不是 `no-store`**：`no-cache` 允许存但每次必须回源校验，
+ETag 还在，内容没变就是 `304`，实际流量几乎为零；`no-store` 是彻底不存，
+每次全量重下（单张最大约 1.1MB × 36 张），纯属浪费。
+
+**缺图为什么必须真 404**：若这个 location 被改成 `try_files $uri @spa`，
+缺图会返回 `index.html` + 200——前端 `<img>` 拿到 HTML 解码失败，静默降级成
+CSS 示意图，Network 面板全 200、零红字。这类失败没人会报警，只能靠断言钉住：
+
+```bash
+bash tools/nginx-check/run.sh   # §6.6 专测本节，12 条断言
+```
+
+> `try_files $uri =404` 有个容易理解反的地方：本 location **不写**它其实也是 404
+> （nginx 直接去 root 找文件，找不到就 404），并不会隐式落到 `location /` 的 @spa。
+> 写死 `=404` 是为了防「以后有人顺手改成 @spa」这个可预见的坏改动——
+> 实测改过去之后，缺图立刻变成 `200` + SPA 壳，§6.6 两条断言同时变红。
+
+**发版后的额外一步**：`scripts/deploy_frontend.sh` 现在会逐张核对
+`dist/theme-previews/` 与 `manifest.json` 的组合键是否齐全（缺一张直接 `die`），
+并在自检段探测线上 `default--default.png` 必须是 `200 image/png`——
+拿到 `text/html` 就说明图没传上去、或者被缓存成了 SPA 壳。
+
 ### 5.3 首屏 TTFB：HTML 不缓存 = 每次全页加载都跨境回源
 
 实测（Cloudflare 境外节点 → 国内源站，5 次）：

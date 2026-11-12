@@ -6,3 +6,5 @@
 /site.conf
 /nginx-conflict.conf
 /conflict/
+# gen_site.py 生成的 1x1 桩图（验 /theme-previews/ 的缓存头用，不是真素材）
+/www/frontend/theme-previews/

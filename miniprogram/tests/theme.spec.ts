@@ -905,6 +905,35 @@ describe('小程序整体风格模板 真实预览图', () => {
     }
   })
 
+  // 2026-11-12 线上真实事故：管理员发版后切风格，预览图「看不到任何变化」，
+  // 第一反应是「发布文件不全」。逐张比对 36 张图的字节数与本地完全一致、入口 JS 的
+  // 内容 hash 也一致——文件是全的，是被缓存住了：图片名不含内容 hash（`ink--brand-crimson.png`
+  // 这种组合键），源站又没发 Cache-Control，Cloudflare 按静态图片默认给了 max-age=14400。
+  // 两层都要钉：前端 URL 带构建戳（任何缓存都失效）+ nginx 显式 no-cache 且缺图真 404。
+  it('预览图不会被缓存成旧版式：URL 带构建戳，两份 nginx 都 no-cache 且缺图真 404', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue, 'previewUrl 必须拼 ?v=<构建戳>，否则同名不同内容会被缓存住')
+      .toMatch(/theme-previews\/.*\.png\?v=\$\{__APP_BUILD__\}/)
+    // define 的注入点也要在，否则构建时 __APP_BUILD__ 是未定义变量
+    const vite = readFileSync(resolve(REPO, 'frontend/vite.config.ts'), 'utf-8')
+    expect(vite).toContain('__APP_BUILD__')
+    expect(readFileSync(resolve(REPO, 'frontend/env.d.ts'), 'utf-8')).toContain('__APP_BUILD__')
+
+    for (const rel of ['frontend/nginx.conf', 'deploy/baota/nginx-site.conf']) {
+      const conf = readFileSync(resolve(REPO, rel), 'utf-8')
+      const at = conf.indexOf('location ^~ /theme-previews/')
+      expect(at, `${rel} 缺 /theme-previews/ 专用 location`).toBeGreaterThan(-1)
+      const body = conf.slice(at, conf.indexOf('}', at))
+      expect(body, `${rel} 的预览图不能强缓存（文件名不含哈希）`)
+        .toContain('Cache-Control "no-cache"')
+      // `try_files $uri =404` 是把「缺图真 404」钉死，别理解反：本 location 不写它其实
+      // 也是 404（nginx 直接去 root 找文件），不会隐式落到 location / 的 SPA 兜底。
+      // 真正会出事的写法是 `try_files $uri @spa`——那时缺图返回 index.html + 200，
+      // <img> 解码失败 → 静默降级成示意图，Network 里看不到任何红字。
+      expect(body, `${rel} 缺图必须显式 404，不得写成 @spa 兜底`).toContain('try_files $uri =404')
+    }
+  })
+
   it('生成脚本从 app.wxss 取 token，不手画第二套主题色', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     expect(script).toContain('miniprogram/app.wxss')

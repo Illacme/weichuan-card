@@ -256,8 +256,15 @@ const failedPreviews = ref<Record<string, boolean>>({})
 // public/ 下的文件由 Vite 原样拷到产物根目录；带 BASE_URL 前缀，部署到子路径时
 // 不会误打到站点根下的 /theme-previews。encodeURIComponent 防 id 拼出非预期路径，
 // 真出异常也就是这张图 404 → 走兜底，不会静默显示另一款模板的图。
+//
+// **必须带 `?v=<构建戳>`**：这 36 张图的文件名是「风格--色系」组合键，不含内容 hash，
+// 重出图后 URL 一个字都不变。不带版本号时，浏览器与 CDN 会按各自的默认静态缓存
+// （线上实测 Cloudflare 给的是 `max-age=14400`）继续喂旧图——管理员在后台切风格 / 色系，
+// 看到的却是上一版的版式，而 Network 里全是 200、控制台一个错都没有（典型静默失败，
+// 2026-11-12 线上真实反馈「切换风格预览图看不到变化，是不是发布文件不全」即此因，
+// 排查结论是文件齐全、字节数与本地一致，纯粹是被缓存住了）。
 function previewUrl(id: string): string {
-  return `${import.meta.env.BASE_URL}theme-previews/${encodeURIComponent(id)}.png`
+  return `${import.meta.env.BASE_URL}theme-previews/${encodeURIComponent(id)}.png?v=${__APP_BUILD__}`
 }
 
 function onPreviewError(id: string) {

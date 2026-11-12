@@ -169,6 +169,33 @@ EOF
 [ "$MISSING" -eq 0 ] || die "index.html 引用了 $MISSING 个不存在的本地文件，产物是坏的（重新 build）"
 echo "  index.html 引用的资源全部存在"
 
+# 主题预览图单独对账（2026-11-12 线上反馈「切风格预览图没变化，是不是发布文件不全」）：
+# 这 36 张图**不被 index.html 引用**——后台是按「风格--色系」组合名现拼 URL 去取的，
+# 所以上面那条自洽性校验永远发现不了缺图。漏传 / 漏生成时线上的表现是
+# 「预览图一直停在降级示意图、切风格看不出变化」，而 Network 里一个 404 都没有
+# （缺图会被 SPA 兜底成 index.html + 200，<img> 解码失败后静默降级）。
+# 这里按 manifest 的 combos 键逐张对账，缺一张就不发版。
+PREVIEW_DIR="$DIST_DIR/theme-previews"
+if [ ! -d "$PREVIEW_DIR" ]; then
+    warn "  产物里没有 theme-previews/：后台「整体风格」页只会显示降级示意图"
+elif [ ! -f "$PREVIEW_DIR/manifest.json" ]; then
+    die "theme-previews/ 里没有 manifest.json，产物不完整（重跑 scripts/gen_theme_previews.py 再 build）"
+else
+    PREVIEW_BAD=0
+    PREVIEW_TOTAL=0
+    for cid in $(grep -oE '"[a-z0-9-]+--[a-z0-9-]+"' "$PREVIEW_DIR/manifest.json" \
+                 | tr -d '"' | sort -u); do
+        PREVIEW_TOTAL=$((PREVIEW_TOTAL + 1))
+        if [ ! -f "$PREVIEW_DIR/$cid.png" ]; then
+            echo "  缺预览图：$cid.png"
+            PREVIEW_BAD=$((PREVIEW_BAD + 1))
+        fi
+    done
+    [ "$PREVIEW_TOTAL" -gt 0 ] || die "manifest.json 里没解析出任何组合键，产物格式不对"
+    [ "$PREVIEW_BAD" -eq 0 ] || die "缺 $PREVIEW_BAD / $PREVIEW_TOTAL 张主题预览图（先跑 python3 scripts/gen_theme_previews.py 再 build）"
+    echo "  主题预览图齐全（$PREVIEW_TOTAL 张，与 manifest 组合键逐一对上）"
+fi
+
 # ---------- 1. 连接方式与传输方式 ----------
 
 umask 022
@@ -607,6 +634,25 @@ if [ "$DO_VERIFY" = 1 ] && [ -n "$DEPLOY_URL" ]; then
     else
         die "$BAD 个资源取不到，线上会白屏"
     fi
+
+    # 主题预览图线上抽检：它们不在 index.html 里，上面那段查不到。
+    # 缺图时 SPA 兜底会返回 index.html + 200（content-type: text/html），
+    # <img> 解码失败后静默降级成示意图 —— 客户只会说「切风格看不到变化」。
+    # 带随机串绕开 CDN，看到的是源站当前内容。
+    PROBE=$(curl -sS -o /dev/null -m 20 -w '%{http_code} %{content_type}' \
+        "$DEPLOY_URL/theme-previews/default--default.png?cb=$$$(date +%s)") || PROBE="curl 失败"
+    case "$PROBE" in
+        200\ image/png*)
+            echo "  ✓ 主题预览图可取（default--default.png）"
+            ;;
+        *)
+            warn "✗ 主题预览图异常：$PROBE"
+            warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
+            warn "  图在但内容旧（版式没变）说明是缓存：CDN 清 /theme-previews/*，"
+            warn "  源站需按 deploy/baota/nginx-site.conf 的 /theme-previews/ 段发 no-cache。"
+            exit 1
+            ;;
+    esac
 fi
 
 say "发版完成"

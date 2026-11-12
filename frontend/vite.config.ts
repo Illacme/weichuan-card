@@ -25,7 +25,22 @@ function rewriteOriginForProxy(proxy: any) {
   })
 }
 
+// 构建戳：注入给前端当静态资源的反缓存版本号（见 MpTheme.vue 的 previewUrl）。
+//
+// 为什么需要它：`public/theme-previews/` 下 36 张预览图的文件名是「风格--色系」组合键
+// （`ink--brand-crimson.png`），**不含内容 hash**。Vite 只能给 /assets/ 下的产物加 hash，
+// public/ 里的文件是原样拷贝。于是重出图后 URL 一点没变，浏览器与 CDN 按各自的默认
+// 静态缓存（实测 Cloudflare 给的是 max-age=14400）继续喂旧图——客户在后台切换风格，
+// 看到的是上一版的版式，而控制台、Network、日志里**一个错都不报**，属于典型静默失败。
+// 每次构建换一个 `?v=`，URL 变了，任何一级缓存都自然失效。
+// 一次只下发当前选中那一张（切换时再拉下一张），所以不存在「发版后全量重下 41MB」。
+const buildStamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)
+
 export default defineConfig({
+  // 构建期常量：静态预览图的版本戳
+  define: {
+    __APP_BUILD__: JSON.stringify(buildStamp),
+  },
   plugins: [
     vue(),
     // Element Plus 按需引入：自动扫描模板中的 el-* 组件并按需注册、注入对应 CSS，

@@ -10,6 +10,11 @@ import { fileURLToPath, URL } from 'node:url'
 //   避免为小程序包再引入一套 Node 工具链（miniprogram 保持零依赖）。
 export default defineConfig({
   plugins: [vue()],
+  // 与 vite.config.ts 的 define 对齐：MpTheme.vue 的 previewUrl 会读这个构建戳拼 `?v=`，
+  // 单测里没有真实的「构建」动作，给一个固定值即可（断言只看路径前缀）。
+  define: {
+    __APP_BUILD__: JSON.stringify('test'),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

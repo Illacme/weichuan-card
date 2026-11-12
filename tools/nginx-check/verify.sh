@@ -121,6 +121,34 @@ bad "小响应不被压缩（min_length 生效）" "$h" "content-encoding: gzip"
 h=$(curl -sk -D- -o /dev/null -H 'Accept-Encoding: gzip' "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
 bad "png 不被 gzip（不在 gzip_types）" "$h" "content-encoding: gzip"
 
+echo "== 6.6 主题预览图绝不长缓存（线上事故：版式改了、图没变）=="
+# 事故复盘：这 36 张图的名字是「风格--色系」组合键（ink--brand-crimson.png），
+# **不含内容 hash**，重出图后 URL 一个字都不变。原先这里没有 location 段，
+# 源站不发 Cache-Control，Cloudflare 就按静态图片默认补 max-age=14400（4 小时）。
+# 表现：发版成功、Network 全 200、无任何报错，但后台切风格预览图死活不变——
+# 典型的「没人报错、用户却无从察觉」型静默失败。
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/default--default.png")
+code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/theme-previews/default--default.png")
+chk "预览图返回 200"                  "$code" "200"
+chk "预览图是 image/png"              "$h" "content-type: image/png"
+chk "预览图 no-cache（而非 max-age=14400）" "$h" "cache-control: no-cache"
+bad "预览图不带 immutable"            "$h" "immutable"
+bad "预览图不带 max-age"              "$h" "max-age"
+chk "预览图仍带 nosniff"              "$h" "x-content-type-options: nosniff"
+chk "预览图仍带 X-Frame-Options"      "$h" "x-frame-options: SAMEORIGIN"
+chk "预览图仍带 Referrer-Policy"      "$h" "referrer-policy: strict-origin-when-cross-origin"
+chk "预览图仍带 X-Robots-Tag"         "$h" "x-robots-tag: noindex"
+# 缺图必须真 404。若掉进 SPA 兜底会返回 index.html + 200：
+# 前端 <img> 拿到 HTML 只显示破图，且这个 200 还会被 CDN 缓存住，越拖越死。
+# 判据用 body 里有没有 SPA 壳标记（index.html 内容含 SHELL），
+# 不能断言「非 text/html」——nginx 内置 404 页本身就是 146 字节的 text/html。
+_body=$(curl -sk "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
+code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
+chk "缺图是 404（没落进 SPA 兜底）"    "$code" "404"
+bad "缺图不能是 SPA 壳"               "$_body" 'SHELL'
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
+bad "缺图也不能被长缓存"              "$h" "max-age"
+
 echo "== 7. 404 与 SPA 兜底不互相污染 =="
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/assets/nope.js")
 chk "缺失的 assets 返回 404（非 HTML）" "$code" "404"

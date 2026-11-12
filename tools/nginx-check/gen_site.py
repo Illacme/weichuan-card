@@ -11,6 +11,7 @@
 本脚本与配套 nginx.conf 都用相对路径，clone 到任意位置都能跑；
 生成物（conf.d/site.conf、panel-proxy/、cert/、logs/）由 .gitignore 忽略。
 """
+import base64
 import re
 import sys
 from pathlib import Path
@@ -148,6 +149,19 @@ else:
 
 DST.write_text(text, encoding="utf-8")
 print(f"写入 {DST}")
+
+# 9. 主题预览图桩：/theme-previews/ 的缓存断言需要一个「真实存在」的文件来验 200 头。
+#    用 1x1 PNG（67 字节）而不是拷 public/ 里那张 1MB 大图——桩目录进 git，
+#    不该为了一条缓存断言塞进去一兆二进制。文件名必须是真实的组合键格式
+#    （风格--色系），否则测不出「名字不含内容 hash」这个缓存根因。
+_tp_dir = HERE / "www/frontend/theme-previews"
+_tp_dir.mkdir(parents=True, exist_ok=True)
+(_tp_dir / "default--default.png").write_bytes(
+    base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+)
+print("✓ theme-previews 桩图已生成（default--default.png，1x1）")
 
 # 输出改动清单，便于核对「只改了路径没改语义」
 for i, line in enumerate(text.splitlines(), 1):

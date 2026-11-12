@@ -2639,3 +2639,67 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 0 issues / `go test ./...` 全绿，handler 50.9s / `--check` 通过 / eslint 通过 / vue-tsc 通过 /
 > 全量 Vitest **95 文件 1612 例** / `vite build dist-check-44` 1m25s / `git diff --check` 干净）实跑全绿。
 > 本轮提交后由本人手动 `git push origin main`（沙箱拦截 push）。
+
+### 第四十四轮 · 附：发版后「切风格预览图不变」的线上排查（同日晚）
+
+**用户反馈原文**：
+
+> 「发布到线上，我切换整体风格和品牌配色，预览图看不到任何变化，是不是发布文件不全导致的，
+> 相关文件你都放哪里了」
+
+**第一件事是排除「文件不全」**——这是最容易误判的方向，也是用户的第一直觉。逐项比对：
+
+| 检查 | 线上 | 本地 | 结论 |
+| --- | --- | --- | --- |
+| `default--default.png` | `200 image/png`、`content-length 1109522`、750×2588 | 1109522 字节 | 字节数完全一致 |
+| 36 张图全量 | 逐张比对 | 逐张比对 | 全部一致 |
+| 入口 JS | `assets/index-DPoIgPeU.js` | 同 hash | 一致 |
+| `MpSettings-*.js` | 22550 字节 | 22550 字节 | 一致 |
+| `MpSettings-*.css` | 10228 字节 | 10228 字节 | 一致 |
+| 老命名 `default.png` | `404 text/html 146` | — | 反证：36 张新命名图确实已上线 |
+
+**所以部署是完整的。** 真因是**缓存**，而且是一个自己给自己埋的坑：
+
+| 环节 | 事实 |
+| --- | --- |
+| 文件名 | 36 张图是 `<风格>--<色系>.png` 组合键，**不含内容 hash**（与 `/assets/` 恰好相反） |
+| 重出图 | 版式改了、图重出了，**URL 一个字都不变** |
+| 源站 | `/theme-previews/` 当时**没有 location 段**，不发 `Cache-Control` |
+| CDN | Cloudflare 对静态图片默认补 `max-age=14400`（4 小时） |
+| 实测响应头 | `cache-control: max-age=14400`、`cf-cache-status: MISS`、`server: cloudflare` |
+| 用户感知 | 切风格 → 看图 → 还是旧的 →「是不是文件没传全」；Network 面板全 200、控制台零红字 |
+
+这是典型的**静默失败**：没有任何一处报错，但用户完全无从察觉真相。
+
+**两处修复 + 一处清理**：
+
+| 层 | 改动 | 文件 |
+| --- | --- | --- |
+| URL 破缓存 | `previewUrl()` 拼 `?v=${__APP_BUILD__}`，`__APP_BUILD__` 由 vite `define` 注入发版时间戳（`vitest.config.ts` 与 `env.d.ts` 同步补上，否则测试与类型检查会挂） | `MpTheme.vue`、`vite.config.ts`、`vitest.config.ts`、`env.d.ts` |
+| 源站不缓存 | `location ^~ /theme-previews/` 发 `Cache-Control: no-cache` + `try_files $uri =404`，并重声明四个安全头（`add_header` 继承陷阱） | `nginx-site.live.conf`、`nginx-site.conf`、`frontend/nginx.conf` |
+| 发版自检 | ① 逐张核对 `dist/theme-previews/` 与 `manifest.json` 组合键，缺一张 `die`；② 探测线上 `default--default.png` 必须是 `200 image/png`，拿到 `text/html` 判红 | `scripts/deploy_frontend.sh` |
+| CDN 清理 | Cloudflare Purge `/theme-previews/*`（**只能由本人操作**，脚本无权） | 面板 |
+
+**守门**：`tools/nginx-check` 新增 §6.6「主题预览图绝不长缓存」12 条断言（200 / `image/png` /
+`no-cache` / 不带 `immutable` / 不带 `max-age` / 四个安全头仍在 / 缺图真 404 / 缺图不是 SPA 壳 /
+缺图不进长缓存），总数 95 → **107 项**。Miniprogram 侧 `tests/theme.spec.ts` 另加一条源码级断言，
+钉住 `?v=${__APP_BUILD__}` 与两份 nginx 的 `no-cache`、`try_files $uri =404`。
+
+**反向验证（三次，因为前两次都没让断言变红——这本身很有价值）**：
+
+1. 把 `no-cache` 改回 `public, max-age=14400` → 「预览图 no-cache」「预览图不带 max-age」**双红**，符合预期。
+2. 删掉 `try_files $uri =404` → 断言**仍全绿**。原因是本 location 里不写 try_files 也是 404
+   （nginx 直接去 root 找文件），根本不会落到 `@spa`。**说明我原注释里「缺图会落进 SPA 兜底」
+   写错了**，已修正三份配置的措辞。
+3. 把 `try_files` 改成 `try_files $uri @spa`（唯一真会 fallback 的写法）+ `@spa` 改为
+   `return 200 "SHELL"` → 「缺图是 404」变红（拿到 `200`）、「缺图不能是 SPA 壳」变红（拿到 `SHELL`）。
+   这才是这条断言真正的守备对象：**防以后有人顺手把这里改成 `@spa`**。
+
+> 中间还踩了一次自己的坑：先把 `@spa` 里的 `return 404` 改成 `rewrite ^ /index.html last`，
+> 断言没红——因为**命名 location 里的 `rewrite ... last` 不生效**，注入根本没构造出坏行为。
+> 换成 `return 200 "SHELL"` 才真正复现。
+
+**用户侧待办（本人执行）**：① `git push origin main`；② 按 `nginx-site.live.conf` 更新宝塔站点配置
+（保存时自动 `nginx -t` + reload）；③ Cloudflare Purge `/theme-previews/*`；
+④ 重跑 `./scripts/deploy_frontend.sh --build` 让新构建戳生效；⑤ 小程序改了 WXSS/wxml，
+**必须重新提审发版**，端上不能热加载。
