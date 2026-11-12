@@ -2499,3 +2499,57 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 本轮提交后本地领先远端 **12 个提交**；沙箱拦截 `git push`，需本人手动
 > `git push origin main`。**主题两轴化 P1–P4 全部收口**。
 
+## 第四十二轮：主题两轴化 P5（树形归属 → 4 风格 × 9 色档全叉乘 36 组合 + 风格按布局特色命名）
+
+承接第四十一轮 P4（提交 `569ef09`）。用户质疑「**为什么只有整体风格的经典蓝有品牌配色**」，
+明确「整体风格的分类不该按颜色分，而应该按布局特色区分，每种风格都有对应所有品牌配色的设计」。
+复核确认 P2 已把 `app.wxss` 拆成 `.wc-style-*`（布局层）与 `.wc-brand-*`（颜色层）两层、根节点
+同时挂载、颜色层后定义覆盖风格默认色，因此**任意风格 × 任意色系本来就能渲染**；限制只来自
+四个树形判定点（后端 `StyleOfBrand`/`BelongsToStyle`、content.go 跨风格 code=1、端上
+`normalizeSelection`、P4 后台禁用与自动清空）。本轮把树形归属拆除，改为全叉乘。
+
+| 项 | 说明 |
+| --- | --- |
+| 口径修订 | **统一色板 + 风格按布局特色改名**（另两选项：统一色板暂不改名 / 逐风格调校 32 套色被否）。`default/ink/warm/teal` 改名 `标准均衡/紧凑信息/宽松亲和/疏排透气`，内部 id 不变；8 款 brand 说明改为「版式跟随所选整体风格」；风格名/说明禁含颜色词，由 `TestStyleNamesDescribeLayout` 钉住 |
+| 真正的硬阻塞 | `template_id` 只有 12 个扁平 id 装不下 36 组合；决策：两轴列是真值，兼容列退化为**旧端近似值**（`Split` 只用于存量未回填行，有损）；端上 `wc_theme_id` 缓存 P5-2 升级为带前缀两轴格式，旧格式零迁移继续解析 |
+| 后端 P5-1 | `mptemplate.go` 删 `StyleOfBrand`/`BelongsToStyle` → `IsValidCombo`（只挡未知风格/色系）、`IsAdvancedCombo` 改 OR（修 brand 短路，当前 8 色全高级故行为暂不可观测，属防御性）、兼容列注释写明近似语义；`content.go` 去掉跨风格拒绝；`openapi.yaml` 三处描述 + 36 组合说明；`mptemplate_test.go` 改 `TestCrossProductComboAndAdvanced`（36 组合全遍历）并新增命名守门；`handler_test.go` 改为「ink+brand-ocean / warm+brand-magenta 均放行」并断言公开 GET 下发两轴 |
+| 端上 P5-2 | `theme.ts` 的 `normalizeSelection` 放开（不再把带品牌色组合打回 default）；`wc_theme_id` 缓存升级为带前缀两轴格式 `encodeCachedTheme(styleId, brandColorId)`，旧扁平缓存继续走 `splitTheme` 零迁移；`themeBootstrap.ts` / `types.ts` 注释订正 |
+| 后台 P5-3 | `MpTheme.vue` 改为固定预览区 + 4×9 组合矩阵，`comboId(styleId, brandColorId)` 生成组合键；去掉「非 default 清空」与「禁用色系」逻辑，按组合寻图；风格名同步布局特色。`MpTheme.spec.ts` 重写为 36 组合矩阵断言 |
+| 预览图 P5-4 | `gen_theme_previews.py` 重写为 36 组合出图、文件名 `style--brand` / `style--default`；`check_manifest` 校验 `combos` 与 `comboTokens`；`manifest.json` 新结构（`canvas` / `canvasByStyle` / `combos` 36 映射 / `comboTokens` 36 组 / `layouts` / `tokens` 12 基础色板 / `seedAssets` / `placeholders` / `source`）；旧 12 张删除 + 36 张新图新增，产物约 43 MB，`--check` 通过 |
+| 守门改写 | 跨端守门三份（`theme.spec.ts` / `themeBootstrap.spec.ts` / `types_contract.spec.ts`）去掉树形归属断言，改为跨风格组合两轴响应、旧缓存兼容、36 组合跨端守门 |
+| 反向验证 | **6 项必红**（每项字节级还原、还原后复绿、5 文件 sha256 零漂移）：A 后端 `IsValidCombo` 退回树形（go）B 生成脚本 `combo_tokens` 让色系覆盖版式（check）C `manifest` 组合映射写错（check+vit）D 后台 `currentId` 退回扁平 id（vit）E 后台恢复「切风格清空色系」（vit）F 端上 `normalizeSelection` 退回树形归属（vit）。Case C 锚点初稿在 `manifest.json` 重复 2 次会误判「配置错误」，改为 `combos` 段独有多行片段修复 |
+| 门禁 | **8 项实质全绿**：`golangci-lint v2.15.0`（0 issues）/ `go test ./...` 全包 / `gen_theme_previews.py --check` / `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **95 文件 1612 例** / `vite build --outDir dist-check-p5`（36 图齐全）/ `git diff --check`。`dist-check-p5` 由 `**/dist-check-*/` 忽略 |
+| 文档同步 | `backend/README.md`、`miniprogram/README.md`、`docs/theming-two-axis-design.md`、`docs/real-device-acceptance.md`、`docs/launch-checklist.md`、`miniprogram/app.wxss` 旧风格名注释订正；设计稿追加 §12 决策与分期（旧树形描述保留作历史事实，不回改） |
+
+> 关键坑 1（**树形判定点散落四处**）：限制并非来自 CSS（P2 已拆两层），而是来自后端两个函数、
+> content.go 一处拒绝、端上归一、后台 UI 三处。单改后端放行会让前端仍把组合打回 default、
+> 后台仍禁用色系，**客户看到选项却不让选**。必须同步拆掉全部五处。
+>
+> 关键坑 2（**兼容列不可逆**）：`template_id` 只有 12 个扁平 id，36 组合塞不进。
+> `DeriveTemplateID` 选了色系就丢 style、`Split` 反拆成 (default, 色系)。决策是明确写进契约：
+> 两轴列是真值，兼容列只是旧端近似值，读路径优先两轴列、仅未回填存量行回退 `Split`，
+> 绝不反向用兼容列覆盖两轴列。
+>
+> 关键坑 3（**36 张图体积**）：产物约 43 MB，约为 P4 的 3 倍。优化时优先降 `SCALE`
+> 而不是退回 4 张图——后者会丢掉「每组合一张真实布局图」的静默失败防护。
+>
+> 关键坑 4（**端上测试桩假绿**）：P5-2 早期把 `wx.getStorageSync` stub 成字符串而非函数，
+> 异常被 `catch` 吞后回落 default，导致针对性用例错误通过；修正为传入函数后复绿（69 例）。
+
+> **本轮刻意未做（留作后续独立阶段）**：删 `template_id` 兼容列（需动数据库迁移 + 模型 +
+> 回填收敛，按项目纪律需显式批准才动）、OpenAPI 的 `templateId` enum 收敛（当前保留作旧端近似，
+> 属刻意）、删 `IsBrand` 平面判定、清单改 `styles[]` + `brandColors[]` 形态。真机像素级验收
+> 仍需人工（本环境无真机截图工具链）。
+
+> 验收结论：反向验证 6 项必红且已还原复绿（针对性 Vitest + `--check` 复绿），全量 Vitest
+> 95 文件 / **1612 例**通过，`dist-check-p5` 由 `**/dist-check-*/` 忽略、不进提交。本轮提交
+> **`b42bd6d`**（57 files / +1799 −392，git 识别旧 12 张 PNG rename→`default--*` 等、新 27 张
+> `ink-/warm-/teal-*` 为新增）。提交后本地领先远端 **13 个提交**；沙箱拦截 `git push`，
+> 需本人手动 `git push origin main`。**主题两轴化 P1–P5 全部收口**。
+>
+> 第四十二轮文档收口（本轮）：补本记录；并只读核对 `mptemplate` 白名单形态——确认 `IsValidCombo`
+> 已取代树形判定、`IsAdvancedCombo` 为 OR、`NormalizeStyle`/`IsKnownBrandColor` 为两轴守门、
+> 风格名描述布局特色（`TestStyleNamesDescribeLayout` 钉住），**白名单与全叉乘一致，无需改代码**。
+> 本变更仅触及 `docs/commercial-readiness.md` 一个 Markdown 文件，不进任何测试读路径，故只跑
+> `git diff --check` 一项门禁即可。
+
