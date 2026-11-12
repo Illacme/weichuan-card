@@ -29,7 +29,7 @@ bash verify.sh                             # 跑断言（容器需已起在 8443
 docker rm -f nginx-check                   # 收摊
 ```
 
-## 它到底验什么（110 项断言，节选）
+## 它到底验什么（113 项断言，节选）
 
 - **80 → 443 强制跳转**（不靠 CF，源站自己也得跳）
 - **healthz 三端点打到后端**，且 `/healthz/` 不产生 301 死循环
@@ -38,6 +38,9 @@ docker rm -f nginx-check                   # 收摊
 - **`/uploads/` 缓存头按状态码分流（§3.6）**：404/410/5xx 必须 no-store——
   「文件不存在」若也带 immutable 会被 CF 锁死一年，之后补上文件客户端永远拿不到；
   同时对照断言 200 路径不受影响
+- **`/api/` 原样透传后端自己发的 `Cache-Control`（§3.7）**：公开只读接口的短缓存
+  （`max-age` + `s-maxage`）完全靠后端这个头驱动，nginx 既不能吞、也不能再叠一个——
+  叠了就变成两个值并存，CDN 取哪个不确定，且从响应上根本看不出「到底生效没」
 - **real_ip 生效且不可伪造**：CF-Connecting-IP 被采信、客户端自带 XFF 被丢弃
 - **静态资源头**：`/assets/` immutable、`/index.html` no-cache
 - **`/theme-previews/` 按状态码分流（§6.6）**：文件名不含内容 hash，但前端 URL 带

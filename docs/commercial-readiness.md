@@ -2896,3 +2896,129 @@ CF 会把「这张图不存在」锁死——`/uploads/` 在 2026-11-03 踩过�
 （**注意文件顶部新增的 `map $status $preview_cache` 必须一起粘到 server 块之外**，漏了 nginx 会
 报 `unknown "preview_cache" variable` 起不来）；③ Cloudflare Purge `/theme-previews/*`；
 ④ 重跑 `./scripts/deploy_frontend.sh --build` 让新构建戳进入页面。本轮不涉及小程序端，无需重新提审。
+
+## 第四十八轮：性能优化评估 + P1「公开只读接口 60 秒边缘缓存」（2026-11-12）
+
+起因是「还有哪些能优化的地方」。第一版想当然列了四条，逐条实测后被数据推翻两条，
+又发现自己对 element-plus 打包的判断是错的——结论因此重排。
+
+### 一、被实测推翻的判断（先记，免得以后再走一遍）
+
+| 判断 | 实测结果 | 处置 |
+| --- | --- | --- |
+| `Employees.vue` / `ApplyOpen.vue` 头像直出原图会拖慢后台 | 真实头像 `avatar-gaolixin.png` **仅 3KB**，`_thumb` 也是 3KB | 收益 0，**放弃** |
+| `_thumb` 已经在省带宽了 | `cat-1.png` 是 256×256 / 42KB，它的 `_thumb` **也是 42KB**——缩略图不按显示尺寸缩；`cat-*` 8 张共 291KB 完全没优化 | 降级为 P2（需改 `thumbbackfill` 规格） |
+| element-plus 是「摇不掉」，可以从导入方式上优化 | **五条路全部 0 收益**，见下 | 负结论落库，不再尝试 |
+
+**EP（element-plus）五路实测**（产物字节数百位不变，连内容 hash 都一样）：
+
+1. 48 个 SFC 把 `ElMessage` / `ElMessageBox` 改成子路径导入
+   （`element-plus/es/components/message/index`）；
+2. 去掉 `vite.config.ts` 的 `manualChunks` 里对 `element-plus` 的强制分包；
+3. `build.treeshake`（放错层级，实际是空转一轮——它该在 `rollupOptions` 下）；
+4. `rollupOptions.treeshake.moduleSideEffects` 对 EP 组件返回 `false`（样式目录除外）；
+5. 自写 `enforce:'post'` 插件把桶导入拆成 127 个深路径导入。
+
+根因（用 `buildEnd()` + `getModuleIds()` + `getModuleInfo(id).importers` 查出来的）：
+
+```
+[DIAG] watermark: importers=["/node_modules/element-plus/es/component.mjs",
+                             "/node_modules/element-plus/es/index.mjs"]
+[DIAG2] /element-plus/es/index.mjs importers=["/src/App.vue?…", （共 48 个 SFC）]
+```
+
+`unplugin-vue-components` 给**每个** SFC 注入的是同一个共享模块 `element-plus/es`，
+而 `es/index.mjs` → `es/component.mjs` 把 122 个组件聚合成一个 `makeInstaller([...])`
+数组。`App.vue` 引用了它，于是整库 823KB 进首屏。**不是摇不掉，是本来就被引用了。**
+
+顺带记一条踩坑：插件在 `enforce:'post'` 下仍看不到注入的导入
+（`id.includes('/src/App.vue') && code.includes('element-plus')` 恒 false），
+但 Rollup 的 `importers` 明确指认 App.vue 是 importer——注入发生在 Vue 插件编译之后、
+`transform` 钩子看不到的阶段。所以第 5 条路线从原理上就不成立。
+
+**唯一能真正降首屏的方向是多页拆包**（登录页与后台两个入口，首屏各自只装自己那半），
+代价是要动 `vite.config.ts` 的 `rollupOptions.input` 与路由守卫落地页，属于结构变更，
+排到 P3。评估全程未提交任何改动（`git checkout -- src` + 还原 `vite.config.ts`）。
+
+### 二、P1 落地：5 条公开只读接口加 60 秒边缘缓存
+
+名片页首屏 4 个接口并发（`card` / `home-layout` / `achievements` / `services`），
+每次都要付一次跨境回源（实测一次往返 300～400ms）。这些接口内容**只由 URL 参数决定**，
+没有登录态、没有访客相关字段，因此可以交给边缘缓存。
+
+改动只有两处（`handler/pagination.go` + `handler/handler.go`）：
+
+| 改动 | 内容 |
+| --- | --- |
+| `cdnCache` | 从只发 `max-age` 改成**同时发** `max-age` 与 `s-maxage`（同值） |
+| 新增调用 | `/api/card`（`code==0` 支）、`/api/home-layout`（成功支）各加 `cdnCache(c, 60)` |
+
+**为什么两个 TTL 都发**：`s-maxage` 是共享缓存（CDN / 反代）的专用指令，但各家实现
+取哪个字段并不统一。只发 `s-maxage`，遇到只读 `max-age` 的边缘节点就等于没配——
+表现为「头看着对、`cf-cache-status` 一直 `DYNAMIC`」这种**零报错**的静默失效。
+两个都发同值，谁读都对。
+
+**为什么只在成功分支调用**：`code != 0` 的几支（员工不存在 / 名片停用 / 企业停用 /
+查询失败）一个头都不能带。错误响应一旦带上 `Cache-Control`，边缘会把故障也缓存
+60 秒——「员工不存在」被缓存事小，接口抖动期间把 **500 缓存住**才是灾难。
+
+### 三、守门
+
+| 位置 | 断言 |
+| --- | --- |
+| `handler/public_list_test.go` `TestPublicListCacheHeader` | 5 条公开接口**同时**带 `public` + `max-age=60` + `s-maxage=60`；错误分支（企业不存在 / 员工不存在 / 名片停用）**一个头都没有**；`/api/team` 成功但**刻意不带头** |
+| 同上（新增的前置断言） | 每条都先确认信封 `code` 真是期望值——否则「验的其实是另一条路径」，断言全绿也说明不了问题 |
+| `tools/nginx-check` §3.7（+3 条，总数 110 → **113 项**） | 桩后端在 `/api/card` 自己发 `Cache-Control`，断言 nginx **原样透传**（含 `s-maxage`）、**只有一个** `Cache-Control`（没叠加 nginx 自己的）、且没被降级成 `no-cache` |
+
+§3.7 这条是新发现的风险：三份 nginx 配置的 `/api/` 段**都没有** `add_header
+Cache-Control`（server 级也没有），所以后端头原样透传是「碰巧对」。一旦有人按
+`/assets/` 的写法给 `/api/` 也加一个 `add_header Cache-Control`，就会变成两个值并存，
+CDN 取哪个不确定，而**从响应上根本看不出「到底生效没」**。桩后端现在会主动发这个头，
+把这条隐式约定变成断言。
+
+反向验证时还挖出**第二个后果**（比双份头更严重）：给 `location /api/` 加上
+`add_header Cache-Control` 后，反向验证报 **5 项失败**——除「只有一个 Cache-Control」
+之外，`/api/admin/login` 的 **4 条安全头断言全红**。原因是 `add_header` 继承陷阱：
+那个 location 里没有重声明安全头，server 级那 5 个头**整组失效**。也就是说，
+「顺手补个缓存头」的实际后果是「管理端接口失去 nosniff / X-Frame / Referrer-Policy」。
+
+**反向验证（三条，都确认会红）**：
+
+1. 把 `/api/card` 的 `cdnCache(c, 60)` 提到两个错误分支之前 →
+   `TestPublicListCacheHeader` 红：`员工不存在的错误响应不应被缓存` /
+   `Should be empty, but was public, max-age=60, s-maxage=60`。
+2. 把 `cdnCache` 改回只发 `max-age` → 红：`/api/projects 缺 s-maxage：CDN 拿不到
+   共享缓存语义，同样退化成不缓存`。
+3. 给 `location /api/` 加 `add_header Cache-Control` → nginx-check **5 项红**
+   （双份头 + 4 条安全头失效），还原后 **113/113 全绿**。
+
+### 四、CF 侧三条硬约束（写进 runbook §5.2.7）
+
+1. **绝不写成 `/api/*`**。管理端接口全在 `/api/` 下，带 `Authorization` 但**不带**
+   `Cache-Control`。今天的语义是「没头 → 绕过缓存」所以看着安全，但这等于把「管理端
+   响应能不能被缓存」交给一条路径通配符——将来任何人给某个管理端 GET 顺手加上
+   `cdnCache`，就是**跨租户数据串号**（CF 缓存键不含 Authorization）。
+2. **用「等于」不用「通配符」**。`/api/projects*` 会连带覆盖 `/api/projects/:id`
+   （详情接口刻意没挂缓存头：后台改完详情要立刻能验）。
+3. **Cache Level 必须是 Standard**。否则 `?staffId=1` 与 `?staffId=2` 折叠成同一个
+   缓存对象——甲员工的名片会被发给找乙员工的访客，且零报错（同 §5.2.6）。
+
+### 五、代价与边界
+
+- **可见代价**：后台改职务 / 服务后，访客最长 **60 秒**后才看到。管理员改完立刻扫码
+  验证最容易误判成「没生效」——等一分钟，或加 `?v=$RANDOM` 强制 MISS。
+- **`/api/team` 刻意不缓存**：它是路由决策（裸启动落名片墙还是某员工名片），缓存会
+  让管理员以为设置没生效，反复改反复验。
+- **端上拿不到收益**：小程序 `wx.request` 不利用 HTTP 缓存，省下的只是 CF 节点那一次
+  回源。所以这条优化的收益取决于「同一张名片被重复打开」的比例。
+- **还没生效**：**CF 侧那条 Cache Rule 必须由本人加**（runbook §5.2.7 有逐项表格），
+  否则后端发了头、CF 依旧 `DYNAMIC`。
+
+### 六、后续排序（评估后确定）
+
+| 优先级 | 事项 | 理由 |
+| --- | --- | --- |
+| ~~P1~~ | ~~公开只读接口边缘缓存~~ | **本轮已完成** |
+| P2 | 缩略图按显示尺寸出图（图标 256→128 + PNG8，改 `thumbbackfill` 规格 + 存量回填） | `cat-*` 8 张 291KB 完全没优化，是唯一有实测收益的前端项 |
+| P3 | 后台多页拆包（登录页 / 后台两入口） | 唯一能真正降首屏的方向，但要动构建与路由结构 |
+| P4 | 接入路径（国内 CDN / 备案 / 源站访问控制重构） | 收益最大但成本最高，且依赖外部条件 |

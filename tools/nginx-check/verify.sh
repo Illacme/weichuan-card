@@ -74,6 +74,22 @@ chk "/uploads/ 200 仍是 immutable 长缓存" "$h" "cache-control: public, max-
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/uploads/wxacode/missing$$.jpg")
 chk "wxacode 404 仍是 no-cache" "$h" "cache-control: no-cache"
 
+echo "== 3.7 /api/ 必须原样透传后端自己发的 Cache-Control =="
+# 公开只读接口（/api/card、/api/home-layout、/api/projects、/api/services、
+# /api/achievements）的短缓存**完全靠后端发的这个头**驱动：nginx 不信这个头、
+# CF 也就拿不到 TTL。而 nginx 一旦在 /api/ 里写了自己的 add_header Cache-Control，
+# 就会跟后端那个并存成两个值——CDN 取哪个不确定，且「到底生效了没」从响应上
+# 根本看不出来。所以这里两条都要断：值在、且只有一个。
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/api/card")
+chk "/api/card 的 Cache-Control 原样透传（含 s-maxage）" "$h" "cache-control: public, max-age=60, s-maxage=60"
+n=$(low "$h" | grep -c '^cache-control:')
+if [[ "$n" == "1" ]]; then
+  ok "/api/card 只有一个 Cache-Control（nginx 没有叠加自己的）"
+else
+  no "/api/card 只有一个 Cache-Control（nginx 没有叠加自己的）" "实际出现 ${n} 个"
+fi
+bad "/api/ 不把公开接口降级成 no-cache" "$h" "cache-control: no-cache"
+
 echo "== 4. /api/ 反代头是否正确 =="
 j=$(curl -sk "${NOPROXY[@]}" $R "$B/api/x")
 chk "Host 保持原始域名" "$j" '"host":"weichuan.ziyuanxingqiu.cn"'

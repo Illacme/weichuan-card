@@ -1213,6 +1213,117 @@ curl -sI "https://<域名>/theme-previews/default--default.thumb.png?cb=$RANDOM"
 并在自检段探测线上 `default--default.png` 必须是 `200 image/png`——
 拿到 `text/html` 就说明图没传上去、或者被缓存成了 SPA 壳。
 
+### 5.2.7 公开只读接口：60 秒边缘短缓存（省掉一次跨境回源）
+
+名片页首屏是**4 个接口并发**：`/api/card`、`/api/home-layout`、`/api/achievements`、
+`/api/services`。它们全是公开只读，内容**只由 URL 参数决定**（`staffId` / `companyId`），
+没有登录态、没有任何访客相关字段——所以可以交给边缘缓存。
+
+后端已经给 5 条公开只读接口发头（`handler/pagination.go` 的 `cdnCache`）：
+
+```
+Cache-Control: public, max-age=60, s-maxage=60
+```
+
+| 接口 | 内容由什么决定 | 挂在 handler 的哪一支 |
+| --- | --- | --- |
+| `/api/card` | `staffId` | `code==0`（停用/不存在两支不设头） |
+| `/api/home-layout` | `companyId`（`styleId` 的授权回落已在服务端算完） | 成功分支 |
+| `/api/projects` | `companyId` + `categoryId` + `limit` | 成功分支 |
+| `/api/services` | `companyId` + `limit` | 成功分支 |
+| `/api/achievements` | `companyId` | 成功分支 |
+
+**为什么两个 TTL 都发**：`s-maxage` 才是共享缓存（CDN / 反代）读的那个字段，但各家
+实现取哪个并不统一——只发 `s-maxage`，遇到只读 `max-age` 的地方就等于没配，表现为
+「头看着对、`cf-cache-status` 一直 `DYNAMIC`」这种**零报错**的静默失效。两个都发
+同样的值，谁读都对。反过来只发 `max-age` 也不行：拿不到「只给共享缓存、不给端上」
+的语义（虽然小程序 `wx.request` 本来就不利用 HTTP 缓存，等于白搭）。
+
+**为什么只在成功分支发**：`code != 0` 的几支（员工不存在 / 名片已停用 / 企业停用 /
+查询失败）**一个缓存头都不能带**。错误响应一旦带上 `Cache-Control`，边缘会把故障
+一起缓存 60 秒——「员工不存在」被缓存一分钟事小，接口抖动期间把 500 缓存住才是灾难。
+
+守门：`backend/internal/handler/public_list_test.go` 的 `TestPublicListCacheHeader`
+逐条断言「成功分支两个 TTL 都在」+「错误分支一个头都没有」，并且每条都先确认
+`code` 真的是期望的那个值（否则会验到另一条路径上去）。
+`tools/nginx-check` §3.7 则让桩后端在 `/api/card` 自己发 `Cache-Control`，断言 nginx
+**原样透传**且**只有一个**该头。
+
+> ⚠️ **不要为了「保险」在 nginx 的 `/api/` 段里补 `add_header Cache-Control`**。
+> 三份配置的 `/api/` 段和 server 级都没写过这个指令，后端头是**原样透传**的。
+> 一旦补上，实测后果是双份：① 响应里出现两个 `Cache-Control`（CDN 取哪个不确定）；
+> ② 触发 `add_header` 继承陷阱——该 location 里没有重声明安全头，**server 级那 5 个
+> 头整组失效**（反向验证时 §3.3 的 4 条安全头断言一起变红）。
+> 要改 TTL 就改后端 `cdnCache` 的秒数，别在 nginx 侧叠。
+
+#### 必须在 CF 加一条 Cache Rule（否则头发了也不生效）
+
+CF **默认不缓存 JSON**，`/api/*` 一律 `DYNAMIC`；后端发的头只是「允许缓存」，
+还得有一条规则把它变成「要缓存」。
+
+| 项 | 值 |
+|---|---|
+| 规则名称 | `公开接口短缓存`（别留模板默认名，排查时要靠它认） |
+| 匹配 | 字段 **URI 路径** + **等于**，五条用「或」并列：`/api/card`、`/api/home-layout`、`/api/projects`、`/api/services`、`/api/achievements` |
+| 缓存资格 | 符合缓存条件 |
+| 边缘 TTL | **使用缓存控制标头（如果存在），否则绕过缓存** |
+| 浏览器 TTL | **接受源服务器 TTL** |
+| 状态代码 TTL | 留空（默认只缓存 200/206/301/302/404 里的成功项；404 无头会落在 BYPASS） |
+
+表达式预览：
+
+```
+(http.request.uri.path eq "/api/card") or
+(http.request.uri.path eq "/api/home-layout") or
+(http.request.uri.path eq "/api/projects") or
+(http.request.uri.path eq "/api/services") or
+(http.request.uri.path eq "/api/achievements")
+```
+
+> ⚠️ **三条硬约束，破一条就是事故**：
+>
+> 1. **绝不写成 `/api/*`**。管理端接口全在 `/api/` 下，它们带 `Authorization` 但
+>    **不带** `Cache-Control`。今天的语义是「没头 → 绕过缓存」所以看着安全，但这等于
+>    把「管理端响应能不能被缓存」交给了一条路径通配符——将来任何人给某个管理端 GET
+>    顺手加上 `cdnCache`，就是**跨租户数据串号**（CF 的缓存键不含 Authorization）。
+>    缓存资格必须逐条白名单，不能用通配符兜。
+> 2. **用「等于」而不是「通配符」**。`/api/projects*` 会连带覆盖
+>    `/api/projects/:id`（详情接口刻意没挂缓存头：后台改完详情要立刻能验）。
+>    虽然它没头会落到 bypass，但把不该有资格的路由圈进规则，就是给自己埋雷。
+> 3. **Cache Level 必须是 Standard**。默认就是；但若为了省命中率改成
+>    「Ignore query string」，`?staffId=1` 和 `?staffId=2` 会折叠成同一个缓存对象——
+>    **甲员工的名片会被发给找乙员工的访客**，而且零报错。同 §5.2.6。
+
+#### 生效验证
+
+```bash
+# 1) 后端确实在发头（命中/未命中都要看，别只看 HIT）
+curl -sI "https://<域名>/api/home-layout?cb=$RANDOM" | grep -iE 'cache-control|cf-cache-status'
+# 期望 cache-control: public, max-age=60, s-maxage=60
+
+# 2) 同一 URL 连打三次：第 1 次 MISS，之后 HIT，age 递增
+for i in 1 2 3; do
+  curl -s -o /dev/null -D- "https://<域名>/api/card?staffId=1" | grep -iE 'cf-cache-status|^age:';
+  sleep 2;
+done
+
+# 3) 错误分支绝不能被缓存：没有 cache-control，且不是 HIT
+curl -s -o /dev/null -D- "https://<域名>/api/card?staffId=999999" \
+  | grep -iE 'cache-control|cf-cache-status'
+# 期望：没有 cache-control 那一行，cf-cache-status: DYNAMIC 或 BYPASS
+```
+
+#### 代价与例外
+
+- **可见代价**：后台改了职务 / 业务服务后，访客最长 **60 秒**后才看到。管理员改完
+  立刻扫码验证最容易误判成「没生效」——先等一分钟，或直接给 URL 加一个随机 query
+  （`?v=$RANDOM`）强制 MISS。
+- **`/api/team` 刻意不缓存**（不在上面 5 条里）：它是路由决策（裸启动落名片墙还是
+  某个员工的名片），管理员改完设置立刻扫码验证，缓存 60 秒会让他反复改、反复验，
+  越查越乱。看到「为什么别人都缓存了它没有」时，别当成漏配。
+- **收益集中在「重复打开同一张名片」**：小程序 `wx.request` 不利用 HTTP 缓存，所以
+  端上一点便宜都占不到；省下的是 CF 节点那一次跨境回源（实测一次往返约 300～400ms）。
+
 ### 5.3 首屏 TTFB：HTML 不缓存 = 每次全页加载都跨境回源
 
 实测（Cloudflare 境外节点 → 国内源站，5 次）：

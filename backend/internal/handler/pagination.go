@@ -45,14 +45,26 @@ func limitParam(c *gin.Context, def, max int) int {
 	return n
 }
 
-// cdnCache 给公开只读接口加短缓存。
+// cdnCache 给公开只读接口加短缓存（只给共享缓存用，不给端上）。
 //
 // 小程序自身的 wx.request 不利用 HTTP 缓存，所以这不是给端上用的——是给反向代理
 // / CDN 用的：内容型列表重复访问比例很高（同一个访客反复进出首页），短缓存能把
 // 这部分重复回源挡掉。时长刻意取短（分钟级）：后台改了内容后，访客不该长时间
 // 看到旧数据。
+//
+// 为什么同时发 max-age 和 s-maxage（2026-11-12 补）：
+//
+//	· s-maxage 是**共享缓存**（CDN / 反代）的专用指令，优先级高于 max-age；
+//	· 但各家实现取哪个字段并不统一——只发 s-maxage，遇到只读 max-age 的边缘节点
+//	  就等于没配（表现为「头看着对、cf-cache-status 一直 DYNAMIC」这种静默失效）；
+//	· 两个都发同样的值，任何实现取哪个都得到同一个 TTL。
+//
+// 为什么必须**只在成功分支**调用：`add_header`/`Header()` 一旦落到错误响应上，
+// 4xx/5xx 也会被边缘缓存——「员工不存在」被缓存一分钟事小，接口抖动期间把
+// 500 缓存住才是灾难。所以调用点全部写在 `code == 0` 的那一支前面。
 func cdnCache(c *gin.Context, seconds int) {
-	c.Header("Cache-Control", "public, max-age="+strconv.Itoa(seconds))
+	c.Header("Cache-Control",
+		"public, max-age="+strconv.Itoa(seconds)+", s-maxage="+strconv.Itoa(seconds))
 }
 
 // pageParams 解析分页参数：非法值回落缺省，size 超上限截断。

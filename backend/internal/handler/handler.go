@@ -119,6 +119,11 @@ func New(db *gorm.DB) *gin.Engine {
 		if cp.VideoSource == "" {
 			cp.VideoSource = model.VideoSourceNone
 		}
+		// 公开只读，且**只按 staffId 决定内容**（没有登录态、没有访客相关字段），
+		// 所以可以交给边缘短缓存：访客打开名片要 4 个接口并发，每次回源都要付一次
+		// 跨境往返；缓存 60 秒能把「同一个员工的名片被反复打开」这部分回源全挡掉。
+		// 停用 / 不存在两支（code=1/2）**不设头**——错误响应不能被缓存。
+		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "employee": e, "company": ci, "profile": cp})
 	})
 
@@ -351,6 +356,9 @@ func New(db *gorm.DB) *gin.Engine {
 			// 授权到期 / 未开通高级款时访客回落默认配色，但不抹库里的值。
 			styleID, brandColorID = publicStyleBrand(c, cid, styleID, brandColorID)
 		}
+		// 同上，公开只读且只按 companyId 决定内容（styleId 的授权回落也在服务端算完），
+		// 可以交给边缘短缓存。这条是名片页 4 个并发请求之一，且每次切风格都会重新取。
+		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"styleId": styleID, "brandColorId": brandColorID,
