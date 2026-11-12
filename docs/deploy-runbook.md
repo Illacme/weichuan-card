@@ -965,10 +965,15 @@ curl -sI https://<域名>/assets/<任一hash文件>.js | grep -iE 'cache-control
 CF → Caching → Configuration → **Browser Cache TTL** → 选 **Respect Existing Headers**。
 
 为什么安全：本站点所有来源的 `Cache-Control` 都是**显式**的——`/assets/` 是 immutable 1 年、
-`/index.html` 是 no-cache、`/uploads/wxacode/` 是 no-cache、`/uploads/` 其余是 immutable 1 年。
+`/index.html` 是 no-cache、`/uploads/wxacode/` 是 no-cache、`/uploads/` 其余是 immutable 1 年、
+`/theme-previews/` 是 immutable 1 年（靠 URL 上的 `?v=` 构建戳破缓存，见 §5.2.6）。
 改成 Respect Existing 之后 CF 一律原样透传：HTML 仍 no-cache（不发版不缓存）、
 wxacode 仍 no-cache（重生成即生效）、其余按 1 年 + immutable 缓存。
 **连 §5.2 的 `/assets/` 也一并受益**，不用再单独建 Cache Rule。
+
+> 注意：改成 Respect Existing 之前，CF 会给**没发 Cache-Control 的响应**补默认
+> `max-age=14400`。§5.2.6 那场「切风格预览图不变」事故正是这么来的——
+> 所以「源站每一个静态目录都显式发头」本身就是这条方案的前提。
 
 > 副作用：之前 §5.2 那条 `/assets/*` 的 Cache Rule 可以保留也可以删——两种 TTL 现在都设成 1 年，
 > 结果一致；保留无害，删掉少一处维护点。
@@ -1083,26 +1088,39 @@ add_header Cache-Control $uploads_cache always;
    （新部署默认不缓存，天然没有本雷）——参考版与线上版在这块是**有意不同**，
    若要给参考版也补长缓存，须连 `map` 与四个安全头重声明一起搬。
 
-### 5.2.6 主题预览图：与 `/assets/` **正好相反**，绝不长缓存
+### 5.2.6 主题预览图：靠 URL 上的构建戳破缓存，因此可以长缓存
 
 > 这一节是 2026-11-12 线上事故的直接产物。结论先写：**不是发版文件不全，是缓存**。
-> 事故现象、误判过程与两处修复见 `docs/commercial-readiness.md` 第四十四轮。
+> 事故现象、误判过程与两处修复见 `docs/commercial-readiness.md` 第四十四轮；
+> 「no-cache 方案把 CDN 废掉、改成 URL 带戳 + immutable」见第四十七轮。
 
-`/theme-previews/` 下 36 张后台「整体风格 × 品牌配色」预览图，是唯一一类
+`/theme-previews/` 下 36 组后台「整体风格 × 品牌配色」预览图，是唯一一类
 **文件名不含内容 hash** 的构建产物：名字就是组合键
 `<风格>--<色系>.png`（如 `ink--brand-crimson.png`）。改完版式重新出图后，
 文件名一个字都不变，URL 完全一样。
 
-于是它必须按「会被原地覆盖」来对待，和 `/uploads/wxacode/`（小程序码）同类，
-而与 `/assets/`（hash 文件名，可 immutable 一年）**恰好相反**。
+所以「防旧图」这件事**不能靠缓存时长来做**，只能靠 **URL 变**。现行做法是：
+前端给每张图拼 `?v=<构建戳>`，于是「同一张图的不同版本」在缓存眼里是两个不同
+的 URL —— 这时才可以放心给 `immutable` 一年。
 
-**三层防护，缺一层就会重现事故**：
+> ⚠️ 第一版修法是源站发 `no-cache`（每次回源校验）。它确实能防旧图，但代价是
+> **CDN 形同虚设**：36 组原图约 40MB、缩略图约 5MB，每次切风格都要跨境回源校验，
+> 用户明确反馈「消耗带宽太大」。把「防旧图」和「省带宽」对立起来是不必要的，
+> 现行方案让两件事同时成立。
+
+**四层防护，缺一层就会重现事故**：
 
 | 层 | 做什么 | 在哪 |
 |---|---|---|
-| 1. 前端 URL 带构建戳 | `previewUrl()` 拼 `?v=__APP_BUILD__`（vite `define` 注入发版时间戳），每次发版 URL 都变 | `frontend/src/views/content/MpTheme.vue`、`frontend/vite.config.ts` |
-| 2. 源站显式 no-cache | `location ^~ /theme-previews/` 发 `Cache-Control: no-cache`，并用 `try_files $uri =404` 把「缺图真 404」钉死 | `deploy/baota/nginx-site.live.conf`（线上）、`nginx-site.conf`、`frontend/nginx.conf` |
-| 3. CDN 侧不拦 | CF 的 Browser Cache TTL 若被设成「覆盖源站」，第 2 层白做；见 §5.2.5 方案 A（Respect Existing Headers） | Cloudflare 面板 |
+| 1. 前端 URL 带构建戳 | `previewAssetUrl()` 拼 `?v=__APP_BUILD__`（vite `define` 注入发版时间戳），每次发版 URL 都变 | `frontend/src/views/content/MpTheme.vue`、`frontend/vite.config.ts` |
+| 2. 源站按状态码分流 | `add_header Cache-Control $preview_cache`：200/206/304 → `public, max-age=31536000, immutable`；404/410/5xx → `no-store`；其余 → `no-cache` | `deploy/baota/nginx-site.live.conf`（线上）、`nginx-site.conf`、`frontend/nginx.conf`（各带一份 `map`） |
+| 3. 缺图必须真 404 | `try_files $uri =404` 钉死；写成 `@spa` 会让缺图返回 `index.html` + 200 | 同上 |
+| 4. CDN 侧不拦 | CF 的 Browser Cache TTL 若被设成「覆盖源站」，1 年的头会被压成 4 小时；见 §5.2.5 方案 A（Respect Existing Headers） | Cloudflare 面板 |
+
+**为什么必须用 `map` 而不是写死 immutable**：`add_header` 区分不了状态码。
+写死的话 404 也带 `immutable`，CF 会把「这张图不存在」缓存一年，之后补上文件
+客户端也永远拿不到——`/uploads/` 在 2026-11-03 就是这么踩的（见 §5.2.4）。
+事故排查时实测线上缺图返回 `404` + `max-age=14400`，「404 被 CDN 缓存」不是假想风险。
 
 **验证（务必强制 MISS，否则你看到的是缓存里的旧副本）**：
 
@@ -1110,12 +1128,15 @@ add_header Cache-Control $uploads_cache always;
 curl -sI "https://<域名>/theme-previews/default--default.png?cb=$RANDOM" \
   | grep -iE 'cache-control|content-type|cf-cache-status'
 # 期望：content-type: image/png
-#       cache-control: no-cache
-#       cf-cache-status: MISS
+#       cache-control: public, max-age=31536000, immutable
+#       cf-cache-status: MISS（第一次）/ HIT（第二次同 URL，且零回源）
+# 再取一次不存在的图，必须 no-store：
+curl -sI "https://<域名>/theme-previews/nope-$RANDOM.png" | grep -i cache-control
+# 期望：cache-control: no-store
 # 若仍是 max-age=14400 → 本段没生效（配置没换/没 reload），或 CF 缓存没 Purge
 ```
 
-**改完 nginx 后必须清一次 CDN**（否则 4 小时内的旧副本照旧供着）：
+**改完 nginx 后必须清一次 CDN**（旧的 4 小时副本不会自己变短）：
 
 - Cloudflare → Caching → **Configuration → Purge Cache → Custom Purge** →
   `https://<域名>/theme-previews/*`（Purge 是按 URL 的，可以用通配符路径）；
@@ -1124,9 +1145,11 @@ curl -sI "https://<域名>/theme-previews/default--default.png?cb=$RANDOM" \
 > ⚠️ **别只在浏览器里按 Ctrl+F5 验收**。强刷只清本地，清不掉 CF 边缘节点——
 > 你会以为修好了，换台设备/换个网络一看还是旧图。判断依据只有 `cf-cache-status`。
 
-**为什么用 `no-cache` 而不是 `no-store`**：`no-cache` 允许存但每次必须回源校验，
-ETag 还在，内容没变就是 `304`，实际流量几乎为零；`no-store` 是彻底不存，
-每次全量重下（单张最大约 1.86MB），纯属浪费。
+**为什么长缓存也不会让用户看到旧版式**：图变了必然伴随发版，发版就会换
+`__APP_BUILD__`，于是新版式的 URL 与旧版式的 URL 是两个地址。缓存里留着旧
+URL 的旧图完全无害——**已经没有任何页面引用它了**。这与 `/assets/` 那套
+「文件名带 hash → immutable 一年」是同一条思路，只是这里的 hash 放在查询串上
+（文件名要保持稳定，部署脚本与 `manifest.json` 都按组合键对账）。
 
 **缺图为什么必须真 404**：若这个 location 被改成 `try_files $uri @spa`，
 缺图会返回 `index.html` + 200——前端 `<img>` 拿到 HTML 解码失败，静默降级成
@@ -1148,7 +1171,7 @@ bash tools/nginx-check/run.sh   # §6.6 专测本节，15 条断言
 | `<id>.thumb.png` | 460 × 等比 | 100～212 KB | 后台预览窗口（230px 宽，2x 屏需要 460） |
 | `<id>.png` | 750 ×（最高 5144） | 0.78～1.86 MB | 只有点「查看大图」才请求 |
 
-两档共用一个 location，所以 `no-cache`、`=404`、安全头对两者同样生效，
+两档共用一个 location，所以 `$preview_cache` 分流、`=404`、安全头对两者同样生效，
 **不需要**为缩略图另写规则。但发版时必须两档一起传：只传原图不会报任何错，
 页面照样能开，只是列表窗口退回拉整张 1～2 MB 图，切一次风格卡一下。
 `deploy_frontend.sh` 已逐组合核对两个文件都存在，线上自检也两档都探：
@@ -1156,7 +1179,7 @@ bash tools/nginx-check/run.sh   # §6.6 专测本节，15 条断言
 ```bash
 curl -sI "https://<域名>/theme-previews/default--default.thumb.png?cb=$RANDOM" \
   | grep -iE 'content-type|cache-control'
-# 期望 image/png + no-cache
+# 期望 image/png + public, max-age=31536000, immutable
 ```
 
 > 缩略图**不是**原图的裁剪或低清版，而是整张按 460 宽等比缩 + 128 色量化的成品；

@@ -29,7 +29,7 @@ bash verify.sh                             # 跑断言（容器需已起在 8443
 docker rm -f nginx-check                   # 收摊
 ```
 
-## 它到底验什么（83 项断言，节选）
+## 它到底验什么（110 项断言，节选）
 
 - **80 → 443 强制跳转**（不靠 CF，源站自己也得跳）
 - **healthz 三端点打到后端**，且 `/healthz/` 不产生 301 死循环
@@ -40,6 +40,9 @@ docker rm -f nginx-check                   # 收摊
   同时对照断言 200 路径不受影响
 - **real_ip 生效且不可伪造**：CF-Connecting-IP 被采信、客户端自带 XFF 被丢弃
 - **静态资源头**：`/assets/` immutable、`/index.html` no-cache
+- **`/theme-previews/` 按状态码分流（§6.6）**：文件名不含内容 hash，但前端 URL 带
+  `?v=<构建戳>`，所以 200/206 可以 immutable 一年（零回源）；缺图 404 必须 no-store，
+  且必须真 404（不得被 `@spa` 兜底成 `200` + `index.html`）
 - **SPA 兜底修复**：仅浏览器导航（`Accept: text/html`）回落壳，其余（扫描器/fetch/缺失资源）一律 404
 - **敏感文件拦截**：`/.env`、`.git/config` 等 404
 - **TLS**：禁 TLSv1.1、保留 1.2/1.3、不下发 HSTS（交给 CF）

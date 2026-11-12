@@ -121,19 +121,26 @@ bad "小响应不被压缩（min_length 生效）" "$h" "content-encoding: gzip"
 h=$(curl -sk -D- -o /dev/null -H 'Accept-Encoding: gzip' "${NOPROXY[@]}" $R "$B/uploads/deadbeef.png")
 bad "png 不被 gzip（不在 gzip_types）" "$h" "content-encoding: gzip"
 
-echo "== 6.6 主题预览图绝不长缓存（线上事故：版式改了、图没变）=="
-# 事故复盘：这 36 张图的名字是「风格--色系」组合键（ink--brand-crimson.png），
+echo "== 6.6 主题预览图：URL 带构建戳 → 可长缓存；但 404 绝不能 =="
+# 事故复盘（2026-11-12）：这 36 组图的名字是「风格--色系」组合键（ink--brand-crimson.png），
 # **不含内容 hash**，重出图后 URL 一个字都不变。原先这里没有 location 段，
 # 源站不发 Cache-Control，Cloudflare 就按静态图片默认补 max-age=14400（4 小时）。
 # 表现：发版成功、Network 全 200、无任何报错，但后台切风格预览图死活不变——
 # 典型的「没人报错、用户却无从察觉」型静默失败。
+#
+# 第一版修法是 no-cache（每次回源校验）：能防旧图，但**把 CDN 废掉了**——
+# 40MB 图集每次切风格都要跨境回源校验，用户明确反馈「消耗带宽太大」。
+# 现行方案是把「防旧图」交给 **URL 上的 ?v=<构建戳>**（前端 previewAssetUrl 拼）：
+#   · 没发版 → URL 与内容都不变 → 边缘/浏览器直接命中，零回源；
+#   · 发版 → v 变了 → 全新 URL → 必回源取新图 → 客户端永远拿不到「新 URL + 旧图」。
+# 所以这里断言 **immutable 一年**，而不是 no-cache；同时断言「不能是 no-cache」，
+# 防止有人出于好心把 CDN 又关掉。404 的下限不变（见下）。
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/default--default.png")
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/theme-previews/default--default.png")
 chk "预览图返回 200"                  "$code" "200"
 chk "预览图是 image/png"              "$h" "content-type: image/png"
-chk "预览图 no-cache（而非 max-age=14400）" "$h" "cache-control: no-cache"
-bad "预览图不带 immutable"            "$h" "immutable"
-bad "预览图不带 max-age"              "$h" "max-age"
+chk "预览图可长缓存（一年 + immutable）" "$h" "cache-control: public, max-age=31536000, immutable"
+bad "预览图不能退回 no-cache（CDN 会每次回源）" "$h" "cache-control: no-cache"
 chk "预览图仍带 nosniff"              "$h" "x-content-type-options: nosniff"
 chk "预览图仍带 X-Frame-Options"      "$h" "x-frame-options: SAMEORIGIN"
 chk "预览图仍带 Referrer-Policy"      "$h" "referrer-policy: strict-origin-when-cross-origin"
@@ -146,14 +153,17 @@ _body=$(curl -sk "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
 chk "缺图是 404（没落进 SPA 兜底）"    "$code" "404"
 bad "缺图不能是 SPA 壳"               "$_body" 'SHELL'
+# 这是 $preview_cache 存在的全部理由：add_header 区分不了状态码，
+# 若把 immutable 写死，404 也会被 CF 锁一年（/uploads/ §3.6 同款老坑）。
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
-bad "缺图也不能被长缓存"              "$h" "max-age"
+chk "缺图 no-store（不会被锁一年）"    "$h" "cache-control: no-store"
+bad "缺图不带 max-age"                "$h" "max-age"
 # 缩略图与原图同属一个 location，缓存策略必须一致：后台列表窗口每次切风格取的都是
-# `.thumb.png`，它若被长缓存，管理员看到的还是上一版版式（与 2026-11-12 事故同因）。
+# `.thumb.png`，它若被长缓存而无构建戳，管理员看到的还是上一版版式（与事故同因）。
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/default--default.thumb.png")
 chk "缩略图是 image/png"              "$h" "content-type: image/png"
-chk "缩略图同样 no-cache"             "$h" "cache-control: no-cache"
-bad "缩略图不带 max-age"              "$h" "max-age"
+chk "缩略图同样可长缓存（一年 + immutable）" "$h" "cache-control: public, max-age=31536000, immutable"
+bad "缩略图不带 max-age=14400（CF 默认值）" "$h" "max-age=14400"
 
 echo "== 7. 404 与 SPA 兜底不互相污染 =="
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/assets/nope.js")

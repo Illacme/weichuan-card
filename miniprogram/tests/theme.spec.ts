@@ -907,8 +907,8 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 
   // 后台预览窗口只有 230px 宽，原图却是 750px 宽、单张 0.8~1.8MB（warm 款 5144 高）。
-  // 直接喂原图的代价有两个且都不会报错：① 切一次风格就回源拉 1~2MB（本目录 no-cache，
-  // 每次真下）；② 750×5144 位图解码约 15MB 内存，老机器切风格明显卡。
+  // 直接喂原图的代价有两个且都不会报错：① 切一次风格就拉 1~2MB（换风格就换图，
+  // 而 36 组原图共约 40MB）；② 750×5144 位图解码约 15MB 内存，老机器切风格明显卡。
   // 所以每个组合出两档：`.thumb.png`（460px / 100~210KB）给列表窗口，
   // `.png` 只在「查看大图」浮层里按需加载。下面四段缺任何一段，优化都会悄悄失效：
   // 前端指错档位（无运行时症状）、缩略图没生成（退回拉原图）、缩略图没真缩（等于没做）。
@@ -955,8 +955,15 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 第一反应是「发布文件不全」。逐张比对 36 张图的字节数与本地完全一致、入口 JS 的
   // 内容 hash 也一致——文件是全的，是被缓存住了：图片名不含内容 hash（`ink--brand-crimson.png`
   // 这种组合键），源站又没发 Cache-Control，Cloudflare 按静态图片默认给了 max-age=14400。
-  // 两层都要钉：前端 URL 带构建戳（任何缓存都失效）+ nginx 显式 no-cache 且缺图真 404。
-  it('预览图不会被缓存成旧版式：URL 带构建戳，两份 nginx 都 no-cache 且缺图真 404', () => {
+  //
+  // 第一版修法是 nginx 显式 no-cache，能防旧图但把 CDN 废掉了（每次刷新都回源校验，
+  // 40MB 图集白烧带宽）。现行方案：**破缓存靠 URL 上的 `?v=<构建戳>`，因此可以长缓存**。
+  // 这条用例钉三件事，缺任何一件都会退回「要么看旧图、要么烧带宽」：
+  //   ① 前端 URL 必须带构建戳（否则同名不同内容被缓存住）；
+  //   ② nginx 必须按状态码分流（`$preview_cache`），200 才 immutable、404 是 no-store
+  //      （写死 immutable 会把「图不存在」锁一年，/uploads/ 踩过同款坑）；
+  //   ③ 缺图必须真 404（不得 `@spa` 兜底）。
+  it('预览图不会被缓存成旧版式：URL 带构建戳 + 按状态码分流 + 缺图真 404', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     expect(vue, 'previewUrl 必须拼 ?v=<构建戳>，否则同名不同内容会被缓存住')
       .toMatch(/theme-previews\/.*\.png\?v=\$\{__APP_BUILD__\}/)
@@ -965,13 +972,31 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(vite).toContain('__APP_BUILD__')
     expect(readFileSync(resolve(REPO, 'frontend/env.d.ts'), 'utf-8')).toContain('__APP_BUILD__')
 
-    for (const rel of ['frontend/nginx.conf', 'deploy/baota/nginx-site.conf']) {
+    // 三份都要钉：两份参考版 + 线上实际在用的 live.conf（后者才是发版时真正生效的）
+    for (const rel of [
+      'frontend/nginx.conf',
+      'deploy/baota/nginx-site.conf',
+      'deploy/baota/nginx-site.live.conf',
+    ]) {
       const conf = readFileSync(resolve(REPO, rel), 'utf-8')
       const at = conf.indexOf('location ^~ /theme-previews/')
       expect(at, `${rel} 缺 /theme-previews/ 专用 location`).toBeGreaterThan(-1)
       const body = conf.slice(at, conf.indexOf('}', at))
-      expect(body, `${rel} 的预览图不能强缓存（文件名不含哈希）`)
-        .toContain('Cache-Control "no-cache"')
+      // 不能写死字符串：add_header 区分不了状态码，写死 immutable 会让 404 也被锁一年
+      expect(body, `${rel} 的 Cache-Control 必须走按状态码分流的变量`)
+        .toContain('add_header Cache-Control $preview_cache always')
+      // 反向：不能退回 no-cache（那样 CDN 每次回源，等于没缓存）
+      expect(body, `${rel} 不能退回写死的 no-cache（CDN 会每次回源）`)
+        .not.toContain('Cache-Control "no-cache"')
+      // map 必须真的存在且在 server 块之前（http 级），否则变量未定义 nginx 起不来
+      const mapAt = conf.indexOf('map $status $preview_cache {')
+      expect(mapAt, `${rel} 缺 $preview_cache 的 map`).toBeGreaterThan(-1)
+      expect(mapAt, `${rel} 的 map 必须在 server 块之前（http 级）`).toBeLessThan(at)
+      const mapBody = conf.slice(mapAt, conf.indexOf('}', mapAt))
+      expect(mapBody, `${rel} 的 200 必须 immutable 一年`)
+        .toMatch(/200\s+"public, max-age=31536000, immutable"/)
+      expect(mapBody, `${rel} 的 404 必须 no-store（否则「图不存在」被锁一年）`)
+        .toMatch(/404\s+"no-store"/)
       // `try_files $uri =404` 是把「缺图真 404」钉死，别理解反：本 location 不写它其实
       // 也是 404（nginx 直接去 root 找文件），不会隐式落到 location / 的 SPA 兜底。
       // 真正会出事的写法是 `try_files $uri @spa`——那时缺图返回 index.html + 200，

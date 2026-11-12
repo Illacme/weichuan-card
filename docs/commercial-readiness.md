@@ -2824,3 +2824,75 @@ bug」），测试立刻红：`expected: "warm" / actual: "ink"`——正是「�
    平台模式是扫码/分享粘滞值），否则访客会看到 1 号租户的主题。小程序 `request.ts` 已对
    `/api/home-layout` 自动注入，这条链路有 `themeBootstrap.spec.ts` 钉住。
    另外平台超管可以用 `?companyId=N` 改任意企业的主题——这是产品设计（平台运营），不是越权。
+
+## 第四十七轮：预览图缓存策略改口——从 `no-cache` 到「URL 带戳 + immutable 一年」（2026-11-12）
+
+用户提的：
+
+> 「这些图片是会走cloudflare缓存的吧，要总重新从服务器拉取的话消耗带宽太大了」
+
+判断成立。第四十四轮为了修「切风格预览图不变」，给 `/theme-previews/` 发了 `no-cache`
+（每次回源校验）。它确实防住了旧图，但**把 CDN 废掉了**：
+
+| 事实 | 数值 |
+| --- | --- |
+| 36 组原图合计 | **40.9 MB** |
+| 36 张缩略图合计 | **4978 KB** |
+| 后台切一次风格会取 | 1 张缩略图（列表窗口）+ 可能的 1 张原图（点开大图） |
+| `no-cache` 的代价 | 每个用户每次刷新都要回源校验，CF 边缘几乎不命中 → 跨境 RTT + 源站带宽 |
+
+也就是说，第四十四轮的方案把「防旧图」和「省带宽」当成了对立面。但这两件事其实不冲突：
+**旧图之所以能被看到，是因为 URL 没变；让 URL 变，就可以随便缓存。**
+
+**现行三层结构**（缺一层都不成立）：
+
+| 层 | 做法 | 位置 |
+| --- | --- | --- |
+| ① URL 变 | `previewAssetUrl()` 拼 `?v=__APP_BUILD__`（vite `define` 注入发版时间戳） | `frontend/src/views/content/MpTheme.vue`、`vite.config.ts` |
+| ② 按状态码分流 | `map $status $preview_cache`：200/206/304 → `public, max-age=31536000, immutable`；404/410/5xx → `no-store`；其余 → `no-cache` | `nginx-site.live.conf`、`nginx-site.conf`、`frontend/nginx.conf`（各带一份 map） |
+| ③ 缺图真 404 | `try_files $uri =404`（沿用第四十四轮，防 `@spa` 兜底） | 同上 |
+
+`location ^~ /theme-previews/` 的 `add_header Cache-Control` 由字面量改成 `$preview_cache`。
+**为什么不能写死 immutable**：`add_header` 区分不了状态码，写死则 404 也带一年，
+CF 会把「这张图不存在」锁死——`/uploads/` 在 2026-11-03 踩过同款坑（见 runbook §5.2.4）。
+这不是假想风险：本轮排查时实测线上缺图返回 `404` + `max-age=14400`，**确实会被缓存**。
+
+**为什么长缓存也不会看到旧版式**：图变了必然伴随发版，发版必然换 `__APP_BUILD__`，
+于是新版式与旧版式是两个不同的 URL。缓存里留着旧 URL 的旧图完全无害——已经没有页面引用它了。
+这与 `/assets/` 那套「文件名带 hash → immutable 一年」是同一条思路，只是 hash 放在查询串上
+（文件名要保持稳定，部署脚本与 `manifest.json` 都按组合键对账）。
+
+**守门**：
+
+- `tools/nginx-check` §6.6 改写（仍是 15 条，总数维持 **110 项**）：
+  `chk` 200/206 的 `public, max-age=31536000, immutable`、`bad` 退回 `no-cache`、
+  缺图 `chk` `no-store` + `bad` 带 `max-age`、缩略图同档；
+- `miniprogram/tests/theme.spec.ts` 的源码级断言从「两份 nginx 必须 `no-cache`」改成
+  「三份 nginx 必须用 `$preview_cache`、**不得**出现字面量 `no-cache`、map 必须存在且在
+  server 块之前（http 级）、200 必须 immutable、404 必须 no-store」；
+- `deploy_frontend.sh` 的失败提示改成「先确认 URL 带的是新构建戳，再 Purge」。
+
+**反向验证（两条，都确认会红）**：
+
+1. 把 `$preview_cache` 里的 `404 "no-store"` 改成 `404 "public, max-age=31536000, immutable"`
+   → nginx-check 报 **2 项失败**（`缺图 no-store`、`缺图不带 max-age`），其余 108 项仍绿。
+   说明 `map` 分流不是摆设，确实是这两条断言在守。
+2. 把 `frontend/nginx.conf` 的 `add_header Cache-Control $preview_cache always;` 改回
+   `"no-cache"` → `theme.spec.ts` 变红（`Tests 1 failed | 55 passed`），报错信息直接指出
+   缺 `$preview_cache`。还原后 56/56 全绿。
+
+**两个必须知道的边界**：
+
+1. **`immutable` 一年要被浏览器真正吃到，CF 侧得配合**。CF 默认的 Browser Cache TTL 会把
+   源站的 `Cache-Control` 覆盖成 `max-age=14400`。按 runbook §5.2.5 方案 A
+   （Browser Cache TTL → **Respect Existing Headers**）即可，顺带让 `/assets/`、`/uploads/` 一起受益。
+2. **换缓存策略必须清一次 CF**。边缘上留着的旧 `max-age=14400` 副本不会自己变短——
+   Purge `/theme-previews/*` 或 Purge Everything。别只在浏览器里 Ctrl+F5 验收（那只清本地）。
+
+> 历史记录保留原文：第四十四轮的「源站不缓存」一格、第四十五轮的「`/theme-previews/` 是 `no-cache`」
+> 描述的是当时状态，以本轮为准。
+
+**用户侧待办（本人执行）**：① `git push origin main`；② 按 `nginx-site.live.conf` 更新宝塔站点配置
+（**注意文件顶部新增的 `map $status $preview_cache` 必须一起粘到 server 块之外**，漏了 nginx 会
+报 `unknown "preview_cache" variable` 起不来）；③ Cloudflare Purge `/theme-previews/*`；
+④ 重跑 `./scripts/deploy_frontend.sh --build` 让新构建戳进入页面。本轮不涉及小程序端，无需重新提审。

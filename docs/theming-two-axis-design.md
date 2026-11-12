@@ -375,8 +375,9 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 > **P7（2026-11-12）补：把预览图拆成「缩略图 + 原图」两档。**
 > 上面那句「按需只加载当前组合那一张（0.85–1.85 MB）」还是不够省，原因有两层：
-> ① 这 36 张图的名字不含内容 hash，`/theme-previews/` 又是 `no-cache`，所以
-> **每切一次风格 / 换一次色都要真实回源拉一次整图**；② `750×5144` 的位图解码后约 15 MB
+> ① 这 36 张图的名字不含内容 hash，改动前的缓存策略是 `no-cache`（**现已改为
+> 「URL 带 `?v=<构建戳>` + immutable 一年」**，见本节末），所以
+> 每切一次风格 / 换一次色都要真实拉一次整图；② `750×5144` 的位图解码后约 15 MB
 > 内存，老机器切风格能明显感到卡。现在每个组合出两档：
 >
 > | 档 | 文件 | 尺寸 | 体积 | 用在哪 |
@@ -396,3 +397,11 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 >    并逐张读 PNG 头校验尺寸与体积——指错档位没有任何运行时症状，只能靠源码断言；
 > 3. `deploy_frontend.sh`：发版前逐组合核对 `<id>.png` **与** `<id>.thumb.png` 都在，
 >    缺一张直接拒绝发版（少缩略图不会报错，只会让列表窗口退回拉 1～2 MB 原图）。
+>
+> **补充（同日，缓存策略改口）**：两档化只解决「单张太大」，没解决「每次都回源」。
+> 最初给 `/theme-previews/` 发的是 `no-cache`，结果 CDN 形同虚设（40 MB 原图 + 5 MB 缩略图
+> 每次切风格都回源校验），用户反馈「消耗带宽太大」。现改为：
+> 前端 `previewAssetUrl()` 拼 `?v=__APP_BUILD__`，nginx 用 `map` 按状态码分流——
+> 200/206/304 → `public, max-age=31536000, immutable`，404/5xx → `no-store`。
+> 没发版时 URL 不变 → 边缘/浏览器直接命中、零回源；发版后 URL 变 → 必回源取新图，
+> 旧图留在缓存里也无人引用。详见 `docs/deploy-runbook.md` §5.2.6。
