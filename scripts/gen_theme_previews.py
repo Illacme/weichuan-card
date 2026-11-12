@@ -84,6 +84,24 @@ MEASURE_HEIGHT = 4000
 RPX_TO_PX = 0.5
 SCALE = 2  # 2x 出图，后台缩小显示仍可辨识，也可直接当销售材料用
 
+# 缩略图（2026-11-12 加）：后台「整体风格」页的预览窗口只有 230px 宽，
+# 而原图是 750px 宽、单张 0.8~1.8MB。直接喂原图有两个代价：
+#   ① 传输：切一次风格 / 换一次色就回源拉 1MB+（这目录是 no-cache，每次都真下）；
+#   ② 解码：750×5144 的位图解码后约 15MB 内存，老机器切风格会明显卡顿。
+# 缩略图给列表窗口用，原图只在「查看大图」浮层里按需加载。
+# 460 = 卡片 230px × 2x（Retina 也不糊）；128 色 PNG8 实测在 230px 显示下
+# 文字清晰、照片无色带（逐张 ViewImage 核对过），单张降到 100~210KB。
+THUMB_WIDTH = 460
+THUMB_COLORS = 128
+THUMB_SUFFIX = ".thumb"
+# 守门阈值：低于 2KB 说明图是空的/纯色的；高于 300KB 说明量化参数被改坏了
+# （正常最大约 210KB），这两种都该在出图前拦下来而不是发到线上。
+THUMB_MIN_BYTES = 2_000
+THUMB_MAX_BYTES = 300_000
+# 缩略图必须真的比原图小。留 0.6 的余量：极端纯色图量化后可能接近原图大小，
+# 但也不该到「缩了等于没缩」的程度。
+THUMB_MAX_RATIO = 0.6
+
 # P5：两轴全叉乘。4 个风格 × (默认色 + 8 款色系) = 36 个组合。
 # 文件名用 "<style>--<brand 或 default>.png"：两轴都进文件名，谁也不压扁谁。
 # 后端 template_id 兼容派生列只有 12 个扁平 id，装不下 36 个组合，不能拿来当图名。
@@ -267,6 +285,10 @@ def manifest_payload(
         "source": "miniprogram/app.wxss",
         "canvas": [WIDTH, HEIGHT],
         "scale": SCALE,
+        # 缩略图规格也进快照：改了 THUMB_WIDTH / THUMB_COLORS 却没重出图时，
+        # 下面 check_manifest 会判红，避免「文件名叫 thumb、实际还是 750 宽原图」。
+        "thumbWidth": THUMB_WIDTH,
+        "thumbColors": THUMB_COLORS,
         "canvasByStyle": heights,
         "contentBottoms": bottoms,
         "layouts": layouts,
@@ -368,6 +390,11 @@ def check_manifest(
         problems.append("布局规则快照与 app.wxss 当前值不一致：改了模块布局却没重跑本脚本")
     if data.get("canvas") != [WIDTH, HEIGHT] or data.get("scale") != SCALE:
         problems.append("manifest 画布参数与脚本不一致")
+    if data.get("thumbWidth") != THUMB_WIDTH or data.get("thumbColors") != THUMB_COLORS:
+        problems.append(
+            "manifest 的缩略图规格与脚本不一致：改了 THUMB_WIDTH / THUMB_COLORS 却没重出图"
+            "（前端仍会按旧规格取图，但缩略图已经不是那个尺寸了）"
+        )
     if data.get("canvasByStyle") != heights:
         problems.append("manifest 的各风格画布高度与本次实测不一致")
     if data.get("contentBottoms") != bottoms:
@@ -754,6 +781,50 @@ def png_size(path: Path) -> tuple[int, int] | None:
     return struct.unpack(">II", data[16:24])
 
 
+def split_preview_name(name: str) -> tuple[str, bool]:
+    """`ink--default.png` → ('ink--default', False)；`ink--default.thumb.png` → ('ink--default', True)。
+
+    目录里混着原图与缩略图，两者组合键完全相同、只差 `.thumb` 后缀，
+    所以「列举产物」和「清理过期图」都必须走这个函数，不能直接拿 Path.stem 比 ——
+    `ink--default.thumb.png` 的 stem 是 `ink--default.thumb`，会被误判成过期图删掉。
+    """
+    stem = name[: -len(".png")] if name.endswith(".png") else name
+    if stem.endswith(THUMB_SUFFIX):
+        return stem[: -len(THUMB_SUFFIX)], True
+    return stem, False
+
+
+def thumb_path(cid: str) -> Path:
+    return OUT_DIR / f"{cid}{THUMB_SUFFIX}.png"
+
+
+def make_thumb(src: Path, dst: Path) -> None:
+    """从原图缩出一张 460 宽的调色板 PNG（后台列表窗口专用）。
+
+    找不到 ImageMagick 就**明确失败**，绝不静默跳过：少了缩略图，前端会退回拉整张
+    1~2MB 原图，页面照样能开、Network 全 200，只有「切风格时卡一下」——
+    这种性能退化没有任何一处会报错，只能靠这里拦住。
+    """
+    tool = shutil.which("magick") or shutil.which("convert")
+    if not tool:
+        raise SystemExit(
+            "✗ 找不到 ImageMagick（magick / convert），缩略图无法生成。\n"
+            "  macOS: brew install imagemagick    Debian: apt install imagemagick\n"
+            "  刻意不静默跳过：少一张缩略图，后台就会退回去拉整张原图，性能悄悄退化没人察觉。"
+        )
+    cmd = [
+        tool, str(src),
+        "-resize", f"{THUMB_WIDTH}x",
+        "-strip",
+        "-dither", "None",
+        "-colors", str(THUMB_COLORS),
+        f"PNG8:{dst}",
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not dst.is_file():
+        raise SystemExit(f"✗ 生成缩略图失败 {dst.name}：{r.stderr[-400:]}")
+
+
 def build_html(
     tokens: dict[str, str],
     style_id: str = DEFAULT_STYLE,
@@ -824,14 +895,24 @@ def main() -> int:
         return 1
 
     if args.check:
-        files = {p.stem: p for p in OUT_DIR.glob("*.png")} if OUT_DIR.is_dir() else {}
-        extra = sorted(set(files) - set(combos))
-        absent = [cid for cid in combos if cid not in files]
+        fulls: dict[str, Path] = {}
+        thumbs: dict[str, Path] = {}
+        others: list[str] = []
+        for p in OUT_DIR.glob("*.png") if OUT_DIR.is_dir() else []:
+            cid, is_thumb = split_preview_name(p.name)
+            if cid not in combos:
+                # 目录里还有别的 png（误放的截图等）也要报，但别把它当成组合键
+                others.append(p.name)
+                continue
+            (thumbs if is_thumb else fulls)[cid] = p
         data = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.is_file() else {}
         heights = data.get("canvasByStyle", {})
-        bad = []
+        absent = [cid for cid in combos if cid not in fulls]
+        absent_thumb = [cid for cid in combos if cid not in thumbs]
+        bad: list[str] = []
+        bad_thumb: list[str] = []
         for cid, (sid, _brand) in combos.items():
-            p = files.get(cid)
+            p = fulls.get(cid)
             if not p:
                 continue
             h = heights.get(sid)
@@ -839,8 +920,23 @@ def main() -> int:
             expected = (WIDTH * SCALE, h * SCALE) if isinstance(h, int) else None
             if p.stat().st_size < 5000 or size != expected:
                 bad.append(f"{cid}({size}, {p.stat().st_size}B, 期望 {expected})")
+            # 缩略图：宽度必须是 THUMB_WIDTH，高度按原图等比（±1px 容差，resize 取整），
+            # 体积必须落在 [THUMB_MIN_BYTES, THUMB_MAX_BYTES] 且显著小于原图。
+            # 三条缺一条就会让「缩略图其实是大图剪切/没缩/缩成纯色」这类假绿混过去。
+            t = thumbs.get(cid)
+            if not t or not size:
+                continue
+            tsize = png_size(t)
+            tbytes = t.stat().st_size
+            want_h = round(size[1] * THUMB_WIDTH / size[0])
+            if tsize is None or tsize[0] != THUMB_WIDTH or abs(tsize[1] - want_h) > 1:
+                bad_thumb.append(f"{cid}({tsize}, 期望 {THUMB_WIDTH}x{want_h})")
+            elif tbytes < THUMB_MIN_BYTES or tbytes > THUMB_MAX_BYTES:
+                bad_thumb.append(f"{cid}({tbytes}B 越界 {THUMB_MIN_BYTES}~{THUMB_MAX_BYTES})")
+            elif tbytes > p.stat().st_size * THUMB_MAX_RATIO:
+                bad_thumb.append(f"{cid}({tbytes}B 相对原图 {p.stat().st_size}B 没真缩)")
         print(f"组合 {len(combos)} 个：{len(STYLE_IDS)} 风格 × {1 + len(go_brands)} 色档")
-        print(f"预览图 {len(files)} 张，按风格画布 {heights}")
+        print(f"预览图 {len(fulls)} 张 + 缩略图 {len(thumbs)} 张，按风格画布 {heights}")
         # --check 不跑浏览器：用上一次出图时记下的实测值做快照对账。
         # 布局规则 / 基础色板 / 36 组合并 token 一旦变了，下面的比对就会判红，
         # 要求重出图（重出图时会重新实测并重写这几个快照）。
@@ -849,15 +945,24 @@ def main() -> int:
         )
         if absent:
             problems.append(f"缺图：{absent}")
-        if extra:
-            problems.append(f"多余图片（旧扁平 id 残留？）：{extra}")
+        if absent_thumb:
+            problems.append(
+                f"缺缩略图（后台会退回拉整张原图，切风格变慢）：{absent_thumb}"
+            )
+        if others:
+            problems.append(f"目录里有多余图片（旧扁平 id 残留 / 误放？）：{others}")
         if bad:
-            problems.append(f"尺寸/体积异常：{bad}")
+            problems.append(f"原图尺寸/体积异常：{bad}")
+        if bad_thumb:
+            problems.append(f"缩略图异常：{bad_thumb}")
         if problems:
             for p in problems:
                 print(f"✗ {p}", file=sys.stderr)
             return 1
-        print("✓ 36 组合预览图、四风格布局、组合 token 与模板白名单同版，PNG 合法且按风格尺寸一致")
+        print(
+            f"✓ 36 组合原图 + 36 张 {THUMB_WIDTH}px 缩略图、四风格布局、组合 token 与模板白名单同版，"
+            "PNG 合法且按风格尺寸一致"
+        )
         return 0
 
     chrome = find_chrome()
@@ -891,19 +996,31 @@ def main() -> int:
         return 0
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    full_total = 0
+    thumb_total = 0
     for cid, (sid, _brand) in combos.items():
         out = OUT_DIR / f"{cid}.png"
         html = build_html(combo_tok[cid], sid, heights[sid], layout_css(layout_rules[sid]))
         render(chrome, html, out, heights[sid])
-        print(f"✓ {out.relative_to(ROOT)}  [{sid}]  {png_size(out)}  {out.stat().st_size}B")
-    # P5 改了命名：旧扁平 id 的 12 张图已成死资源，留着会让 --check 判「多余图片」，
-    # 仓库还白背十几 MB。只清本脚本自己产出的 *.png，不碰目录里其它文件。
+        thumb = thumb_path(cid)
+        make_thumb(out, thumb)
+        full_total += out.stat().st_size
+        thumb_total += thumb.stat().st_size
+        print(f"✓ {out.name}  [{sid}]  {png_size(out)}  {out.stat().st_size}B"
+              f"  → 缩略 {png_size(thumb)} {thumb.stat().st_size}B")
+    # P5 改了命名；P7 起同目录又多了一组 `.thumb.png`：归属判断一律走
+    # split_preview_name，不能直接比 Path.stem——`x.thumb.png` 的 stem 是
+    # `x.thumb`，会被当成过期图连图带缩略图一起删掉。
     for p in OUT_DIR.glob("*.png"):
-        if p.stem not in combos:
+        cid, _is_thumb = split_preview_name(p.name)
+        if cid not in combos:
             p.unlink()
     write_manifest(tokens, layouts, bottoms, heights, combos, combo_tok)
     print(f"完成：{len(combos)} 张预览图（{len(STYLE_IDS)} 风格 × {1 + len(go_brands)} 色档）"
-          f"+ 基础色板 / 组合 token / 布局快照，"
+          f"+ {len(combos)} 张 {THUMB_WIDTH}px 缩略图"
+          f"（原图合计 {full_total / 1024 / 1024:.1f}MB → 缩略图合计 {thumb_total / 1024:.0f}KB，"
+          f"省 {100 - thumb_total * 100 / full_total:.0f}%），"
+          f"基础色板 / 组合 token / 布局快照，"
           f"token 与布局均来自 {APP_WXSS.relative_to(ROOT)}，图形来自 {SEED_DIR.relative_to(ROOT)}")
     return 0
 

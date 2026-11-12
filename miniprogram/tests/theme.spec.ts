@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -518,7 +518,7 @@ describe('小程序风格模板 系列分组', () => {
     // 保存必须发两轴而不是旧的单列 templateId，否则两轴化等于没落后台。
     expect(vue).toContain('class="preview-pane"')
     expect(vue).toContain('position: sticky')
-    expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain(':src="thumbUrl(currentId)"')
     expect(vue).toContain('const currentId = computed(() => comboId(styleId.value, brandColorId.value))')
     expect(vue).toContain('function comboId(s: string, b: string | null): string')
     expect(vue).toContain('v-for="t in styleTemplates"')
@@ -854,7 +854,9 @@ describe('小程序整体风格模板 真实预览图', () => {
     const combos = expectedCombos()
     expect(Object.keys(combos), '组合数必须是 4 × 9 = 36').toHaveLength(36)
     const files = readdirSync(PREVIEW_DIR)
-      .filter((f) => f.endsWith('.png'))
+      // 目录里同目录还放着一套 460px 缩略图（`<cid>.thumb.png`），它们的 stem 会多出
+      // `.thumb` 后缀，不排除掉就会把「36 张」比成 72 张而误报。
+      .filter((f) => f.endsWith('.png') && !f.endsWith('.thumb.png'))
       .map((f) => f.slice(0, -4))
     expect(files.sort()).toEqual(Object.keys(combos).sort(), '加款 / 改组合忘了重跑 gen_theme_previews.py')
 
@@ -882,8 +884,7 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 「每张图都在、尺寸都对、快照也对」仍挡不住一种静默失败：只用一套布局或只用
   // 一套颜色出 36 张图，客户看到的是一堆重复预览。36 张摘要互不相同，
   // 再加「同风格 9 档互不相同」「同色档 4 风格互不相同」两层分组，才钉得住两轴。
-  it('36 张预览图两两不同：布局与颜色都真的进了图', () => {
-    const combos = expectedCombos()
+  it('36 张预览图两两不同：布局与颜色都真的进了图', () => {    const combos = expectedCombos()
     const digests: Record<string, string> = {}
     for (const cid of Object.keys(combos)) {
       digests[cid] = createHash('sha256')
@@ -902,6 +903,51 @@ describe('小程序整体风格模板 真实预览图', () => {
       expect(group).toHaveLength(STYLE_IDS.length)
       expect(new Set(group.map((cid) => digests[cid])).size, `${bid} 的 4 风格布局没进图`)
         .toBe(group.length)
+    }
+  })
+
+  // 后台预览窗口只有 230px 宽，原图却是 750px 宽、单张 0.8~1.8MB（warm 款 5144 高）。
+  // 直接喂原图的代价有两个且都不会报错：① 切一次风格就回源拉 1~2MB（本目录 no-cache，
+  // 每次真下）；② 750×5144 位图解码约 15MB 内存，老机器切风格明显卡。
+  // 所以每个组合出两档：`.thumb.png`（460px / 100~210KB）给列表窗口，
+  // `.png` 只在「查看大图」浮层里按需加载。下面四段缺任何一段，优化都会悄悄失效：
+  // 前端指错档位（无运行时症状）、缩略图没生成（退回拉原图）、缩略图没真缩（等于没做）。
+  it('预览图分「缩略图 / 大图」两档：列表用缩略图，大图浮层才用原图', () => {
+    // ① 前端取图必须分成两个函数，且各自指对档位
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue, '列表窗口必须用缩略图').toMatch(/class="preview-shot"[\s\S]{0,200}:src="thumbUrl\(/)
+    expect(vue, '「查看大图」必须用原图').toMatch(/class="zoom-shot"[^>]*:src="fullUrl\(/)
+    expect(vue, '列表图不能指到大图（那样等于没做优化）')
+      .not.toMatch(/class="preview-shot"[\s\S]{0,200}:src="fullUrl\(/)
+
+    // ② 规格只有一处来源：manifest 与脚本常量必须一致
+    const combos = expectedCombos()
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const thumbWidth = manifest.thumbWidth as number
+    expect(thumbWidth, 'manifest 缺 thumbWidth：改了规格却没重出图').toBe(460)
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    expect(script).toMatch(new RegExp(`THUMB_WIDTH\\s*=\\s*${thumbWidth}`))
+    // 找不到 ImageMagick 必须直接失败，不能静默跳过缩略图
+    expect(script, '缺 ImageMagick 时要显式报错，不能跳过缩略图')
+      .toMatch(/raise SystemExit\(\s*"✗ 找不到 ImageMagick/)
+
+    // ③ 36 张缩略图必须真的存在，尺寸按原图等比、体积真的更小
+    for (const cid of Object.keys(combos)) {
+      const full = readFileSync(join(PREVIEW_DIR, `${cid}.png`))
+      const thumbPath = join(PREVIEW_DIR, `${cid}.thumb.png`)
+      expect(existsSync(thumbPath), `${cid} 缺缩略图：后台会退回拉整张原图`).toBe(true)
+      const thumb = readFileSync(thumbPath)
+      expect(thumb.subarray(0, 8).toString('hex'), `${cid}.thumb 不是 PNG`).toBe('89504e470d0a1a0a')
+      const fw = full.readUInt32BE(16)
+      const fh = full.readUInt32BE(20)
+      const tw = thumb.readUInt32BE(16)
+      const th = thumb.readUInt32BE(20)
+      expect(tw, `${cid} 缩略图宽度`).toBe(thumbWidth)
+      expect(Math.abs(th - Math.round((fh * thumbWidth) / fw)), `${cid} 缩略图没按比例缩`)
+        .toBeLessThanOrEqual(1)
+      expect(thumb.length, `${cid} 缩略图疑似空白`).toBeGreaterThan(2000)
+      expect(thumb.length, `${cid} 缩略图没比原图小多少（等于没做优化）`)
+        .toBeLessThan(full.length * 0.6)
     }
   })
 
@@ -1028,7 +1074,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(vue).toContain('class="preview-shot"')
     // P4：预览区只有一个，src 跟随当前 (styleId, brandColorId) 组合，
     // 不再是遍历模板卡片时的 t.id。
-    expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain(':src="thumbUrl(currentId)"')
     expect(vue).toContain('theme-previews/')
     expect(vue).toContain('encodeURIComponent(id)')
     expect(vue).toContain('import.meta.env.BASE_URL')
@@ -1154,7 +1200,7 @@ describe('P5 36 组合预览图与后台两步选择', () => {
   it('后台按组合键寻图与两轴保存，固定预览区不退回「每款一张卡」', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     expect(vue).toContain('class="preview-pane"')
-    expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain(':src="thumbUrl(currentId)"')
     expect(vue).toContain('const currentId = computed(() => comboId(styleId.value, brandColorId.value))')
     expect(vue).toContain('@click="pickStyle(t)"')
     expect(vue).toContain('@click="pickBrand(t)"')

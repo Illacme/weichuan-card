@@ -1126,20 +1126,43 @@ curl -sI "https://<域名>/theme-previews/default--default.png?cb=$RANDOM" \
 
 **为什么用 `no-cache` 而不是 `no-store`**：`no-cache` 允许存但每次必须回源校验，
 ETag 还在，内容没变就是 `304`，实际流量几乎为零；`no-store` 是彻底不存，
-每次全量重下（单张最大约 1.1MB × 36 张），纯属浪费。
+每次全量重下（单张最大约 1.86MB），纯属浪费。
 
 **缺图为什么必须真 404**：若这个 location 被改成 `try_files $uri @spa`，
 缺图会返回 `index.html` + 200——前端 `<img>` 拿到 HTML 解码失败，静默降级成
 CSS 示意图，Network 面板全 200、零红字。这类失败没人会报警，只能靠断言钉住：
 
 ```bash
-bash tools/nginx-check/run.sh   # §6.6 专测本节，12 条断言
+bash tools/nginx-check/run.sh   # §6.6 专测本节，15 条断言
 ```
 
 > `try_files $uri =404` 有个容易理解反的地方：本 location **不写**它其实也是 404
 > （nginx 直接去 root 找文件，找不到就 404），并不会隐式落到 `location /` 的 @spa。
 > 写死 `=404` 是为了防「以后有人顺手改成 @spa」这个可预见的坏改动——
 > 实测改过去之后，缺图立刻变成 `200` + SPA 壳，§6.6 两条断言同时变红。
+
+**每个组合是两档文件，别只传一档**（2026-11-12 同日加）：
+
+| 文件 | 尺寸 | 体积 | 谁在取 |
+| --- | --- | --- | --- |
+| `<id>.thumb.png` | 460 × 等比 | 100～212 KB | 后台预览窗口（230px 宽，2x 屏需要 460） |
+| `<id>.png` | 750 ×（最高 5144） | 0.78～1.86 MB | 只有点「查看大图」才请求 |
+
+两档共用一个 location，所以 `no-cache`、`=404`、安全头对两者同样生效，
+**不需要**为缩略图另写规则。但发版时必须两档一起传：只传原图不会报任何错，
+页面照样能开，只是列表窗口退回拉整张 1～2 MB 图，切一次风格卡一下。
+`deploy_frontend.sh` 已逐组合核对两个文件都存在，线上自检也两档都探：
+
+```bash
+curl -sI "https://<域名>/theme-previews/default--default.thumb.png?cb=$RANDOM" \
+  | grep -iE 'content-type|cache-control'
+# 期望 image/png + no-cache
+```
+
+> 缩略图**不是**原图的裁剪或低清版，而是整张按 460 宽等比缩 + 128 色量化的成品；
+> 规格由 `scripts/gen_theme_previews.py` 的 `THUMB_WIDTH` / `THUMB_COLORS` 单点控制，
+> 并写进 `manifest.json` 的 `thumbWidth` / `thumbColors` 做快照对账。
+> 重出图：`python3 scripts/gen_theme_previews.py`（需要 ImageMagick，缺了会直接报错不静默跳过）。
 
 **发版后的额外一步**：`scripts/deploy_frontend.sh` 现在会逐张核对
 `dist/theme-previews/` 与 `manifest.json` 的组合键是否齐全（缺一张直接 `die`），

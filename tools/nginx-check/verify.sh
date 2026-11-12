@@ -148,6 +148,12 @@ chk "缺图是 404（没落进 SPA 兜底）"    "$code" "404"
 bad "缺图不能是 SPA 壳"               "$_body" 'SHELL'
 h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/missing$$.png")
 bad "缺图也不能被长缓存"              "$h" "max-age"
+# 缩略图与原图同属一个 location，缓存策略必须一致：后台列表窗口每次切风格取的都是
+# `.thumb.png`，它若被长缓存，管理员看到的还是上一版版式（与 2026-11-12 事故同因）。
+h=$(curl -sk -D- -o /dev/null "${NOPROXY[@]}" $R "$B/theme-previews/default--default.thumb.png")
+chk "缩略图是 image/png"              "$h" "content-type: image/png"
+chk "缩略图同样 no-cache"             "$h" "cache-control: no-cache"
+bad "缩略图不带 max-age"              "$h" "max-age"
 
 echo "== 7. 404 与 SPA 兜底不互相污染 =="
 code=$(curl -sk -o /dev/null -w '%{http_code}' "${NOPROXY[@]}" $R "$B/assets/nope.js")

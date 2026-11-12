@@ -56,12 +56,13 @@
             <span class="fallback-tag">示意图</span>
           </div>
           <!-- 长图放在滚动窗口里：默认露出手机窗口高度，管理员滚动看完整首页；
-               窗口比例由 .theme-preview 控制，与长图自身比例无关。 -->
+               窗口比例由 .theme-preview 控制，与长图自身比例无关。
+               这里取缩略图（460px 宽 / 100~210KB），原图只在「查看大图」时才拉。 -->
           <div class="preview-scroll">
             <img
               v-if="!failedPreviews[currentId]"
               class="preview-shot"
-              :src="previewUrl(currentId)"
+              :src="thumbUrl(currentId)"
               :alt="currentName + ' 小程序首页预览'"
               decoding="async"
               @error="onPreviewError(currentId)"
@@ -174,7 +175,7 @@
           <el-button size="small" @click="closeZoom">关闭</el-button>
         </div>
         <div class="zoom-scroll">
-          <img class="zoom-shot" :src="previewUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+          <img class="zoom-shot" :src="fullUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
         </div>
       </div>
     </div>
@@ -257,19 +258,30 @@ const failedPreviews = ref<Record<string, boolean>>({})
 // 不会误打到站点根下的 /theme-previews。encodeURIComponent 防 id 拼出非预期路径，
 // 真出异常也就是这张图 404 → 走兜底，不会静默显示另一款模板的图。
 //
+// **一图两档**（scripts/gen_theme_previews.py 同时产出）：
+//   · `<id>.thumb.png` 460px 宽、100~210KB —— 只给下面 230px 宽的卡片窗口用；
+//   · `<id>.png`       750px 宽、0.8~1.8MB —— 只在「查看大图」浮层里才请求。
+// 别把卡片也指到大图：切一次风格就要回源拉 1~2MB（本目录是 no-cache，每次真下），
+// 而且 750×5144 的位图解码约 15MB 内存，老机器切风格会明显卡。这种退化不会报错，
+// 只会「感觉有点慢」，所以两档必须分开，并由测试钉住谁用哪一档。
+//
 // **必须带 `?v=<构建戳>`**：这 36 张图的文件名是「风格--色系」组合键，不含内容 hash，
 // 重出图后 URL 一个字都不变。不带版本号时，浏览器与 CDN 会按各自的默认静态缓存
 // （线上实测 Cloudflare 给的是 `max-age=14400`）继续喂旧图——管理员在后台切风格 / 色系，
 // 看到的却是上一版的版式，而 Network 里全是 200、控制台一个错都没有（典型静默失败，
 // 2026-11-12 线上真实反馈「切换风格预览图看不到变化，是不是发布文件不全」即此因，
 // 排查结论是文件齐全、字节数与本地一致，纯粹是被缓存住了）。
-function previewUrl(id: string): string {
-  return `${import.meta.env.BASE_URL}theme-previews/${encodeURIComponent(id)}.png?v=${__APP_BUILD__}`
+function previewAssetUrl(id: string, thumb: boolean): string {
+  const suffix = thumb ? '.thumb' : ''
+  return `${import.meta.env.BASE_URL}theme-previews/${encodeURIComponent(id)}${suffix}.png?v=${__APP_BUILD__}`
 }
+const thumbUrl = (id: string) => previewAssetUrl(id, true)
+const fullUrl = (id: string) => previewAssetUrl(id, false)
 
 function onPreviewError(id: string) {
   failedPreviews.value = { ...failedPreviews.value, [id]: true }
-  // 大图用的是同一个 URL：这张图坏了，别让浮层停在一片空白上
+  // 缩略图都取不到，说明这一款根本没出图，别让浮层停在一片空白上。
+  // （大图走的是另一个 URL，但缺的是同一款组合，一起收掉才对。）
   if (zoomId.value === id) zoomId.value = ''
 }
 

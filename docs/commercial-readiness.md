@@ -2703,3 +2703,76 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 （保存时自动 `nginx -t` + reload）；③ Cloudflare Purge `/theme-previews/*`；
 ④ 重跑 `./scripts/deploy_frontend.sh --build` 让新构建戳生效；⑤ 小程序改了 WXSS/wxml，
 **必须重新提审发版**，端上不能热加载。
+
+## 第四十五轮：预览图拆成「缩略图 + 原图」两档（P7，2026-11-12）
+
+用户提的：
+
+> 「这些预览图保存一种缩略图和一种大图，默认显示的是缩略小图，点击查看大图的功能本身就是有的，
+> 这样是不是性能会更好些」
+
+判断成立，而且收益比"更好一些"更大。先量清楚再动手：
+
+| 事实 | 数值 |
+| --- | --- |
+| 后台预览窗口宽度 | 230px（`.theme-preview{aspect-ratio:375/750}`） |
+| 原图尺寸 | 750 × 2588 / 2364 / 5144 / 3458（2x） |
+| 原图体积 | 0.78～1.86 MB，36 张合计 **40.9 MB** |
+| 原图解码内存 | `750×5144×4` ≈ **15 MB**（warm 款） |
+| 加载时机 | 每次切风格 / 换色都重新拉（`/theme-previews/` 是 `no-cache`） |
+
+也就是说：把一个 15 MB 解码、1.8 MB 传输的位图，缩到 230px 宽的窗口里显示，
+而且每换一次配色就重来一遍。这跟"点开大图才需要细节"的场景完全不匹配。
+
+**做法**：每个组合出两档，文件名只差一个 `.thumb` 后缀。
+
+| 档 | 文件 | 规格 | 体积 | 用在哪 |
+| --- | --- | --- | --- | --- |
+| 缩略图 | `<id>.thumb.png` | 460 宽等比，128 色 PNG8 | 100～212 KB | 列表窗口（460 = 230px × 2x） |
+| 原图 | `<id>.png` | 750 宽，原样 | 0.78～1.86 MB | 「查看大图」浮层，点开才请求 |
+
+36 张缩略图合计 **4978 KB**，省 88%；单张最大从 1866 KB 降到 212 KB（省 89%）。
+解码内存从 15 MB 降到 `460×3155×4` ≈ 5.5 MB。
+
+**规格是量出来的，不是拍的**：
+
+| 候选 | 单张体积 | 取舍 |
+| --- | --- | --- |
+| 460 宽真彩 PNG | 548 KB | 太胖，省得不到一半 |
+| 460 宽 256 色 | 160 KB | 可用，但没必要多花 26% |
+| **460 宽 128 色（选定）** | **127 KB** | 逐张 ViewImage 核对：文字清晰、照片无色带 |
+| 460 宽 WebP q82 | 81 KB | 更小，但要额外处理 MIME（`nosniff` 下 MIME 错会被拒渲染），收益不值这个风险 |
+
+460 这个宽度也是算出来的：卡片 230px × 2x = 460，再低在 Retina 上就糊；
+而"一眼看出四款版式差异"是缩略图唯一用途，糊了就白做。
+
+**改动清单**：
+
+| 文件 | 改什么 |
+| --- | --- |
+| `scripts/gen_theme_previews.py` | 新增 `THUMB_WIDTH/THUMB_COLORS/THUMB_SUFFIX` 与 `make_thumb()`（ImageMagick）；`--check` 分 `fulls/thumbs` 两套校验；清理过期图改用 `split_preview_name()`（否则 `x.thumb.png` 的 stem 是 `x.thumb`，会被当过期图连原图一起删）；manifest 增 `thumbWidth/thumbColors` |
+| `frontend/src/views/content/MpTheme.vue` | `previewUrl` 拆成 `thumbUrl`/`fullUrl`，列表窗口用前者、浮层用后者 |
+| `frontend/src/views/content/MpTheme.spec.ts` | 全部列表图断言指向 `.thumb.png`；大图断言加 `not.toContain('.thumb')` |
+| `miniprogram/tests/theme.spec.ts` | 文件集合过滤掉 `.thumb.png`（否则 36 张比成 72 张）；新增用例钉住两档分离 + 逐张读 PNG 头校验尺寸体积 |
+| `scripts/deploy_frontend.sh` | 发版对账改成「每个组合两个文件」，线上自检两档都探 |
+| `tools/nginx-check/gen_site.py` / `verify.sh` | 桩目录补缩略图；§6.6 加 3 条断言（缩略图也是 `image/png` + `no-cache` + 不带 `max-age`），107 → **110 项** |
+
+**静默失败防线（这轮的核心，不是生图）**：三处退化都不会报错，只会「感觉有点慢」或「图好像没变」：
+
+1. **前端指错档位**——列表图指回原图，页面完全正常，只是每切一次拉 1.8 MB。
+   → 源码断言：`class="preview-shot"` 后面必须是 `thumbUrl(`，且**不能**是 `fullUrl(`。
+2. **缩略图没生成 / 没传**——`<img>` 404 后走 CSS 兜底示意图，Network 里看得到 404 但没人会盯。
+   → `--check` 报「缺缩略图」，`deploy_frontend.sh` 拒绝发版，线上自检两档都探。
+3. **缩略图像素没变**——文件名叫 `.thumb.png`，内容还是 750 宽原图（比如 `cp` 错了）。
+   → `--check` 断言宽度必须是 460、高度按原图等比 ±1px、体积必须 < 原图 60%。
+
+**反向验证（三次，全部变红后还原）**：
+
+| 注入 | 结果 |
+| --- | --- |
+| 列表图改回 `fullUrl(currentId)` | `--check` 无关（图都在），但 4 条测试全红：「列表窗口必须用缩略图」「expected ... to contain ':src="thumbUrl(currentId)"'」 |
+| 删掉 `default--default.thumb.png` | `--check` →「缺缩略图（后台会退回拉整张原图）：['default--default']」；Vitest →「default--default 缺缩略图：后台会退回拉整张原图」 |
+| 用原图覆盖 `ink--default.thumb.png` | `--check` →「缩略图异常：['ink--default((750, 2364), 期望 460x1450)']」；Vitest →「ink--default 缩略图宽度: expected 750 to be 460」 |
+
+**验收**：36 张原图逐字节未变（Chrome 截图是确定性的，git 里只多出 36 个 `.thumb.png` +
+`manifest.json` 两行字段），`--check` 通过，nginx-check 110 项全绿。

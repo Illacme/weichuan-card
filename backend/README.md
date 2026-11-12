@@ -744,8 +744,10 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 
 加一款模板 = 改 `internal/mptemplate`（含 `Series`） + `app.wxss` 对应层
 + `utils/theme.ts` 的 `THEME_IDS` + 重跑 `scripts/gen_theme_previews.py`
-（产出 `frontend/public/theme-previews/<styleId>--<brandColorId 或 default>.png`；
-加一款色系多 4 张、加一款风格多 9 张），并随小程序**重新提审发版**；
+（产出 `frontend/public/theme-previews/<styleId>--<brandColorId 或 default>.png` 与同名的
+`.thumb.png` 缩略图：原图 750 宽只服务「查看大图」，460 宽缩略图给后台 230px 预览窗口，
+缺一档 `--check` / `theme.spec.ts` / `deploy_frontend.sh` 都会红；
+加一款色系多 4 组、加一款风格多 9 组），并随小程序**重新提审发版**；
 只有加「整体风格」款才需要再补 `MpTheme.vue` 的 `.layout-<id>` 兜底示意
 （品牌配色款不另给版式，加专属示意反而是造假，守门会拦）。
 `tests/theme.spec.ts` 逐项对账（id / 变量齐全 / 预览色 / 版式「要有差异」与

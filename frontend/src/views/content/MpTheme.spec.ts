@@ -121,7 +121,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
 
     expect(w.findAll('.theme-preview')).toHaveLength(1)
     expect(w.find('.preview-pane').exists()).toBe(true)
-    expect(previewSrc(w)).toContain('theme-previews/default--default.png')
+    expect(previewSrc(w)).toContain('theme-previews/default--default.thumb.png')
     expect(previewShot(w).attributes('alt')).toContain('标准均衡')
     expect(w.find('.theme-preview').classes()).toContain('layout-default')
     expect(w.find('.pane-combo-line').text()).toContain('使用中')
@@ -144,7 +144,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     await flush()
 
     expect(styleCards(w)[1].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('theme-previews/ink--default.png')
+    expect(previewSrc(w)).toContain('theme-previews/ink--default.thumb.png')
     expect(w.find('.theme-preview').classes()).toContain('layout-ink')
     expect(w.text()).not.toContain('暂无可用品牌配色')
     for (const c of colorOptions(w)) expect(c.classes()).not.toContain('disabled')
@@ -159,7 +159,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     await flush()
 
     expect(colorOptions(w)[1].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('theme-previews/default--brand-crimson.png')
+    expect(previewSrc(w)).toContain('theme-previews/default--brand-crimson.thumb.png')
     expect(styleCards(w)[0].classes()).toContain('selected')
     expect(w.find('.theme-preview').classes()).toContain('layout-default')
   })
@@ -172,7 +172,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     await colorOptions(w)[1].trigger('click') // 绛红
     await flush()
 
-    expect(previewSrc(w)).toContain('theme-previews/teal--brand-crimson.png')
+    expect(previewSrc(w)).toContain('theme-previews/teal--brand-crimson.thumb.png')
     expect(w.find('.theme-preview').classes()).toContain('layout-teal')
     expect(colorOptions(w)[1].classes()).toContain('selected')
 
@@ -188,11 +188,11 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
 
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default--brand-crimson.png')
+    expect(previewSrc(w)).toContain('default--brand-crimson.thumb.png')
 
     await styleCards(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('ink--brand-crimson.png')
+    expect(previewSrc(w)).toContain('ink--brand-crimson.thumb.png')
     expect(colorOptions(w)[1].classes()).toContain('selected')
     expect(colorOptions(w)[0].classes()).not.toContain('selected')
 
@@ -214,7 +214,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
         await flush()
         const brand = bi === 0 ? null : BRAND_IDS[bi - 1]
         expect(previewSrc(w), `${STYLE_IDS[si]} + ${brand}`)
-          .toContain(`theme-previews/${comboId(STYLE_IDS[si], brand)}.png`)
+          .toContain(`theme-previews/${comboId(STYLE_IDS[si], brand)}.thumb.png`)
         expect(w.find('.theme-preview').classes()).toContain(`layout-${STYLE_IDS[si]}`)
         seen++
       }
@@ -236,11 +236,11 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     const w = await mountPage()
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default--brand-crimson.png')
+    expect(previewSrc(w)).toContain('default--brand-crimson.thumb.png')
 
     await colorOptions(w)[0].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default--default.png')
+    expect(previewSrc(w)).toContain('default--default.thumb.png')
     expect(colorOptions(w)[0].classes()).toContain('selected')
   })
 
@@ -266,7 +266,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     })
 
     expect(styleCards(w)[3].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('teal--default.png')
+    expect(previewSrc(w)).toContain('teal--default.thumb.png')
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
@@ -280,7 +280,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
 
     expect(styleCards(w)[1].classes()).toContain('selected')
     expect(colorOptions(w)[5].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('ink--brand-ocean.png')
+    expect(previewSrc(w)).toContain('ink--brand-ocean.thumb.png')
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
@@ -297,7 +297,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
 
     expect(styleCards(w)).toHaveLength(4)
     expect(w.text()).toContain('当前服务端版本未提供品牌配色清单')
-    expect(previewSrc(w)).toContain('default--default.png')
+    expect(previewSrc(w)).toContain('default--default.thumb.png')
   })
 
   it('单张预览图加载失败：只降级当前组合，重新加载会重试', async () => {
@@ -321,13 +321,19 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     await w.find('.preview-zoom-btn').trigger('click')
     await flush()
     expect(w.find('.preview-zoom').exists()).toBe(true)
-    expect(w.find('.zoom-shot').attributes('src')).toContain('default--default.png')
+    // 大图必须指回原图（750px 宽）：列表窗口用 460px 缩略图，浮层才是看清细节的地方。
+    // `.thumb` 不能出现在这里，否则「查看大图」等于放大一张缩略图。
+    const zoomSrc = w.find('.zoom-shot').attributes('src') || ''
+    expect(zoomSrc).toContain('theme-previews/default--default.png')
+    expect(zoomSrc).not.toContain('.thumb')
     expect(w.find('.zoom-note').text()).toContain('非真机截图')
     expect(w.find('.zoom-scroll').find('img.zoom-shot').exists()).toBe(true)
 
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(w.find('.zoom-shot').attributes('src')).toContain('default--brand-crimson.png')
+    const zoomSrc2 = w.find('.zoom-shot').attributes('src') || ''
+    expect(zoomSrc2).toContain('theme-previews/default--brand-crimson.png')
+    expect(zoomSrc2).not.toContain('.thumb')
 
     const closeBtn = w.findAll('.el-button').find((b: any) => b.text().includes('关闭'))
     expect(closeBtn).toBeDefined()
@@ -359,7 +365,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     await styleCards(w)[1].trigger('click')
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default--default.png')
+    expect(previewSrc(w)).toContain('default--default.thumb.png')
 
     await (w.vm as any).save()
     await flush()

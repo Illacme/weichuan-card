@@ -186,14 +186,21 @@ else
     for cid in $(grep -oE '"[a-z0-9-]+--[a-z0-9-]+"' "$PREVIEW_DIR/manifest.json" \
                  | tr -d '"' | sort -u); do
         PREVIEW_TOTAL=$((PREVIEW_TOTAL + 1))
+        # 每个组合是两档文件：列表窗口用的 460px 缩略图 + 「查看大图」用的原图。
+        # 只查原图会漏掉一种退化——缩略图没生成 / 没传上去，页面照样能开，
+        # 但列表窗口会退回拉整张 1~2MB 原图，切一次风格卡一下，没有任何报错。
         if [ ! -f "$PREVIEW_DIR/$cid.png" ]; then
-            echo "  缺预览图：$cid.png"
+            echo "  缺预览大图：$cid.png"
+            PREVIEW_BAD=$((PREVIEW_BAD + 1))
+        fi
+        if [ ! -f "$PREVIEW_DIR/$cid.thumb.png" ]; then
+            echo "  缺预览缩略图：$cid.thumb.png（重跑 gen_theme_previews.py）"
             PREVIEW_BAD=$((PREVIEW_BAD + 1))
         fi
     done
     [ "$PREVIEW_TOTAL" -gt 0 ] || die "manifest.json 里没解析出任何组合键，产物格式不对"
-    [ "$PREVIEW_BAD" -eq 0 ] || die "缺 $PREVIEW_BAD / $PREVIEW_TOTAL 张主题预览图（先跑 python3 scripts/gen_theme_previews.py 再 build）"
-    echo "  主题预览图齐全（$PREVIEW_TOTAL 张，与 manifest 组合键逐一对上）"
+    [ "$PREVIEW_BAD" -eq 0 ] || die "缺 $PREVIEW_BAD 个主题预览图文件（$PREVIEW_TOTAL 个组合 × 2 档；先跑 python3 scripts/gen_theme_previews.py 再 build）"
+    echo "  主题预览图齐全（$PREVIEW_TOTAL 个组合 × 大图 + 缩略图，与 manifest 逐一对上）"
 fi
 
 # ---------- 1. 连接方式与传输方式 ----------
@@ -639,20 +646,24 @@ if [ "$DO_VERIFY" = 1 ] && [ -n "$DEPLOY_URL" ]; then
     # 缺图时 SPA 兜底会返回 index.html + 200（content-type: text/html），
     # <img> 解码失败后静默降级成示意图 —— 客户只会说「切风格看不到变化」。
     # 带随机串绕开 CDN，看到的是源站当前内容。
-    PROBE=$(curl -sS -o /dev/null -m 20 -w '%{http_code} %{content_type}' \
-        "$DEPLOY_URL/theme-previews/default--default.png?cb=$$$(date +%s)") || PROBE="curl 失败"
-    case "$PROBE" in
-        200\ image/png*)
-            echo "  ✓ 主题预览图可取（default--default.png）"
-            ;;
-        *)
-            warn "✗ 主题预览图异常：$PROBE"
-            warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
-            warn "  图在但内容旧（版式没变）说明是缓存：CDN 清 /theme-previews/*，"
-            warn "  源站需按 deploy/baota/nginx-site.conf 的 /theme-previews/ 段发 no-cache。"
-            exit 1
-            ;;
-    esac
+    # 两档都探：缩略图缺了页面照样能开（退回拉原图），只有「切风格有点慢」，
+    # 这种退化必须在这里拦住，否则要等用户抱怨才被发现。
+    for probe_name in default--default.png default--default.thumb.png; do
+        PROBE=$(curl -sS -o /dev/null -m 20 -w '%{http_code} %{content_type}' \
+            "$DEPLOY_URL/theme-previews/$probe_name?cb=$$$(date +%s)") || PROBE="curl 失败"
+        case "$PROBE" in
+            200\ image/png*)
+                echo "  ✓ 主题预览图可取（$probe_name）"
+                ;;
+            *)
+                warn "✗ 主题预览图异常（$probe_name）：$PROBE"
+                warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
+                warn "  图在但内容旧（版式没变）说明是缓存：CDN 清 /theme-previews/*，"
+                warn "  源站需按 deploy/baota/nginx-site.conf 的 /theme-previews/ 段发 no-cache。"
+                exit 1
+                ;;
+        esac
+    done
 fi
 
 say "发版完成"

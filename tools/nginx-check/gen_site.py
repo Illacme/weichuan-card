@@ -156,12 +156,14 @@ print(f"写入 {DST}")
 #    （风格--色系），否则测不出「名字不含内容 hash」这个缓存根因。
 _tp_dir = HERE / "www/frontend/theme-previews"
 _tp_dir.mkdir(parents=True, exist_ok=True)
-(_tp_dir / "default--default.png").write_bytes(
-    base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-    )
+_tp_png = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
-print("✓ theme-previews 桩图已生成（default--default.png，1x1）")
+# 两档都放：后台列表窗口取 `.thumb.png`，「查看大图」取同名无后缀的原图。
+# 两者共用同一个 location，所以缓存头断言对两张都要成立。
+for _name in ("default--default.png", "default--default.thumb.png"):
+    (_tp_dir / _name).write_bytes(_tp_png)
+print("✓ theme-previews 桩图已生成（原图 + 缩略图各一张，1x1）")
 
 # 输出改动清单，便于核对「只改了路径没改语义」
 for i, line in enumerate(text.splitlines(), 1):
