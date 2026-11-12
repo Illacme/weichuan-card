@@ -184,9 +184,9 @@ export interface HomeLayoutData {
   serviceTimeMode: DetailTimeMode
   /** 当前整体风格：决定首页各模块布局（白名单真值在后端 internal/mptemplate） */
   styleId: string
-  /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P1 起仅 default 风格下挂 brand-* */
+  /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P5 起任意风格 × 任意色系都合法（36 组合） */
   brandColorId: string | null
-  /** 兼容派生列：旧后端只下发它，前端按 brand- 前缀拆成 (styleId, brandColorId) */
+  /** 兼容派生列：旧端近似值（12 个扁平 id 装不下 36 组合），旧后端只有它时按 brand- 前缀拆回两轴 */
   templateId: string
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */

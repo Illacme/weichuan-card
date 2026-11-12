@@ -24,6 +24,8 @@ export function prefetchTheme(baseUrl: string, companyId: number): void {
       const d = res.data as (ThemePayload & { code?: number }) | null
       // 只认 code:0；失败 / 旧后端 / 未授权回落 default 都交给 resolveTheme 处理。
       // 两轴优先、只有 templateId 时拆它——新旧后端都走同一套解析，不在这里另猜字段。
+      // P5 起非 default 风格 + 色系是合法组合，必须原样交给 applyTheme；在这里
+      // 收敛成 default 会让「分享链接直接进二级页」的访客永远看不到所选布局。
       // 纯展示配置，任何一种异常都不该弹错或拖住启动。
       if (d && d.code === 0) {
         const sel = resolveTheme(d)

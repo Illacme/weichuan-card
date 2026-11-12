@@ -1089,13 +1089,28 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Nil(t, hl["brandColorId"])
 		require.Equal(t, "ink", hl["templateId"])
 
-		// 色系不可跨风格：brand-ocean 归 default，配 ink 必须拒绝
+		// P5 全叉乘：ink 布局 + brand-ocean 色系必须能保存并原样读回。
+		// 旧树形模型会回 code=1，客户只看到一句「保存失败」却不知道为什么。
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"styleId": "ink", "brandColorId": "brand-ocean",
 		}, adminToken)
-		require.EqualValues(t, 1, body["code"], "品牌色系不属于所选风格必须拒绝")
+		require.EqualValues(t, 0, body["code"], "跨风格叠加色系必须放行")
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
-		require.Equal(t, "ink", body["data"].(map[string]interface{})["styleId"], "被拒绝的跨风格组合不应落库")
+		hl = body["data"].(map[string]interface{})
+		require.Equal(t, "ink", hl["styleId"])
+		require.Equal(t, "brand-ocean", hl["brandColorId"])
+		require.Equal(t, "brand-ocean", hl["templateId"], "兼容列是旧端近似值：只留色系 id，两轴列才是真值")
+
+		// 公开接口同样下发两轴，访客端才能同时挂 .wc-style-ink 与 .wc-brand-ocean
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "ink", body["styleId"])
+		require.Equal(t, "brand-ocean", body["brandColorId"])
+
+		// 换一组风格 / 色系再验一次，确认不是只对 ink + ocean 特判
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"styleId": "warm", "brandColorId": "brand-magenta",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"], "任意风格 × 任意色系都应放行")
 
 		// 未知风格 / 未知色系一律拒绝
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{

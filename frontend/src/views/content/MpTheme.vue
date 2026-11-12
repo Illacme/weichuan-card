@@ -1,9 +1,10 @@
 <template>
   <el-card>
     <p class="desc">
-      小程序的外观分两步选：第 1 步「<strong>整体风格</strong>」决定首页各模块的布局
+      小程序的外观分两步选：第 1 步「<strong>整体风格</strong>」按布局特色区分，决定首页各模块的布局
       （分类列数、精选大图排法、服务卡密度、封面高度与圆角），并自带一套默认色；
       第 2 步「<strong>品牌配色</strong>」只在所选风格之上替换主色，版式不变，用于对齐企业自有 VI 主色。
+      <strong>4 款风格 × 9 档颜色 = 36 种组合</strong>：每款风格都能叠加全部品牌配色，色板在四款风格上完全一致。
       风格与色系都随小程序版本内置，后台只记录「选了哪一款」，保存后访客端即时生效，
       不需要重新上传代码或提交微信审核。
       左侧预览区<strong>固定在一个位置</strong>，随上面两步的选择实时切换，不必在十几张卡片间来回找图。
@@ -25,8 +26,8 @@
       title="当前授权未开通高级风格模板"
       class="entitle-alert"
     >
-      高级款暂不可新选，访客端会临时回落到经典蓝；已经选中的高级款会为您保留，续费后自动恢复。
-      已选中的款式仍可继续使用或切回经典蓝。如需开通请联系服务商升级授权。
+      高级款暂不可新选，访客端会临时回落到标准均衡默认款；已经选中的高级款会为您保留，续费后自动恢复。
+      已选中的款式仍可继续使用或切回标准均衡。如需开通请联系服务商升级授权。
     </el-alert>
 
     <div class="theme-workbench">
@@ -36,14 +37,14 @@
       <aside class="preview-pane">
         <div class="pane-head">
           <span class="pane-title">首页预览</span>
-          <span class="pane-combo">{{ currentName }}</span>
+          <span class="pane-combo">{{ styleName }}</span>
         </div>
         <!-- 真实预览图由 scripts/gen_theme_previews.py 从 app.wxss 的 token + 风格布局
              规则生成，和访客端共用同一套配色 / 圆角 / 模块排布，不是手画的第二套样式。
              底层 CSS 示意常驻：图片加载中、404、或新增组合忘了补图时都不会留空白；
              右下角「示意图」角标让降级可见，而不是悄悄退回旧样式。
-             .layout-<id> 只给「整体风格」款画版式差异；品牌配色款版式沿用经典蓝，
-             没有专属规则，示意自然落在基线样式上。 -->
+             .layout-<id> 只给「整体风格」款画版式差异；品牌配色不另给版式规则，
+             示意自然跟着当前风格走，不会出现「换色顺手换掉圆角」。 -->
         <div class="theme-preview" :class="'layout-' + styleId">
           <div class="preview-fallback" :style="{ background: currentPreviewSoft }">
             <div class="preview-nav" :style="{ background: currentPreviewPrimary }" />
@@ -125,22 +126,19 @@
             <span class="step-no">2</span>
             <div>
               <h4>品牌配色</h4>
-              <p>在所选风格之上只替换主色，版式沿用该风格；用于对齐企业自有 VI 主色。</p>
+              <p>在所选风格之上只替换主色，版式沿用该风格；9 档颜色在任意风格下都能选，用于对齐企业自有 VI 主色。</p>
             </div>
           </div>
-          <!-- 树形归属：P1 起 8 款 brand-* 全挂在 default 风格下，其它风格没有可叠加的色系。
-               不解释就置灰，客户会以为页面坏了；切风格时也必须自动清空，否则保存时后端
-               BelongsToStyle 会直接 code=1，客户只看到「保存失败」却不知道为什么。 -->
-          <div v-if="styleId !== DEFAULT_STYLE" class="step-disabled">
-            「{{ styleName }}」使用自己的默认色，暂无可用品牌配色；切回「经典蓝」即可叠加色系。
-          </div>
-          <div v-else-if="!brandTemplates.length" class="step-disabled">
+          <!-- P5：树形归属已废止。4 款风格都能叠加全部 8 款色系，色板在四款上完全一致；
+               这里只保留「清单没下发」的升级提示，不再按风格禁用，也不在切风格时
+               清空色系——那会让客户刚对齐好的 VI 主色无声消失。 -->
+          <div v-if="!brandTemplates.length" class="step-disabled">
             当前服务端版本未提供品牌配色清单，请升级服务端后再使用。
           </div>
           <div class="color-grid">
             <div
               class="color-option"
-              :class="{ selected: brandColorId === null, disabled: styleId !== DEFAULT_STYLE }"
+              :class="{ selected: brandColorId === null }"
               @click="pickBrand(null)"
             >
               <span class="color-swatch" :style="{ background: defaultPrimary }" />
@@ -153,7 +151,6 @@
               :class="{
                 selected: brandColorId === t.id,
                 locked: isBrandLocked(t),
-                disabled: styleId !== DEFAULT_STYLE,
               }"
               @click="pickBrand(t)"
             >
@@ -193,8 +190,9 @@ import { getHomeLayout, saveHomeLayout, type HomeLayoutData, type ThemeTemplate 
 // 标题行与操作按钮已上移到父组件「小程序设置」的页签切换栏，本组件不再自行渲染）。
 defineProps<{ embedded?: boolean }>()
 
-// 两轴真值与后端 internal/mptemplate 一致：brand-* 全归 default 风格。
-// 旧后端只下发兼容派生列 templateId 时，按前缀反推，升级零突变。
+// P5 两轴真值与后端 internal/mptemplate 一致：任意风格 × 任意已知色系都合法，
+// 色系不再隶属于某个风格。旧后端只下发兼容派生列 templateId 时按前缀反推，
+// 那条扁平列只是旧端近似值，两轴列才是真值。
 const DEFAULT_STYLE = 'default'
 const BRAND_PREFIX = 'brand-'
 const FALLBACK_PRIMARY = '#1a8cff'
@@ -215,24 +213,39 @@ const templateEntitled = ref(true)
 // 不下发 series 时一律归入「整体风格」组，色系区给出升级提示，卡片不会凭空消失。
 const styleTemplates = computed(() => templates.value.filter((t) => t.series !== 'brand'))
 const brandTemplates = computed(() => templates.value.filter((t) => t.series === 'brand'))
-const defaultTemplate = computed(() => templates.value.find((t) => t.id === DEFAULT_STYLE))
-const defaultPrimary = computed(() => defaultTemplate.value?.previewPrimary || FALLBACK_PRIMARY)
+const activeStyle = computed(() => styleTemplates.value.find((t) => t.id === styleId.value))
+const activeBrand = computed(() => brandTemplates.value.find((t) => t.id === brandColorId.value))
+// 「默认色」色卡要显示**当前风格**的默认主色，不是全局 default 的蓝色：
+// 紧凑信息 + 默认色是深灰，画成蓝色会让客户以为自己点错了。
+const defaultPrimary = computed(() => activeStyle.value?.previewPrimary || FALLBACK_PRIMARY)
 
-// 12 张 PNG 仍按 12 个合法组合命名：4 款风格各用自己 id，8 款品牌色各用自己 id。
-// brandColorId 非空时 styleId 必为 default（pickStyle 自动清空 + load 反推都保证），
-// 所以这里直接取色系 id，与后端 DeriveTemplateID 的口径一致。
-const currentId = computed(() => brandColorId.value || styleId.value)
-const currentTemplate = computed(() => templates.value.find((t) => t.id === currentId.value))
-const currentName = computed(() => currentTemplate.value?.name || currentId.value)
-const currentPreviewPrimary = computed(() => currentTemplate.value?.previewPrimary || defaultPrimary.value)
-const currentPreviewSoft = computed(() => currentTemplate.value?.previewSoft || FALLBACK_SOFT)
-const styleName = computed(
-  () => styleTemplates.value.find((t) => t.id === styleId.value)?.name || styleId.value
-)
+// P5：36 个组合各有一张 PNG，文件名 <styleId>--<brandColorId 或 default>.png。
+// 12 个扁平 templateId 装不下 36 个组合，绝不能再拿它当预览图名。
+function comboId(s: string, b: string | null): string {
+  return `${s}--${b || 'default'}`
+}
+const currentId = computed(() => comboId(styleId.value, brandColorId.value))
+const styleName = computed(() => activeStyle.value?.name || styleId.value)
 const brandName = computed(() => {
   if (!brandColorId.value) return '默认色'
-  return brandTemplates.value.find((t) => t.id === brandColorId.value)?.name || brandColorId.value
+  return activeBrand.value?.name || brandColorId.value
 })
+// 组合名按 id 反解，不用「当前选中值」：大图浮层打开后切组合，标题必须跟着换。
+function comboName(id: string): string {
+  const [s, b] = id.split('--')
+  const sn = styleTemplates.value.find((t) => t.id === s)?.name || s
+  const bn = b === 'default'
+    ? '默认色'
+    : brandTemplates.value.find((t) => t.id === b)?.name || b
+  return `${sn} ＋ ${bn}`
+}
+const currentName = computed(() => comboName(currentId.value))
+const currentPreviewPrimary = computed(
+  () => activeBrand.value?.previewPrimary || activeStyle.value?.previewPrimary || FALLBACK_PRIMARY
+)
+const currentPreviewSoft = computed(
+  () => activeBrand.value?.previewSoft || activeStyle.value?.previewSoft || FALLBACK_SOFT
+)
 const isCurrentInUse = computed(
   () => styleId.value === savedStyleId.value && brandColorId.value === savedBrandColorId.value
 )
@@ -256,7 +269,7 @@ function onPreviewError(id: string) {
 
 // 查看大图只改一个 id，不复制图片数据；关闭时一并清掉，避免下次打开闪出上一款。
 const zoomId = ref('')
-const zoomName = computed(() => templates.value.find((t) => t.id === zoomId.value)?.name || '')
+const zoomName = computed(() => (zoomId.value ? comboName(zoomId.value) : ''))
 function openZoom(id: string) {
   zoomId.value = id
 }
@@ -276,14 +289,12 @@ function isBrandLocked(t: ThemeTemplate): boolean {
 function pickStyle(t: ThemeTemplate) {
   if (isStyleLocked(t)) return
   styleId.value = t.id
-  // 树形归属：非 default 风格下没有可叠加的品牌色系。切风格必须清空，否则
-  // 保存时后端 BelongsToStyle 会以 code=1 拒绝，而客户只看到一句「保存失败」。
-  if (t.id !== DEFAULT_STYLE) brandColorId.value = null
+  // P5：切风格**保留**已选色系。风格只换布局、统一色板在四款上取值一致，
+  // 没有理由把客户刚对齐好的 VI 主色清掉；后端也早已放开跨风格组合。
   syncZoom()
 }
 
 function pickBrand(t: ThemeTemplate | null) {
-  if (styleId.value !== DEFAULT_STYLE) return
   if (t && isBrandLocked(t)) return
   brandColorId.value = t ? t.id : null
   syncZoom()
@@ -295,7 +306,8 @@ function syncZoom() {
   if (zoomId.value) zoomId.value = currentId.value
 }
 
-// 旧后端（P1 之前）只下发 templateId 兼容派生列，按 (style, brand) 拆回两轴。
+// 旧后端（P1 之前）只下发 templateId 兼容派生列：它是**旧端近似值**，12 个扁平
+// id 装不下 P5 的 36 个组合，只能按前缀拆回 (default, brand-*)。
 // 两轴齐备时以两轴为准；缺 styleId 才看 templateId，避免旧值把新值盖掉。
 function splitThemeId(d?: HomeLayoutData | null): { styleId: string; brandColorId: string | null } {
   if (d?.styleId) {
@@ -750,9 +762,10 @@ onMounted(load)
   border-radius: 6px;
 }
 /* 版式示意（与端上 --wc-r-* token 同向，px 只是后台缩略图尺度）：
-   沉稳墨 = 近直角 + 细描边代替投影；暖金棕 = 大圆角 + 胶囊按钮；
-   松石青 = 中圆角 + 极轻投影。真实预览图已按同一风格出图，这里只服务降级兜底。
-   加新模板必须补一条 .layout-<id>，theme.spec.ts 会逐个对账。 */
+   紧凑信息 = 近直角 + 细描边代替投影；宽松亲和 = 大圆角 + 胶囊按钮；
+   疏排透气 = 中圆角 + 极轻投影。真实预览图已按同一风格出图，这里只服务降级兜底。
+   风格名按布局特色命名、不含颜色词；加新模板必须补一条 .layout-<id>，
+   theme.spec.ts 会逐个对账。 */
 .layout-ink .preview-nav,
 .layout-ink .preview-line,
 .layout-ink .preview-btn { border-radius: 2px; }

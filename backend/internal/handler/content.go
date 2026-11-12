@@ -516,10 +516,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 		}
 
-		// ===== 风格 / 色系（两轴）=====
-		// styleId 决定布局族；brandColorId 只覆盖颜色，且必须属于所选风格
-		// （树形模型：色系不能跨风格乱配）。前端 / 小程序若仍只发 templateId，
-		// 兼容分支拆成 (style, brand)，保证升级零突变、旧端不崩。
+		// ===== 风格 / 色系（两轴，P5 起全叉乘）=====
+		// styleId 决定布局族，brandColorId 只覆盖颜色；任意风格 × 任意已知色系都合法
+		// （4 × 9 = 36 种）。前端 / 小程序若仍只发 templateId，兼容分支拆成
+		// (style, brand)，保证升级零突变、旧端不崩。
 		//
 		// themeTouched 是「三个页签各存各的」不变量的开关：只有本次请求**显式带了**
 		// 任一风格字段，才允许写风格三列。「名片页面样式」页签只提交
@@ -543,8 +543,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "品牌色系无效"})
 					return
 				}
-				if !mptemplate.BelongsToStyle(styleID, &bc) {
-					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该品牌色系不属于所选整体风格"})
+				// P5：树形归属已废止，这里只留组合合法性兜底（挡未知风格 / 未知色系）。
+				// 不能再按「色系属于哪个风格」拒绝，否则 3/4 的组合会被无声砍掉。
+				if !mptemplate.IsValidCombo(styleID, &bc) {
+					c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "风格与品牌色系组合无效"})
 					return
 				}
 				brandColorID = &bc

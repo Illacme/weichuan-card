@@ -719,34 +719,42 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
 | GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`** + `templateId` 兼容派生列、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
-| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**P4 起 PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`，旧端只发 `templateId` 时后端按 `Split()` 拆回两轴；三列同步写，但仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法模板 id 回 code=1；跨风格色系组合（`BelongsToStyle`）回 code=1；未开通 `mp_template_advanced` 且「新选」高级款回 code=403 |
+| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**P5 起 PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`，旧端只发 `templateId` 时后端按 `Split()` 拆回两轴；三列同步写，但仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法 id 回 code=1；**任意风格 × 任意已知色系（含 nil）都合法，4 × 9 = 36 组合**，`IsValidCombo` 只挡未知 id；未开通 `mp_template_advanced` 且「风格与色系任一高级」并「新选」回 code=403 |
 
-小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，12 款），按服务端下发的
+小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，12 个扁平 id），按服务端下发的
 `Series` 分两组，后台据此分组渲染、不靠 id 前缀猜：
 
 | 系列 | 款数 | 换什么 | 7 个版式 token |
 |---|---|---|---|
-| `style` 整体风格 | 4（`default` 免费 + `ink` / `warm` / `teal` 高级） | 配色 + 版式 | 每款至少 4 项不同于 default |
-| `brand` 品牌配色 | 8（全部高级） | **只换配色** | 逐字沿用 default |
+| `style` 整体风格 | 4（`default` 免费 + `ink` / `warm` / `teal` 高级） | 布局 + 默认配色 + 版式 | 每款至少 4 项不同于 default |
+| `brand` 品牌配色 | 8（全部高级） | **只换配色** | 叠加后仍由风格层给 |
+
+**P5 起两轴全叉乘**：风格按布局特色命名（标准均衡 / 紧凑信息 / 宽松亲和 / 疏排透气，
+内部 id 不变），8 款色系在 4 个风格上取值逐字一致，任意组合都合法；`styleId` 与
+`brandColorId` 两列是存储真值，`template_id` 只是**旧端近似值**（12 个扁平 id 装不下
+36 个组合，`ink + brand-crimson` 会写成 `brand-crimson`，旧端看到的是 default 布局 +
+绛红色）。授权 gate 也是两轴 OR：风格或色系任一高级且未开通，就不许新选。
 
 `brand-*` 是「客户自定义主色」的落地方式：**预设色板 + 白名单**，不是运行时自由色值
 注入——小程序代码随版本审核，端上不能动态加载 WXSS，自由 CSS 还会把内部类名变成对
-客户的长期承诺。后台仍只存 `templateId` 一列，加款不需要改数据库。
+客户的长期承诺。数据库存 `style_id` / `brand_color_id` / `template_id` 三列（迁移 0042），
+加款不需要改表结构。
 端上 18 个 CSS 变量（11 个色值 + 7 个版式）随版本内置在 `miniprogram/app.wxss`：
 默认 token 写在 `page` 上，取值与模板功能上线前逐字一致（升级零突变）；
-挂了 `.wc-theme-*` 的 6 个访客页才覆盖，员工 / 管理页保持默认。
+挂了 `.wc-style-*` + 可选 `.wc-brand-*` 两层 class 的 6 个访客页才覆盖，员工 / 管理页保持默认。
 
-加一款模板 = 改 `internal/mptemplate`（含 `Series`） + `app.wxss` 变量块
+加一款模板 = 改 `internal/mptemplate`（含 `Series`） + `app.wxss` 对应层
 + `utils/theme.ts` 的 `THEME_IDS` + 重跑 `scripts/gen_theme_previews.py`
-（产出 `frontend/public/theme-previews/<id>.png`），并随小程序**重新提审发版**；
+（产出 `frontend/public/theme-previews/<styleId>--<brandColorId 或 default>.png`；
+加一款色系多 4 张、加一款风格多 9 张），并随小程序**重新提审发版**；
 只有加「整体风格」款才需要再补 `MpTheme.vue` 的 `.layout-<id>` 兜底示意
-（品牌配色款版式沿用经典蓝，加专属示意反而是造假，守门会拦）。
+（品牌配色款不另给版式，加专属示意反而是造假，守门会拦）。
 `tests/theme.spec.ts` 逐项对账（id / 变量齐全 / 预览色 / 版式「要有差异」与
-「不许有差异」两套相反约束 / 对比度 / PNG 产物互不相同 / 画布比例 /
+「不许有差异」两套相反约束 / 对比度 / 36 组合 PNG 产物互不相同 / 画布比例 /
 预览 HTML 的**完整首页区块顺序**与 18 个 token 全被 `var()` 引用 / 后台接入代码），
 漏一处即变红。
 
-后台模板卡展示的是从 `app.wxss` token 生成的**按真机首页复刻版式的完整首页风格
+后台**固定预览区**展示的是从 `app.wxss` token 生成的**按真机首页复刻版式的完整首页风格
 示意，不是真机截图**：`gen_theme_previews.py` 解析 18 个 `--wc-*` 变量，按
 `pages/index/index.wxml` 的区块顺序复刻整页（状态栏 / 顶栏「我的」+ 微信胶囊 /
 名片卡两列联系信息 / 公司简介封面与视频控件 / 经典业绩 8 分类图标 + 2 张精选案例 /

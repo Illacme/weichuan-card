@@ -126,22 +126,71 @@ func TestTwoAxisSplitAndDerive(t *testing.T) {
 	require.Equal(t, DefaultID, DeriveTemplateID("", nil))
 }
 
-// 树形不变式 + 高级款判定（两轴形态）。
-func TestTwoAxisOwnershipAndAdvanced(t *testing.T) {
-	// 树形：P1 全部 brand-* 归 default（经典蓝基线）；色系不可跨风格乱配
+// 全叉乘组合合法性 + 高级款判定（P5）。
+func TestCrossProductComboAndAdvanced(t *testing.T) {
 	bc := "brand-ocean"
-	require.True(t, BelongsToStyle(DefaultID, &bc))
-	require.False(t, BelongsToStyle("ink", &bc), "品牌色系不可跨风格")
-	require.True(t, BelongsToStyle(DefaultID, nil), "无品牌色系恒合法")
-	require.True(t, BelongsToStyle("ink", nil), "无品牌色系恒合法")
+	styles := []string{DefaultID, "ink", "warm", "teal"}
+	brands := []string{
+		"brand-crimson", "brand-coral", "brand-amber", "brand-forest",
+		"brand-ocean", "brand-indigo", "brand-violet", "brand-magenta",
+	}
+
+	// P1–P4 只允许 default 挂色系；P5 起 4 风格 × (nil + 8 色系) = 36 组合全部合法。
+	// 漏掉任意一格客户都只是「点不动」，不会报错，属于典型的静默失败。
+	n := 0
+	for _, s := range styles {
+		require.True(t, IsValidCombo(s, nil), "%s 不带色系恒合法", s)
+		n++
+		for _, b := range brands {
+			bid := b
+			require.True(t, IsValidCombo(s, &bid), "%s + %s 必须合法（全叉乘）", s, b)
+			n++
+		}
+	}
+	require.Equal(t, 36, n, "4 风格 × 9 色档")
+
+	// 放开叉乘不等于放弃白名单：未知风格 / 未知色系仍要拒绝。
+	require.False(t, IsValidCombo("neon", nil))
+	bad := "brand-neon"
+	require.False(t, IsValidCombo(DefaultID, &bad))
+	require.False(t, IsValidCombo("neon", &bad))
 
 	require.True(t, IsKnownBrandColor("brand-magenta"))
 	require.False(t, IsKnownBrandColor("neon"))
 	require.Equal(t, "warm", NormalizeStyle("warm"))
 	require.Equal(t, "", NormalizeStyle("neon"))
 
-	// 高级款判定：品牌色系高级、风格高级；default 默认色非高级
+	// 高级款判定：两轴任一高级即高级。当前 8 款色系恰好全是高级款，
+	// 所以「高级风格 + 色系」与旧的短路写法结果相同；改成 OR 是为了将来
+	// 新增免费色系时不会漏判高级风格，不是当下可观测的行为变化。
 	require.True(t, IsAdvancedCombo(DefaultID, &bc))
 	require.True(t, IsAdvancedCombo("ink", nil))
+	require.True(t, IsAdvancedCombo("ink", &bc))
 	require.False(t, IsAdvancedCombo(DefaultID, nil))
+}
+
+// 风格分类按布局特色命名，不许再把颜色塞回风格名里（用户需求，P5）。
+// 颜色由第 2 轴负责：风格名带颜色会让人误以为「换风格 = 换色」，
+// 也会让「紧凑信息 + 绛红」这类组合在后台看起来自相矛盾。
+func TestStyleNamesDescribeLayout(t *testing.T) {
+	colorWords := []string{"蓝", "墨", "棕", "青", "红", "绿", "紫", "金", "灰", "橘", "色系"}
+	layoutWords := []string{"列", "圆角", "间距", "描边", "留白", "排布", "密度", "网格"}
+	for _, tpl := range All() {
+		if tpl.Series != SeriesStyle {
+			continue
+		}
+		for _, w := range colorWords {
+			require.NotContains(t, tpl.Name, w, "%s 的风格名不该含颜色词 %q", tpl.ID, w)
+			require.NotContains(t, tpl.Description, w, "%s 的风格说明不该含颜色词 %q", tpl.ID, w)
+		}
+		require.NotEmpty(t, tpl.Description)
+		hit := false
+		for _, w := range layoutWords {
+			if strings.Contains(tpl.Description, w) {
+				hit = true
+				break
+			}
+		}
+		require.True(t, hit, "%s 的说明必须描述布局特色，不能只谈颜色", tpl.ID)
+	}
 }

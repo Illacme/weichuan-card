@@ -3,16 +3,17 @@ import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
 import MpTheme from './MpTheme.vue'
 
-// 风格页 P4：核心约束是**只提交两轴 (styleId, brandColorId)**。
+// 风格页 P5：核心约束是**只提交两轴 (styleId, brandColorId)**，以及
+// 4 风格 × 9 色档 = 36 个组合全部可选、全部按自己的组合键寻图。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
 // 的值一起写回去，所以这里用精确断言钉死 payload，而不是 objectContaining。
-// 另外两步选择必须守住树形归属：非 default 风格下清空并禁用色系，否则后端
-// BelongsToStyle 会 code=1，客户只看到「保存失败」却不知道为什么。
+// P4 的「非 default 风格清空并禁用色系」已废止：那会让客户对齐好的 VI 主色
+// 在切风格时无声消失，而后端 P5 早已放开跨风格组合。
 const STYLE_ITEMS = [
-  { id: 'default', name: '经典蓝', description: '默认配色', series: 'style', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-  { id: 'ink', name: '沉稳墨', description: '低饱和深灰蓝', series: 'style', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-  { id: 'warm', name: '暖金棕', description: '温暖金棕', series: 'style', advanced: true, previewPrimary: '#8f6320', previewSoft: '#f7efdf' },
-  { id: 'teal', name: '松石青', description: '清透青绿', series: 'style', advanced: true, previewPrimary: '#0f766e', previewSoft: '#dff2ef' },
+  { id: 'default', name: '标准均衡', description: '标准列数与间距、中等圆角', series: 'style', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
+  { id: 'ink', name: '紧凑信息', description: '近直角细描边、高信息密度', series: 'style', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
+  { id: 'warm', name: '宽松亲和', description: '大圆角胶囊按钮、单列精选大图', series: 'style', advanced: true, previewPrimary: '#8f6320', previewSoft: '#f7efdf' },
+  { id: 'teal', name: '疏排透气', description: '中圆角轻投影、疏排网格', series: 'style', advanced: true, previewPrimary: '#0f766e', previewSoft: '#dff2ef' },
 ]
 const BRAND_ITEMS = [
   { id: 'brand-crimson', name: '绛红', description: '绛红主色', series: 'brand', advanced: true, previewPrimary: '#a01f2e', previewSoft: '#f3e2e4' },
@@ -24,6 +25,10 @@ const BRAND_ITEMS = [
   { id: 'brand-violet', name: '紫罗兰', description: '紫罗兰主色', series: 'brand', advanced: true, previewPrimary: '#612a96', previewSoft: '#eae3f1' },
   { id: 'brand-magenta', name: '品红', description: '品红主色', series: 'brand', advanced: true, previewPrimary: '#8c2358', previewSoft: '#f0e2e9' },
 ]
+const STYLE_IDS = STYLE_ITEMS.map((t) => t.id)
+const BRAND_IDS = BRAND_ITEMS.map((t) => t.id)
+const comboId = (s: string, b: string | null) => `${s}--${b || 'default'}`
+
 const DEFAULT_LAYOUT = {
   styleId: 'default',
   brandColorId: null,
@@ -89,7 +94,7 @@ const colorOptions = (w: any) => w.findAll('.color-option')
 const previewShot = (w: any) => w.find('img.preview-shot')
 const previewSrc = (w: any) => previewShot(w).attributes('src') || ''
 
-describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
+describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockReset()
     mocks.saveHomeLayout.mockClear()
@@ -106,7 +111,7 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     // 4 张风格卡 + 「默认色」+ 8 款品牌色
     expect(styleCards(w)).toHaveLength(4)
     expect(colorOptions(w)).toHaveLength(9)
-    expect(styleCards(w)[0].text()).toContain('经典蓝')
+    expect(styleCards(w)[0].text()).toContain('标准均衡')
     expect(styleCards(w)[1].find('.el-tag').text()).toBe('高级')
     expect(colorOptions(w)[0].text()).toContain('默认色')
     expect(colorOptions(w)[1].text()).toContain('绛红')
@@ -117,8 +122,8 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
 
     expect(w.findAll('.theme-preview')).toHaveLength(1)
     expect(w.find('.preview-pane').exists()).toBe(true)
-    expect(previewSrc(w)).toContain('theme-previews/default.png')
-    expect(previewShot(w).attributes('alt')).toContain('经典蓝')
+    expect(previewSrc(w)).toContain('theme-previews/default--default.png')
+    expect(previewShot(w).attributes('alt')).toContain('标准均衡')
     expect(w.find('.theme-preview').classes()).toContain('layout-default')
     expect(w.find('.pane-combo-line').text()).toContain('使用中')
   })
@@ -133,73 +138,110 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     expect(w.find('.preview-scroll').exists()).toBe(true)
   })
 
-  it('第 1 步选风格：固定预览区随风格切换到对应 PNG，并带上版式示意 class', async () => {
+  it('第 1 步选风格：预览切到该风格默认色 PNG，色系区不再被禁用', async () => {
     const w = await mountPage()
 
     await styleCards(w)[1].trigger('click')
     await flush()
 
     expect(styleCards(w)[1].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('theme-previews/ink.png')
+    expect(previewSrc(w)).toContain('theme-previews/ink--default.png')
     expect(w.find('.theme-preview').classes()).toContain('layout-ink')
-    expect(w.text()).toContain('暂无可用品牌配色')
+    expect(w.text()).not.toContain('暂无可用品牌配色')
+    for (const c of colorOptions(w)) expect(c.classes()).not.toContain('disabled')
     // 未保存时不能显示「使用中」，否则客户以为已经生效
     expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
   })
 
-  it('第 2 步选品牌色：只在 default 风格上叠加，预览切到该色系 PNG 且风格仍是经典蓝', async () => {
+  it('第 2 步选品牌色：default 风格下叠色，预览切到该组合 PNG', async () => {
     const w = await mountPage()
 
     await colorOptions(w)[1].trigger('click')
     await flush()
 
     expect(colorOptions(w)[1].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('theme-previews/brand-crimson.png')
+    expect(previewSrc(w)).toContain('theme-previews/default--brand-crimson.png')
     expect(styleCards(w)[0].classes()).toContain('selected')
     expect(w.find('.theme-preview').classes()).toContain('layout-default')
   })
 
-  it('树形归属：切到非 default 风格自动清空色系，保存不会带出跨风格组合', async () => {
+  it('P5 全叉乘：非 default 风格下照样能选色系，布局仍是该风格', async () => {
+    const w = await mountPage()
+    await styleCards(w)[3].trigger('click') // 疏排透气
+    await flush()
+
+    await colorOptions(w)[1].trigger('click') // 绛红
+    await flush()
+
+    expect(previewSrc(w)).toContain('theme-previews/teal--brand-crimson.png')
+    expect(w.find('.theme-preview').classes()).toContain('layout-teal')
+    expect(colorOptions(w)[1].classes()).toContain('selected')
+
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'teal', brandColorId: 'brand-crimson',
+    })
+  })
+
+  it('P5：切风格保留已选色系，不再清空，也不会带回跨风格旧限制', async () => {
     const w = await mountPage()
 
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('brand-crimson.png')
+    expect(previewSrc(w)).toContain('default--brand-crimson.png')
 
     await styleCards(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('ink.png')
-    expect(colorOptions(w)[0].classes()).toContain('selected')
-    for (const c of colorOptions(w)) expect(c.classes()).toContain('disabled')
+    expect(previewSrc(w)).toContain('ink--brand-crimson.png')
+    expect(colorOptions(w)[1].classes()).toContain('selected')
+    expect(colorOptions(w)[0].classes()).not.toContain('selected')
 
     await (w.vm as any).save()
     await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'ink', brandColorId: null })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'ink', brandColorId: 'brand-crimson',
+    })
   })
 
-  it('非 default 风格下点色卡无效（不能绕过后端 BelongsToStyle）', async () => {
+  it('P5 组合矩阵：4 风格 × 9 色档 = 36 个组合，每个都按自己的组合键寻图', async () => {
     const w = await mountPage()
-    await styleCards(w)[3].trigger('click')
-    await flush()
+    let seen = 0
+    for (let si = 0; si < STYLE_IDS.length; si++) {
+      await styleCards(w)[si].trigger('click')
+      await flush()
+      for (let bi = 0; bi <= BRAND_IDS.length; bi++) {
+        await colorOptions(w)[bi].trigger('click')
+        await flush()
+        const brand = bi === 0 ? null : BRAND_IDS[bi - 1]
+        expect(previewSrc(w), `${STYLE_IDS[si]} + ${brand}`)
+          .toContain(`theme-previews/${comboId(STYLE_IDS[si], brand)}.png`)
+        expect(w.find('.theme-preview').classes()).toContain(`layout-${STYLE_IDS[si]}`)
+        seen++
+      }
+    }
+    expect(seen).toBe(36)
+  })
 
-    await colorOptions(w)[1].trigger('click')
-    await flush()
-    expect(previewSrc(w)).toContain('teal.png')
+  it('P5：默认色色卡跟随当前风格（紧凑信息的默认色不是全局蓝）', async () => {
+    const w = await mountPage()
+    const swatch = () => colorOptions(w)[0].find('.color-swatch').attributes('style') || ''
+    expect(swatch()).toMatch(/#1a8cff|rgb\(26,\s*140,\s*255\)/)
 
-    await (w.vm as any).save()
+    await styleCards(w)[1].trigger('click')
     await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
+    expect(swatch()).toMatch(/#3d4b5c|rgb\(61,\s*75,\s*92\)/)
   })
 
   it('点回「默认色」清掉已叠加的色系', async () => {
     const w = await mountPage()
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('brand-crimson.png')
+    expect(previewSrc(w)).toContain('default--brand-crimson.png')
 
     await colorOptions(w)[0].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default.png')
+    expect(previewSrc(w)).toContain('default--default.png')
     expect(colorOptions(w)[0].classes()).toContain('selected')
   })
 
@@ -225,10 +267,26 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     })
 
     expect(styleCards(w)[3].classes()).toContain('selected')
-    expect(previewSrc(w)).toContain('teal.png')
+    expect(previewSrc(w)).toContain('teal--default.png')
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
+  })
+
+  it('P5：load 读回跨风格组合，预览与保存都不丢两轴中的任何一维', async () => {
+    const w = await mountPage({
+      ...DEFAULT_LAYOUT,
+      styleId: 'ink', brandColorId: 'brand-ocean', templateId: 'brand-ocean',
+    })
+
+    expect(styleCards(w)[1].classes()).toContain('selected')
+    expect(colorOptions(w)[5].classes()).toContain('selected')
+    expect(previewSrc(w)).toContain('ink--brand-ocean.png')
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'ink', brandColorId: 'brand-ocean',
+    })
   })
 
   // 旧后端（P1 之前）只下发兼容派生列 templateId：brand-* 必须拆回
@@ -239,7 +297,7 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
       styleId: undefined, brandColorId: undefined, templateId: 'brand-ocean',
     })
 
-    expect(previewSrc(w)).toContain('brand-ocean.png')
+    expect(previewSrc(w)).toContain('default--brand-ocean.png')
     expect(styleCards(w)[0].classes()).toContain('selected')
     expect(colorOptions(w)[5].classes()).toContain('selected')
     await (w.vm as any).save()
@@ -258,7 +316,7 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
 
     expect(styleCards(w)).toHaveLength(4)
     expect(w.text()).toContain('当前服务端版本未提供品牌配色清单')
-    expect(previewSrc(w)).toContain('default.png')
+    expect(previewSrc(w)).toContain('default--default.png')
   })
 
   it('单张预览图加载失败：只降级当前组合，重新加载会重试', async () => {
@@ -282,13 +340,13 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     await w.find('.preview-zoom-btn').trigger('click')
     await flush()
     expect(w.find('.preview-zoom').exists()).toBe(true)
-    expect(w.find('.zoom-shot').attributes('src')).toContain('default.png')
+    expect(w.find('.zoom-shot').attributes('src')).toContain('default--default.png')
     expect(w.find('.zoom-note').text()).toContain('非真机截图')
     expect(w.find('.zoom-scroll').find('img.zoom-shot').exists()).toBe(true)
 
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(w.find('.zoom-shot').attributes('src')).toContain('brand-crimson.png')
+    expect(w.find('.zoom-shot').attributes('src')).toContain('default--brand-crimson.png')
 
     const closeBtn = w.findAll('.el-button').find((b: any) => b.text().includes('关闭'))
     expect(closeBtn).toBeDefined()
@@ -320,7 +378,7 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     await styleCards(w)[1].trigger('click')
     await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(previewSrc(w)).toContain('default.png')
+    expect(previewSrc(w)).toContain('default--default.png')
 
     await (w.vm as any).save()
     await flush()
@@ -328,7 +386,7 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
   })
 
   // 授权到期时后端仍允许「带着同一个组合」保存别的设置，前端不能把已选中的
-  // 那款也锁死，否则客户连切回经典蓝都做不到。
+  // 那款也锁死，否则客户连切回标准均衡都做不到。
   it('授权到期但已选中高级风格：该款不锁，仍可保存或切回默认款', async () => {
     const w = await mountPage({
       ...DEFAULT_LAYOUT,
@@ -372,11 +430,12 @@ describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
     expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
   })
 
-  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图 / 固定预览区」', async () => {
+  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图 / 固定预览区 / 36 组合」', async () => {
     const w = await mountPage()
     expect(w.text()).toContain('本产品是通用平台')
     expect(w.text()).toContain('不含任何真实企业客户资料')
     expect(w.text()).toContain('不是真机截图')
     expect(w.text()).toContain('固定在一个位置')
+    expect(w.text()).toContain('36 种组合')
   })
 })

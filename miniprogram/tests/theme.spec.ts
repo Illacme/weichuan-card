@@ -11,7 +11,8 @@ import {
   normalizeStyle,
   normalizeBrand,
   splitTheme,
-  deriveThemeId,
+  encodeCachedTheme,
+  decodeCachedTheme,
   resolveTheme,
   themeClass,
   currentThemeClass,
@@ -103,18 +104,24 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(themeClass('neon')).toBe('wc-style-default')
   })
 
-  it('两轴与扁平 templateId 互拆互合；品牌色系强制归 default 风格', () => {
+  it('splitTheme 只服务旧扁平 id：8 款 brand-* 反推 (default, brand-*)，不代表 P5 归属', () => {
     expect(splitTheme('brand-ocean')).toEqual({ styleId: 'default', brandColorId: 'brand-ocean' })
     expect(splitTheme('ink')).toEqual({ styleId: 'ink', brandColorId: null })
     expect(splitTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
     expect(splitTheme('neon')).toEqual({ styleId: 'default', brandColorId: null })
-    expect(deriveThemeId('default', 'brand-ocean')).toBe('brand-ocean')
-    expect(deriveThemeId('teal', null)).toBe('teal')
-    expect(deriveThemeId('neon', 'brand-neon')).toBe('default')
-    // 后端 BelongsToStyle 会拒绝跨风格组合，端上同样收敛，别拼出第三种外观
-    expect(themeClass('ink', 'brand-ocean')).toBe('wc-style-default wc-brand-ocean')
+  })
+
+  it('P5 全叉乘：色系叠在非 default 风格上保留该风格布局，不再被打回 default', () => {
+    // P4 的 normalizeSelection 曾把带色系的组合收敛成 default（树形归属）；
+    // 后端 IsValidCombo 放开后，这里再收敛就是「后台保存成功、真机版式没换」的静默失败。
+    expect(themeClass('ink', 'brand-ocean')).toBe('wc-style-ink wc-brand-ocean')
+    expect(themeClass('warm', 'brand-crimson')).toBe('wc-style-warm wc-brand-crimson')
+    expect(themeClass('teal', 'brand-violet')).toBe('wc-style-teal wc-brand-violet')
     expect(themeClass('default', 'brand-ocean')).toBe('wc-style-default wc-brand-ocean')
     expect(themeClass('default', null)).toBe('wc-style-default')
+    expect(themeClass('ink', 'brand-neon'), '未知色系回落到该风格默认色').toBe('wc-style-ink')
+    expect(themeClass('neon', 'brand-ocean'), '未知风格回落 default，色系仍生效')
+      .toBe('wc-style-default wc-brand-ocean')
   })
 
   it('resolveTheme 两轴优先，旧后端只有 templateId 时拆成两轴', () => {
@@ -122,6 +129,11 @@ describe('小程序整体风格模板 utils/theme', () => {
       .toEqual({ styleId: 'warm', brandColorId: null })
     expect(resolveTheme({ styleId: 'default', brandColorId: 'brand-crimson' }))
       .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
+    // P5：非 default 风格 + 色系必须原样保留，兼容派生列也不能把它带偏
+    expect(resolveTheme({ styleId: 'ink', brandColorId: 'brand-ocean' }))
+      .toEqual({ styleId: 'ink', brandColorId: 'brand-ocean' })
+    expect(resolveTheme({ styleId: 'warm', brandColorId: 'brand-magenta', templateId: 'brand-magenta' }))
+      .toEqual({ styleId: 'warm', brandColorId: 'brand-magenta' })
     expect(resolveTheme({ templateId: 'brand-crimson' }))
       .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
     expect(resolveTheme({ templateId: 'teal' })).toEqual({ styleId: 'teal', brandColorId: null })
@@ -204,6 +216,17 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(src).toContain("'wc-brand-' + sel.brandColorId.slice(BRAND_PREFIX.length)")
     expect(src, '不能退回单层 wc-theme-*').not.toContain("'wc-theme-' +")
     expect(readFileSync(APP_WXSS, 'utf-8')).not.toMatch(/\.wc-theme-[\w-]+\s*\{/)
+    // P5：归一函数里绝不能出现 THEME_DEFAULT（那意味着又把带色系的组合打回 default）
+    const norm = src.match(/function normalizeSelection\([\s\S]*?\n\}/)?.[0] || ''
+    expect(norm, '取不到 normalizeSelection 函数体').not.toBe('')
+    expect(norm, 'normalizeSelection 不得再把跨风格组合收敛成 default').not.toContain('THEME_DEFAULT')
+    // P5：缓存必须写两轴串，不能压扁回 12 个扁平 templateId
+    expect(src).toContain('CACHE_PREFIX')
+    expect(src).toContain('encodeCachedTheme')
+    expect(src).toContain('decodeCachedTheme')
+    expect(src, '不能再留「两轴 → 扁平 id」的写缓存入口').not.toContain('deriveThemeId')
+    expect(src).toMatch(/setStorageSync\(STORAGE_KEY,\s*encodeCachedTheme\(/)
+    expect(src).toMatch(/decodeCachedTheme\(raw\)/)
   })
 
   it('4 个风格 × 4 个模块都有专属布局规则，且同模块四风格互不雷同', () => {
@@ -254,49 +277,119 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(wxml).toContain('标题已绘制在图内')
   })
 
-  it('currentThemeClass 从扁平缓存恢复两轴 class；旧缓存 / 存储不可用都不抛错', () => {
+  it('currentThemeClass 从两轴缓存恢复 36 组合；旧扁平缓存 / 脏值 / 存储不可用都不抛错', () => {
     vi.stubGlobal('getCurrentPages', () => [])
-    vi.stubGlobal('wx', {
-      getStorageSync: () => 'ink',
-      setStorageSync: vi.fn(),
-    })
+    const cached = (v: string | (() => string)) => {
+      const getter = typeof v === 'function' ? v : () => v
+      vi.stubGlobal('wx', { getStorageSync: getter, setStorageSync: vi.fn() })
+    }
+
+    cached('wc2:ink|brand-ocean')
+    expect(currentThemeClass()).toBe('wc-style-ink wc-brand-ocean')
+    cached('wc2:warm|-')
+    expect(currentThemeClass()).toBe('wc-style-warm')
+    cached('wc2:default|-')
+    expect(currentThemeClass()).toBe('wc-style-default')
+
+    // 旧缓存是扁平 12 款：原样按 splitTheme 拆，老用户升级零迁移
+    cached('ink')
     expect(currentThemeClass()).toBe('wc-style-ink')
-
-    // 旧缓存存的是扁平 templateId：品牌款要拆成 (default, brand-*) 两层
-    vi.stubGlobal('wx', {
-      getStorageSync: () => 'brand-ocean',
-      setStorageSync: vi.fn(),
-    })
+    cached('brand-ocean')
     expect(currentThemeClass()).toBe('wc-style-default wc-brand-ocean')
+    cached('')
+    expect(currentThemeClass()).toBe('wc-style-default')
 
-    vi.stubGlobal('wx', {
-      getStorageSync: () => {
-        throw new Error('storage disabled')
-      },
-      setStorageSync: vi.fn(),
+    // 脏缓存：未知风格 / 未知色系各自回落，不能拼出白名单外的 class
+    cached('wc2:neon|brand-neon')
+    expect(currentThemeClass()).toBe('wc-style-default')
+    cached('wc2:teal|brand-magenta')
+    expect(currentThemeClass()).toBe('wc-style-teal wc-brand-magenta')
+
+    cached(() => {
+      throw new Error('storage disabled')
     })
     expect(currentThemeClass()).toBe('wc-style-default')
   })
 
-  it('applyTheme 缓存扁平 id 并广播两层 class；bindTheme 把当前主题写回本页', () => {
+  it('applyTheme 写两轴缓存并广播两层 class；bindTheme 把当前主题写回本页', () => {
     const setStorageSync = vi.fn()
     const pageA = { setData: vi.fn() }
     const pageB = { setData: vi.fn() }
-    vi.stubGlobal('wx', { getStorageSync: () => 'warm', setStorageSync })
+    vi.stubGlobal('wx', { getStorageSync: () => 'wc2:warm|brand-amber', setStorageSync })
     vi.stubGlobal('getCurrentPages', () => [pageA, pageB])
 
     applyTheme('ink', null)
-    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'ink')
+    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'wc2:ink|-')
     expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-ink' })
     expect(pageB.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-ink' })
 
+    applyTheme('ink', 'brand-ocean')
+    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'wc2:ink|brand-ocean')
+    expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-ink wc-brand-ocean' })
+
     applyTheme('default', 'brand-crimson')
-    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'brand-crimson')
+    expect(setStorageSync).toHaveBeenCalledWith('wc_theme_id', 'wc2:default|brand-crimson')
     expect(pageA.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-default wc-brand-crimson' })
 
     const page = { setData: vi.fn() }
     bindTheme(page)
-    expect(page.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-warm' })
+    expect(page.setData).toHaveBeenCalledWith({ themeClass: 'wc-style-warm wc-brand-amber' })
+  })
+})
+
+// ===== P5：两轴全叉乘 + 缓存升级 =====
+//
+// 树形归属时期只有 12 个合法组合，缓存存扁平 templateId 就够了。P5 放开成
+// 4 风格 × 9 色档 = 36 个组合后，扁平列不可逆地丢掉风格：访客明明选了
+// 「紧凑信息 + 绛红」，下次冷启动却按「标准均衡 + 绛红」渲染，后台还显示保存成功。
+// 这类静默失败只能靠「组合矩阵 + 缓存往返」的穷举断言钉住。
+const COMBOS: { styleId: string; brandColorId: string | null }[] = []
+for (const styleId of STYLE_IDS) {
+  COMBOS.push({ styleId, brandColorId: null })
+  for (const brandColorId of BRAND_IDS) COMBOS.push({ styleId, brandColorId })
+}
+
+describe('P5 两轴全叉乘与两轴缓存', () => {
+  it('4 风格 × 9 色档 = 36 个组合，每组的 class 唯一且风格层恒挂', () => {
+    expect(COMBOS).toHaveLength(36)
+    const classes = COMBOS.map((c) => themeClass(c.styleId, c.brandColorId))
+    expect(new Set(classes).size, '有组合被压扁成同一套 class').toBe(COMBOS.length)
+    for (const c of COMBOS) {
+      const cls = themeClass(c.styleId, c.brandColorId)
+      expect(cls, `${c.styleId}+${c.brandColorId} 丢了风格层`).toContain(`wc-style-${c.styleId}`)
+      if (c.brandColorId) {
+        expect(cls).toContain(`wc-brand-${c.brandColorId.slice(BRAND_PREFIX.length)}`)
+      } else {
+        expect(cls).not.toContain('wc-brand-')
+      }
+    }
+    // 关键回归：同一色系在四个风格上只换布局层，颜色层逐字一致
+    const ocean = STYLE_IDS.map((s) => themeClass(s, 'brand-ocean'))
+    expect(new Set(ocean.map((c) => c.split(' ')[0])).size).toBe(STYLE_IDS.length)
+    expect(new Set(ocean.map((c) => c.split(' ')[1])).size, '统一色板不该按风格分叉').toBe(1)
+  })
+
+  it('缓存串覆盖 36 组合且编解码幂等；扁平 12 款旧缓存零迁移', () => {
+    const cache = COMBOS.map((c) => encodeCachedTheme(c.styleId, c.brandColorId))
+    expect(new Set(cache).size, '有组合被写成同一个缓存值（风格丢了）').toBe(COMBOS.length)
+    for (let i = 0; i < COMBOS.length; i++) {
+      expect(decodeCachedTheme(cache[i])).toEqual(COMBOS[i])
+    }
+    // 旧扁平值不带前缀，仍按旧语义解析；12 个白名单 id 一个都不能失守
+    for (const id of THEME_IDS) {
+      expect(decodeCachedTheme(id)).toEqual(splitTheme(id))
+      expect(id.startsWith('wc2:'), '扁平 id 不能和 P5 前缀撞车').toBe(false)
+    }
+    expect(encodeCachedTheme('neon', 'brand-neon')).toBe('wc2:default|-')
+    expect(decodeCachedTheme('wc2:ink|brand-nope')).toEqual({ styleId: 'ink', brandColorId: null })
+  })
+
+  it('theme.ts 不再把两轴压扁：缓存格式由常量定义，applyTheme 只有一个写入口', () => {
+    const src = readFileSync(resolve(MP, 'utils/theme.ts'), 'utf-8')
+    expect(src).toContain("const CACHE_PREFIX = 'wc2:'")
+    expect(src, '缓存 key 换了会让存量用户主题失效').toContain("const STORAGE_KEY = 'wc_theme_id'")
+    expect(src.split('setStorageSync(').length - 1, '写入口必须只有一个').toBe(1)
+    expect(src, '不能把兼容列 templateId 当缓存真值').not.toContain('deriveThemeId')
   })
 })
 
@@ -326,24 +419,28 @@ describe('小程序风格模板 系列分组', () => {
     expect(vue).toContain('styleTemplates')
     expect(vue).toContain('品牌配色')
     expect(vue).not.toContain("startsWith('brand-')")
-    // P4：整页只有一个固定预览区（sticky），两步选择先风格后色系；
+    // P5：整页只有一个固定预览区（sticky），两步选择先风格后色系；
     // 保存必须发两轴而不是旧的单列 templateId，否则两轴化等于没落后台。
     expect(vue).toContain('class="preview-pane"')
     expect(vue).toContain('position: sticky')
     expect(vue).toContain(':src="previewUrl(currentId)"')
-    expect(vue).toContain('const currentId = computed(() => brandColorId.value || styleId.value)')
+    expect(vue).toContain('const currentId = computed(() => comboId(styleId.value, brandColorId.value))')
+    expect(vue).toContain('function comboId(s: string, b: string | null): string')
     expect(vue).toContain('v-for="t in styleTemplates"')
     expect(vue).toContain('v-for="t in brandTemplates"')
     expect(vue).toContain('第 1 步')
     expect(vue).toContain('第 2 步')
+    expect(vue).toContain('36 种组合')
     expect(vue).toContain(
       'saveHomeLayout({ styleId: styleId.value, brandColorId: brandColorId.value })'
     )
     expect(vue, '不能退回只发单列 templateId').not.toContain('saveHomeLayout({ templateId:')
-    // 树形归属：切到非 default 风格必须清空色系，非 default 下色卡不可点，
-    // 否则后端 BelongsToStyle 会 code=1，客户只看到「保存失败」却不知为何。
-    expect(vue).toContain('if (t.id !== DEFAULT_STYLE) brandColorId.value = null')
-    expect(vue).toContain('if (styleId.value !== DEFAULT_STYLE) return')
+    // P5 树形归属已废止：切风格不清空色系、非 default 不禁用色卡、不留旧提示。
+    // 任何一条退回，客户都会「后台保存成功、真机却少了刚对齐的 VI 主色」。
+    expect(vue, '不能退回切风格清空色系').not.toContain('if (t.id !== DEFAULT_STYLE) brandColorId.value = null')
+    expect(vue, '不能退回非 default 禁用色卡').not.toContain('if (styleId.value !== DEFAULT_STYLE) return')
+    expect(vue, '不能退回按风格置灰色卡').not.toContain('disabled: styleId !== DEFAULT_STYLE')
+    expect(vue, '不能退回树形提示').not.toContain('暂无可用品牌配色')
     // 旧后端只下发兼容派生列时按前缀拆回两轴
     expect(vue).toContain('id.startsWith(BRAND_PREFIX)')
     expect(vue).toContain('splitThemeId(d)')
@@ -529,7 +626,7 @@ describe('小程序整体风格模板 版式差异', () => {
   // 与上面的约束正好相反：品牌配色的卖点是「只对齐主色，版式不动」。
   // P2 拆层后这条从「人工自觉」升级为结构约束：颜色层块里根本不许出现版式 token，
   // 谁想给品牌款顺手改个圆角都会变红；合并后的版式仍逐字等于 default。
-  it('品牌配色颜色层不含任何版式 token，12 组合合并后版式逐字等于 default', () => {
+  it('品牌配色颜色层不含任何版式 token，12 组基础色板里品牌款版式逐字等于 default', () => {
     const src = readFileSync(APP_WXSS, 'utf-8')
     const brandBlocks = Array.from(src.matchAll(/\.wc-brand-([a-z0-9_-]+)\s*\{([\s\S]*?)\n\}/g))
     expect(brandBlocks).toHaveLength(BRAND_IDS.length)
@@ -591,9 +688,37 @@ const PREVIEW_DIR = resolve(REPO, 'frontend/public/theme-previews')
 const PREVIEW_SCRIPT = resolve(REPO, 'scripts/gen_theme_previews.py')
 const MP_THEME_VUE = resolve(REPO, 'frontend/src/views/content/MpTheme.vue')
 
-/** 组合 id → 布局风格：8 款 brand-* 全归 default（与生成脚本 style_of / 后端 Split 同口径）。 */
-function styleOfPreview(id: string): string {
-  return id.startsWith(BRAND_PREFIX) ? THEME_DEFAULT : id
+/** P5 组合键：<styleId>--<brandColorId 或 default>，两轴都进文件名，不压扁成 12 个扁平 id。 */
+const COMBO_SEP = '--'
+const NO_BRAND = 'default'
+function comboId(styleId: string, brandColorId: string | null): string {
+  return `${styleId}${COMBO_SEP}${brandColorId || NO_BRAND}`
+}
+function styleOfCombo(cid: string): string {
+  return cid.split(COMBO_SEP)[0]
+}
+/** 从 Go 白名单复算 4 风格 × (默认色 + 8 色系) = 36 个组合映射。 */
+function expectedCombos(): Record<string, { styleId: string; brandColorId: string | null }> {
+  const ids = goTemplateIds()
+  const styles = ids.filter((i) => !i.startsWith(BRAND_PREFIX))
+  const brands = ids.filter((i) => i.startsWith(BRAND_PREFIX))
+  const out: Record<string, { styleId: string; brandColorId: string | null }> = {}
+  for (const s of styles) {
+    out[comboId(s, null)] = { styleId: s, brandColorId: null }
+    for (const b of brands) out[comboId(s, b)] = { styleId: s, brandColorId: b }
+  }
+  return out
+}
+/** 按生成脚本 combo_tokens() 同口径复算：风格全套 18 + 色系 11 颜色，版式 token 不被覆盖。 */
+function comboTokens(styleId: string, brandColorId: string | null): ThemeVars {
+  const all = readThemeVars()
+  const merged: ThemeVars = { ...all[styleId] }
+  if (brandColorId) {
+    for (const [k, v] of Object.entries(all[brandColorId])) {
+      if (!k.startsWith('--wc-r-') && !k.startsWith('--wc-card-shadow')) merged[k] = v
+    }
+  }
+  return merged
 }
 
 /**
@@ -626,46 +751,62 @@ function goTemplateIds(): string[] {
 }
 
 describe('小程序整体风格模板 真实预览图', () => {
-  it('每款模板都有一张合法 PNG，按所属风格画布高度一致，没有多余图', () => {
+  it('36 个组合各有一张合法 PNG，按所属风格画布高度一致，没有旧扁平 id 残留', () => {
     const ids = goTemplateIds()
     expect(ids.length).toBeGreaterThanOrEqual(2)
     expect([...THEME_IDS].sort()).toEqual([...ids].sort(), '小程序 class 白名单与 Go 白名单漂移')
+    const combos = expectedCombos()
+    expect(Object.keys(combos), '组合数必须是 4 × 9 = 36').toHaveLength(36)
     const files = readdirSync(PREVIEW_DIR)
       .filter((f) => f.endsWith('.png'))
       .map((f) => f.slice(0, -4))
-    expect(files.sort()).toEqual([...ids].sort(), '加款忘了重跑 gen_theme_previews.py')
+    expect(files.sort()).toEqual(Object.keys(combos).sort(), '加款 / 改组合忘了重跑 gen_theme_previews.py')
 
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)
     const scale = /SCALE\s*=\s*(\d+)/.exec(script)
     expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
     expect(scale, '生成脚本缺 SCALE').not.toBeNull()
-    // P4：长图按风格内容高度各自收口，8 款 brand-* 共用 default 的画布。
-    // 统一用最大高度会让短风格下半部拖一大片空白，故逐张对账自己的风格高度。
+    // 长图按风格内容高度各自收口，同风格的 9 档颜色共用该风格画布。
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const heights = manifest.canvasByStyle as Record<string, number>
     expect(Object.keys(heights).sort()).toEqual([...STYLE_IDS].sort())
 
-    for (const id of ids) {
-      const buf = readFileSync(join(PREVIEW_DIR, `${id}.png`))
-      const h = heights[styleOfPreview(id)]
-      expect(h, `${id} 所属风格没有画布高度`).toBeGreaterThan(0)
+    for (const [cid, c] of Object.entries(combos)) {
+      const buf = readFileSync(join(PREVIEW_DIR, `${cid}.png`))
+      const h = heights[c.styleId]
+      expect(h, `${cid} 所属风格没有画布高度`).toBeGreaterThan(0)
       const expected = [Number(dim![1]) * Number(scale![1]), h * Number(scale![1])]
-      expect(buf.subarray(0, 8).toString('hex'), `${id} 不是 PNG`).toBe('89504e470d0a1a0a')
-      expect([buf.readUInt32BE(16), buf.readUInt32BE(20)], `${id} 尺寸`).toEqual(expected)
-      expect(buf.length, `${id} 疑似空白图`).toBeGreaterThan(5000)
+      expect(buf.subarray(0, 8).toString('hex'), `${cid} 不是 PNG`).toBe('89504e470d0a1a0a')
+      expect([buf.readUInt32BE(16), buf.readUInt32BE(20)], `${cid} 尺寸`).toEqual(expected)
+      expect(buf.length, `${cid} 疑似空白图`).toBeGreaterThan(5000)
     }
   })
 
-  // 「每张图都存在、尺寸都对、token 快照也对」仍挡不住一种静默失败：生成脚本
-  // 若把 12 款都用 default 的 token 出图，客户会看到 12 张一模一样的预览，
-  // 而上面所有检查都还是绿的。逐张比内容摘要才能钉住「图真的按各自 token 画了」。
-  it('每款预览图内容互不相同（不能 12 张都是同一张默认款）', () => {
-    const ids = goTemplateIds()
-    const digests = ids.map((id) =>
-      createHash('sha256').update(readFileSync(join(PREVIEW_DIR, `${id}.png`))).digest('hex')
-    )
-    expect(new Set(digests).size, '有重复预览图：某一款没按自己的 token 出图').toBe(ids.length)
+  // 「每张图都在、尺寸都对、快照也对」仍挡不住一种静默失败：只用一套布局或只用
+  // 一套颜色出 36 张图，客户看到的是一堆重复预览。36 张摘要互不相同，
+  // 再加「同风格 9 档互不相同」「同色档 4 风格互不相同」两层分组，才钉得住两轴。
+  it('36 张预览图两两不同：布局与颜色都真的进了图', () => {
+    const combos = expectedCombos()
+    const digests: Record<string, string> = {}
+    for (const cid of Object.keys(combos)) {
+      digests[cid] = createHash('sha256')
+        .update(readFileSync(join(PREVIEW_DIR, `${cid}.png`))).digest('hex')
+    }
+    expect(new Set(Object.values(digests)).size, '有重复预览图：某一维没进图')
+      .toBe(Object.keys(combos).length)
+    for (const sid of STYLE_IDS) {
+      const group = Object.keys(combos).filter((cid) => combos[cid].styleId === sid)
+      expect(group).toHaveLength(9)
+      expect(new Set(group.map((cid) => digests[cid])).size, `${sid} 的 9 档颜色没进图`)
+        .toBe(group.length)
+    }
+    for (const bid of [null, ...BRAND_IDS]) {
+      const group = Object.keys(combos).filter((cid) => combos[cid].brandColorId === bid)
+      expect(group).toHaveLength(STYLE_IDS.length)
+      expect(new Set(group.map((cid) => digests[cid])).size, `${bid} 的 4 风格布局没进图`)
+        .toBe(group.length)
+    }
   })
 
   it('生成脚本从 app.wxss 取 token，不手画第二套主题色', () => {
@@ -693,7 +834,16 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(script).toContain('STYLE_RULE_RE')
     expect(script).toContain('read_layout_rules()')
     expect(script).toContain('MODULE_HOOKS')
-    expect(script).toContain('style_of(')
+    // P5：两轴都不许压扁。组合键、36 组合并 token（版式只来自风格层）、组合映射
+    // 必须由脚本显式算出；退回 style_of() / 扁平 templateId 会让 36 → 12 塌缩。
+    expect(script, '不能退回「色系全归 default」的扁平映射').not.toContain('def style_of(')
+    expect(script).toContain('def combo_id(')
+    expect(script).toContain('def all_combos(')
+    expect(script).toContain('def combo_tokens(')
+    expect(script).toContain('is_layout_token(k)')
+    expect(script).toContain('"combos": {')
+    expect(script).toContain('"comboTokens": combo_tok')
+    expect(script).toContain('combo_tok[cid]')
     expect(script).toContain('layout_css(')
     expect(script).toContain('${style_css}')
     expect(script).toContain('"layouts": layouts')
@@ -775,8 +925,23 @@ describe('小程序整体风格模板 真实预览图', () => {
     for (const id of ids) {
       expect(manifest.tokens[id], `${id} 的 token 快照`).toEqual(current[id])
     }
-    // P4：布局规则也必须有快照。只查 token 会放行「app.wxss 改了列数、
-    // 预览图却还是旧版式」——图片一张不少、尺寸也对，客户却看到错的布局。
+    // P5：36 组合的映射与合并 token 也必须有快照。只查 12 组基础色板会放行
+    // 「换色系时把风格版式一起覆盖」：图片一张不少、尺寸也对，客户却看到
+    // 紧凑信息的近直角悄悄变回默认圆角。
+    const combos = expectedCombos()
+    expect(manifest.combos, '组合映射与 Go 白名单漂移，请重跑生成脚本').toEqual(combos)
+    expect(Object.keys(manifest.comboTokens).sort()).toEqual(Object.keys(combos).sort())
+    for (const [cid, c] of Object.entries(combos)) {
+      expect(manifest.comboTokens[cid], `${cid} 的合并 token`).toEqual(
+        comboTokens(c.styleId, c.brandColorId)
+      )
+      for (const key of LAYOUT_TOKENS) {
+        expect(manifest.comboTokens[cid][key], `${cid} 的 ${key} 不该被色系覆盖`)
+          .toBe(current[c.styleId][key])
+      }
+    }
+    // 布局规则同样要有快照：只查 token 会放行「app.wxss 改了列数、预览图却还是旧版式」。
+    // 图片一张不少、尺寸也对，客户却看到错的布局。
     expect(manifest.layouts, '布局快照与 app.wxss 当前规则漂移，请重跑生成脚本').toEqual(
       expectedLayoutRules()
     )
@@ -801,7 +966,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     }
   })
 
-  it('两层合并出的 12 组 token 逐字等于预览快照（拆层零视觉突变）', () => {
+  it('两层读出的 12 组基础色板逐字等于预览快照（拆层零视觉突变）', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const merged = readThemeVars()
     expect(Object.keys(merged).sort(), '组合集合漂移').toEqual(Object.keys(manifest.tokens).sort())
@@ -809,27 +974,30 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 })
 
-// ===== P4：四风格布局进预览图 + 后台两步 UI =====
+// ===== P5：36 组合预览图 + 后台两步 UI =====
 //
-// 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，12 张 PNG 一张不少、
+// 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，36 张 PNG 一张不少、
 // token 快照也没变、尺寸也对，客户看到的却是旧版式。布局必须留快照并与 WXSS
-// 对账；后台也必须真的按 (styleId, brandColorId) 切图、按两轴保存。
-describe('P4 四风格预览图与后台两步选择', () => {
-  it('12 张图按 4 风格分组：同风格画布一致，四风格高度互不相同', () => {
+// 对账；后台也必须真的按 (styleId, brandColorId) 组合键寻图、按两轴保存，
+// 且 4 个风格下 9 档颜色全部可选。
+describe('P5 36 组合预览图与后台两步选择', () => {
+  it('36 张图按 4 风格分组：每风格 9 档颜色共用同一画布，四风格高度互不相同', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const scale = Number(/SCALE\s*=\s*(\d+)/.exec(script)![1])
+    const combos = expectedCombos()
     const grouped: Record<string, string[]> = {}
-    for (const id of goTemplateIds()) {
-      ;(grouped[styleOfPreview(id)] ||= []).push(id)
+    for (const [cid, c] of Object.entries(combos)) {
+      ;(grouped[c.styleId] ||= []).push(cid)
     }
     expect(Object.keys(grouped).sort()).toEqual([...STYLE_IDS].sort())
-    // default 风格下挂 1 款默认色 + 8 款品牌色，其余 3 风格各 1 款
-    expect(grouped[THEME_DEFAULT]).toHaveLength(9)
+    // P5 全叉乘：四个风格**各**挂 1 款默认色 + 8 款品牌色，不再只有 default 有 9 张
     for (const sid of STYLE_IDS) {
-      for (const id of grouped[sid]) {
-        const buf = readFileSync(join(PREVIEW_DIR, `${id}.png`))
-        expect(buf.readUInt32BE(20), `${id} 未按所属风格收口`).toBe(
+      expect(grouped[sid], `${sid} 没能叠加全部 9 档颜色`).toHaveLength(9)
+      for (const cid of grouped[sid]) {
+        expect(styleOfCombo(cid)).toBe(sid)
+        const buf = readFileSync(join(PREVIEW_DIR, `${cid}.png`))
+        expect(buf.readUInt32BE(20), `${cid} 未按所属风格收口`).toBe(
           manifest.canvasByStyle[sid] * scale
         )
       }
@@ -839,15 +1007,16 @@ describe('P4 四风格预览图与后台两步选择', () => {
     )
   })
 
-  it('布局规则来自 app.wxss 原文，脚本按风格注入且 --check 比对布局快照', () => {
+  it('布局规则来自 app.wxss 原文，脚本按每个组合的风格注入并留快照', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     expect(script).toContain('STYLE_RULE_RE')
     expect(script).toContain('read_layout_rules()')
     expect(script).toContain('layout_css(layout_rules[sid])')
-    expect(script).toContain('sid = style_of(i)')
+    expect(script).toContain('for cid, (sid, _brand) in combos.items():')
+    expect(script, '不能把所有组合都按 default 布局出图').not.toContain('style_of(')
     expect(script).toContain('data.get("layouts") != layouts')
+    expect(script).toContain('data.get("comboTokens") != combo_tok')
     expect(script).toContain('for sid in STYLE_IDS:')
-    expect(script, '不能把所有组合都按 default 布局出图').not.toContain('build_html(active[i])')
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     expect(manifest.layouts).toEqual(expectedLayoutRules())
     for (const sid of STYLE_IDS) {
@@ -857,15 +1026,17 @@ describe('P4 四风格预览图与后台两步选择', () => {
     }
   })
 
-  it('后台按两轴切图与保存，固定预览区不退回「每款一张卡」', () => {
+  it('后台按组合键寻图与两轴保存，固定预览区不退回「每款一张卡」', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     expect(vue).toContain('class="preview-pane"')
     expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain('const currentId = computed(() => comboId(styleId.value, brandColorId.value))')
     expect(vue).toContain('@click="pickStyle(t)"')
     expect(vue).toContain('@click="pickBrand(t)"')
     expect(vue).toContain('@click="pickBrand(null)"')
     expect(vue, '不能退回每款模板一张带预览的卡片').not.toContain('class="theme-card"')
     expect(vue, '不能退回单列 templateId 保存').not.toContain('saveHomeLayout({ templateId:')
+    expect(vue, '不能退回切风格清空色系').not.toContain('if (t.id !== DEFAULT_STYLE) brandColorId.value = null')
     expect(vue).toContain('第 1 步')
     expect(vue).toContain('第 2 步')
   })
@@ -929,8 +1100,8 @@ describe('小程序风格模板 完整首页示意', () => {
     }
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     expect(script).toContain('css_tokens(tokens)')
-    // P4：出图时必须把所属风格传进去，才能注入该风格的 app.wxss 布局规则
-    expect(script).toContain('build_html(active[i],')
+    // P5：出图时必须把该组合的合并 token 与所属风格都传进去，才能注入该风格的布局规则
+    expect(script).toContain('build_html(combo_tok[cid],')
     expect(script).toContain('${tokens}')
     expect(script).toContain('${style_css}')
   })
@@ -1144,7 +1315,7 @@ describe('小程序风格模板 通用平台脱敏', () => {
   it('脱敏守门真的被调用，且查的是最终 HTML 而不是脚本源码', () => {
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     // 第二十七轮的教训：只断言函数 / 变量名字，删掉真正调用照样全绿
-    expect(script).toContain('check_sources() + check_no_identity(build_html(active[ids[0]]))')
+    expect(script).toContain('check_sources() + check_no_identity(build_html(first))')
     expect(script).toContain('for token in identity_tokens():')
     expect(script).toContain('GO_IDENTITY_RE.finditer(DEMO_GO.read_text(')
     expect(script).toContain('PLACEHOLDER_TEXT[key] not in html')

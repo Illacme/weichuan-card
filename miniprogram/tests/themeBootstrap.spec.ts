@@ -41,7 +41,7 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     expect(mocks.applyTheme).toHaveBeenCalledWith('teal', null)
   })
 
-  it('两轴响应优先按 (styleId, brandColorId) 应用，不被兼容列 templateId 带偏', () => {
+  it('两轴响应优先按 (styleId, brandColorId) 应用；P5 跨风格叠加色系不被收敛', () => {
     prefetchTheme('https://card.example', 7)
     const opt = request.mock.calls[0][0]
     opt.success({ data: { code: 0, styleId: 'warm', brandColorId: null, templateId: 'brand-amber' } })
@@ -50,6 +50,14 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     mocks.applyTheme.mockClear()
     opt.success({ data: { code: 0, styleId: 'default', brandColorId: 'brand-ocean' } })
     expect(mocks.applyTheme).toHaveBeenCalledWith('default', 'brand-ocean')
+
+    // P5：非 default 风格 + 色系是 36 组合里的合法一员，冷启动同样不能打回 default，
+    // 否则「分享链接直接进二级页」的访客会一直看到标准均衡布局。
+    mocks.applyTheme.mockClear()
+    opt.success({
+      data: { code: 0, styleId: 'ink', brandColorId: 'brand-ocean', templateId: 'brand-ocean' },
+    })
+    expect(mocks.applyTheme).toHaveBeenCalledWith('ink', 'brand-ocean')
   })
 
   it('平台模式无租户绑定时不带 companyId；基址末尾斜杠不会拼出 //api', () => {

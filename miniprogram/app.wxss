@@ -10,6 +10,10 @@
      --wc-card-shadow* 都不许出现（theme.spec.ts 会拦）。版式由同挂的 style 层决定，
      所以「换品牌配色不会顺手改掉圆角」这条产品承诺从结构上成立，不靠人工自觉。
    - 颜色层写在布局层之后：同为单类选择器时后定义者覆盖前者，品牌色才能生效。
+   - P5 起两轴全叉乘：8 款色系可叠加在**任意**风格上（4 × 9 = 36 组合），
+     风格只管布局、色系只管颜色；颜色层不写版式 token，所以叠加后版式仍由
+     .wc-style-* 决定。根节点两层 class 同时挂，改 utils/theme.ts 的归一逻辑
+     把带色系的组合打回 default，客户会只换色不换布局，theme.spec.ts 会拦。
    每加一款模板必须给齐对应层的 token，theme.spec.ts 会逐个核对。 */
 page {
   --wc-primary: #1a8cff;
@@ -32,7 +36,7 @@ page {
   --wc-card-shadow-soft: 0 6rpx 18rpx rgba(30, 90, 160, 0.06);
   --wc-card-shadow-bg: 0 6rpx 20rpx rgba(0,0,0,.10);
 }
-/* 沉稳墨：近直角 + 细描边代替投影，工程 / 制造 / 法律的硬朗感。 */
+/* 紧凑信息：近直角 + 细描边代替投影，工程 / 制造 / 法律的硬朗感。 */
 .wc-style-ink {
   --wc-primary: #3d4b5c;
   --wc-primary-deep: #2b3745;
@@ -53,7 +57,7 @@ page {
   --wc-card-shadow-soft: 0 0 0 1rpx rgba(61, 75, 92, 0.12);
   --wc-card-shadow-bg: 0 0 0 1rpx rgba(31, 42, 53, 0.26);
 }
-/* 暖金棕：大圆角 + 胶囊按钮 + 暖色柔阴影，餐饮 / 文旅 / 家居的亲和感。
+/* 宽松亲和：大圆角 + 胶囊按钮 + 暖色柔阴影，餐饮 / 文旅 / 家居的亲和感。
    主色按 WCAG AA 实测调深过一档：早期 #a5742a 在「白字按钮 / 浅底主色字」
    两处只有 3.27～4.09，换模板反而不如默认款好读；现 12 组关键搭配最低 4.59
    （见 tests/theme.spec.ts）。浅色系保持暖调不变，只压深主色。 */
@@ -77,8 +81,8 @@ page {
   --wc-card-shadow-soft: 0 8rpx 22rpx rgba(143, 99, 32, 0.10);
   --wc-card-shadow-bg: 0 10rpx 28rpx rgba(90, 60, 20, 0.18);
 }
-/* 松石青：中圆角 + 极轻的青色投影，走清爽自然路线，与墨款的硬朗、
-   暖款的大圆角都拉开差距。主色 12 组搭配最低 4.71（见 theme.spec.ts）。 */
+/* 疏排透气：中圆角 + 极轻的青色投影，走清爽自然路线，与紧凑信息的硬朗、
+   宽松亲和的大圆角都拉开差距。主色 12 组搭配最低 4.71（见 theme.spec.ts）。 */
 .wc-style-teal {
   --wc-primary: #0f766e;
   --wc-primary-deep: #0a5a54;
@@ -246,7 +250,7 @@ page {
 .wc-style-default .mp-profile .cv { height: 440rpx; border-radius: 12rpx; }
 .wc-style-default .mp-profile .intro { line-height: 1.7; }
 
-/* 沉稳墨：头像缩小、信息紧凑、近直角；公司简介封面压矮去圆角，文字分段密排 */
+/* 紧凑信息：头像缩小、信息紧凑、近直角；公司简介封面压矮去圆角，文字分段密排 */
 .wc-style-ink .emp-card { padding: 20rpx 18rpx 16rpx; }
 .wc-style-ink .emp-card .ec-head { align-items: flex-start; }
 .wc-style-ink .emp-card .ec-avatar { width: 88rpx; height: 88rpx; border-width: 2rpx; }
@@ -259,7 +263,7 @@ page {
 .wc-style-ink .mp-profile .company-name { font-size: 32rpx; padding-bottom: 14rpx; }
 .wc-style-ink .mp-profile .intro { line-height: 1.6; margin-top: 14rpx; }
 
-/* 暖金棕：头像放大、行距放宽、胶囊按钮更大；封面更高更圆，简介留白充足 */
+/* 宽松亲和：头像放大、行距放宽、胶囊按钮更大；封面更高更圆，简介留白充足 */
 .wc-style-warm .emp-card { padding: 30rpx 24rpx 26rpx; }
 .wc-style-warm .emp-card .ec-avatar { width: 136rpx; height: 136rpx; }
 .wc-style-warm .emp-card .ec-info { margin-left: 26rpx; }
@@ -271,7 +275,7 @@ page {
 .wc-style-warm .mp-profile .company-name { padding-bottom: 26rpx; }
 .wc-style-warm .mp-profile .intro { line-height: 1.9; margin-top: 24rpx; }
 
-/* 松石青：半透磨砂卡、疏排；封面中高、细线分隔感、正文行距透气 */
+/* 疏排透气：半透磨砂卡、疏排；封面中高、细线分隔感、正文行距透气 */
 .wc-style-teal .emp-card { padding: 28rpx 24rpx; background: rgba(255, 255, 255, 0.88); }
 .wc-style-teal .emp-card .ec-avatar { width: 104rpx; height: 104rpx; }
 .wc-style-teal .emp-card .ec-info { margin-left: 24rpx; }
@@ -293,7 +297,7 @@ page {
 .wc-style-default .mp-achievements .feat-cover { height: 175rpx; border-radius: 12rpx; }
 .wc-style-default .mp-services .svc-item { width: 25%; }
 
-/* 沉稳墨：5 列紧凑分类网格、去圆角、细描边分隔；精选照片压矮；服务 4 列但收紧 */
+/* 紧凑信息：5 列紧凑分类网格、去圆角、细描边分隔；精选照片压矮；服务 4 列但收紧 */
 .wc-style-ink .mp-achievements .cat-item { width: 20%; padding: 6rpx 4rpx; }
 .wc-style-ink .mp-achievements .cat-icon,
 .wc-style-ink .mp-achievements .cat-placeholder { border-radius: 0; }
@@ -306,7 +310,7 @@ page {
 .wc-style-ink .mp-services .svc-icon-ph { border-radius: 0; }
 .wc-style-ink .mp-services .svc-title { font-size: 24rpx; margin-top: 6rpx; }
 
-/* 暖金棕：2 列大分类卡 + 单列横向大卡流；服务放宽到 3 列，圆角与留白都加大 */
+/* 宽松亲和：2 列大分类卡 + 单列横向大卡流；服务放宽到 3 列，圆角与留白都加大 */
 .wc-style-warm .mp-achievements .cat-item { width: 50%; padding: 18rpx 14rpx; }
 .wc-style-warm .mp-achievements .cat-icon,
 .wc-style-warm .mp-achievements .cat-placeholder { border-radius: 28rpx; }
@@ -318,7 +322,7 @@ page {
 .wc-style-warm .mp-services .svc-icon-ph { border-radius: 24rpx; }
 .wc-style-warm .mp-services .svc-title { font-size: 26rpx; margin-top: 16rpx; }
 
-/* 松石青：3 列疏排、轻卡片微阴影、细线感；服务同样疏排 */
+/* 疏排透气：3 列疏排、轻卡片微阴影、细线感；服务同样疏排 */
 .wc-style-teal .mp-achievements .cat-item { width: 33.33%; padding: 18rpx 12rpx; }
 .wc-style-teal .mp-achievements .cat-icon,
 .wc-style-teal .mp-achievements .cat-placeholder { border-radius: 16rpx; }

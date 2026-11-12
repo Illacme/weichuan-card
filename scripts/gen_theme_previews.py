@@ -18,24 +18,25 @@
 微信胶囊的真实质感、视频号播放器的真实画面、首页背景图与安全区。
 **最终观感必须走 `docs/real-device-acceptance.md` §7 的真机验收**，示意图不能替代。
 
-**P4：按「风格 × 色系」两轴出图**。12 张图仍是 12 个合法组合（4 风格默认色 +
-8 款 `brand-*`，后者全归 `default` 风格），但**布局不再只有一套**：预览 HTML 的
-模块节点改用 `app.wxss` 的真实钩子类名（`.emp-card` / `.mp-profile` /
-`.mp-achievements` / `.mp-services` 及其子元素），再把 `app.wxss` 里
-`.wc-style-<id> ...` 的规则**原文**（去掉前缀、rpx 换 px）注入 `<style>`。
-也就是说预览里的列数 / 间距 / 圆角 / 封面高度来自端上同一份 WXSS，
-不存在「另写第二套布局」——改了 `app.wxss` 布局却忘了重出图，`--check` 会红。
-每张图的颜色取该组合自己的 18 token；画布按**所属风格**的内容高度自然收口，
-底栏始终紧贴内容底部，短风格不会被拉出一大片空白。
+**P5：按「风格 × 色系」两轴全叉乘出图**。4 个风格 × (默认色 + 8 款品牌色系)
+= 36 个组合，文件名是 `<styleId>--<brandColorId 或 default>.png`，两轴都进文件名，
+不再压扁成 12 个扁平 templateId。模块节点用 `app.wxss` 的真实钩子类名
+（`.emp-card` / `.mp-profile` / `.mp-achievements` / `.mp-services` 及其子元素），
+再把 `.wc-style-<id> ...` 规则**原文**（去掉前缀、rpx 换 px）注入 `<style>`：
+列数 / 间距 / 圆角 / 封面高度来自端上同一份 WXSS，不存在「另写第二套布局」。
+每张图的 18 个 token = 该风格的全套 18 个（含 7 个版式 token）+ 色系的 11 个颜色
+覆盖；**色系绝不覆盖版式 token**，否则「紧凑信息 + 绛红」会悄悄长成默认圆角。
+画布按所属风格的内容高度自然收口，底栏始终紧贴内容底部。
 
 用法：
     python3 scripts/gen_theme_previews.py            # 重新生成全部预览图
     python3 scripts/gen_theme_previews.py --check    # 只校验产物（CI / 提交前用）
     python3 scripts/gen_theme_previews.py --measure  # 只实测各风格内容高度，不出图
 
---check 不需要浏览器，查「每款模板都有图 / PNG 合法 / 按风格尺寸一致 /
-token + 布局规则快照与 app.wxss 同版 / 通用素材齐全 / 区块与按钮文案同源 /
-不含任何真实客户身份」。生成需要本机 Chrome（可用 THEME_PREVIEW_CHROME 指定路径）。
+--check 不需要浏览器，查「36 个组合都有图 / PNG 合法 / 按风格尺寸一致 /
+token + 布局规则 + 组合映射快照与 app.wxss 同版 / 通用素材齐全 / 区块与按钮
+文案同源 / 不含任何真实客户身份」。生成需要本机 Chrome
+（可用 THEME_PREVIEW_CHROME 指定路径）。
 **改了 app.wxss 的配色 / 圆角 / 布局规则、改了首页区块、换了素材、改了占位文案、
 或加了一款模板，都必须重跑本脚本**：否则图片会悄悄停在旧样式。
 """
@@ -81,10 +82,13 @@ MEASURE_HEIGHT = 4000
 RPX_TO_PX = 0.5
 SCALE = 2  # 2x 出图，后台缩小显示仍可辨识，也可直接当销售材料用
 
-# 两轴归属真值：8 款 brand-* 全挂在 default 风格下（与 mptemplate.Split 一致）。
-# 布局注入只认这 4 个风格，色系只换颜色不改布局。
+# P5：两轴全叉乘。4 个风格 × (默认色 + 8 款色系) = 36 个组合。
+# 文件名用 "<style>--<brand 或 default>.png"：两轴都进文件名，谁也不压扁谁。
+# 后端 template_id 兼容派生列只有 12 个扁平 id，装不下 36 个组合，不能拿来当图名。
 DEFAULT_STYLE = "default"
 STYLE_IDS = ("default", "ink", "warm", "teal")
+COMBO_SEP = "--"
+NO_BRAND = "default"
 MODULE_HOOKS = (".emp-card", ".mp-profile", ".mp-achievements", ".mp-services")
 
 # 只引用**通用行业素材**：分类图标、服务插画、公司简介封面与两张案例建筑照片。
@@ -149,29 +153,30 @@ GO_ID_RE = re.compile(r'ID:\s*(DefaultID|"([a-z0-9_-]+)")')
 GO_DEFAULT_RE = re.compile(r'DefaultID\s*=\s*"([a-z0-9_-]+)"')
 
 
+def is_layout_token(key: str) -> bool:
+    """版式 token 只由风格层提供；颜色层一个都不许写（theme.spec.ts 会逐项拦）。"""
+    return key.startswith("--wc-r-") or key.startswith("--wc-card-shadow")
+
+
 def pairs(block: str) -> dict[str, str]:
     # strip 与 theme.spec.ts 的 readThemeVars() 一致，否则快照对账会被尾随空格搞出假红
     return {k: v.strip() for k, v in TOKEN_RE.findall(block)}
 
 
 def read_tokens() -> dict[str, dict[str, str]]:
-    """从 app.wxss 的两层主题块合并出 12 组 18 token（与 theme.spec.ts 同一口径）。
+    """从 app.wxss 的两层主题块读出 12 组**基础色板**（与 theme.spec.ts 同一口径）。
 
     P2 起根节点同时挂 .wc-style-*（布局层，给全套 18 个 token）与 .wc-brand-*
-    （颜色层，只给 11 个颜色 token，一个版式 token 都不许有）。后台预览仍按
-    12 款组合各出一张图，所以这里把品牌款的颜色层与 default 的 7 个版式 token
-    合并成完整一组。合并结果必须与拆层前逐字相同——否则 manifest 快照与 12 张
-    PNG 都得重出，还会给存量租户引入视觉突变。
+    （颜色层，只给 11 个颜色 token）。这里给品牌款补上 default 的 7 个版式 token
+    凑成 18 个，供 manifest 快照与守门对账。P5 出图不直接用这组，
+    而是由 combo_tokens() 按「风格 18 个 + 色系 11 个颜色」现算 36 组。
     """
     src = APP_WXSS.read_text(encoding="utf-8")
     m = DEFAULT_BLOCK_RE.search(src)
     if not m:
         raise SystemExit("app.wxss 找不到 page 上的默认 token 块")
     default = pairs(m.group(1))
-    layout = {
-        k: v for k, v in default.items()
-        if k.startswith("--wc-r-") or k.startswith("--wc-card-shadow")
-    }
+    layout = {k: v for k, v in default.items() if is_layout_token(k)}
     out: dict[str, dict[str, str]] = {"default": default}
     for t in STYLE_BLOCK_RE.finditer(src):
         out[t.group(1)] = pairs(t.group(2))
@@ -180,6 +185,37 @@ def read_tokens() -> dict[str, dict[str, str]]:
         merged.update(pairs(t.group(2)))
         out["brand-" + t.group(1)] = merged
     return out
+
+
+def combo_id(style: str, brand: str | None) -> str:
+    """两轴 → 预览图文件名主键。扁平 templateId 表达不了 36 个组合，别再退回它。"""
+    return f"{style}{COMBO_SEP}{brand or NO_BRAND}"
+
+
+def all_combos(brand_ids: list[str]) -> dict[str, tuple[str, str | None]]:
+    """4 风格 × (默认色 + 8 款色系) = 36 个组合，顺序与后台两步选择一致。"""
+    return {
+        combo_id(s, b): (s, b)
+        for s in STYLE_IDS
+        for b in [None, *brand_ids]
+    }
+
+
+def combo_tokens(
+    base: dict[str, dict[str, str]], style: str, brand: str | None
+) -> dict[str, str]:
+    """组合的 18 token = 该风格全套 + 色系的 11 个颜色覆盖，版式 token 不被覆盖。
+
+    直接 base[style].update(base[brand]) 会把品牌款里补齐的 **default 版式** 也
+    写进来，于是「紧凑信息 + 绛红」的近直角会悄悄变回默认圆角；客户看不到报错，
+    只会觉得换了风格没反应。所以这里按 key 逐个过滤。
+    """
+    merged = dict(base[style])
+    if brand:
+        for k, v in base[brand].items():
+            if not is_layout_token(k):
+                merged[k] = v
+    return merged
 
 
 def read_layout_rules() -> dict[str, list[str]]:
@@ -211,22 +247,20 @@ def layout_css(rules: list[str]) -> str:
     return "\n  ".join(rules)
 
 
-def style_of(theme_id: str) -> str:
-    """组合 id → 布局风格：8 款 brand-* 全归 default（与 mptemplate.Split 一致）。
-
-    色系只覆盖颜色 token，不换布局；后台固定预览区也用这个映射把
-    (styleId, brandColorId) 折回一张 PNG 的文件名。
-    """
-    return DEFAULT_STYLE if theme_id.startswith("brand-") else theme_id
-
-
 def manifest_payload(
     tokens: dict[str, dict[str, str]],
     layouts: dict[str, str],
     bottoms: dict[str, int],
     heights: dict[str, int],
+    combos: dict[str, tuple[str, str | None]],
+    combo_tok: dict[str, dict[str, str]],
 ) -> dict:
-    """随图写 token / 布局规则 / 画布 / 素材 / 占位文案快照：改了任一样却没重出图，守门能查出图旧了。"""
+    """随图写基础色板 / 36 组合并 token / 组合映射 / 布局 / 画布 / 素材 / 占位快照。
+
+    改了任一样却没重出图，守门能查出图旧了。comboTokens 是 P5 的核心快照：
+    它钉住「色系只覆盖颜色、版式仍由风格层给」，否则换风格只换色这种静默失败
+    在「36 张图都在 / 尺寸都对」这类检查下会一路绿灯。
+    """
     return {
         "source": "miniprogram/app.wxss",
         "canvas": [WIDTH, HEIGHT],
@@ -234,6 +268,10 @@ def manifest_payload(
         "canvasByStyle": heights,
         "contentBottoms": bottoms,
         "layouts": layouts,
+        "combos": {
+            cid: {"styleId": s, "brandColorId": b} for cid, (s, b) in combos.items()
+        },
+        "comboTokens": combo_tok,
         "seedAssets": SEED_FILES,
         "placeholders": PLACEHOLDER_TEXT,
         "tokens": tokens,
@@ -245,10 +283,12 @@ def write_manifest(
     layouts: dict[str, str],
     bottoms: dict[str, int],
     heights: dict[str, int],
+    combos: dict[str, tuple[str, str | None]],
+    combo_tok: dict[str, dict[str, str]],
 ) -> None:
     MANIFEST.write_text(
         json.dumps(
-            manifest_payload(tokens, layouts, bottoms, heights),
+            manifest_payload(tokens, layouts, bottoms, heights, combos, combo_tok),
             ensure_ascii=False, indent=2, sort_keys=True,
         ) + "\n",
         encoding="utf-8",
@@ -303,6 +343,8 @@ def check_manifest(
     layouts: dict[str, str],
     bottoms: dict[str, int],
     heights: dict[str, int],
+    combos: dict[str, tuple[str, str | None]],
+    combo_tok: dict[str, dict[str, str]],
 ) -> list[str]:
     if not MANIFEST.is_file():
         return ["缺 manifest.json（无法证明预览图与 app.wxss / 素材同版）"]
@@ -312,7 +354,14 @@ def check_manifest(
         return [f"manifest.json 不是合法 JSON：{e}"]
     problems = []
     if data.get("tokens") != tokens:
-        problems.append("token 快照与 app.wxss 当前值不一致：改了配色 / 圆角却没重跑本脚本")
+        problems.append("基础色板快照与 app.wxss 当前值不一致：改了配色 / 圆角却没重跑本脚本")
+    if data.get("comboTokens") != combo_tok:
+        problems.append("36 组合并 token 快照不一致：风格 / 色系叠加规则变了却没重出图")
+    expected_combos = {
+        cid: {"styleId": s, "brandColorId": b} for cid, (s, b) in combos.items()
+    }
+    if data.get("combos") != expected_combos:
+        problems.append("组合映射快照不一致：重出图后后台会按新组合寻图，旧图会 404")
     if data.get("layouts") != layouts:
         problems.append("布局规则快照与 app.wxss 当前值不一致：改了模块布局却没重跑本脚本")
     if data.get("canvas") != [WIDTH, HEIGHT] or data.get("scale") != SCALE:
@@ -701,19 +750,28 @@ def main() -> int:
         print("✗ Go 白名单出现重复 id", file=sys.stderr)
         return 1
     go_styles = [i for i in ids if not i.startswith("brand-")]
+    go_brands = [i for i in ids if i.startswith("brand-")]
     if go_styles != list(STYLE_IDS):
         print(f"✗ Go 白名单的风格款与布局规则对不上：{go_styles} != {list(STYLE_IDS)}", file=sys.stderr)
         return 1
-    if style_of(ids[0]) != DEFAULT_STYLE:
-        print("✗ 默认款必须归 default 风格", file=sys.stderr)
+    if ids[0] != DEFAULT_STYLE:
+        print("✗ 默认款必须是 default 风格", file=sys.stderr)
         return 1
-    active = {i: tokens[i] for i in ids}
+    if not go_brands:
+        print("✗ Go 白名单没有品牌配色款，叉乘不出全组合", file=sys.stderr)
+        return 1
+    combos = all_combos(go_brands)
+    if len(combos) != len(STYLE_IDS) * (1 + len(go_brands)):
+        print("✗ 组合键发生冲突（两轴拼不出全叉乘）", file=sys.stderr)
+        return 1
+    combo_tok = {cid: combo_tokens(tokens, s, b) for cid, (s, b) in combos.items()}
+    first = combo_tok[combo_id(DEFAULT_STYLE, None)]
 
     # 查的是代入占位文案后的最终 HTML，不能只查模板源码，否则是假绿。
-    # P4 起四个风格各查一遍：布局不同，占位文案 / 身份素材必须同样干净。
-    problems = check_sources() + check_no_identity(build_html(active[ids[0]]))
+    # P5 起四个风格各查一遍：布局不同，占位文案 / 身份素材必须同样干净。
+    problems = check_sources() + check_no_identity(build_html(first))
     for sid in STYLE_IDS:
-        problems += check_no_identity(build_html(active[ids[0]], sid))
+        problems += check_no_identity(build_html(first, sid))
     if problems:
         for p in problems:
             print(f"✗ {p}", file=sys.stderr)
@@ -721,39 +779,39 @@ def main() -> int:
 
     if args.check:
         files = {p.stem: p for p in OUT_DIR.glob("*.png")} if OUT_DIR.is_dir() else {}
-        extra = sorted(set(files) - set(ids))
-        absent = [i for i in ids if i not in files]
+        extra = sorted(set(files) - set(combos))
+        absent = [cid for cid in combos if cid not in files]
         data = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.is_file() else {}
         heights = data.get("canvasByStyle", {})
         bad = []
-        for i in ids:
-            p = files.get(i)
+        for cid, (sid, _brand) in combos.items():
+            p = files.get(cid)
             if not p:
                 continue
-            h = heights.get(style_of(i))
+            h = heights.get(sid)
             size = png_size(p)
             expected = (WIDTH * SCALE, h * SCALE) if isinstance(h, int) else None
             if p.stat().st_size < 5000 or size != expected:
-                bad.append(f"{i}({size}, {p.stat().st_size}B, 期望 {expected})")
-        print(f"模板 {len(ids)} 款：{', '.join(ids)}")
+                bad.append(f"{cid}({size}, {p.stat().st_size}B, 期望 {expected})")
+        print(f"组合 {len(combos)} 个：{len(STYLE_IDS)} 风格 × {1 + len(go_brands)} 色档")
         print(f"预览图 {len(files)} 张，按风格画布 {heights}")
         # --check 不跑浏览器：用上一次出图时记下的实测值做快照对账。
-        # 布局规则 / token 一旦变了，下面的 layouts / tokens 比对就会判红，
-        # 要求重出图（重出图时会重新实测并重写这两个快照）。
+        # 布局规则 / 基础色板 / 36 组合并 token 一旦变了，下面的比对就会判红，
+        # 要求重出图（重出图时会重新实测并重写这几个快照）。
         problems = check_manifest(
-            active, layouts, data.get("contentBottoms", {}), data.get("canvasByStyle", {})
+            tokens, layouts, data.get("contentBottoms", {}), heights, combos, combo_tok
         )
         if absent:
             problems.append(f"缺图：{absent}")
         if extra:
-            problems.append(f"多余图片：{extra}")
+            problems.append(f"多余图片（旧扁平 id 残留？）：{extra}")
         if bad:
             problems.append(f"尺寸/体积异常：{bad}")
         if problems:
             for p in problems:
                 print(f"✗ {p}", file=sys.stderr)
             return 1
-        print("✓ 预览图、四风格布局、演示素材与模板白名单同版，PNG 合法且按风格尺寸一致")
+        print("✓ 36 组合预览图、四风格布局、组合 token 与模板白名单同版，PNG 合法且按风格尺寸一致")
         return 0
 
     chrome = find_chrome()
@@ -762,13 +820,13 @@ def main() -> int:
         return 1
 
     # 逐风格实测：测量时用 MEASURE_HEIGHT 让内容自然流完，再按实测底部给该风格收口。
-    # 12 张图按所属风格共用该风格的画布高度，底栏始终紧贴内容，短风格不留大尾巴。
+    # 36 张图按所属风格共用该风格的画布高度，底栏始终紧贴内容，短风格不留大尾巴。
     bottoms: dict[str, int] = {}
     heights: dict[str, int] = {}
     bar_top = HEIGHT - BAR_HEIGHT
     for sid in STYLE_IDS:
         probe_html = build_html(
-            active[ids[0]], sid, MEASURE_HEIGHT, layout_css(layout_rules[sid])
+            first, sid, MEASURE_HEIGHT, layout_css(layout_rules[sid])
         )
         bottom = measure_content_bottom(chrome, probe_html)
         bottoms[sid] = bottom
@@ -787,14 +845,19 @@ def main() -> int:
         return 0
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for i in ids:
-        sid = style_of(i)
-        out = OUT_DIR / f"{i}.png"
-        html = build_html(active[i], sid, heights[sid], layout_css(layout_rules[sid]))
+    for cid, (sid, _brand) in combos.items():
+        out = OUT_DIR / f"{cid}.png"
+        html = build_html(combo_tok[cid], sid, heights[sid], layout_css(layout_rules[sid]))
         render(chrome, html, out, heights[sid])
         print(f"✓ {out.relative_to(ROOT)}  [{sid}]  {png_size(out)}  {out.stat().st_size}B")
-    write_manifest(active, layouts, bottoms, heights)
-    print(f"完成：{len(ids)} 张预览图（{len(STYLE_IDS)} 套布局 × 各自色系）+ token / 布局快照，"
+    # P5 改了命名：旧扁平 id 的 12 张图已成死资源，留着会让 --check 判「多余图片」，
+    # 仓库还白背十几 MB。只清本脚本自己产出的 *.png，不碰目录里其它文件。
+    for p in OUT_DIR.glob("*.png"):
+        if p.stem not in combos:
+            p.unlink()
+    write_manifest(tokens, layouts, bottoms, heights, combos, combo_tok)
+    print(f"完成：{len(combos)} 张预览图（{len(STYLE_IDS)} 风格 × {1 + len(go_brands)} 色档）"
+          f"+ 基础色板 / 组合 token / 布局快照，"
           f"token 与布局均来自 {APP_WXSS.relative_to(ROOT)}，图形来自 {SEED_DIR.relative_to(ROOT)}")
     return 0
 
