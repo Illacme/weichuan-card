@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { fileURLToPath, URL } from 'node:url'
+import { createEPResolvers } from './vite/ep-resolver.mjs'
 
 // PC 管理后台 Vite 配置
 // 开发期通过 /api 代理把请求转发到本地 Go 后端（默认 8080），避免跨域。
@@ -36,6 +36,10 @@ function rewriteOriginForProxy(proxy: any) {
 // 一次只下发当前选中那一张（切换时再拉下一张），所以不存在「发版后全量重下 41MB」。
 const buildStamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)
 
+// 裸 `element-plus` 值导入（ElMessage / ElMessageBox）的薄封装。
+// 详见 ./vite/element-plus-runtime.mjs 顶部注释与下方 resolve.alias。
+const epRuntimeShim = fileURLToPath(new URL('./vite/element-plus-runtime.mjs', import.meta.url))
+
 export default defineConfig({
   // 构建期常量：静态预览图的版本戳
   define: {
@@ -43,20 +47,34 @@ export default defineConfig({
   },
   plugins: [
     vue(),
-    // Element Plus 按需引入：自动扫描模板中的 el-* 组件并按需注册、注入对应 CSS，
-    // 取代全量 app.use(ElementPlus) 与 import 'element-plus/dist/index.css'（约 361KB），
-    // 首屏 CSS 体积显著下降。ElMessage / ElMessageBox 等命令式 API 改为「显式 import」
-    // （见各 .vue 与 src/api/request.ts），其样式在 src/main.ts 中手动引入，避免依赖
-    // AutoImport 的运行时注入（实测该注入在构建产物中未生效，会导致线上 ReferenceError）。
+    // Element Plus 深路径按需引入。
+    //
+    // 官方解析器会把每个 <el-*> 都注入同一个 `element-plus/es`
+    // 桶入口（聚合 111 个组件，约 823KB 进首屏），光改命令式 API 或光改 resolver
+    // 都无效——两条来源必须同时掐断：
+    //   - 模板组件 / v-loading 指令 → createEPResolvers() 生成深路径 + 全部样式；
+    //   - `from 'element-plus'` 的命令式 API → resolve.alias 转到 epRuntimeShim。
+    // 实测首屏 1,369,641 → 约 1,000,000 字节（见 docs/commercial-readiness.md）。
+    // ElMessage / ElMessageBox 的 CSS 继续在 src/main.ts 显式引入，避免依赖
+    // AutoImport 的运行时注入（实测该注入在构建产物中未生效，会线上 ReferenceError）。
     Components({
-      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
-      dts: 'src/components.d.ts',
+      resolvers: createEPResolvers(),
+      // 关掉自动生成：自定义 resolver 每次构建都会重写 components.d.ts 里的类型
+      // 导入路径，在只读/受限构建环境里写回会超时。声明文件是纯类型产物，与运行时
+      // 无关，改为手工维护 + src/vite/ep-resolver.spec.ts 对账「实际用到的 el-*
+      // 组件都在声明里」，新增组件漏声明必红。
+      dts: false,
     }),
   ],
   resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
+    alias: [
+      // 精确匹配裸包名（带 ^$），不会碰到 `element-plus/es/...` 深路径，也不会
+      // 形成「shim → EP 内部 → 裸 element-plus → shim」循环（实测 EP/es 内无裸
+      // 自引用）。Vitest 用独立的 vitest.config.ts，不读本文件，所以 25 个
+      // vi.mock('element-plus') 与 54 处源码导入都不需要改。
+      { find: /^element-plus$/, replacement: epRuntimeShim },
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+    ],
   },
   server: {
     host: '0.0.0.0',

@@ -2936,9 +2936,14 @@ CF 会把「这张图不存在」锁死——`/uploads/` 在 2026-11-03 踩过�
 但 Rollup 的 `importers` 明确指认 App.vue 是 importer——注入发生在 Vue 插件编译之后、
 `transform` 钩子看不到的阶段。所以第 5 条路线从原理上就不成立。
 
-**唯一能真正降首屏的方向是多页拆包**（登录页与后台两个入口，首屏各自只装自己那半），
+**当时认为唯一能真正降首屏的方向是多页拆包**（登录页与后台两个入口，首屏各自只装自己那半），
 代价是要动 `vite.config.ts` 的 `rollupOptions.input` 与路由守卫落地页，属于结构变更，
 排到 P3。评估全程未提交任何改动（`git checkout -- src` + 还原 `vite.config.ts`）。
+
+> ⚠️ **订正（第五十轮，2026-11-13）**：上面「五条路全 0 收益 ⇒ 只能多页拆包」的结论
+> **已被推翻**。当时漏了第二条独立的桶入口来源（54 处命令式 API 的裸包导入），
+> 每条路线只掐断一条，另一条仍把整库拉回来，所以字节数才一字不变。两条同时掐断
+> 即可全站降 25.7%，无需 MPA。详见本文末「第五十轮」。
 
 ### 二、P1 落地：5 条公开只读接口加 60 秒边缘缓存
 
@@ -3121,3 +3126,118 @@ go run ./cmd/thumbbackfill -force
 **用户侧待办**：① `git push origin main`；② 线上按 §4.5.1 跑 `-force` 回填；
 ③ **Cloudflare Purge `/uploads/*`**；④ 上一轮 P1 的第 5 条 Cache Rule 若还没加，
 一并补上（runbook §5.2.7）。
+
+## 第五十轮：P3 Element Plus 深路径按需引入（首屏 −25.7%，2026-11-13）
+
+### 一、方向变更：不做多页拆包，改做深路径按需导入
+
+第四十八轮把 P3 定成「登录页 / 后台两入口 MPA」。动手前重新评估，否掉：
+
+- MPA **只优化未登录登录页**首屏，已登录后台首屏仍要完整下载同一份资源；
+- 登录成功后整页重载，反而把后台资源多拉一遍；
+- 登录页本身用 `el-card` / `el-form` / `el-input` / `el-button`，`api/request.ts`
+  又静态 import `ElMessage` 与 router，真要甩掉 EP 需重写原生 UI 并解耦请求层；
+- 真 MPA 还要改 nginx SPA 兜底与发版脚本，属于结构变更。
+
+用户选择「改做深路径按需导入」：不动路由结构，全站首屏一起降体积。
+
+### 二、订正第四十八轮：「五路全败」的真正根因是两条独立来源
+
+旧结论「别试图靠 tree-shaking 给 element-plus 瘦身」不再成立。整库进首屏有
+**两个互不依赖的入口**，指向同一个 `element-plus/es` 桶（→ `es/component.mjs`
+聚合 111 个组件）：
+
+| # | 来源 | 注入点 |
+| --- | --- | --- |
+| 1 | 模板 `<el-*>` | 官方 resolver 给**每个** SFC 注入同一个共享桶入口 `element-plus/es` |
+| 2 | 命令式 API | 54 处 `import { ElMessage, ElMessageBox } from 'element-plus'` 直连包根 |
+
+单独修任一条，另一条仍会把整库拉回来，于是此前五条路线（改子路径、拆
+`manualChunks`、`treeshake.moduleSideEffects`、自写插件、只改一处来源）每一条都
+**精确地 0 收益**。这不是摇树配置问题，两条同时掐断才见效。
+
+### 三、实现（5 个新文件 + 1 处配置改动）
+
+| 文件 | 作用 |
+| --- | --- |
+| `frontend/vite/ep-resolver.mjs` | 构建期解析器：读 EP 官方 `es/component.mjs` 文本生成「组件名 → 组件目录」表（**不 import 它**，避免把桶入口带进构建图），产出组件 + 指令两个 resolver |
+| `frontend/vite/ep-resolver.d.mts` | 构建期模块的类型声明，供守门 spec 静态 import |
+| `frontend/vite/element-plus-runtime.mjs` | 裸 `element-plus` 值导入的薄封装，只 re-export `ElMessage` / `ElMessageBox` 且都走深路径 |
+| `frontend/src/vite/ep-resolver.spec.ts` | 13 条行为级 / 源码级守门 |
+| `frontend/vite.config.ts` | 换成 `createEPResolvers()`、`dts: false`、alias 精确匹配裸包名 |
+
+**四个关键设计**：
+
+1. **映射不手工维护**：45 种在用组件全部能在官方导出表里定位，升级 EP 自动跟随；
+   导出表格式若变（比如改成 `export *`），解析器直接抛错，不静默产出空组件。
+2. **复合组件「组件目录 + 样式目录」双映射**：14 个组件的导出在父目录，CSS 却只在
+   同名子目录的 `style/` 下（子目录没有 `index.mjs`）——`aside/header/main`、
+   `descriptions-item`、`dropdown-item/menu`、`form-item`、`menu-item/sub-menu`、
+   `option`、`radio-button/group`、`tab-pane`、`table-column`。只引父目录会静默丢
+   样式：早期探针实测少 83 条 `.el-form-item` 选择器、CSS 少 12KB，页面零报错。
+3. **`v-loading` 是指令不是组件**，24 处模板在用。单独补 `type: 'directive'` 分支，
+   解析成 `ElLoadingDirective` + `loading/style/css`；漏了所有 loading 态静默消失。
+4. **不改 54 处源码 / 25 个 `vi.mock('element-plus')`**：Vitest 用独立的
+   `vitest.config.ts`（alias 只有 `@`，不读 `vite.config.ts`），所以 vite 侧的
+   `resolve.alias` 对测试零影响；dev 与 build 统一走薄封装，不存在两套实现。
+   alias 用 `/^element-plus$/` 精确匹配，碰不到 `element-plus/es/...` 深路径，
+   实测 EP/es 内部没有任何裸自引用，不会形成循环。
+
+**`dts: false` 的取舍**：自定义 resolver 每次构建都会重写 `components.d.ts` 里的类型
+导入路径，在受限构建环境写回会超时。声明文件是纯类型产物、与运行时无关，改为
+手工维护 + 守门断言「SFC 里实际用到的每个 `el-*` 都在声明里」，新增组件漏声明必红。
+另有一条守门钉住「`vitest.config.ts` 不给 element-plus 加 alias」，防止有人顺手同步
+别名把 25 个 mock 全打破。
+
+### 四、实测收益（逐字节，基线 `dist-check-p2b` vs `dist-check-p3final`）
+
+| 首屏文件 | 基线 | 本轮 |
+| --- | ---: | ---: |
+| 入口 JS | 16,537 | 16,535 |
+| vendor JS | 298,645 | 275,847 |
+| **Element Plus JS** | **823,973** | **494,368** |
+| Element Plus CSS | 227,922 | **227,922** |
+| 业务 CSS | 2,564 | 2,564 |
+| **首屏合计** | **1,369,641** | **1,017,236** |
+
+**省 352,405 字节（−25.7%，1337.5KB → 993.4KB）**。EP CSS 的 sha256 与基线
+**逐字相同**（`c24b8ca8c35c99fd…`）、文件名也相同，17 类关键选择器数量全等——
+这是「零样式丢失」的最强证据。EP JS 里 `ElAffix` / `ElCalendar` / `ElCascader` /
+`ElCarousel` / `ElTimeline` / `ElTransfer` / `ElColorPicker` 等未用组件标识已清空。
+
+比早期探针的 1,000,298 字节多约 17KB，是**刻意换来的**：探针漏了子样式与
+`v-loading`，体积更小但 CSS 少 12KB；本轮补齐后样式与旧版完全一致。体积不是
+唯一目标，静默丢样式更贵。
+
+### 五、守门与反向验证
+
+13 条守门覆盖：从 SFC 真实扫出 45 个组件（防止空集合假绿）→ 官方导出表定位 →
+深路径与 `index.mjs` 存在 → 14 个复合组件必须双样式 → 未知组件必须**抛错**
+（返回 null 会让模板渲染成空白块）→ `v-loading` 指令 → `components.d.ts` 声明 →
+薄封装导出集合与源码运行时导入符号**逐字对账** → 命令式 API 的 CSS 仍由
+`main.ts` 引入 → vite 配置禁止回潮。
+
+**8 项注入全部使守门变红**，还原后文件 sha256 零漂移、守门复绿：
+
+1. 换回官方 resolver；2. 漏复合组件子样式；3. 未知组件返回 null；
+4. 漏 `v-loading` 指令；5. 薄封装漏 `ElMessageBox`；6. `components.d.ts` 漏声明；
+7. 改回自动 dts；8. alias 不再精确匹配裸包名。
+
+全量门禁串行跑齐：`golangci-lint` 0 issues、`go test ./...` 全绿、
+`gen_theme_previews.py --check` 绿、`eslint .` 0、`vue-tsc --noEmit` 0、
+全量 Vitest **96 文件 / 1627 例**全绿、`vite build --outDir dist-check-p3final` 成功、
+nginx-check **113/113**、`git diff --check` 干净。
+
+### 六、刻意未做 / 边界
+
+- 不动任何 `.vue` 与既有 spec 的 import 语句，不动后端 / 迁移 / OpenAPI / 数据库；
+- 原 P3 的 MPA 方案取消；P4「接入路径（国内 CDN / 备案 / 源站访问控制）」仍开放；
+- 产物字节阈值**没有**进 CI：CI 跑 Vitest 时没有 `dist/`，写「若产物存在才检查」
+  会造成假绿。字节数由本地构建量测并记在本节，守门是源头（源码 / 行为）级；
+- 以后新增 `el-*` 组件需手工在 `src/components.d.ts` 补声明，守门会拦；
+  新增「从裸 `element-plus` 取值」的符号需同步加进薄封装，守门也会拦；
+- EP 升级若改了 `es/component.mjs` 的格式，解析器会显式抛错而不是静默降级。
+
+**用户侧待办**（沿用前两轮，本轮无新增运维动作）：① `git push origin main`；
+② 线上按 §4.5.1 跑 `thumbbackfill -force` 回填 + **CF Purge `/uploads/*`**；
+③ P1 的第 5 条 CF Cache Rule（runbook §5.2.7）。
