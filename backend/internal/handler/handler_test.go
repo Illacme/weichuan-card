@@ -2482,6 +2482,97 @@ func TestMultiTenantIsolation(t *testing.T) {
 	require.Equal(t, "乙司", body["companyShortName"])
 }
 
+// TestHomeLayoutTenantIsolation 主题两轴（style_id / brand_color_id）的租户语义。
+//
+// 2026-11-12 用户提问触发：「每个企业初始都是默认的整体风格为标准均衡，品牌配色为默认色吧，
+// 不会互相影响吧」——两件事都要用测试钉住，不能靠读代码的口头结论：
+//
+//  1. **初始值**：新建企业只写 CompanyID + Order（见 companies.go 的开通事务），
+//     style_id 靠 DB 默认落 'default'，brand_color_id 保持 NULL。
+//     注意 NULL 不是「没设置」，它的语义就是「用该风格的默认色」——端上
+//     normalizeBrand(null) 同样返回 null，两处一致。若哪天有人把默认值改成字面量
+//     "default"，前端 normalizeBrand 会把它当未知值丢掉（白名单里没有 default 这一档），
+//     表面看没坏，实际是两套语义各说各话，所以这里把 NULL 显式断言下来。
+//  2. **隔离**：三处合力——targetCompanyID 对企业管理员强制取 JWT 里的租户（不可用
+//     ?companyId= 越权）、读写都带 company_id 条件、home_layouts 上有
+//     uk_home_layout_company 唯一索引。改一家不能动另一家。
+//
+// 访客侧（/api/home-layout）也一并验：它走 publicCompanyID(?companyId=，缺省 1 号租户)，
+// 与后台读的是同一张表的不同租户行。
+func TestHomeLayoutTenantIsolation(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	plat := newTestClient(r, t)
+
+	_, body := plat.do("POST", "/api/admin/login", map[string]interface{}{
+		"username": "admin", "password": "admin123456",
+	}, "")
+	require.EqualValues(t, 0, body["code"])
+
+	// 开通乙公司（不灌分类模板，本用例不关心分类）
+	_, body = plat.doWithCookie("POST", "/api/admin/companies", map[string]interface{}{
+		"name": "主题隔离乙公司", "shortName": "乙司主题",
+		"adminUsername": "theme2", "adminPassword": "theme2pass",
+		"seedCategories": false,
+	})
+	require.EqualValues(t, 0, body["code"])
+	comp2ID := int64(body["data"].(map[string]interface{})["id"].(float64))
+	comp2Path := fmt.Sprintf("/api/admin/home-layout?companyId=%d", comp2ID)
+
+	// ===== 1. 新企业初始值：标准均衡 + 默认色 =====
+	_, body = plat.doWithCookie("GET", comp2Path, nil)
+	require.EqualValues(t, 0, body["code"])
+	d := body["data"].(map[string]interface{})
+	require.Equal(t, "default", d["styleId"], "新企业的默认整体风格必须是标准均衡")
+	require.Nil(t, d["brandColorId"], "默认色以 NULL 存储（= 用该风格自带默认色），不是字面量 \"default\"")
+	require.True(t, d["templateEntitled"].(bool),
+		"测试环境应默认全开通高级款（Features 为空 = 全开）；这条前提变了，下面访客侧断言要跟着改")
+
+	// 1 号租户同样是 default / NULL（存量行也走同一默认）
+	_, body = plat.doWithCookie("GET", "/api/admin/home-layout", nil)
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "default", body["data"].(map[string]interface{})["styleId"])
+	require.Nil(t, body["data"].(map[string]interface{})["brandColorId"])
+
+	// ===== 2. 改 1 号租户 → 乙公司不受影响 =====
+	_, body = plat.doWithCookie("PUT", "/api/admin/home-layout", map[string]interface{}{
+		"styleId": "warm", "brandColorId": "brand-crimson",
+	})
+	require.EqualValues(t, 0, body["code"], "保存高级组合应成功（测试环境已全开通）")
+
+	_, body = plat.doWithCookie("GET", comp2Path, nil)
+	d = body["data"].(map[string]interface{})
+	require.Equal(t, "default", d["styleId"], "改 1 号租户把乙公司的风格带跑了")
+	require.Nil(t, d["brandColorId"], "改 1 号租户把乙公司的配色带跑了")
+
+	// ===== 3. 改乙公司 → 1 号租户不受影响 =====
+	_, body = plat.doWithCookie("PUT", comp2Path, map[string]interface{}{"styleId": "ink"})
+	require.EqualValues(t, 0, body["code"])
+
+	_, body = plat.doWithCookie("GET", "/api/admin/home-layout", nil)
+	require.Equal(t, "warm", body["data"].(map[string]interface{})["styleId"],
+		"改乙公司把 1 号租户的风格带跑了")
+	require.Equal(t, "brand-crimson",
+		body["data"].(map[string]interface{})["brandColorId"].(string),
+		"改乙公司把 1 号租户的配色带跑了")
+
+	// 乙公司只提交了 styleId，色系应保持 NULL（没提交的字段不能被顺手写脏）
+	_, body = plat.doWithCookie("GET", comp2Path, nil)
+	require.Equal(t, "ink", body["data"].(map[string]interface{})["styleId"])
+	require.Nil(t, body["data"].(map[string]interface{})["brandColorId"],
+		"只提交 styleId 时不该顺带写 brand_color_id")
+
+	// ===== 4. 访客侧按租户分发（响应是根级，不在 data 里）=====
+	guest := newTestClient(r, t)
+	_, body = guest.do("GET", "/api/home-layout", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "warm", body["styleId"], "访客（缺省 1 号租户）应看到 1 号租户自己的主题")
+
+	_, body = guest.do("GET", fmt.Sprintf("/api/home-layout?companyId=%d", comp2ID), nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "ink", body["styleId"], "访客带 companyId 时应看到该企业自己的主题")
+	require.Nil(t, body["brandColorId"])
+}
+
 // TestCompanyShortNameDefault 企业简称缺省值：企业管理里未设置简称（留空/纯空白）时，
 // company.short_name 回落「微传名片」（侧边栏品牌名）；公司信息简称不跟随该缺省值
 // （留空 → 小程序顶栏展示企业全称），两个简称相互独立。

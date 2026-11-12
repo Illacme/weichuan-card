@@ -2776,3 +2776,51 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 
 **验收**：36 张原图逐字节未变（Chrome 截图是确定性的，git 里只多出 36 个 `.thumb.png` +
 `manifest.json` 两行字段），`--check` 通过，nginx-check 110 项全绿。
+
+## 第四十六轮：主题两轴的租户语义固化（初始值 + 互不影响，2026-11-12）
+
+用户确认口径：
+
+> 「每个企业初始都是默认的整体风格为标准均衡，品牌配色为默认色吧，不会互相影响吧」
+
+两句话都对，但「不会互相影响」这种事不能靠读代码口头保证，本轮逐层核实并固化成测试。
+
+**整条链路的证据**：
+
+| 层 | 实现 | 位置 |
+| --- | --- | --- |
+| DB 默认值 | `style_id VARCHAR(32) NOT NULL DEFAULT 'default'`、`brand_color_id VARCHAR(32) DEFAULT NULL` | 迁移 `0042`、`model.HomeLayout` 的 gorm tag |
+| 开通企业 | 事务里只写 `HomeLayout{CompanyID, Order}`，风格两列留给 DB 默认 | `handler/companies.go` |
+| 后台读 | 无行时回 `mptemplate.DefaultID`（`"default"`）+ `nil`，不是空串 | `content.go` GET `/api/admin/home-layout` |
+| 租户判定 | 企业管理员**强制**取 JWT 里的租户（`?companyId=` 无效）；平台超管才可显式切换 | `tenant.go` `targetCompanyID` |
+| 读写条件 | 读 `First(company_id = ?)`；写作用于查出来的那行主键 | `content.go`、`repository.GetHomeLayout` |
+| DB 兜底 | `home_layouts` 上 `uk_home_layout_company(company_id)` 唯一索引，一家最多一行 | 迁移 `0011` |
+| 访客读 | `publicCompanyID` 取 `?companyId=`（缺省 1 号租户），小程序请求层对 `/api/home-layout` 自动注入 | `handler.go`、`miniprogram/utils/request.ts` |
+| 端上归一 | `normalizeStyle(空/未知) → 'default'`；`normalizeBrand(空/未知) → null`（= 该风格默认色） | `miniprogram/utils/theme.ts` |
+
+**实测（临时 Go 测试，跑完即删）**：模拟 `companies.go` 的写入形态（只给 `CompanyID` + `Order`），
+落库结果是 `style_id="default"`、`brand_color_id=NULL`；随后把 10 号企业改成 `warm` + `brand-crimson`，
+9 号企业仍是 `default`/`NULL`。证明 GORM 的 `default:default` tag 在 `Create` 时确实省略该列、
+让 DB 默认生效，而不是把零值 `""` 写进去。
+
+**新增守门**：`TestHomeLayoutTenantIsolation`（SQLite 与 MySQL parity 同一套断言风格）钉住四件事：
+
+1. 新开通企业的 `GET /api/admin/home-layout` 必须是 `styleId="default"` + `brandColorId=null`；
+2. 改 1 号租户为 `warm` + `brand-crimson` 后，乙公司读出来仍是 `default`/`null`；
+3. 改乙公司为 `ink` 后，1 号租户仍是 `warm` + `brand-crimson`；且只提交 `styleId` 时
+   **不能顺带写脏** `brand_color_id`（仍是 `null`）；
+4. 访客侧 `/api/home-layout` 与 `?companyId=` 分别取到两个租户各自的值。
+
+**反向验证**：把读接口的 `First(&hl, "company_id = ?", cid)` 改成不带条件（模拟「有人写出串租户
+bug」），测试立刻红：`expected: "warm" / actual: "ink"`——正是「乙公司的配置盖到了 1 号租户」的
+症状。还原后恢复全绿。
+
+**两个必须知道的边界（不是 bug，是设计）**：
+
+1. `brand_color_id` 存的是 **NULL**，不是字面量 `"default"`。语义上「NULL = 用该风格自带默认色」，
+   端上 `normalizeBrand` 同样把 NULL/未知值都归成 `null`。**不要**图省事把它改成 `"default"`：
+   白名单里没有 `default` 这一档，`normalizeBrand("default")` 会当未知值丢掉，两套语义就开始打架。
+2. 访客侧缺省落 **1 号租户**。所以「企业独立小程序」必须让请求带上 `companyId`（独立版是锁定值，
+   平台模式是扫码/分享粘滞值），否则访客会看到 1 号租户的主题。小程序 `request.ts` 已对
+   `/api/home-layout` 自动注入，这条链路有 `themeBootstrap.spec.ts` 钉住。
+   另外平台超管可以用 `?companyId=N` 改任意企业的主题——这是产品设计（平台运营），不是越权。
