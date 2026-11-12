@@ -607,7 +607,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/projects/:id?companyId= | 项目详情（解析 album JSON；含 categoryName 与 updatedAt） |
 | GET  | /api/services?companyId= | 业务服务列表 |
 | GET  | /api/services/:id?companyId= | 业务服务详情（含 updatedAt） |
-| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 风格模板 `templateId`（12 款：`default` 免费，3 款整体风格 + 8 款品牌配色为高级款，未授权回落 `default`）。访客从分享直达二级页时 `app.ts` 冷启动也调本接口预热主题 |
+| GET  | /api/home-layout?companyId= | 小程序展示配置（**字段全在响应根级**）：板块顺序 `order` + 首页背景 `bgImage` / `bgMask`（空串=不设背景）+ 风格两轴 **`styleId` / `brandColorId`**（P1 起为真值，`brandColorId=null` 表示用该风格默认色）+ `templateId` **兼容派生列**（12 款：`default` 免费，3 款整体风格 + 8 款品牌配色为高级款，未授权回落 `default`）。访客从分享直达二级页时 `app.ts` 冷启动也调本接口预热主题 |
 | GET  | /api/company?companyId= | 企业公开信息（名称/简称/LOGO/状态）：小程序申请页展示申请目标、企业独立版自检配置用 |
 | GET  | /api/team?companyId=&page=&size=&keyword= | 名片墙：该企业**启用中**员工（staffId/name/title/avatar）+ 企业抬头 + `entry{mode,staffId}`（裸启动的**生效**入口，指定员工不可用时已回落 `wall`）。小程序裸启动（扫体验版二维码 / 直接打开）的落地页数据源。**只输出白名单字段**——`model.Employee` 上的 Phone/Email/Landline/OpenID 一律不出网。**不挂 CDN 缓存**（改完入口设置要能立刻扫码验证）。**分页与搜索**：`size` 缺省 300（与改造前一致，老端不带参数行为不变）、上限 300，新端固定传 60；`keyword` 同时匹配姓名与职位。回包 `{code, company, entry, data, total, page, size, hasMore, keyword}`，`total` 是**匹配总数**、`hasMore` 由服务端算（端上别用 `total - data.length` 推）。姓名是 PII 密文列、SQL 做不了 `LIKE '张%'`，带关键字时走「全员解密 → Go 侧过滤 → 切片」（`repository.MaxTeamSearchScan` 上限 5000 人），**不要优化回 SQL LIKE** |
 | POST | /api/stat/track | 埋点上报（staffId + eventType + targetId；公开接口但按 IP 限流 60 次/分并校验员工存在、事件类型白名单、targetId 存在且同租户） |
@@ -718,8 +718,8 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/services | 新增业务服务 |
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
-| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格模板 `templateId`、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
-| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。非法模板 id 回 code=1；未开通 `mp_template_advanced` 且「新选」高级款回 code=403 |
+| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`** + `templateId` 兼容派生列、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
+| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`templateId`/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**P4 起 PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`，旧端只发 `templateId` 时后端按 `Split()` 拆回两轴；三列同步写，但仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法模板 id 回 code=1；跨风格色系组合（`BelongsToStyle`）回 code=1；未开通 `mp_template_advanced` 且「新选」高级款回 code=403 |
 
 小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，12 款），按服务端下发的
 `Series` 分两组，后台据此分组渲染、不靠 id 前缀猜：

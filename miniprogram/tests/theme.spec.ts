@@ -319,13 +319,34 @@ describe('小程序风格模板 系列分组', () => {
     expect(STYLE_ADVANCED_IDS).toEqual(['ink', 'warm', 'teal'])
   })
 
-  it('后台按服务端 series 分组渲染，不自己猜 id 前缀', () => {
+  it('后台按服务端 series 分两步渲染，不自己猜 id 前缀；固定预览区随两轴组合切换', () => {
     const vue = readFileSync(resolve(REPO, 'frontend/src/views/content/MpTheme.vue'), 'utf-8')
     expect(vue).toContain("t.series === 'brand'")
     expect(vue).toContain('brandTemplates')
     expect(vue).toContain('styleTemplates')
     expect(vue).toContain('品牌配色')
     expect(vue).not.toContain("startsWith('brand-')")
+    // P4：整页只有一个固定预览区（sticky），两步选择先风格后色系；
+    // 保存必须发两轴而不是旧的单列 templateId，否则两轴化等于没落后台。
+    expect(vue).toContain('class="preview-pane"')
+    expect(vue).toContain('position: sticky')
+    expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain('const currentId = computed(() => brandColorId.value || styleId.value)')
+    expect(vue).toContain('v-for="t in styleTemplates"')
+    expect(vue).toContain('v-for="t in brandTemplates"')
+    expect(vue).toContain('第 1 步')
+    expect(vue).toContain('第 2 步')
+    expect(vue).toContain(
+      'saveHomeLayout({ styleId: styleId.value, brandColorId: brandColorId.value })'
+    )
+    expect(vue, '不能退回只发单列 templateId').not.toContain('saveHomeLayout({ templateId:')
+    // 树形归属：切到非 default 风格必须清空色系，非 default 下色卡不可点，
+    // 否则后端 BelongsToStyle 会 code=1，客户只看到「保存失败」却不知为何。
+    expect(vue).toContain('if (t.id !== DEFAULT_STYLE) brandColorId.value = null')
+    expect(vue).toContain('if (styleId.value !== DEFAULT_STYLE) return')
+    // 旧后端只下发兼容派生列时按前缀拆回两轴
+    expect(vue).toContain('id.startsWith(BRAND_PREFIX)')
+    expect(vue).toContain('splitThemeId(d)')
   })
 })
 
@@ -540,9 +561,11 @@ describe('小程序整体风格模板 版式差异', () => {
     expect(styles.split('var(--wc-r-control)').length - 1).toBeGreaterThanOrEqual(8)
   })
 
-  it('后台预览卡为每款整体风格高级款画出版式差异（加款忘了补示意会变红）', () => {
+  it('后台固定预览区的降级示意为每款整体风格高级款画出版式差异（加款忘了补示意会变红）', () => {
     const src = readFileSync(resolve(REPO, 'frontend/src/views/content/MpTheme.vue'), 'utf-8')
-    expect(src).toContain(`:class="'layout-' + t.id"`)
+    // P4：预览区从「每张卡一个」变成「整页一个」，class 跟着当前风格切，
+    // 不再是遍历模板时的 t.id。真实 PNG 本身已按风格出图，这里只服务图降级兜底。
+    expect(src).toContain(`:class="'layout-' + styleId"`)
     // default 与品牌配色都不需要专属示意规则：它们用的就是预览卡基线样式。
     // 给品牌款加了 .layout-brand-*，等于在示意图里凭空造出并不存在的版式差异。
     expect(src).not.toContain('.layout-default')
@@ -568,6 +591,33 @@ const PREVIEW_DIR = resolve(REPO, 'frontend/public/theme-previews')
 const PREVIEW_SCRIPT = resolve(REPO, 'scripts/gen_theme_previews.py')
 const MP_THEME_VUE = resolve(REPO, 'frontend/src/views/content/MpTheme.vue')
 
+/** 组合 id → 布局风格：8 款 brand-* 全归 default（与生成脚本 style_of / 后端 Split 同口径）。 */
+function styleOfPreview(id: string): string {
+  return id.startsWith(BRAND_PREFIX) ? THEME_DEFAULT : id
+}
+
+/**
+ * 按生成脚本 read_layout_rules() 的同一口径，从 app.wxss 复算 4 套布局规则快照。
+ * 用于和 manifest.layouts 逐字对账：改了 WXSS 布局却没重出图，图片会停在旧版式，
+ * 而「文件都在 / token 没变 / 尺寸都对」这三类检查全都发现不了。
+ */
+function expectedLayoutRules(): Record<string, string> {
+  const src = readFileSync(APP_WXSS, 'utf-8')
+  const out: Record<string, string[]> = {}
+  for (const sid of STYLE_IDS) out[sid] = []
+  const toPx = (s: string) =>
+    s.replace(/(\d+(?:\.\d+)?)rpx/g, (_, n: string) => `${Number(n) * 0.5}px`)
+  const re = /^\.wc-style-([a-z0-9_-]+)\s+([^{}]+?)\s*\{([^{}]*)\}/gm
+  for (const m of src.matchAll(re)) {
+    const sid = m[1]
+    if (!(sid in out)) throw new Error(`app.wxss 出现未登记的风格布局规则：${sid}`)
+    const selector = m[2].replace(/\.wc-style-[a-z0-9_-]+\s+/g, '').trim()
+    const body = toPx(m[3]).trim()
+    out[sid].push(`${selector} { ${body} }`)
+  }
+  return Object.fromEntries(Object.entries(out).map(([sid, rules]) => [sid, rules.join('\n  ')]))
+}
+
 function goTemplateIds(): string[] {
   const src = readFileSync(GO_TPL, 'utf-8')
   const def = /DefaultID\s*=\s*"([a-z0-9_-]+)"/.exec(src)?.[1]
@@ -576,7 +626,7 @@ function goTemplateIds(): string[] {
 }
 
 describe('小程序整体风格模板 真实预览图', () => {
-  it('每款模板都有一张合法 PNG，尺寸与生成脚本画布一致，没有多余图', () => {
+  it('每款模板都有一张合法 PNG，按所属风格画布高度一致，没有多余图', () => {
     const ids = goTemplateIds()
     expect(ids.length).toBeGreaterThanOrEqual(2)
     expect([...THEME_IDS].sort()).toEqual([...ids].sort(), '小程序 class 白名单与 Go 白名单漂移')
@@ -590,10 +640,17 @@ describe('小程序整体风格模板 真实预览图', () => {
     const scale = /SCALE\s*=\s*(\d+)/.exec(script)
     expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
     expect(scale, '生成脚本缺 SCALE').not.toBeNull()
-    const expected = [Number(dim![1]) * Number(scale![1]), Number(dim![2]) * Number(scale![1])]
+    // P4：长图按风格内容高度各自收口，8 款 brand-* 共用 default 的画布。
+    // 统一用最大高度会让短风格下半部拖一大片空白，故逐张对账自己的风格高度。
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const heights = manifest.canvasByStyle as Record<string, number>
+    expect(Object.keys(heights).sort()).toEqual([...STYLE_IDS].sort())
 
     for (const id of ids) {
       const buf = readFileSync(join(PREVIEW_DIR, `${id}.png`))
+      const h = heights[styleOfPreview(id)]
+      expect(h, `${id} 所属风格没有画布高度`).toBeGreaterThan(0)
+      const expected = [Number(dim![1]) * Number(scale![1]), h * Number(scale![1])]
       expect(buf.subarray(0, 8).toString('hex'), `${id} 不是 PNG`).toBe('89504e470d0a1a0a')
       expect([buf.readUInt32BE(16), buf.readUInt32BE(20)], `${id} 尺寸`).toEqual(expected)
       expect(buf.length, `${id} 疑似空白图`).toBeGreaterThan(5000)
@@ -630,6 +687,22 @@ describe('小程序整体风格模板 真实预览图', () => {
       expect(html.toLowerCase(), `${id} 主色被硬编码进预览 HTML`).not.toContain(primary.toLowerCase())
     }
     expect(html.split('var(--wc-').length - 1, '预览 HTML 没有真正用 token').toBeGreaterThanOrEqual(15)
+
+    // P4：布局也必须同源。模块节点用 app.wxss 的真实钩子类名，规则由 ${style_css}
+    // 注入 WXSS 原文；模板里自己写死列宽就会和端上分叉成第二套版式。
+    expect(script).toContain('STYLE_RULE_RE')
+    expect(script).toContain('read_layout_rules()')
+    expect(script).toContain('MODULE_HOOKS')
+    expect(script).toContain('style_of(')
+    expect(script).toContain('layout_css(')
+    expect(script).toContain('${style_css}')
+    expect(script).toContain('"layouts": layouts')
+    for (const hook of ['emp-card', 'mp-profile', 'mp-achievements', 'mp-services']) {
+      expect(html, `预览 HTML 缺模块钩子 .${hook}`).toContain(hook)
+    }
+    expect(html, '预览 HTML 自己写了一套列宽，等于和 app.wxss 分叉').not.toMatch(
+      /width:\s*(?:20|25|33\.33|50)%/
+    )
   })
 
   // 第二十八轮之后用户实测：后台预览每款背景色不同，但小程序首页背景是写死蓝渐变，
@@ -647,13 +720,22 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(script).toContain('var(--wc-primary-soft), var(--wc-primary-tint)')
   })
 
-  it('后台预览卡是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {
+  it('后台固定预览区是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
-    // 长图自身画布仍由脚本决定（375x1210），产物比例与脚本一致由 --check 守门
-    expect([Number(dim[1]), Number(dim[2])]).toEqual([375, 1210])
-    // 卡片是手机窗口：窄于长图、靠滚动看完整页；比例必须落在手机竖屏范围
+    const parts = /CONTENT_BOTTOM,\s*TAIL_GAP,\s*BAR_HEIGHT\s*=\s*(\d+),\s*(\d+),\s*(\d+)/.exec(script)!
+    // P4：长图按风格收口，脚本里的 HEIGHT 是四风格中的最大画布上界；
+    // 每张图自己的高度写在 manifest.canvasByStyle，由上面的逐张尺寸守门对账。
+    expect(Number(dim[1])).toBe(375)
+    expect(Number(dim[2]), '最大画布仍由内容底部 + 呼吸 + 底栏算出').toBe(
+      Number(parts[1]) + Number(parts[2]) + Number(parts[3])
+    )
+    expect(Number(dim[2]), '退回旧的单一 1210 长图会裁掉暖金棕的内容').toBeGreaterThan(1210)
+    // 固定在一个位置，而不是十几张卡片各带一个预览
+    expect(vue).toContain('class="preview-pane"')
+    expect(vue).toContain('position: sticky')
+    // 窗口是手机竖屏比例：窄于长图、靠滚动看完整页
     const ratio = /aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/.exec(vue)
     expect(ratio, '后台预览容器缺 aspect-ratio，图没加载完会跳版').not.toBeNull()
     const r = Number(ratio![2]) / Number(ratio![1])
@@ -669,11 +751,13 @@ describe('小程序整体风格模板 真实预览图', () => {
   it('后台确实渲染真实图并保留按张降级的兜底（改回色块示意会变红）', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     expect(vue).toContain('class="preview-shot"')
-    expect(vue).toContain(':src="previewUrl(t.id)"')
+    // P4：预览区只有一个，src 跟随当前 (styleId, brandColorId) 组合，
+    // 不再是遍历模板卡片时的 t.id。
+    expect(vue).toContain(':src="previewUrl(currentId)"')
     expect(vue).toContain('theme-previews/')
     expect(vue).toContain('encodeURIComponent(id)')
     expect(vue).toContain('import.meta.env.BASE_URL')
-    expect(vue).toContain('@error="onPreviewError(t.id)"')
+    expect(vue).toContain('@error="onPreviewError(currentId)"')
     expect(vue).toContain('class="preview-fallback"')
     expect(vue).toContain('class="fallback-tag"')
     expect(vue).toContain('failedPreviews.value = {}')
@@ -681,7 +765,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 
   // 只查「PNG 都在」挡不住「app.wxss 改了配色却没重出图」：文件一个不少，
   // 客户看到的仍是旧样式，而且没人会报错。manifest 是出图时写下的 token 快照。
-  it('token 快照与 app.wxss 同版（改了配色 / 圆角没重出图会变红）', () => {
+  it('token / 布局快照与 app.wxss 同版（改了配色 / 圆角 / 模块排布没重出图会变红）', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     expect(manifest.source).toBe('miniprogram/app.wxss')
     const ids = goTemplateIds()
@@ -691,12 +775,30 @@ describe('小程序整体风格模板 真实预览图', () => {
     for (const id of ids) {
       expect(manifest.tokens[id], `${id} 的 token 快照`).toEqual(current[id])
     }
+    // P4：布局规则也必须有快照。只查 token 会放行「app.wxss 改了列数、
+    // 预览图却还是旧版式」——图片一张不少、尺寸也对，客户却看到错的布局。
+    expect(manifest.layouts, '布局快照与 app.wxss 当前规则漂移，请重跑生成脚本').toEqual(
+      expectedLayoutRules()
+    )
+    expect(Object.keys(manifest.layouts).sort()).toEqual([...STYLE_IDS].sort())
+    expect(new Set(Object.values(manifest.layouts)).size, '四风格复制同一套布局 = 没换风格')
+      .toBe(STYLE_IDS.length)
+    expect(Object.keys(manifest.canvasByStyle).sort()).toEqual([...STYLE_IDS].sort())
+    expect(Object.keys(manifest.contentBottoms).sort()).toEqual([...STYLE_IDS].sort())
 
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const dim = /WIDTH,\s*HEIGHT\s*=\s*(\d+),\s*(\d+)/.exec(script)!
     const scale = /SCALE\s*=\s*(\d+)/.exec(script)!
+    const parts = /CONTENT_BOTTOM,\s*TAIL_GAP,\s*BAR_HEIGHT\s*=\s*(\d+),\s*(\d+),\s*(\d+)/.exec(script)!
+    const [, gap, bar] = parts.slice(1).map(Number)
     expect(manifest.canvas).toEqual([Number(dim[1]), Number(dim[2])])
     expect(manifest.scale).toBe(Number(scale[1]))
+    for (const sid of STYLE_IDS) {
+      expect(manifest.canvasByStyle[sid], `${sid} 画布应由内容底部收口`).toBe(
+        manifest.contentBottoms[sid] + gap + bar
+      )
+      expect(manifest.canvasByStyle[sid], `${sid} 不得超过最大画布`).toBeLessThanOrEqual(Number(dim[2]))
+    }
   })
 
   it('两层合并出的 12 组 token 逐字等于预览快照（拆层零视觉突变）', () => {
@@ -704,6 +806,68 @@ describe('小程序整体风格模板 真实预览图', () => {
     const merged = readThemeVars()
     expect(Object.keys(merged).sort(), '组合集合漂移').toEqual(Object.keys(manifest.tokens).sort())
     expect(merged, '合并口径与生成脚本漂移，或拆层时改了某个色值').toEqual(manifest.tokens)
+  })
+})
+
+// ===== P4：四风格布局进预览图 + 后台两步 UI =====
+//
+// 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，12 张 PNG 一张不少、
+// token 快照也没变、尺寸也对，客户看到的却是旧版式。布局必须留快照并与 WXSS
+// 对账；后台也必须真的按 (styleId, brandColorId) 切图、按两轴保存。
+describe('P4 四风格预览图与后台两步选择', () => {
+  it('12 张图按 4 风格分组：同风格画布一致，四风格高度互不相同', () => {
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    const scale = Number(/SCALE\s*=\s*(\d+)/.exec(script)![1])
+    const grouped: Record<string, string[]> = {}
+    for (const id of goTemplateIds()) {
+      ;(grouped[styleOfPreview(id)] ||= []).push(id)
+    }
+    expect(Object.keys(grouped).sort()).toEqual([...STYLE_IDS].sort())
+    // default 风格下挂 1 款默认色 + 8 款品牌色，其余 3 风格各 1 款
+    expect(grouped[THEME_DEFAULT]).toHaveLength(9)
+    for (const sid of STYLE_IDS) {
+      for (const id of grouped[sid]) {
+        const buf = readFileSync(join(PREVIEW_DIR, `${id}.png`))
+        expect(buf.readUInt32BE(20), `${id} 未按所属风格收口`).toBe(
+          manifest.canvasByStyle[sid] * scale
+        )
+      }
+    }
+    expect(new Set(Object.values(manifest.canvasByStyle)).size, '四风格布局没拉开差异').toBe(
+      STYLE_IDS.length
+    )
+  })
+
+  it('布局规则来自 app.wxss 原文，脚本按风格注入且 --check 比对布局快照', () => {
+    const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
+    expect(script).toContain('STYLE_RULE_RE')
+    expect(script).toContain('read_layout_rules()')
+    expect(script).toContain('layout_css(layout_rules[sid])')
+    expect(script).toContain('sid = style_of(i)')
+    expect(script).toContain('data.get("layouts") != layouts')
+    expect(script).toContain('for sid in STYLE_IDS:')
+    expect(script, '不能把所有组合都按 default 布局出图').not.toContain('build_html(active[i])')
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    expect(manifest.layouts).toEqual(expectedLayoutRules())
+    for (const sid of STYLE_IDS) {
+      for (const hook of ['emp-card', 'mp-profile', 'mp-achievements', 'mp-services']) {
+        expect(manifest.layouts[sid], `${sid} 缺 .${hook} 布局规则`).toContain(hook)
+      }
+    }
+  })
+
+  it('后台按两轴切图与保存，固定预览区不退回「每款一张卡」', () => {
+    const vue = readFileSync(MP_THEME_VUE, 'utf-8')
+    expect(vue).toContain('class="preview-pane"')
+    expect(vue).toContain(':src="previewUrl(currentId)"')
+    expect(vue).toContain('@click="pickStyle(t)"')
+    expect(vue).toContain('@click="pickBrand(t)"')
+    expect(vue).toContain('@click="pickBrand(null)"')
+    expect(vue, '不能退回每款模板一张带预览的卡片').not.toContain('class="theme-card"')
+    expect(vue, '不能退回单列 templateId 保存').not.toContain('saveHomeLayout({ templateId:')
+    expect(vue).toContain('第 1 步')
+    expect(vue).toContain('第 2 步')
   })
 })
 
@@ -765,8 +929,10 @@ describe('小程序风格模板 完整首页示意', () => {
     }
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     expect(script).toContain('css_tokens(tokens)')
-    expect(script).toContain('build_html(active[i])')
+    // P4：出图时必须把所属风格传进去，才能注入该风格的 app.wxss 布局规则
+    expect(script).toContain('build_html(active[i],')
     expect(script).toContain('${tokens}')
+    expect(script).toContain('${style_css}')
   })
 
   it('画布按内容自然收口：区块齐全、尾部不留大空白、底栏不会盖住服务卡', () => {
@@ -778,15 +944,31 @@ describe('小程序风格模板 完整首页示意', () => {
     const [content, gap, bar] = parts!.slice(1).map(Number)
     expect(Number(dim![1])).toBe(375)
     expect(Number(dim![2]), '不能压回 430 / 640 的旧简化版').toBeGreaterThanOrEqual(1150)
-    expect(Number(dim![2]), '尾部空白不该再回到 1300 的长尾巴').toBeLessThanOrEqual(1250)
+    // P4：暖金棕是 2 列分类 + 单列精选 + 3 列服务，内容比旧版单一布局长得多，
+    // HEIGHT 现在是「四风格最大画布上界」，不能再卡在 1250；真正的留白由
+    // 每个风格自己的画布高度控制（见下面的 canvasByStyle 对账）。
+    expect(Number(dim![2]), '最大画布不该无边界地膨胀').toBeLessThanOrEqual(2600)
     expect(Number(dim![2])).toBe(content + gap + bar)
     expect(gap, '呼吸超过 24px 就会让按钮和服务卡重新割裂').toBeLessThanOrEqual(24)
     // CSS 必须吃同一组常量，不能脚本算一套、样式写死另一套 60px
     expect(script).toContain('padding-bottom: ${tail_gap}px')
     expect(script).toContain('height: ${bar_h}px')
-    // 改了占位文案 / 区块高度，absolute 底栏会静默盖住服务卡：出图前必须实测
-    expect(script).toContain('measure_content_bottom(chrome, build_html(')
+    // 改了占位文案 / 布局列数，absolute 底栏会静默盖住服务卡：出图前必须逐风格实测
+    expect(script).toContain('measure_content_bottom(chrome, probe_html)')
     expect(script).toContain('bottom + TAIL_GAP > bar_top')
+    expect(script).toContain('for sid in STYLE_IDS:')
+    expect(script).toContain('MEASURE_HEIGHT')
+    expect(script).toContain('canvasByStyle')
+    expect(script).toContain('contentBottoms')
+    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    for (const sid of STYLE_IDS) {
+      const bottom = manifest.contentBottoms[sid]
+      expect(bottom, `${sid} 缺实测内容底部`).toBeGreaterThan(0)
+      expect(bottom, `${sid} 内容已超出 CONTENT_BOTTOM 上界`).toBeLessThanOrEqual(content)
+      expect(bottom + gap, `${sid} 内容已顶到底栏`).toBeLessThanOrEqual(content + gap)
+      expect(manifest.canvasByStyle[sid], `${sid} 画布`).toBe(bottom + gap + bar)
+      expect(manifest.canvasByStyle[sid], `${sid} 画布不得超过最大画布`).toBeLessThanOrEqual(Number(dim![2]))
+    }
   })
 
   it('预览只引用通用行业素材，且照片不被主题色染（换模板不该连视频都变色）', () => {
@@ -867,7 +1049,8 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(vue).toContain('class="preview-badge"')
     expect(vue).toContain('风格示意 · 非真机截图')
     expect(vue).toContain('class="preview-zoom-btn"')
-    expect(vue).toContain('@click.stop="openZoom(t.id)"')
+    // P4：固定预览区只有一个，查看大图打开的是当前组合那张图
+    expect(vue).toContain('@click.stop="openZoom(currentId)"')
     expect(vue).toContain('class="preview-zoom"')
     expect(vue).toContain('class="zoom-shot"')
     // 750x2600 长图不能再用 max-height 压成一条细线：固定面板宽度 + 内部纵向滚动
@@ -932,8 +1115,9 @@ describe('小程序风格模板 通用平台脱敏', () => {
     for (const key of ['short_name', 'full_name', 'person', 'title', 'phone', 'tel', 'email', 'address', 'intro']) {
       expect(ph[key], `缺占位 ${key}`).toBeTruthy()
     }
-    // 头像 / LOGO 用 CSS 画占位，不能退回真实素材
-    expect(html).toContain('class="avatar-ph"')
+    // 头像 / LOGO 用 CSS 画占位，不能退回真实素材。P4 起头像同时带
+    // .ec-avatar（供 app.wxss 的布局规则改尺寸），故只查类名本身。
+    expect(html).toContain('avatar-ph')
     expect(html).toContain('class="logo-ph"')
     expect(html).toContain('<span class="logo-ph">LOGO</span>')
     expect(html).toContain('class="me-avatar"')
@@ -973,16 +1157,19 @@ describe('小程序风格模板 通用平台脱敏', () => {
   })
 })
 
-describe('小程序风格模板 预览区与名称区的视觉分隔', () => {
-  it('预览图底部有硬边界、名称区用浅灰底，图内按钮不再和模板说明连成一片', () => {
+describe('小程序风格模板 固定预览区与组合说明区的视觉分隔', () => {
+  // P4 把「每款一张卡 + 卡片下方名称区」换成「一个固定预览区 + 下方当前组合说明」，
+  // 但视觉问题一模一样：长图底部是白色操作栏，紧贴的白底说明会和图内按钮连成一片。
+  // 所以硬边界与浅灰底必须保留，只是落点从 .theme-meta 搬到 .pane-foot。
+  it('预览图底部有硬边界、组合说明区用浅灰底，图内按钮不再和说明文字连成一片', () => {
     const vue = readFileSync(MP_THEME_VUE, 'utf-8')
     const preview = vue.match(/\.theme-preview\s*\{[^}]*\}/)?.[0] || ''
-    const meta = vue.match(/\.theme-meta\s*\{[^}]*\}/)?.[0] || ''
+    const foot = vue.match(/\.pane-foot\s*\{[^}]*\}/)?.[0] || ''
     expect(preview, '取不到 .theme-preview 规则').not.toBe('')
-    expect(meta, '取不到 .theme-meta 规则').not.toBe('')
-    expect(preview, '预览区与名称区没有分界线').toContain('border-bottom:')
-    expect(meta, '名称区仍是纯白底，会和图内白色操作栏混在一起').toContain('background:')
-    expect(meta).toContain('#f8fafc')
+    expect(foot, '取不到 .pane-foot 规则').not.toBe('')
+    expect(preview, '预览区与说明区没有分界线').toContain('border-bottom:')
+    expect(foot, '说明区仍是纯白底，会和图内白色操作栏混在一起').toContain('background:')
+    expect(foot).toContain('#f8fafc')
   })
 
   it('底栏自身也要有清晰的顶边，长图尾部不再是一整片纯底色', () => {

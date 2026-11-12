@@ -182,7 +182,11 @@ export interface HomeLayoutData {
   projectTimeMode: DetailTimeMode
   /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */
   serviceTimeMode: DetailTimeMode
-  /** 当前整体风格模板 id（白名单真值在后端 internal/mptemplate） */
+  /** 当前整体风格：决定首页各模块布局（白名单真值在后端 internal/mptemplate） */
+  styleId: string
+  /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P1 起仅 default 风格下挂 brand-* */
+  brandColorId: string | null
+  /** 兼容派生列：旧后端只下发它，前端按 brand- 前缀拆成 (styleId, brandColorId) */
   templateId: string
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
@@ -199,6 +203,8 @@ export function getHomeLayout() {
           bgMask: 0,
           projectTimeMode: 'date',
           serviceTimeMode: 'date',
+          styleId: 'default',
+          brandColorId: null,
           templateId: 'default',
           templates: [],
           templateEntitled: true,

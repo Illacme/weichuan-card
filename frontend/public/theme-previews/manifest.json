@@ -1,8 +1,26 @@
 {
   "canvas": [
     375,
-    1210
+    2420
   ],
+  "canvasByStyle": {
+    "default": 1297,
+    "ink": 1192,
+    "teal": 1874,
+    "warm": 2406
+  },
+  "contentBottoms": {
+    "default": 1217,
+    "ink": 1112,
+    "teal": 1794,
+    "warm": 2326
+  },
+  "layouts": {
+    "default": ".emp-card { border-radius: var(--wc-r-card); }\n  .emp-card .ec-avatar { width: 56px; height: 56px; }\n  .mp-profile .cv { height: 220px; border-radius: 6px; }\n  .mp-profile .intro { line-height: 1.7; }\n  .mp-achievements .cat-item { width: 25%; }\n  .mp-achievements .feat-item { width: 50%; }\n  .mp-achievements .feat-cover { height: 87.5px; border-radius: 6px; }\n  .mp-services .svc-item { width: 25%; }",
+    "ink": ".emp-card { padding: 10px 9px 8px; }\n  .emp-card .ec-head { align-items: flex-start; }\n  .emp-card .ec-avatar { width: 44px; height: 44px; border-width: 1px; }\n  .emp-card .ec-info { margin-left: 8px; }\n  .emp-card .ec-name { font-size: 16px; }\n  .emp-card .ec-rows { margin-top: 7px; }\n  .emp-card .ec-line { padding: 2px 0; }\n  .mp-profile .cv,\n.mp-profile .cv-video { height: 150px; border-radius: 0; }\n  .mp-profile .company-name { font-size: 16px; padding-bottom: 7px; }\n  .mp-profile .intro { line-height: 1.6; margin-top: 7px; }\n  .mp-achievements .cat-item { width: 20%; padding: 3px 2px; }\n  .mp-achievements .cat-icon,\n.mp-achievements .cat-placeholder { border-radius: 0; }\n  .mp-achievements .cat-grid { padding-bottom: 4px; border-bottom: 0.5px solid var(--wc-primary-border); }\n  .mp-achievements .featured { margin-top: 5px; }\n  .mp-achievements .feat-item { padding: 2px; }\n  .mp-achievements .feat-cover { height: 75px; border-radius: 0; }\n  .mp-services .svc-item { width: 25%; padding: 4px 2px; }\n  .mp-services .svc-icon,\n.mp-services .svc-icon-ph { border-radius: 0; }\n  .mp-services .svc-title { font-size: 12px; margin-top: 3px; }",
+    "teal": ".emp-card { padding: 14px 12px; background: rgba(255, 255, 255, 0.88); }\n  .emp-card .ec-avatar { width: 52px; height: 52px; }\n  .emp-card .ec-info { margin-left: 12px; }\n  .emp-card .ec-rows { margin-top: 13px; }\n  .mp-profile .cv,\n.mp-profile .cv-video { height: 190px; border-radius: 8px; }\n  .mp-profile .company-name { padding-bottom: 12px; }\n  .mp-profile .intro { line-height: 1.85; margin-top: 11px; }\n  .mp-achievements .cat-item { width: 33.33%; padding: 9px 6px; }\n  .mp-achievements .cat-icon,\n.mp-achievements .cat-placeholder { border-radius: 8px; }\n  .mp-achievements .feat-item { padding: 6px; }\n  .mp-achievements .feat-cover { height: 95px; border-radius: 8px; box-shadow: var(--wc-card-shadow-soft); }\n  .mp-achievements .sec-title { font-weight: 500; }\n  .mp-services .svc-item { width: 33.33%; padding: 11px 6px; }\n  .mp-services .svc-icon,\n.mp-services .svc-icon-ph { border-radius: 8px; box-shadow: var(--wc-card-shadow-soft); }\n  .mp-services .svc-title { margin-top: 9px; }",
+    "warm": ".emp-card { padding: 15px 12px 13px; }\n  .emp-card .ec-avatar { width: 68px; height: 68px; }\n  .emp-card .ec-info { margin-left: 13px; }\n  .emp-card .ec-rows { margin-top: 14px; }\n  .emp-card .ec-line { padding: 6px 0; }\n  .emp-card .case-btn { height: 16px; padding: 0 7px; }\n  .mp-profile .cv,\n.mp-profile .cv-video { height: 250px; border-radius: 14px; }\n  .mp-profile .company-name { padding-bottom: 13px; }\n  .mp-profile .intro { line-height: 1.9; margin-top: 12px; }\n  .mp-achievements .cat-item { width: 50%; padding: 9px 7px; }\n  .mp-achievements .cat-icon,\n.mp-achievements .cat-placeholder { border-radius: 14px; }\n  .mp-achievements .cat-name { font-size: 13px; margin-top: 8px; }\n  .mp-achievements .feat-item { width: 100%; padding: 5px 0; }\n  .mp-achievements .feat-cover { height: 130px; border-radius: 16px; }\n  .mp-services .svc-item { width: 33.33%; padding: 10px 6px; }\n  .mp-services .svc-icon,\n.mp-services .svc-icon-ph { border-radius: 12px; }\n  .mp-services .svc-title { font-size: 13px; margin-top: 8px; }"
+  },
   "placeholders": {
     "address": "示例地址 · 仅用于版式示意",
     "email": "name@example.com",

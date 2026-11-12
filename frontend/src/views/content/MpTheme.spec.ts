@@ -3,21 +3,37 @@ import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
 import MpTheme from './MpTheme.vue'
 
-// 风格模板页：核心约束是**只提交 templateId**。
+// 风格页 P4：核心约束是**只提交两轴 (styleId, brandColorId)**。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
-// 的值一起写回去（后端 Order 是指针语义，多提交反而可能覆盖），所以这里用精确
-// 断言钉死 payload，而不是只查 objectContaining。
+// 的值一起写回去，所以这里用精确断言钉死 payload，而不是 objectContaining。
+// 另外两步选择必须守住树形归属：非 default 风格下清空并禁用色系，否则后端
+// BelongsToStyle 会 code=1，客户只看到「保存失败」却不知道为什么。
+const STYLE_ITEMS = [
+  { id: 'default', name: '经典蓝', description: '默认配色', series: 'style', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
+  { id: 'ink', name: '沉稳墨', description: '低饱和深灰蓝', series: 'style', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
+  { id: 'warm', name: '暖金棕', description: '温暖金棕', series: 'style', advanced: true, previewPrimary: '#8f6320', previewSoft: '#f7efdf' },
+  { id: 'teal', name: '松石青', description: '清透青绿', series: 'style', advanced: true, previewPrimary: '#0f766e', previewSoft: '#dff2ef' },
+]
+const BRAND_ITEMS = [
+  { id: 'brand-crimson', name: '绛红', description: '绛红主色', series: 'brand', advanced: true, previewPrimary: '#a01f2e', previewSoft: '#f3e2e4' },
+  { id: 'brand-coral', name: '朱橘', description: '朱橘主色', series: 'brand', advanced: true, previewPrimary: '#a33d16', previewSoft: '#f3e6e1' },
+  { id: 'brand-amber', name: '琥珀', description: '琥珀金主色', series: 'brand', advanced: true, previewPrimary: '#8a5a08', previewSoft: '#f0eadf' },
+  { id: 'brand-forest', name: '森绿', description: '森绿主色', series: 'brand', advanced: true, previewPrimary: '#12603a', previewSoft: '#e0eae5' },
+  { id: 'brand-ocean', name: '海蓝', description: '海蓝主色', series: 'brand', advanced: true, previewPrimary: '#0b5585', previewSoft: '#dfe9ef' },
+  { id: 'brand-indigo', name: '靛青', description: '靛青主色', series: 'brand', advanced: true, previewPrimary: '#38429c', previewSoft: '#e5e6f2' },
+  { id: 'brand-violet', name: '紫罗兰', description: '紫罗兰主色', series: 'brand', advanced: true, previewPrimary: '#612a96', previewSoft: '#eae3f1' },
+  { id: 'brand-magenta', name: '品红', description: '品红主色', series: 'brand', advanced: true, previewPrimary: '#8c2358', previewSoft: '#f0e2e9' },
+]
+const DEFAULT_LAYOUT = {
+  styleId: 'default',
+  brandColorId: null,
+  templateId: 'default',
+  templateEntitled: true,
+  templates: [...STYLE_ITEMS, ...BRAND_ITEMS],
+}
+
 const mocks = vi.hoisted(() => ({
-  getHomeLayout: vi.fn(async (): Promise<any> => ({
-    templateId: 'default',
-    templateEntitled: true,
-    templates: [
-      { id: 'default', name: '经典蓝', description: '默认配色', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-      { id: 'ink', name: '沉稳墨', description: '低饱和深灰蓝', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      { id: 'warm', name: '暖金棕', description: '温暖金棕', advanced: true, previewPrimary: '#8f6320', previewSoft: '#f7efdf' },
-      { id: 'teal', name: '松石青', description: '清透青绿', advanced: true, previewPrimary: '#0f766e', previewSoft: '#dff2ef' },
-    ],
-  })),
+  getHomeLayout: vi.fn(async (): Promise<any> => ({})),
   saveHomeLayout: vi.fn(async (_payload: any) => ({ code: 0 })),
 }))
 
@@ -33,8 +49,6 @@ const ElCard = defineComponent({ name: 'ElCard', template: `<div class="el-card"
 const ElButton = defineComponent({
   name: 'ElButton',
   props: ['type', 'loading', 'icon', 'link', 'disabled'],
-  // disabled 必须真的落到 DOM 上：清单为空时「保存」按钮要靠它禁用，
-  // 只声明 prop 而不输出 attribute 的话，attributes('disabled') 恒 undefined。
   template: `<button class="el-button" :disabled="disabled" v-bind="$attrs"><slot /></button>`,
   inheritAttrs: true,
 })
@@ -64,312 +78,305 @@ async function flush() {
 }
 
 async function mountPage(layout?: any) {
-  if (layout) mocks.getHomeLayout.mockResolvedValueOnce(layout)
+  mocks.getHomeLayout.mockResolvedValueOnce(layout ?? { ...DEFAULT_LAYOUT })
   const w = mount(MpTheme, mountOpts)
   await flush()
   return w
 }
 
-function cards(w: any) {
-  return w.findAll('.theme-card')
-}
+const styleCards = (w: any) => w.findAll('.option-card')
+const colorOptions = (w: any) => w.findAll('.color-option')
+const previewShot = (w: any) => w.find('img.preview-shot')
+const previewSrc = (w: any) => previewShot(w).attributes('src') || ''
 
-describe('content/MpTheme', () => {
+describe('content/MpTheme（P4 固定预览区 + 两步选择）', () => {
   beforeEach(() => {
-    mocks.getHomeLayout.mockClear()
+    mocks.getHomeLayout.mockReset()
     mocks.saveHomeLayout.mockClear()
     ;(ElMessage.success as any).mockClear()
   })
 
-  it('挂载即拉取模板清单并按服务端顺序渲染', async () => {
+  it('挂载即拉取清单，按服务端 series 渲染两步选择', async () => {
     const w = await mountPage()
 
     expect(mocks.getHomeLayout).toHaveBeenCalledTimes(1)
-    expect(cards(w)).toHaveLength(4)
-    expect(cards(w)[0].text()).toContain('经典蓝')
-    expect(cards(w)[1].text()).toContain('沉稳墨')
-    expect(cards(w)[2].text()).toContain('暖金棕')
-    expect(cards(w)[3].text()).toContain('松石青')
-    expect(cards(w)[0].find('.el-tag').exists()).toBe(false)
-    expect(cards(w)[1].find('.el-tag').text()).toBe('高级')
+    expect(w.findAll('.picker-step')).toHaveLength(2)
+    expect(w.text()).toContain('整体风格')
+    expect(w.text()).toContain('品牌配色')
+    // 4 张风格卡 + 「默认色」+ 8 款品牌色
+    expect(styleCards(w)).toHaveLength(4)
+    expect(colorOptions(w)).toHaveLength(9)
+    expect(styleCards(w)[0].text()).toContain('经典蓝')
+    expect(styleCards(w)[1].find('.el-tag').text()).toBe('高级')
+    expect(colorOptions(w)[0].text()).toContain('默认色')
+    expect(colorOptions(w)[1].text()).toContain('绛红')
   })
 
-  it('每张预览卡按模板 id 套版式示意 class（换色之外也要看得出圆角差异）', async () => {
+  it('整页只有一个固定预览区，默认落在当前组合对应的 PNG', async () => {
     const w = await mountPage()
 
-    expect(cards(w)[0].find('.theme-preview').classes()).toContain('layout-default')
-    expect(cards(w)[1].find('.theme-preview').classes()).toContain('layout-ink')
-    expect(cards(w)[2].find('.theme-preview').classes()).toContain('layout-warm')
-    expect(cards(w)[3].find('.theme-preview').classes()).toContain('layout-teal')
+    expect(w.findAll('.theme-preview')).toHaveLength(1)
+    expect(w.find('.preview-pane').exists()).toBe(true)
+    expect(previewSrc(w)).toContain('theme-previews/default.png')
+    expect(previewShot(w).attributes('alt')).toContain('经典蓝')
+    expect(w.find('.theme-preview').classes()).toContain('layout-default')
+    expect(w.find('.pane-combo-line').text()).toContain('使用中')
   })
 
-  it('每张卡按 id 拼出真实预览图，底层示意常驻（图没加载完不留空白）', async () => {
+  it('预览区有底层示意 + 非真机角标 + 查看大图入口（悬停才显示）', async () => {
     const w = await mountPage()
 
-    const shots = cards(w).map((c: any) => c.find('img.preview-shot'))
-    expect(shots).toHaveLength(4)
-    expect(shots[0].attributes('src')).toContain('theme-previews/default.png')
-    expect(shots[1].attributes('src')).toContain('theme-previews/ink.png')
-    expect(shots[2].attributes('src')).toContain('theme-previews/warm.png')
-    expect(shots[3].attributes('src')).toContain('theme-previews/teal.png')
-    expect(shots[1].attributes('alt')).toContain('沉稳墨')
-    for (const c of cards(w)) {
-      expect(c.find('.preview-fallback').exists()).toBe(true)
-      // 降级必须是可见的：静默退回色块会让「真实预览图没生效」没人察觉
-      expect(c.find('.fallback-tag').text()).toBe('示意图')
-    }
+    expect(w.find('.preview-fallback').exists()).toBe(true)
+    expect(w.find('.fallback-tag').text()).toBe('示意图')
+    expect(w.find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
+    expect(w.find('.preview-zoom-btn').exists()).toBe(true)
+    expect(w.find('.preview-scroll').exists()).toBe(true)
   })
 
-  it('单张预览图加载失败：只降级这一张，其余三张不受影响', async () => {
+  it('第 1 步选风格：固定预览区随风格切换到对应 PNG，并带上版式示意 class', async () => {
     const w = await mountPage()
 
-    await cards(w)[2].find('img.preview-shot').trigger('error')
+    await styleCards(w)[1].trigger('click')
     await flush()
 
-    expect(cards(w)[2].find('img.preview-shot').exists()).toBe(false)
-    expect(cards(w)[2].find('.preview-fallback').exists()).toBe(true)
-    expect(cards(w)[2].find('.fallback-tag').exists()).toBe(true)
-    expect(cards(w)[0].find('img.preview-shot').exists()).toBe(true)
-    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
-    expect(cards(w)[3].find('img.preview-shot').exists()).toBe(true)
+    expect(styleCards(w)[1].classes()).toContain('selected')
+    expect(previewSrc(w)).toContain('theme-previews/ink.png')
+    expect(w.find('.theme-preview').classes()).toContain('layout-ink')
+    expect(w.text()).toContain('暂无可用品牌配色')
+    // 未保存时不能显示「使用中」，否则客户以为已经生效
+    expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
   })
 
-  it('点「重新加载」会重试预览图，不再一直停在示意图上', async () => {
+  it('第 2 步选品牌色：只在 default 风格上叠加，预览切到该色系 PNG 且风格仍是经典蓝', async () => {
     const w = await mountPage()
 
-    await cards(w)[1].find('img.preview-shot').trigger('error')
+    await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(false)
 
-    // 重新加载已上移到父组件「小程序设置」的页签切换栏；这里直接驱动暴露的 load，
-    // 验证「重试预览图、清掉失败标记」的核心逻辑不变。
+    expect(colorOptions(w)[1].classes()).toContain('selected')
+    expect(previewSrc(w)).toContain('theme-previews/brand-crimson.png')
+    expect(styleCards(w)[0].classes()).toContain('selected')
+    expect(w.find('.theme-preview').classes()).toContain('layout-default')
+  })
+
+  it('树形归属：切到非 default 风格自动清空色系，保存不会带出跨风格组合', async () => {
+    const w = await mountPage()
+
+    await colorOptions(w)[1].trigger('click')
+    await flush()
+    expect(previewSrc(w)).toContain('brand-crimson.png')
+
+    await styleCards(w)[1].trigger('click')
+    await flush()
+    expect(previewSrc(w)).toContain('ink.png')
+    expect(colorOptions(w)[0].classes()).toContain('selected')
+    for (const c of colorOptions(w)) expect(c.classes()).toContain('disabled')
+
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'ink', brandColorId: null })
+  })
+
+  it('非 default 风格下点色卡无效（不能绕过后端 BelongsToStyle）', async () => {
+    const w = await mountPage()
+    await styleCards(w)[3].trigger('click')
+    await flush()
+
+    await colorOptions(w)[1].trigger('click')
+    await flush()
+    expect(previewSrc(w)).toContain('teal.png')
+
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
+  })
+
+  it('点回「默认色」清掉已叠加的色系', async () => {
+    const w = await mountPage()
+    await colorOptions(w)[1].trigger('click')
+    await flush()
+    expect(previewSrc(w)).toContain('brand-crimson.png')
+
+    await colorOptions(w)[0].trigger('click')
+    await flush()
+    expect(previewSrc(w)).toContain('default.png')
+    expect(colorOptions(w)[0].classes()).toContain('selected')
+  })
+
+  it('保存只提交两轴，不回传其它展示字段；成功后才显示「使用中」', async () => {
+    const w = await mountPage()
+
+    await colorOptions(w)[2].trigger('click')
+    await flush()
+    await (w.vm as any).save()
+    await flush()
+
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'default', brandColorId: 'brand-coral',
+    })
+    expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序风格模板')
+    expect(w.find('.pane-combo-line').text()).toContain('使用中')
+  })
+
+  it('load 优先读两轴，忽略旧的 templateId 派生列', async () => {
+    const w = await mountPage({
+      ...DEFAULT_LAYOUT,
+      styleId: 'teal', brandColorId: null, templateId: 'default',
+    })
+
+    expect(styleCards(w)[3].classes()).toContain('selected')
+    expect(previewSrc(w)).toContain('teal.png')
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
+  })
+
+  // 旧后端（P1 之前）只下发兼容派生列 templateId：brand-* 必须拆回
+  // (default, brand-*)，否则客户已选的品牌色会在升级后被静默冲掉。
+  it('旧后端只下发 templateId：按前缀拆回两轴，预览与保存都不丢色系', async () => {
+    const w = await mountPage({
+      ...DEFAULT_LAYOUT,
+      styleId: undefined, brandColorId: undefined, templateId: 'brand-ocean',
+    })
+
+    expect(previewSrc(w)).toContain('brand-ocean.png')
+    expect(styleCards(w)[0].classes()).toContain('selected')
+    expect(colorOptions(w)[5].classes()).toContain('selected')
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'default', brandColorId: 'brand-ocean',
+    })
+  })
+
+  it('旧后端不下发 series：卡片不丢失，色系区给出升级提示', async () => {
+    const w = await mountPage({
+      styleId: 'default', brandColorId: null, templateId: 'default', templateEntitled: true,
+      templates: STYLE_ITEMS.map(({ id, name, description, advanced, previewPrimary, previewSoft }) =>
+        ({ id, name, description, advanced, previewPrimary, previewSoft })),
+    })
+
+    expect(styleCards(w)).toHaveLength(4)
+    expect(w.text()).toContain('当前服务端版本未提供品牌配色清单')
+    expect(previewSrc(w)).toContain('default.png')
+  })
+
+  it('单张预览图加载失败：只降级当前组合，重新加载会重试', async () => {
+    const w = await mountPage()
+
+    await previewShot(w).trigger('error')
+    await flush()
+    expect(previewShot(w).exists()).toBe(false)
+    expect(w.find('.preview-fallback').exists()).toBe(true)
+    expect(w.find('.preview-zoom-btn').exists()).toBe(false)
+
     await (w.vm as any).load()
     await flush()
-
-    expect(cards(w)[1].find('img.preview-shot').exists()).toBe(true)
+    expect(previewShot(w).exists()).toBe(true)
   })
 
-  // 完整首页示意图容易被直接当成真机页面效果去验收，而这个误解不会报任何错。
-  // 「非真机截图」标注必须存在；但它默认隐藏、仅悬停预览图时浮现，不再常驻遮挡
-  // 示意图与选色对比（降级提示 fallback-tag 仍常显）。默认隐藏/悬停浮现的 CSS 守门
-  // 在 theme.spec.ts 里做源码级对账，改回常驻会变红。
-  it('每张卡有「非真机截图」标注且图降级后仍在 DOM（默认隐藏、悬停才显示）', async () => {
-    const w = await mountPage()
-
-    for (const c of cards(w)) {
-      expect(c.find('.preview-badge').exists()).toBe(true)
-      expect(c.find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
-    }
-    // 两个角标语义不同：悬停浮现的说是示意图，降级的说图没加载出来
-    expect(cards(w)[0].find('.fallback-tag').text()).toBe('示意图')
-
-    await cards(w)[1].find('img.preview-shot').trigger('error')
-    await flush()
-    expect(cards(w)[1].find('.preview-badge').text()).toBe('风格示意 · 非真机截图')
-  })
-
-  // 通用平台产品的示意图不能出现真实 / 演示企业客户信息。这个语义必须真的渲染到
-  // 页面上：只写在脚本注释里，客户看不到，也不会有任何报错。
-  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图」', async () => {
-    const w = await mountPage()
-    expect(w.text()).toContain('本产品是通用平台')
-    expect(w.text()).toContain('不含任何真实企业客户资料')
-    expect(w.text()).toContain('不是真机截图')
-  })
-
-  it('查看大图：打开原尺寸浮层，且不会顺手把这款模板选中', async () => {
+  it('查看大图：打开后随组合切换，可关闭，图降级时自动收起', async () => {
     const w = await mountPage()
     expect(w.find('.preview-zoom').exists()).toBe(false)
-    expect(cards(w)[0].classes()).toContain('selected')
 
-    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await w.find('.preview-zoom-btn').trigger('click')
     await flush()
-
     expect(w.find('.preview-zoom').exists()).toBe(true)
-    expect(w.find('.zoom-shot').attributes('src')).toContain('theme-previews/ink.png')
+    expect(w.find('.zoom-shot').attributes('src')).toContain('default.png')
     expect(w.find('.zoom-note').text()).toContain('非真机截图')
-    // 750x2600 长图必须放在可滚动容器里，不能被 max-height 压成一条细线
-    expect(w.find('.zoom-scroll').exists()).toBe(true)
     expect(w.find('.zoom-scroll').find('img.zoom-shot').exists()).toBe(true)
-    // 卡片自身有 @click="pick(t)"：查看大图必须 @click.stop，否则「看看」变成「选中」
-    expect(cards(w)[1].classes()).not.toContain('selected')
-    expect(cards(w)[0].classes()).toContain('selected')
-  })
 
-  it('查看大图可关闭；图加载失败的卡不再显示大图入口', async () => {
-    const w = await mountPage()
-
-    await cards(w)[2].find('img.preview-shot').trigger('error')
+    await colorOptions(w)[1].trigger('click')
     await flush()
-    expect(cards(w)[2].find('.preview-zoom-btn').exists()).toBe(false)
+    expect(w.find('.zoom-shot').attributes('src')).toContain('brand-crimson.png')
 
-    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
-    await flush()
     const closeBtn = w.findAll('.el-button').find((b: any) => b.text().includes('关闭'))
     expect(closeBtn).toBeDefined()
     await closeBtn!.trigger('click')
     await flush()
     expect(w.find('.preview-zoom').exists()).toBe(false)
 
-    // 点遮罩空白处也能收起
-    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await w.find('.preview-zoom-btn').trigger('click')
     await flush()
     await w.find('.preview-zoom').trigger('click')
     await flush()
     expect(w.find('.preview-zoom').exists()).toBe(false)
-  })
 
-  it('大图正在看的那张图降级时自动收起，不停在空白浮层', async () => {
-    const w = await mountPage()
-    await cards(w)[1].find('.preview-zoom-btn').trigger('click')
+    await w.find('.preview-zoom-btn').trigger('click')
     await flush()
-    expect(w.find('.preview-zoom').exists()).toBe(true)
-
-    await cards(w)[1].find('img.preview-shot').trigger('error')
+    await previewShot(w).trigger('error')
     await flush()
     expect(w.find('.preview-zoom').exists()).toBe(false)
   })
 
-  it('按服务端 series 分两组渲染，品牌配色组说明「只换主色」且可选中', async () => {
-    const w = await mountPage({
-      templateId: 'default',
-      templateEntitled: true,
-      templates: [
-        { id: 'default', name: '经典蓝', description: '', series: 'style', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-        { id: 'ink', name: '沉稳墨', description: '', series: 'style', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-        { id: 'brand-crimson', name: '绛红', description: '', series: 'brand', advanced: true, previewPrimary: '#a01f2e', previewSoft: '#f3e2e4' },
-      ],
-    })
-
-    const groups = w.findAll('.theme-group')
-    expect(groups).toHaveLength(2)
-    expect(groups[0].text()).toContain('整体风格')
-    expect(groups[1].text()).toContain('品牌配色')
-    expect(groups[1].text()).toContain('版式沿用经典蓝')
-    expect(groups[0].findAll('.theme-card')).toHaveLength(2)
-    expect(groups[1].findAll('.theme-card')).toHaveLength(1)
-    // 分组不能把卡片弄丢，也不能打乱顺序（后台清单顺序仍有意义）
-    expect(cards(w)).toHaveLength(3)
-    expect(cards(w)[2].text()).toContain('绛红')
-    expect(cards(w)[2].find('.theme-preview').classes()).toContain('layout-brand-crimson')
-
-    await cards(w)[2].trigger('click')
-    await flush()
-    await (w.vm as any).save()
-    await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'brand-crimson' })
-  })
-
-  // 后端是随二进制升级的：只换前端时旧接口不下发 series。分组逻辑不能因此
-  // 让整组卡片消失——宁可都落在「整体风格」组，也不能白屏。
-  it('旧后端不下发 series：全部归入整体风格组，卡片不丢失', async () => {
-    const w = await mountPage({
-      templateId: 'default',
-      templateEntitled: true,
-      templates: [
-        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-        { id: 'ink', name: '沉稳墨', description: '', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      ],
-    })
-
-    expect(w.findAll('.theme-group')).toHaveLength(1)
-    expect(cards(w)).toHaveLength(2)
-  })
-
-  it('当前 templateId 回填为「使用中」', async () => {
-    const w = await mountPage({
-      templateId: 'ink', templateEntitled: true,
-      templates: [
-        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-        { id: 'ink', name: '沉稳墨', description: '', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      ],
-    })
-
-    expect(cards(w)[1].classes()).toContain('selected')
-    expect(cards(w)[1].text()).toContain('使用中')
-  })
-
-  it('选另一款后保存：只提交 templateId，不回传其它展示字段', async () => {
-    const w = await mountPage()
-
-    await cards(w)[1].trigger('click')
-    await flush()
-    await (w.vm as any).save()
-    await flush()
-
-    expect(cards(w)[1].classes()).toContain('selected')
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'ink' })
-    expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序风格模板')
-  })
-
-  it('未开通高级模板：显示授权说明，高级款置灰且点不动', async () => {
-    const w = await mountPage({
-      templateId: 'default', templateEntitled: false,
-      templates: [
-        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-        { id: 'ink', name: '沉稳墨', description: '', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      ],
-    })
+  it('未开通高级模板：高级风格与色系置灰且点不动，切回默认仍放行', async () => {
+    const w = await mountPage({ ...DEFAULT_LAYOUT, templateEntitled: false })
 
     expect(w.find('.el-alert').exists()).toBe(true)
     expect(w.text()).toContain('续费后自动恢复')
-    expect(cards(w)[1].classes()).toContain('locked')
-    expect(cards(w)[1].text()).toContain('暂不可选')
+    expect(styleCards(w)[1].classes()).toContain('locked')
+    expect(colorOptions(w)[1].classes()).toContain('locked')
 
-    await cards(w)[1].trigger('click')
+    await styleCards(w)[1].trigger('click')
+    await colorOptions(w)[1].trigger('click')
     await flush()
+    expect(previewSrc(w)).toContain('default.png')
+
     await (w.vm as any).save()
     await flush()
-
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null })
   })
 
-  // 授权到期时后端仍允许「带着同一个 id」保存别的设置，前端不能把已选中的
+  // 授权到期时后端仍允许「带着同一个组合」保存别的设置，前端不能把已选中的
   // 那款也锁死，否则客户连切回经典蓝都做不到。
-  it('授权到期但已选中高级款：该款不锁，仍可保存或切回默认款', async () => {
+  it('授权到期但已选中高级风格：该款不锁，仍可保存或切回默认款', async () => {
     const w = await mountPage({
-      templateId: 'ink', templateEntitled: false,
-      templates: [
-        { id: 'default', name: '经典蓝', description: '', advanced: false, previewPrimary: '#1a8cff', previewSoft: '#e8f1fb' },
-        { id: 'ink', name: '沉稳墨', description: '', advanced: true, previewPrimary: '#3d4b5c', previewSoft: '#e8edf2' },
-      ],
+      ...DEFAULT_LAYOUT,
+      styleId: 'ink', brandColorId: null, templateId: 'ink', templateEntitled: false,
     })
 
-    expect(cards(w)[1].classes()).not.toContain('locked')
-    expect(cards(w)[0].classes()).not.toContain('locked')
+    expect(styleCards(w)[1].classes()).not.toContain('locked')
+    expect(styleCards(w)[0].classes()).not.toContain('locked')
 
-    await cards(w)[0].trigger('click')
+    await styleCards(w)[0].trigger('click')
     await flush()
     await (w.vm as any).save()
     await flush()
-
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null })
   })
 
-  it('清单为空：禁用保存，不让客户提交一个空模板 id', async () => {
-    const w = await mountPage({ templateId: 'default', templateEntitled: true, templates: [] })
+  it('清单为空：暴露的 templates 为空，父组件据此禁用保存', async () => {
+    const w = await mountPage({ ...DEFAULT_LAYOUT, templates: [] })
 
-    expect(cards(w)).toHaveLength(0)
-    // 保存按钮已上移到父组件切换栏，disabled 由父组件的 themeDisabled 驱动；
-    // 这里验证数据侧护栏：清单为空时 templates 为空，父组件据此禁用保存。
+    expect(styleCards(w)).toHaveLength(0)
     expect((w.vm as any).templates.length).toBe(0)
   })
 
   it('拉取失败：不白屏，仍能重新加载', async () => {
     mocks.getHomeLayout.mockRejectedValueOnce(new Error('500'))
     const w = await mountPage()
-
-    // 说明文案仍在，页面没有白屏（重新加载按钮已上移到父组件切换栏）
     expect(w.find('.desc').exists()).toBe(true)
+    expect(w.find('.theme-preview').exists()).toBe(true)
   })
 
-  it('保存失败：不提示成功', async () => {
+  it('保存失败：不提示成功，也不把未保存的组合标成「使用中」', async () => {
     mocks.saveHomeLayout.mockRejectedValueOnce(new Error('403'))
     const w = await mountPage()
 
+    await styleCards(w)[1].trigger('click')
+    await flush()
     await (w.vm as any).save()
     await flush()
 
     expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
+  })
+
+  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图 / 固定预览区」', async () => {
+    const w = await mountPage()
+    expect(w.text()).toContain('本产品是通用平台')
+    expect(w.text()).toContain('不含任何真实企业客户资料')
+    expect(w.text()).toContain('不是真机截图')
+    expect(w.text()).toContain('固定在一个位置')
   })
 })

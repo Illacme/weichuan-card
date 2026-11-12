@@ -832,9 +832,11 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 
 后台「小程序设置 → 风格模板」现在存的是 `(styleId, brandColorId)` 两轴，仍保留
 `templateId` 兼容派生列（P1 起同步反推），真值分两端对账：id 白名单在
-`backend/internal/mptemplate`（扁平 12 款，P4 才物理树化），端上色值与版式随版本
-内置在 `app.wxss` 的两层块里。`utils/theme.ts` 只做 `两轴 → 两层 class` 映射 +
-Storage 缓存 + 页面栈广播，不含色值。
+`backend/internal/mptemplate`（**仍是扁平 12 款 + `series` 分组**，物理树化留作后续阶段），
+端上色值与版式随版本内置在 `app.wxss` 的两层块里。`utils/theme.ts` 只做
+`两轴 → 两层 class` 映射 + Storage 缓存 + 页面栈广播，不含色值。
+**P4 起后台是「一个固定预览区 + 右侧两步选择」**：先选风格（决定布局），再选色系（只换主色），
+左侧预览图随组合切换，保存只提交 `{ styleId, brandColorId }`（见下文「后台预览」段）。
 
 **根节点同时挂两层 class**：`class="wc-theme {{themeClass}}"` 里的 `wc-theme` 是保留的
 语义基类（已无 token 定义），`themeClass` 变量展开为 `wc-style-<id>`（布局层，恒挂，
@@ -887,33 +889,48 @@ Storage 缓存 + 页面栈广播，不含色值。
   `BRAND_IDS`、重跑 `scripts/gen_theme_previews.py` 出
   `frontend/public/theme-previews/<id>.png`；只有加「整体风格」款才需要第 5 处
   ——`MpTheme.vue` 的 `.layout-<id>` 兜底示意（品牌配色款不许有，守门会拦）。
+  **P4 起新增风格还要把它写进脚本的 `STYLE_IDS`**：脚本会逐风格实测内容高度并给该风格
+  单独收口画布，`manifest.layouts` / `canvasByStyle` / `contentBottoms` 都要跟着长一项，
+  漏了 `--check` 与 `theme.spec.ts` 会红。
   `tests/theme.spec.ts` 逐项对账，漏一处即变红。加款后必须随小程序**重新提审发版**，
   端上不能热加载 WXSS。
 - **后台预览图不是第二套样式**：`scripts/gen_theme_previews.py` 直接解析本文件
-  （`app.wxss`）两层块并合并出 18 个 `--wc-*` token（P2 起用 `STYLE_BLOCK_RE` /
-  `BRAND_BLOCK_RE`：颜色层只给 11 个颜色，缺的 7 个版式由 `default` 补齐）。合并结果与
-  拆层前逐字相同，所以 `manifest.json` 与 12 张 PNG **都不用重出**，`--check` 保持绿。
-  脚本注入一份**按真机首页复刻版式**的完整首页
-  HTML（`data-sec` 顺序与 `pages/index/index.wxml` 一致：状态栏 / 顶栏 / 名片卡 /
-  公司简介 / 经典业绩 / 业务服务 / 底部操作栏）。画布按内容自然收口为 **375×1210**
-  （实测内容底部 1130 + 20px 呼吸 + 60px 底栏），无头 Chrome 2x 出 12 张
-  **750×2420 长图**；18 个 token 必须全部以 `var()` 引用，定义了却没用就是假同源。
+  （`app.wxss`）。颜色用两层块合并出 18 个 `--wc-*` token（`STYLE_BLOCK_RE` /
+  `BRAND_BLOCK_RE`：颜色层只给 11 个颜色，缺的 7 个版式由 `default` 补齐，合并结果与
+  拆层前逐字相同）；**布局从 P4 起用 `STYLE_RULE_RE` 抽 `.wc-style-<id> … { … }` 规则原文
+  注入**，去掉风格前缀、`rpx` 按 0.5 折成浏览器 `px`。预览 HTML 直接复用真机模块钩子
+  `.emp-card` / `.mp-profile` / `.mp-achievements` / `.mp-services`，所以改了 WXSS 列数
+  却没重出图时，`manifest.layouts` 快照会漂移，`--check` 与 `theme.spec.ts` 判红。
+  脚本注入一份**按真机首页复刻版式**的完整首页 HTML（`data-sec` 顺序与
+  `pages/index/index.wxml` 一致：状态栏 / 顶栏 / 名片卡 / 公司简介 / 经典业绩 /
+  业务服务 / 底部操作栏）；18 个 token 必须全部以 `var()` 引用，定义了却没用就是假同源。
+  **12 张图仍是 12 个合法组合**：4 个风格默认色走各自布局，8 款 `brand-*` 走 `default`
+  布局 + 自己的色系（`style_of()` 与后端 `Split()` 同口径）。
+  **画布按每风格实测内容底部收口**（`default/ink/warm/teal` = 1217/1112/2326/1794，
+  各 +20px 呼吸 +60px 底栏 → 1297/1192/2406/1874，最大上界 375×2420），无头 Chrome 2x
+  出的 PNG 分别是 `750×2594`（default 与 8 款 brand）/ `2384`（ink）/ `4812`（warm）/
+  `3748`（teal）。**不再所有图统一 375×1210**：暖金棕的单列大卡流会被裁掉。
   **通用平台产品，示意图不含任何真实企业客户资料**：企业名 / 人名 / 联系方式 /
   简介全是中性占位，头像与 LOGO 用 CSS 占位块；只引用 15 个通用行业素材
   （分类图标 / 服务插画 / 通用建筑照片），**照片与插画不随模板换色**。
-  改了配色 / 圆角 / 首页区块 / 素材 / 占位文案都要重跑脚本：`manifest.json` 记每款
-  18 个 token 快照 + `seedAssets` + `placeholders` 占位文案快照，`--check` 与
-  `theme.spec.ts` 会抓「图停在旧版」与「混入真实客户身份」。只查「PNG 都在」
-  挡不住这种漂移。
+  改了配色 / 圆角 / **模块布局** / 首页区块 / 素材 / 占位文案都要重跑脚本：
+  `manifest.json` 记每款 18 个 token + `layouts`（4 套规则原文快照）+
+  `canvasByStyle` / `contentBottoms` + `seedAssets` + `placeholders` 快照，
+  `--check` 与 `theme.spec.ts` 会抓「图停在旧版 / 布局漂移 / 按错风格尺寸 /
+  混入真实客户身份」。只查「PNG 都在」挡不住这种漂移。
   `theme.spec.ts` 还断言 HTML 里不得手写任一主题主色、PNG 集合与 Go 白名单一一对应、
-  **12 张图的内容摘要互不相同**、底部按钮「一键拨号」实心在左 /「存入通讯录」
-  描边在右（曾写反），避免端上改了而后台悄悄变旧。
+  **12 张图的内容摘要互不相同**、按所属风格逐张校验 PNG 高度、底部按钮「一键拨号」
+  实心在左 /「存入通讯录」描边在右（曾写反），避免端上改了而后台悄悄变旧。
 - **它不是真机截图**：后台是普通网页，跑不了小程序组件树；模板随小程序版本提审，
   浏览器里也没法动态加载 WXSS。图里准的是配色 / 圆角 / 按钮 / 投影和与真机一致的
   版式密度；不体现真机字体、系统状态栏图标、微信胶囊质感、视频号真实画面、
-  安全区与首页背景图。所以后台**预览卡片本身是一个手机窗口**（比例约 375:750 的竖屏、
-  内部纵向滚动看完整 750×2420 长图），比把整张长图压扁在卡片里更贴近真机预览；
-  卡片在**悬停预览图时浮现「风格示意 · 非真机截图」**并给出「查看大图」入口
+  安全区与首页背景图。**P4 起整页只有一个固定预览区**（`.preview-pane` sticky，
+  `:src="previewUrl(currentId)"` 随风格/色系组合切图），不再让十几张卡片各带一张预览、
+  逼着管理员横向比图；**预览区本身是一个手机窗口**（约 375:750 竖屏、内部纵向滚动看完整
+  长图，长图高度按所属风格不同），比把整张长图压扁在卡片里更贴近真机预览。
+  非 `default` 风格会自动清空并禁用色系（树形归属，避免后端 `BelongsToStyle` 回
+  `code=1` 而客户只看到「保存失败」）；打开大图后切组合，`syncZoom()` 会同步换图。
+  悬停预览图时**浮现「风格示意 · 非真机截图」**并给出「查看大图」入口
   （固定宽度面板 + 纵向滚动看完长图；默认不常驻，以免遮挡选色对比），最终观感必须走
   `docs/real-device-acceptance.md` §7 的真机验收，示意图不能替代。
 - **冷启动预热**：`app.ts` 的 `onLaunch` 在租户绑定之后调

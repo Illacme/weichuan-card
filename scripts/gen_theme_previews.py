@@ -18,15 +18,26 @@
 微信胶囊的真实质感、视频号播放器的真实画面、首页背景图与安全区。
 **最终观感必须走 `docs/real-device-acceptance.md` §7 的真机验收**，示意图不能替代。
 
+**P4：按「风格 × 色系」两轴出图**。12 张图仍是 12 个合法组合（4 风格默认色 +
+8 款 `brand-*`，后者全归 `default` 风格），但**布局不再只有一套**：预览 HTML 的
+模块节点改用 `app.wxss` 的真实钩子类名（`.emp-card` / `.mp-profile` /
+`.mp-achievements` / `.mp-services` 及其子元素），再把 `app.wxss` 里
+`.wc-style-<id> ...` 的规则**原文**（去掉前缀、rpx 换 px）注入 `<style>`。
+也就是说预览里的列数 / 间距 / 圆角 / 封面高度来自端上同一份 WXSS，
+不存在「另写第二套布局」——改了 `app.wxss` 布局却忘了重出图，`--check` 会红。
+每张图的颜色取该组合自己的 18 token；画布按**所属风格**的内容高度自然收口，
+底栏始终紧贴内容底部，短风格不会被拉出一大片空白。
+
 用法：
     python3 scripts/gen_theme_previews.py            # 重新生成全部预览图
     python3 scripts/gen_theme_previews.py --check    # 只校验产物（CI / 提交前用）
+    python3 scripts/gen_theme_previews.py --measure  # 只实测各风格内容高度，不出图
 
---check 不需要浏览器，查「每款模板都有图 / PNG 合法 / 尺寸一致 / token 快照与
-app.wxss 同版 / 通用素材齐全 / 区块与按钮文案同源 / 不含任何真实客户身份」。
-生成需要本机 Chrome（可用 THEME_PREVIEW_CHROME 指定路径）。**改了 app.wxss 配色
-或圆角、改了首页区块、换了素材、改了占位文案、或加了一款模板，都必须重跑本脚本**：
-否则图片会悄悄停在旧样式。
+--check 不需要浏览器，查「每款模板都有图 / PNG 合法 / 按风格尺寸一致 /
+token + 布局规则快照与 app.wxss 同版 / 通用素材齐全 / 区块与按钮文案同源 /
+不含任何真实客户身份」。生成需要本机 Chrome（可用 THEME_PREVIEW_CHROME 指定路径）。
+**改了 app.wxss 的配色 / 圆角 / 布局规则、改了首页区块、换了素材、改了占位文案、
+或加了一款模板，都必须重跑本脚本**：否则图片会悄悄停在旧样式。
 """
 from __future__ import annotations
 
@@ -53,18 +64,28 @@ OUT_DIR = ROOT / "frontend/public/theme-previews"
 MANIFEST = OUT_DIR / "manifest.json"
 
 # 画布按 iPhone 逻辑像素 375pt 设计；小程序 750rpx = 屏宽，故 1rpx = 0.5px。
-# 第二十八轮改为**按内容自然收口**：无头 Chrome 实测业务服务卡底部 y=1129，
-# 取 1130 作基线，留 20px 呼吸后直接接 60px 底栏，不再保留真机截图尾部的滚动余量。
-# 出图前会再实测一次（measure_content_bottom）：改了占位文案 / 区块高度让内容变长时，
+# P4 起高度按**风格**收口：HEIGHT 是四风格中的最大画布（短风格用各自更小的高度，
+# 底栏仍紧贴内容底部），CONTENT_BOTTOM 是允许的最大内容底部。两者仍由
+# 「内容底部 + 呼吸 + 底栏」算出，绝不手填一个带大尾巴的数。
+# 出图前会逐风格实测一次（measure_content_bottom）：改了布局让某风格内容变长时，
 # 底栏会悄悄盖住业务服务卡，光靠常量算不出来，必须显式拒绝出图。
-# 早期 375x430 / 375x640 把分类图标网格、视频控件、4 张竖版服务卡全压成色块，
-# 客户认不出这是自己的小程序，也不能再退回去。
-WIDTH, HEIGHT = 375, 1210
-CONTENT_BOTTOM, TAIL_GAP, BAR_HEIGHT = 1130, 20, 60
+WIDTH, HEIGHT = 375, 2420
+# CONTENT_BOTTOM 是允许的**上界**（实测最大底部 + 一点余量），不是精确值：
+# Chrome 版本 / 字体渲染差 1~2px 不该让出图直接失败。
+CONTENT_BOTTOM, TAIL_GAP, BAR_HEIGHT = 2340, 20, 60
 if HEIGHT != CONTENT_BOTTOM + TAIL_GAP + BAR_HEIGHT:
     raise SystemExit("画布高度必须由「内容底部 + 呼吸 + 底栏」算出，别再手填一个带大尾巴的数")
+# 实测时给 .phone 一个足够高的临时画布，让内容自然流完再读 service 的真实 bottom；
+# 否则 .phone 高度会反过来限制测量，出现「永远刚好装得下」的假绿。
+MEASURE_HEIGHT = 4000
 RPX_TO_PX = 0.5
-SCALE = 2  # 2x 出图 750x2420，后台缩小显示仍可辨识，也可直接当销售材料用
+SCALE = 2  # 2x 出图，后台缩小显示仍可辨识，也可直接当销售材料用
+
+# 两轴归属真值：8 款 brand-* 全挂在 default 风格下（与 mptemplate.Split 一致）。
+# 布局注入只认这 4 个风格，色系只换颜色不改布局。
+DEFAULT_STYLE = "default"
+STYLE_IDS = ("default", "ink", "warm", "teal")
+MODULE_HOOKS = (".emp-card", ".mp-profile", ".mp-achievements", ".mp-services")
 
 # 只引用**通用行业素材**：分类图标、服务插画、公司简介封面与两张案例建筑照片。
 # 它们不含企业名 / 人名 / LOGO；照片与插画跟真机一样不随模板换色。
@@ -117,6 +138,13 @@ TOKEN_RE = re.compile(r"(--wc-[\w-]+)\s*:\s*([^;]+);")
 DEFAULT_BLOCK_RE = re.compile(r"page\s*\{([^{}]*--wc-primary[^{}]*)\}")
 STYLE_BLOCK_RE = re.compile(r"\.wc-style-([a-z0-9_-]+)\s*\{([^{}]*)\}")
 BRAND_BLOCK_RE = re.compile(r"\.wc-brand-([a-z0-9_-]+)\s*\{([^{}]*)\}")
+# 布局规则：行首 .wc-style-<id> + 选择器 + { ... }。选择器允许逗号换行（如
+# `.mp-profile .cv, .mp-profile .cv-video`），故用 M|S 且只允许非花括号字符。
+# 注意它**不会**误吃上面的 token 块：token 块的 id 后面直接是 `{`，
+# `([^{}]+?)` 至少要吃掉一个字符才能接 `{`。
+STYLE_RULE_RE = re.compile(
+    r"^\.wc-style-([a-z0-9_-]+)\s+([^{}]+?)\s*\{([^{}]*)\}", re.M | re.S
+)
 GO_ID_RE = re.compile(r'ID:\s*(DefaultID|"([a-z0-9_-]+)")')
 GO_DEFAULT_RE = re.compile(r'DefaultID\s*=\s*"([a-z0-9_-]+)"')
 
@@ -154,21 +182,75 @@ def read_tokens() -> dict[str, dict[str, str]]:
     return out
 
 
-def manifest_payload(tokens: dict[str, dict[str, str]]) -> dict:
-    """随图写 token / 素材 / 占位文案快照：改了任一样却没重出图，守门能查出图旧了。"""
+def read_layout_rules() -> dict[str, list[str]]:
+    """把 app.wxss 的 `.wc-style-<id> <模块选择器>{...}` 规则按风格分组取出原文。
+
+    预览 HTML 只用这些规则画模块布局，不再自己写一套列宽 / 间距 / 圆角：
+    端上改了布局，重新出图就能跟上；没出图则 manifest 的布局快照会漂移，
+    --check 直接判红。返回值是「选择器 -> 已经过 rpx→px 的规则文本」列表，
+    顺序与 WXSS 一致，方便快照逐字对账。
+    """
+    src = APP_WXSS.read_text(encoding="utf-8")
+    out: dict[str, list[str]] = {sid: [] for sid in STYLE_IDS}
+    for m in STYLE_RULE_RE.finditer(src):
+        sid = m.group(1)
+        if sid not in out:
+            raise SystemExit(f"app.wxss 出现未登记的风格布局规则：{sid}")
+        selector = re.sub(r"\.wc-style-[a-z0-9_-]+\s+", "", m.group(2)).strip()
+        body = to_css_value(m.group(3)).strip()
+        out[sid].append(f"{selector} {{ {body} }}")
+    for sid, rules in out.items():
+        joined = "\n".join(rules)
+        missing = [h for h in MODULE_HOOKS if h not in joined]
+        if missing:
+            raise SystemExit(f"风格 {sid} 缺模块布局规则：{missing}")
+    return out
+
+
+def layout_css(rules: list[str]) -> str:
+    return "\n  ".join(rules)
+
+
+def style_of(theme_id: str) -> str:
+    """组合 id → 布局风格：8 款 brand-* 全归 default（与 mptemplate.Split 一致）。
+
+    色系只覆盖颜色 token，不换布局；后台固定预览区也用这个映射把
+    (styleId, brandColorId) 折回一张 PNG 的文件名。
+    """
+    return DEFAULT_STYLE if theme_id.startswith("brand-") else theme_id
+
+
+def manifest_payload(
+    tokens: dict[str, dict[str, str]],
+    layouts: dict[str, str],
+    bottoms: dict[str, int],
+    heights: dict[str, int],
+) -> dict:
+    """随图写 token / 布局规则 / 画布 / 素材 / 占位文案快照：改了任一样却没重出图，守门能查出图旧了。"""
     return {
         "source": "miniprogram/app.wxss",
         "canvas": [WIDTH, HEIGHT],
         "scale": SCALE,
+        "canvasByStyle": heights,
+        "contentBottoms": bottoms,
+        "layouts": layouts,
         "seedAssets": SEED_FILES,
         "placeholders": PLACEHOLDER_TEXT,
         "tokens": tokens,
     }
 
 
-def write_manifest(tokens: dict[str, dict[str, str]]) -> None:
+def write_manifest(
+    tokens: dict[str, dict[str, str]],
+    layouts: dict[str, str],
+    bottoms: dict[str, int],
+    heights: dict[str, int],
+) -> None:
     MANIFEST.write_text(
-        json.dumps(manifest_payload(tokens), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            manifest_payload(tokens, layouts, bottoms, heights),
+            ensure_ascii=False, indent=2, sort_keys=True,
+        ) + "\n",
         encoding="utf-8",
     )
 
@@ -216,7 +298,12 @@ def check_no_identity(html: str) -> list[str]:
     return problems
 
 
-def check_manifest(tokens: dict[str, dict[str, str]]) -> list[str]:
+def check_manifest(
+    tokens: dict[str, dict[str, str]],
+    layouts: dict[str, str],
+    bottoms: dict[str, int],
+    heights: dict[str, int],
+) -> list[str]:
     if not MANIFEST.is_file():
         return ["缺 manifest.json（无法证明预览图与 app.wxss / 素材同版）"]
     try:
@@ -226,8 +313,23 @@ def check_manifest(tokens: dict[str, dict[str, str]]) -> list[str]:
     problems = []
     if data.get("tokens") != tokens:
         problems.append("token 快照与 app.wxss 当前值不一致：改了配色 / 圆角却没重跑本脚本")
+    if data.get("layouts") != layouts:
+        problems.append("布局规则快照与 app.wxss 当前值不一致：改了模块布局却没重跑本脚本")
     if data.get("canvas") != [WIDTH, HEIGHT] or data.get("scale") != SCALE:
         problems.append("manifest 画布参数与脚本不一致")
+    if data.get("canvasByStyle") != heights:
+        problems.append("manifest 的各风格画布高度与本次实测不一致")
+    if data.get("contentBottoms") != bottoms:
+        problems.append("manifest 的各风格内容底部与本次实测不一致")
+    bar_top = HEIGHT - BAR_HEIGHT
+    for sid, bottom in bottoms.items():
+        if bottom + TAIL_GAP > bar_top:
+            problems.append(
+                f"风格 {sid} 内容底部 {bottom} + 呼吸 {TAIL_GAP} 已超出底栏顶 {bar_top}，"
+                f"必须调大 CONTENT_BOTTOM / HEIGHT 后重出图"
+            )
+    if sorted(bottoms) != sorted(STYLE_IDS) or sorted(heights) != sorted(STYLE_IDS):
+        problems.append("manifest 缺某个风格的实测高度（四风格必须逐个实测）")
     if data.get("seedAssets") != SEED_FILES:
         problems.append("manifest 的素材清单与脚本不一致")
     if data.get("placeholders") != PLACEHOLDER_TEXT:
@@ -264,6 +366,10 @@ def css_tokens(tokens: dict[str, str]) -> str:
 # 每个 data-sec 与真实首页一一对应，theme.spec.ts 会逐个对账。
 # 18 个 --wc-* token 必须全部以 var() 引用（定义了却没用 = 假同源）；
 # 图形全部是 seedassets 里的真实素材，主题色只出现在 var() 里。
+#
+# P4：模块节点改用 app.wxss 的真实钩子类名，${style_css} 注入该风格的布局规则原文。
+# 基础样式只给「结构与颜色」，列数 / 间距 / 封面高度 / 圆角等**布局度量一律由注入规则给**，
+# 避免这里维护成与端上分叉的第二套版式。
 HTML = Template("""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
@@ -301,17 +407,19 @@ ${tokens}
   .card { margin-top: 6px; box-shadow: var(--wc-card-shadow); }
   .section { box-shadow: var(--wc-card-shadow-soft); }
 
-  /* ---- 名片卡：头像 / 姓名职位 / 企业 LOGO / 公司全称 / 查看案例 / 地址 / 两列联系表 ---- */
+  /* ---- 名片卡：头像 / 姓名职位 / 企业 LOGO / 公司全称 / 查看案例 / 地址 / 两列联系表 ----
+     类名与 app.wxss 的 .emp-card 规则对齐（.ec-avatar / .ec-rows / .ec-line / .case-btn），
+     尺寸由 ${style_css} 注入的布局规则覆盖，这里只给形状与颜色。 */
   .ec-head { display: flex; align-items: flex-start; }
   /* 头像与 LOGO 用中性占位，不引用真人照片 / 带企业名的标识：
      通用平台产品的示意图不能让客户误以为这是某家真实企业的名片。 */
-  .avatar-ph { width: 50px; height: 50px; border-radius: 50%; flex: none; position: relative;
+  .avatar-ph, .ec-avatar { width: 56px; height: 56px; border-radius: 50%; flex: none; position: relative;
                overflow: hidden; background: var(--wc-primary-tint); border: 2px solid #fff;
                box-shadow: 0 2px 6px rgba(var(--wc-primary-rgb), .18); }
-  .avatar-ph::before { content: ""; position: absolute; left: 50%; top: 10px;
+  .avatar-ph::before, .ec-avatar::before { content: ""; position: absolute; left: 50%; top: 10px;
                transform: translateX(-50%); width: 15px; height: 15px; border-radius: 50%;
                background: var(--wc-primary-border); }
-  .avatar-ph::after { content: ""; position: absolute; left: 50%; bottom: -6px;
+  .avatar-ph::after, .ec-avatar::after { content: ""; position: absolute; left: 50%; bottom: -6px;
                transform: translateX(-50%); width: 30px; height: 22px;
                border-radius: 15px 15px 0 0; background: var(--wc-primary-border); }
   .ec-info { flex: 1; min-width: 0; margin-left: 10px; }
@@ -333,16 +441,17 @@ ${tokens}
     background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 28%,
                 var(--wc-track) 28%, var(--wc-track) 100%); }
   .line-split { width: 46px; margin: 7px 0 9px; }
-  .ec-contact { display: flex; justify-content: space-between; gap: 8px; }
+  .ec-rows { display: flex; justify-content: space-between; gap: 8px; }
   .ec-col { flex: 1; min-width: 0; }
   .ec-line { display: flex; align-items: baseline; font-size: 10.5px; color: #333; padding: 1px 0; }
   .ec-label { width: 28px; flex: none; color: #98a6b5; font-size: 10px; }
   .ec-val { white-space: nowrap; }
 
-  /* ---- 公司简介：真实封面图 + 视频控件 + 黑色粗体公司名 + 4 行简介 ---- */
-  .cover { position: relative; height: 175px; border-radius: var(--wc-r-card-bg);
-           overflow: hidden; box-shadow: var(--wc-card-shadow-bg); }
-  .cover > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* ---- 公司简介：真实封面图 + 视频控件 + 黑色粗体公司名 + 4 行简介 ----
+     .cv / .cv-video / .company-name / .intro 的高度与行距由布局规则注入。 */
+  .cv { position: relative; height: 220px; border-radius: var(--wc-r-card-bg);
+        overflow: hidden; box-shadow: var(--wc-card-shadow-bg); }
+  .cv > img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* 封面是租户上传的照片/视频帧，真机上**不随模板换色**。这里只加中性暗角
      让白色大字可读，绝不能用主色去染它——否则客户会以为换了风格连视频也变色。 */
   .cover-shade { position: absolute; inset: 0;
@@ -365,18 +474,24 @@ ${tokens}
   .company-name { font-size: 14.5px; font-weight: 700; color: #1a1a1a; margin-top: 10px; }
   .intro { font-size: 13px; line-height: 1.75; color: #4b5563; }
 
-  /* ---- 经典业绩：8 个分类图标卡（2x4）+ 2 张精选案例大图 ---- */
+  /* ---- 经典业绩 / 业务服务 ----
+     容器用 flex-wrap，列宽 25% / 20% / 50% / 33.33% 全部由布局规则给（grid 会忽略
+     子节点 width，那样四风格就画不出差异了）。服务卡标题烧在图片里，与真机一样
+     有图时只渲染 .svc-icon，不另画文字标题。 */
   .sec-head { display: flex; align-items: center; justify-content: space-between; }
   .sec-title { font-size: 15px; font-weight: 700; color: #1a1a1a; }
   .sec-more { font-size: 10px; color: var(--wc-primary); }
   .sec-line { height: 2px; width: 46px; margin: 6px 0 10px;
     background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 28%,
                 var(--wc-track) 28%, var(--wc-track) 100%); }
-  .cat-grid, .svc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
-  .cat-grid img, .svc-grid img { width: 100%; display: block; border-radius: var(--wc-r-card-bg); }
-  .featured { display: flex; gap: 6px; margin-top: 10px; }
-  .featured img { width: 50%; height: 88px; object-fit: cover; display: block;
-                  border-radius: var(--wc-r-card-bg); }
+  .cat-grid, .featured, .svc-grid { display: flex; flex-wrap: wrap; align-items: flex-start; }
+  .cat-item, .feat-item, .svc-item { box-sizing: border-box; }
+  .cat-icon, .feat-cover, .svc-icon { width: 100%; display: block;
+    border-radius: var(--wc-r-card-bg); }
+  .feat-cover { object-fit: cover; }
+  .cat-name { font-size: 10px; color: #6b7a89; text-align: center; margin-top: 3px; }
+  .featured { margin-top: 10px; }
+  .svc-title { font-size: 11px; color: #333; text-align: center; margin-top: 4px; }
   /* 真机右缘有个悬浮音乐开关。长图只有一帧，放在右缘中段最贴近真机；
      之前用 bottom:8px 锚到 .phone 底部，结果被后画的 .bar 整块盖住——
      元素在 DOM 里、CSS 里也在，客户却永远看不到，属于典型静默失败。 */
@@ -396,6 +511,10 @@ ${tokens}
                 border-radius: var(--wc-r-control); }
   .bar .call { background: var(--wc-primary); color: #fff; border: 1px solid var(--wc-primary); }
   .bar .save { background: #fff; color: var(--wc-primary); border: 1px solid var(--wc-primary); }
+
+  /* ===== 布局层：由 app.wxss 的 .wc-style-<id> 规则原文注入（已去前缀 / rpx→px） =====
+     Default 以外的风格会覆盖上面的尺寸与列宽；这里绝不另写第二套布局。 */
+  ${style_css}
 </style></head><body>
 <div class="phone">
   <div class="status" data-sec="status"><span>09:01</span><span class="sys">▪ ▪ 4G ▮ 21</span></div>
@@ -405,9 +524,9 @@ ${tokens}
     <div class="wx-capsule"><span>···</span><span class="sep"></span><span class="dot"></span></div>
   </div>
 
-  <div class="card" data-sec="card">
+  <div class="card emp-card" data-sec="card">
     <div class="ec-head">
-      <div class="avatar-ph" aria-hidden="true"></div>
+      <div class="avatar-ph ec-avatar" aria-hidden="true"></div>
       <div class="ec-info">
         <div class="ec-line1"><span class="ec-name">${person}</span><span class="logo-ph">LOGO</span></div>
         <div class="ec-title">${title}</div>
@@ -416,7 +535,7 @@ ${tokens}
       </div>
     </div>
     <div class="ec-rows-line"></div>
-    <div class="ec-contact">
+    <div class="ec-rows">
       <div class="ec-col"><div class="ec-line"><span class="ec-label">手机</span><span class="ec-val">${phone}</span></div></div>
       <div class="ec-col">
         <div class="ec-line"><span class="ec-label">座机</span><span class="ec-val">${tel}</span></div>
@@ -425,8 +544,8 @@ ${tokens}
     </div>
   </div>
 
-  <div class="section" data-sec="company">
-    <div class="cover">
+  <div class="section mp-profile" data-sec="company">
+    <div class="cv cover">
       <img src="assets/cover-company.jpg" alt="">
       <div class="cover-shade"></div>
       <div class="cover-word"><span>走进</span><span>${short_name}</span></div>
@@ -438,16 +557,17 @@ ${tokens}
     <div class="intro">${intro}</div>
   </div>
 
-  <div class="section" data-sec="achievement">
+  <div class="section mp-achievements" data-sec="achievement">
     <div class="sec-head"><span class="sec-title">经典业绩</span><span class="sec-more">更多案例 ▸</span></div>
     <div class="sec-line"></div>
     <div class="cat-grid">${cat_cards}</div>
     <div class="featured">
-      <img src="assets/cover-daxing.jpg" alt=""><img src="assets/cover-hospital.jpg" alt="">
+      <div class="feat-item"><img class="feat-cover" src="assets/cover-daxing.jpg" alt=""></div>
+      <div class="feat-item"><img class="feat-cover" src="assets/cover-hospital.jpg" alt=""></div>
     </div>
   </div>
 
-  <div class="section" data-sec="service">
+  <div class="section mp-services" data-sec="service">
     <div class="sec-head"><span class="sec-title">业务服务</span></div>
     <div class="sec-line"></div>
     <div class="svc-grid">${svc_cards}</div>
@@ -476,9 +596,10 @@ def find_chrome() -> str | None:
 def measure_content_bottom(chrome: str, html: str) -> int:
     """出图前实测业务服务卡底部，防止固定底栏悄悄盖住内容。
 
-    改了占位文案长度 / 区块密度，内容会变长，而 HEIGHT 是常量：底栏是 absolute
-    定位，内容被盖住不会报任何错，客户只会在缩略卡里看到半张服务卡。让浏览器
-    报一次真实布局，比在注释里写「注意别改文案」可靠。
+    改了布局（列数 / padding / 封面高度）内容会变长，而画布高度是常量：底栏是
+    absolute 定位，内容被盖住不会报任何错，客户只会在缩略卡里看到半张服务卡。
+    让浏览器报一次真实布局，比在注释里写「注意别改布局」可靠。P4 起四个风格
+    逐个实测，每个风格用自己的画布高度收口。
     """
     probe = (
         '<script>window.addEventListener("load",function(){'
@@ -496,7 +617,7 @@ def measure_content_bottom(chrome: str, html: str) -> int:
         cmd = [
             chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
             "--hide-scrollbars", "--allow-file-access-from-files",
-            "--virtual-time-budget=2500", f"--window-size={WIDTH},{HEIGHT}",
+            "--virtual-time-budget=2500", f"--window-size={WIDTH},{MEASURE_HEIGHT}",
             "--dump-dom", page.as_uri(),
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
@@ -506,7 +627,7 @@ def measure_content_bottom(chrome: str, html: str) -> int:
         return int(m.group(1))
 
 
-def render(chrome: str, html: str, out: Path) -> None:
+def render(chrome: str, html: str, out: Path, height: int) -> None:
     with tempfile.TemporaryDirectory(prefix="wc-theme-preview-") as td:
         page = Path(td) / "preview.html"
         assets = Path(td) / "assets"
@@ -523,7 +644,7 @@ def render(chrome: str, html: str, out: Path) -> None:
             chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
             "--hide-scrollbars", "--allow-file-access-from-files",
             f"--force-device-scale-factor={SCALE}",
-            f"--window-size={WIDTH},{HEIGHT}", f"--screenshot={out}",
+            f"--window-size={WIDTH},{height}", f"--screenshot={out}",
             page.as_uri(),
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
@@ -538,16 +659,26 @@ def png_size(path: Path) -> tuple[int, int] | None:
     return struct.unpack(">II", data[16:24])
 
 
-def build_html(tokens: dict[str, str]) -> str:
+def build_html(
+    tokens: dict[str, str],
+    style_id: str = DEFAULT_STYLE,
+    height: int = HEIGHT,
+    style_css: str = "",
+) -> str:
     cat_cards = "\n".join(
-        f'<img src="assets/cat-{i}.png" alt="">' for i in range(1, 9)
+        f'<div class="cat-item"><img class="cat-icon" src="assets/cat-{i}.png" alt="">'
+        f'<div class="cat-name">示例分类</div></div>'
+        for i in range(1, 9)
     )
+    # 服务卡标题已烧在图内（与 service-grid/index.wxml 一致），不重复渲染文字标题
     svc_cards = "\n".join(
-        f'<img src="assets/svc-{i}.png" alt="">' for i in range(1, 5)
+        f'<div class="svc-item"><img class="svc-icon" src="assets/svc-{i}.png" alt=""></div>'
+        for i in range(1, 5)
     )
     return HTML.substitute(
-        w=WIDTH, h=HEIGHT, bar_h=BAR_HEIGHT, tail_gap=TAIL_GAP,
-        tokens=css_tokens(tokens), cat_cards=cat_cards, svc_cards=svc_cards,
+        w=WIDTH, h=height, bar_h=BAR_HEIGHT, tail_gap=TAIL_GAP,
+        tokens=css_tokens(tokens), style_css=style_css,
+        cat_cards=cat_cards, svc_cards=svc_cards,
         **PLACEHOLDER_TEXT,
     )
 
@@ -555,9 +686,12 @@ def build_html(tokens: dict[str, str]) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只校验产物，不需要浏览器")
+    ap.add_argument("--measure", action="store_true", help="只实测四风格内容高度，不出图")
     args = ap.parse_args()
 
     tokens = read_tokens()
+    layout_rules = read_layout_rules()
+    layouts = {sid: "\n  ".join(rules) for sid, rules in layout_rules.items()}
     ids = read_go_ids()
     missing_tokens = [i for i in ids if i not in tokens]
     if missing_tokens:
@@ -566,11 +700,20 @@ def main() -> int:
     if len(set(ids)) != len(ids):
         print("✗ Go 白名单出现重复 id", file=sys.stderr)
         return 1
+    go_styles = [i for i in ids if not i.startswith("brand-")]
+    if go_styles != list(STYLE_IDS):
+        print(f"✗ Go 白名单的风格款与布局规则对不上：{go_styles} != {list(STYLE_IDS)}", file=sys.stderr)
+        return 1
+    if style_of(ids[0]) != DEFAULT_STYLE:
+        print("✗ 默认款必须归 default 风格", file=sys.stderr)
+        return 1
     active = {i: tokens[i] for i in ids}
 
-    # 12 张图共用同一套 HTML（只有 token 不同），抽第一张验证脱敏即可；
     # 查的是代入占位文案后的最终 HTML，不能只查模板源码，否则是假绿。
+    # P4 起四个风格各查一遍：布局不同，占位文案 / 身份素材必须同样干净。
     problems = check_sources() + check_no_identity(build_html(active[ids[0]]))
+    for sid in STYLE_IDS:
+        problems += check_no_identity(build_html(active[ids[0]], sid))
     if problems:
         for p in problems:
             print(f"✗ {p}", file=sys.stderr)
@@ -580,18 +723,26 @@ def main() -> int:
         files = {p.stem: p for p in OUT_DIR.glob("*.png")} if OUT_DIR.is_dir() else {}
         extra = sorted(set(files) - set(ids))
         absent = [i for i in ids if i not in files]
-        expected = (WIDTH * SCALE, HEIGHT * SCALE)
+        data = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.is_file() else {}
+        heights = data.get("canvasByStyle", {})
         bad = []
         for i in ids:
             p = files.get(i)
             if not p:
                 continue
+            h = heights.get(style_of(i))
             size = png_size(p)
+            expected = (WIDTH * SCALE, h * SCALE) if isinstance(h, int) else None
             if p.stat().st_size < 5000 or size != expected:
-                bad.append(f"{i}({size}, {p.stat().st_size}B)")
+                bad.append(f"{i}({size}, {p.stat().st_size}B, 期望 {expected})")
         print(f"模板 {len(ids)} 款：{', '.join(ids)}")
-        print(f"预览图 {len(files)} 张，期望尺寸 {expected[0]}x{expected[1]}")
-        problems = check_manifest(active)
+        print(f"预览图 {len(files)} 张，按风格画布 {heights}")
+        # --check 不跑浏览器：用上一次出图时记下的实测值做快照对账。
+        # 布局规则 / token 一旦变了，下面的 layouts / tokens 比对就会判红，
+        # 要求重出图（重出图时会重新实测并重写这两个快照）。
+        problems = check_manifest(
+            active, layouts, data.get("contentBottoms", {}), data.get("canvasByStyle", {})
+        )
         if absent:
             problems.append(f"缺图：{absent}")
         if extra:
@@ -602,28 +753,49 @@ def main() -> int:
             for p in problems:
                 print(f"✗ {p}", file=sys.stderr)
             return 1
-        print("✓ 预览图、演示素材与模板白名单同版，PNG 合法且尺寸一致")
+        print("✓ 预览图、四风格布局、演示素材与模板白名单同版，PNG 合法且按风格尺寸一致")
         return 0
 
     chrome = find_chrome()
     if not chrome:
         print("✗ 找不到 Chrome；设 THEME_PREVIEW_CHROME=/path/to/chrome 后重试", file=sys.stderr)
         return 1
-    bottom = measure_content_bottom(chrome, build_html(active[ids[0]]))
+
+    # 逐风格实测：测量时用 MEASURE_HEIGHT 让内容自然流完，再按实测底部给该风格收口。
+    # 12 张图按所属风格共用该风格的画布高度，底栏始终紧贴内容，短风格不留大尾巴。
+    bottoms: dict[str, int] = {}
+    heights: dict[str, int] = {}
     bar_top = HEIGHT - BAR_HEIGHT
-    if bottom + TAIL_GAP > bar_top:
-        print(f"✗ 底栏会盖住业务服务卡：内容底部 {bottom} + 呼吸 {TAIL_GAP} "
-              f"> 底栏顶 {bar_top}；请同步调大 CONTENT_BOTTOM / HEIGHT 后重出图", file=sys.stderr)
+    for sid in STYLE_IDS:
+        probe_html = build_html(
+            active[ids[0]], sid, MEASURE_HEIGHT, layout_css(layout_rules[sid])
+        )
+        bottom = measure_content_bottom(chrome, probe_html)
+        bottoms[sid] = bottom
+        heights[sid] = bottom + TAIL_GAP + BAR_HEIGHT
+        if bottom + TAIL_GAP > bar_top:
+            print(f"✗ 风格 {sid} 底栏会盖住业务服务卡：内容底部 {bottom} + 呼吸 {TAIL_GAP} "
+                  f"> 底栏顶 {bar_top}；请同步调大 CONTENT_BOTTOM / HEIGHT 后重出图", file=sys.stderr)
+            return 1
+        print(f"✓ {sid}: 内容底部实测 {bottom}，画布 {heights[sid]}，尾部留白 {TAIL_GAP}px")
+    if max(bottoms.values()) > CONTENT_BOTTOM:
+        print(f"✗ 实测最大内容底部 {max(bottoms.values())} 超出 CONTENT_BOTTOM {CONTENT_BOTTOM}；"
+              f"请同步调大 CONTENT_BOTTOM / HEIGHT 后重出图", file=sys.stderr)
         return 1
-    print(f"✓ 内容底部实测 {bottom}，底栏顶 {bar_top}，尾部留白 {bar_top - bottom}px")
+    if args.measure:
+        print("（--measure：只实测，未出图）")
+        return 0
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for i in ids:
+        sid = style_of(i)
         out = OUT_DIR / f"{i}.png"
-        render(chrome, build_html(active[i]), out)
-        print(f"✓ {out.relative_to(ROOT)}  {png_size(out)}  {out.stat().st_size}B")
-    write_manifest(active)
-    print(f"完成：{len(ids)} 张预览图 + token / 素材快照，token 来自 {APP_WXSS.relative_to(ROOT)}，"
-          f"图形来自 {SEED_DIR.relative_to(ROOT)}")
+        html = build_html(active[i], sid, heights[sid], layout_css(layout_rules[sid]))
+        render(chrome, html, out, heights[sid])
+        print(f"✓ {out.relative_to(ROOT)}  [{sid}]  {png_size(out)}  {out.stat().st_size}B")
+    write_manifest(active, layouts, bottoms, heights)
+    print(f"完成：{len(ids)} 张预览图（{len(STYLE_IDS)} 套布局 × 各自色系）+ token / 布局快照，"
+          f"token 与布局均来自 {APP_WXSS.relative_to(ROOT)}，图形来自 {SEED_DIR.relative_to(ROOT)}")
     return 0
 
 

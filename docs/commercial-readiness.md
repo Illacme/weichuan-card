@@ -2445,3 +2445,57 @@ P1 只动后端数据/契约层，前端与小程序**完全不动**（`template
 > `git push origin main`。**P1 / P2 / P3 全部收口**，只剩 P4（后台两步 UI、预览图重生成、
 > 白名单树化、真机验收）。
 
+## 第四十一轮：主题两轴化 P4（固定预览区 + 两步选择 + 12 张预览图按 4 风格布局重出）
+
+承接第四十轮 P3（提交 `94274e1`）。用户反馈「**管理后台的预览显示区固定在一个位置，
+根据所选风格和色系来切换显示是不是更友好合理**」；助手复核后指出旧 12 张 PNG 仍是
+P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览区会让后台与真机不一致，
+用户选择「**预览图一起重出**」。本轮因此同时改后台 UI、出图脚本、PNG 产物与守门，
+**后端 / 迁移 / OpenAPI / 数据库 / 小程序 wxml 全部零改动**。
+
+| 项 | 说明 |
+| --- | --- |
+| 后台交互 | `MpTheme.vue` 重写：左侧 `<aside class="preview-pane">`（`position: sticky`）**整页只有一个固定预览区**，`:src="previewUrl(currentId)"` 随 `(styleId, brandColorId)` 切图；右侧两步选择（第 1 步 4 张风格卡 / 第 2 步「默认色」+ 8 张色卡）。不再十几张卡片各带预览 |
+| 两轴保存 | `save()` 只发 `{ styleId, brandColorId }`；`splitThemeId()` 兼容只下发 `templateId` 的旧后端（按 `brand-` 前缀拆回两轴）；「使用中」只在保存成功后更新；`syncZoom()` 让已打开的大图随组合换图 |
+| 树形归属 | 切到非 `default` 风格**自动清空并禁用色系**——否则后端 `BelongsToStyle` 回 `code=1`，客户只看到「保存失败」却不明白原因 |
+| 预览图重出 | `gen_theme_previews.py` 用 `STYLE_RULE_RE` 从 `app.wxss` 抽 `.wc-style-<id> … { … }` **规则原文**，去前缀、`rpx→px(×0.5)` 后注入 `${style_css}`；预览 HTML 复用真机模块钩子 `.emp-card` / `.mp-profile` / `.mp-achievements` / `.mp-services`，**不存在第二套布局**。12 张仍是 12 个合法组合：4 风格默认色用各自布局，8 款 `brand-*` 用 `default` 布局 + 自己的色系（`style_of()` 与后端 `Split()` 同口径） |
+| 按风格收口画布 | 逐风格 `measure_content_bottom()` 实测：`default/ink/warm/teal` 内容底部 `1217/1112/2326/1794` → 画布 `1297/1192/2406/1874`（+20 呼吸 +60 底栏），上界 `375×2420`；2x PNG 分别 `750×2594 / 2384 / 4812 / 3748`。不再统一 375×1210，否则裁掉暖金棕单列大卡流 |
+| manifest 快照 | 新增 `layouts`（4 套规则原文）、`canvasByStyle`、`contentBottoms`；`--check` 与 `theme.spec.ts` 的 `expectedLayoutRules()` 同口径复算，改了 WXSS 布局却没重出图必红 |
+| 守门改写 | `MpTheme.spec.ts` 重写 20 例（两步渲染 / 只有一个固定预览区 / 切图 / 归属清空 / 两轴 payload / 旧后端兼容 / 大图同步 / 降级重试 / 脱敏说明）；`MpSettings.spec.ts` 改两轴 payload；`miniprogram/tests/theme.spec.ts` 增布局同源、按风格 PNG 尺寸、固定预览区不回潮等源码级断言 |
+| 反向验证 | **8 项必红**（每项字节级还原、还原后复绿）：① 布局注入退回全 `default` ② 布局规则写死不分风格 ③ `save()` 退回 `{ templateId }` ④ 固定预览区 `:src` 写死 ⑤ 切非 `default` 不清色系 ⑥ 退回 `theme-card` 每款一张卡 ⑦ `manifest.layouts` 与 WXSS 漂移（Vitest + `--check` 双红）⑧ `ink.png` 换错尺寸。另做失败原因复核，确认 ①②⑤⑥ 命中的是目标断言行而非编译错误 |
+| 门禁 | **8 项实质全绿**：`golangci-lint v2.15.0`（0 issues）/ `go test ./...` 全包 / `gen_theme_previews.py --check` / `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **95 文件 1605 例** / `vite build --outDir dist-check-p4` / `git diff --check`。构建首次撞 `CODEBUDDY_BROKER_TIMEOUT`（环境 broker 瞬时超时，第三十五 / 四十轮同款），单独重跑 `RETRY_BUILD_EXIT=0`、`✓ built in 1m 28s` |
+
+> 关键坑 1（**用户看不见的旧图**）：P2/P3 把 4 风格 × 4 模块布局落进了 `app.wxss`，
+> 但 12 张 PNG 仍是旧版式。只固定预览区的话，「12 张图都在 + 尺寸对 + token 快照同版」
+> 三项检查全绿，客户却看到与真机不同的排布，**没有任何人报错**。解法是让布局规则原文
+> 也进入出图链路并写进 `manifest.layouts`，与 WXSS 逐字对账。
+>
+> 关键坑 2（**统一画布会裁内容**）：初始 `HEIGHT=2340` 时暖金棕实测内容底部 2326
+> + 20 呼吸 > 底栏顶 2280，测量阶段直接拒绝出图。改成 `375×2420` 上界 + **每风格动态收口**，
+> 短风格不留大尾巴、长风格不裁内容。随后 `--check` 又因用 `CONTENT_BOTTOM` 而非
+> `HEIGHT - BAR_HEIGHT` 判越界假红一次，改回主流程同口径才通过。
+>
+> 关键坑 3（**静态大图 id 的静默错位**）：打开「查看大图」后切色系，浮层仍显示旧图，
+> 客户以为放大看的是刚选中的那一款。新增 `syncZoom()` 在 `pickStyle` / `pickBrand` 同步。
+> 另外 P4 移除「每张卡片 + 名称区」后，旧 `.theme-meta` 视觉分隔守门假红，
+> 由 `.pane-foot` 承接同一语义（浅灰底 + 边框），不是删掉守门了事。
+>
+> 关键坑 4（**反向验证要红对地方**）：一次性脚本把 8 处改坏后，另做失败原因复核，
+> 逐一确认命中 `theme.spec.ts` 的 847 / 846 / 345 / 867 行断言且无编译错误，
+> 再把全部 19 个改动文件做 sha256 字节对账（漂移 0、新增 0），最后统一复绿。
+>
+> **视觉抽查**：本机无 PIL，改用逐张看图。`default` 为分类 4 列 / 精选 2 列 / 服务 4 列、
+> 封面中等高度；`warm` 为分类 2 列 × 多行 / 精选单列大图 / 服务 3 列 × 2 行、封面更高更圆
+> —— 证明布局差异确实进了 PNG，不只是 token 变色。
+
+> **本轮刻意未做（留作后续独立阶段）**：白名单 `mptemplate` 物理树化、删 `IsBrand`
+> 平面判定、清单改 `styles[]` + `brandColors[]`、OpenAPI 的 `templateId` enum 收敛、
+> 删 `template_id` 兼容列。P4 后台仍按服务端 `series` 做两步渲染、**不自己猜 id 前缀**，
+> 因此全程不引入新的后端 / 数据库变更风险。真机像素级验收仍需人工（本环境无真机截图
+> 工具链），设计稿 §5/§6/§7/§8/§9/§11 已按此口径订正。
+
+> 验收结论：反向验证 8 项必红且已还原复绿（针对性 Vitest 88 例复绿、`--check` 绿），
+> 全量 Vitest 95 文件 / **1605 例**通过，`dist-check-p4` 由 `**/dist-check-*/` 忽略、不进提交。
+> 本轮提交后本地领先远端 **12 个提交**；沙箱拦截 `git push`，需本人手动
+> `git push origin main`。**主题两轴化 P1–P4 全部收口**。
+

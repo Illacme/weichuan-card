@@ -1,8 +1,9 @@
 # 主题系统两轴化设计（风格 × 色系）
 
-> 状态：**P1（数据/契约层）**、**P2（CSS 两层 + 前 2 模块布局）**、**P3（剩余 2 模块布局）均已实现并测试通过**；P4（后台两步 UI / 预览图重生成 / 白名单树化 / 全量真机验收）待实施。
+> 状态：**P1（数据/契约层）/ P2（CSS 两层 + 前 2 模块布局）/ P3（剩余 2 模块布局）/ P4（后台两步 UI + 预览图按风格重出）均已实现并通过全量门禁**。
+> P4 的实际范围是「固定预览区 + 两步选择 + 12 张图按 4 风格布局重出 + 守门改写」；**刻意未做**白名单物理树化、删 `template_id` 兼容列、真机像素级验收，这三项留作后续阶段（见 §7 / §8 / §10），不是漏做。
 > 2026-11-11 用户确认方向：整体风格驱动各模块布局、品牌配色作为叠加在风格之上的色系调整；并确认布局深度为「整模块重排版」。
-> 当前实现见 `docs/commercial-readiness.md` 第三十八轮：后端已完成 `StyleID`+`BrandColorID` 双列、`0042` 迁移、PUT/GET 两轴接口与跨风格归属校验，前端/小程序暂不动（`templateId` 兼容列续命）。
+> 分期记录见 `docs/commercial-readiness.md` 第三十八～四十一轮：P1 完成 `StyleID`+`BrandColorID` 双列、`0042` 迁移与两轴接口；P2/P3 完成 4 风格 × 4 模块布局；P4 完成后台与预览图收口。
 >
 > **命名澄清（重要）**：设计稿里用的标签名「classic（经典蓝基线）」对应的**真实风格 id 是 `default`**（即 `mptemplate.DefaultID`），不是字面 `classic`。P1 实现中基础风格一律用 `default`；`brand-*` 全部归 `default` 风格之下。下文凡「classic」均指 `default` 这一风格。
 
@@ -11,7 +12,7 @@
 - **风格（Style）** 决定小程序各功能模块的**布局语言**（顶部名片卡区、公司简介、经典业绩、业务服务的结构与排布各有特色）。
 - **色系（BrandColor）** 是叠加在所选风格之上的**纯颜色层**，不改布局。
 - 不破坏既有不变量：
-  - 保存**只提交风格/色系**，不跨页签覆盖（`MpTheme.save` 只发 `{styleId, brandColorId}`，见 `frontend/src/views/content/MpTheme.vue:225` 现有 `{ templateId }`）。
+  - 保存**只提交风格/色系**，不跨页签覆盖（P4 起 `MpTheme.save()` 只发 `{ styleId, brandColorId }`；P1–P3 期间发的是 `{ templateId }`，由后端兼容派生列兜住）。
   - 后端 PUT 指针语义（`backend/internal/handler/content.go:491` `TemplateID *string`），未提供字段保持原值。
   - 保存后访客端即时生效，无需重新上传代码或提审（`MpTheme.vue:4-7` 既有承诺）。
 
@@ -98,8 +99,11 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 >   首页 `loadAll` 与冷启动 `prefetchTheme` 都走它，不各自猜字段。
 > - **12 组组合 token 逐字不变**：颜色层删掉的 7 个版式 token 原本就等于 `page` 默认值，
 >   预览脚本 `read_tokens()` 与 `theme.spec.ts` 的 `readThemeVars()` 都按「颜色层 ∪ default
->   版式」合并出 12 组 18 token，与 `manifest.json` 快照逐字相等 → **12 张 PNG 无需重出、
->   存量配色零突变**。真正按风格重出 4 张布局长图是 P4 的事。
+>   版式」合并出 12 组 18 token，与 `manifest.json` 快照逐字相等 → **当轮 12 张 PNG 无需重出、
+>   存量配色零突变**。当时「真正按风格重出布局长图」仍是 P4 的事。
+> - ✅ **P4 已落地**：布局规则也进预览图（见 §6）。`STYLE_RULE_RE` 从 `app.wxss` 抽取
+>   `.wc-style-<id> … { … }` 原文注入预览 HTML，改了列数却没重出图会被 `manifest.layouts`
+>   快照与 `--check` 判红。12 组 token 的合并口径本身没变。
 
 ## 4. 各模块 × 各风格的布局语言（设计核心，方向稿非像素定稿）
 
@@ -136,18 +140,43 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 - 选中态 = `(styleId, brandColorId)`；`.tab-actions` 的「保存风格」payload 由 `{templateId}` 改为 `{styleId, brandColorId}`（其余两页签不变）。
 - 仍嵌在「小程序设置」页签，复用既有 sticky 切换栏与统一保存/重新加载（`frontend/src/views/content/MpSettings.vue` 已就绪）。
 
+> ✅ **P4 已落地，交互按用户反馈做了一处调整**：用户提出「预览显示区固定在一个位置，
+> 根据所选风格和色系切换显示更友好合理」，因此**没有**采用上面方向稿的「4 张风格卡各带一张
+> 布局长图 + 色卡条小图」，而是改成：
+> - 左侧 `<aside class="preview-pane">` 一个 `position: sticky` 的**固定预览区**，整页只有一个
+>   `.theme-preview`，`:src="previewUrl(currentId)"` 随 `(styleId, brandColorId)` 组合切图；
+>   右侧两步选择（第 1 步 4 张风格卡 / 第 2 步「默认色」+ 8 张色卡）。
+> - 树形归属落地：非 `default` 风格自动清空并禁用色系，否则后端 `BelongsToStyle` 会 `code=1`，
+>   客户只看到一句「保存失败」却不知道原因。
+> - `save()` 只发 `{ styleId, brandColorId }`；`splitThemeId()` 兼容只下发兼容列 `templateId`
+>   的旧后端（按 `brand-` 前缀拆回两轴）。打开大图后切组合时 `syncZoom()` 同步换图；
+>   「使用中」只在保存成功后更新，未保存组合不误标。
+
 ## 6. 预览图生成（`scripts/gen_theme_previews.py`）
 
-- 现状：每 `templateId` 一张长图，从 `app.wxss` token 生成（`MpTheme.vue:47` 注释）。
-- 目标：
-  - 按 **风格**生成 4 张「布局示意长图」（体现 §4 的模块排布差异）。
-  - 色系以**色卡条**形式叠加渲染（同一布局 + 不同主色），不再为每 (风格×色系) 各出一张整图。
-- 后台卡片：风格卡显示布局长图；色系卡显示「该布局 + 此色」的局部应用小图。
+> 当前口径：**12 个合法组合各出一张完整首页长图，布局取自 `app.wxss` 的 `.wc-style-<id>` 规则原文，颜色取自两层合并 token**；`--check` 不跑浏览器即可对账产物。
+>
+> **早期方向稿（已被 P4 落地口径取代，保留作决策记录）**：曾设想「按风格出 4 张布局长图 +
+> 色卡条小图，不再为每组合各出一张整图」；并注明 P2 现状是 12 张按组合出的长图，只把
+> `read_tokens()` 改成两层合并读取（`.wc-style-*` 全套 + `.wc-brand-*` 颜色 ∪ default 版式），
+> 合并出的 18 token 逐字未变，当轮 `manifest.json` 与 12 张 PNG 全部无需重出、`--check` 保持绿。
 
-> **P2 现状**：仍是 12 张按组合出的长图，只把 `read_tokens()` 改成两层合并读取
-> （`.wc-style-*` 全套 + `.wc-brand-*` 颜色 ∪ default 版式）。合并出的 18 token 逐字未变，
-> `manifest.json` 与 12 张 PNG **全部无需重出**，`--check` 保持绿。上面「4 张布局长图 +
-> 色卡条」是 **P4 目标**，随后台两步 UI 一起做。
+> ✅ **P4 实际落地：仍是 12 张合法组合各一张，但每张按所属风格的布局出图**，没有改成
+> 「4 张图 + 色卡条」。理由：固定预览区本来就是按组合切一张完整长图，缩成 4 张反而要另做
+> 小图合成；保留 12 张还能继续用「PNG 集合与 Go 白名单一一对应 / 12 张内容两两不同」
+> 这批已有的守门，不为了改结构而丢掉静默失败防护。
+> - `STYLE_RULE_RE` 从 `app.wxss` 直接抽取 `.wc-style-<id> … { … }` **规则原文**，去掉前缀、
+>   把 `rpx` 按 0.5 折成浏览器 `px`，注入 `${style_css}`；预览 HTML 复用真机模块钩子
+>   `.emp-card` / `.mp-profile` / `.mp-achievements` / `.mp-services`，**不存在第二套布局**。
+> - 4 个风格默认色用各自布局，8 款 `brand-*` 用 `default` 布局 + 自己的色系 token
+>   （`style_of(id)` 与后端 `Split()` 同口径）。
+> - 画布按**每风格实测内容高度**收口（`measure_content_bottom()`）：`default/ink/warm/teal`
+>   实测底部 `1217/1112/2326/1794`，画布 `1297/1192/2406/1874`（+20 呼吸 +60 底栏），
+>   最大上界 `375×2420`；2x 出的 PNG 分别为 `750×2594 / 2384 / 4812 / 3748`。
+>   再让所有图统一 1210 高度会裁掉暖金棕的单列大卡流。
+> - `manifest.json` 新增 `layouts`（4 套规则原文快照）、`canvasByStyle`、`contentBottoms`；
+>   `--check` 与 `theme.spec.ts` 的 `expectedLayoutRules()` 同口径复算，改了 WXSS 布局却没
+>   重出图必红。
 
 ## 7. 接口契约（`docs/openapi.yaml`）
 
@@ -158,10 +187,15 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 
 - **P2 已落地**：小程序 `utils/types.ts` 的 `HomeLayoutResp` 补 `styleId` / `brandColorId`
   （`types_contract.spec.ts` 与 `models.go` json tag 对账）；首页 `loadAll` 与冷启动
-  `prefetchTheme` 都经 `resolveTheme` 消费两值并兼容旧后端。后台 `MpTheme.vue` 仍发
-  `templateId`，由 P1 的兼容派生列兜住，两边零漂移。
-- **P4 待做**：`templateId` enum 收敛、清单从扁平 `templates[]` 改为 `styles[]` + 每风格 `brandColors[]`
-  （P1 刻意**保留扁平 12 款清单与 `series` 分组**，后台 UI 零改动；树化随两步 UI 一起做，避免单侧漂移）。
+  `prefetchTheme` 都经 `resolveTheme` 消费两值并兼容旧后端。**P2/P3 期间**后台 `MpTheme.vue`
+  仍发 `templateId`，由 P1 的兼容派生列兜住，两边零漂移。
+- **P4 已落地**：后台 `frontend/src/api/content.ts` 的 `HomeLayoutData` 补两轴字段与兼容列，
+  `MpTheme.save()` 改发 `{ styleId, brandColorId }`；`splitThemeId()` 兼容旧后端只下发
+  `templateId`。**接口契约本身未改**（P1 的 GET/PUT 已能直接消费两轴），因此 `openapi.yaml`
+  本轮零改动。
+- **后续阶段（P4 刻意未做）**：`templateId` enum 收敛、清单从扁平 `templates[]` 改为
+  `styles[]` + 每风格 `brandColors[]`。P4 后台仍按服务端 `series` 做两步渲染，
+  **不自己猜 id 前缀**；清单树化要连同后端、OpenAPI、前端一起改，避免单侧漂移。
 
 ## 8. 后端 handler / model / 迁移
 
@@ -176,8 +210,10 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 >   `template_id` **保留不删**（P1 写入时同步反推），`manifest_gen.go` 追加清单项。
 > - `handler_test.go` 新增「风格两轴」子测试；`mptemplate_test.go` 新增两轴函数单测；`gofmt` / `go test ./...` 全绿。
 
-- **P4 最终形态（待做）**：白名单物理树化并删除 `IsBrand` 平面判定、列表接口改返回树、前端两步 UI 消费树、
-  确认无旧端后再删 `template_id` 列与兼容字段。
+- **后续阶段（P4 未纳入，不是漏做）**：白名单物理树化并删除 `IsBrand` 平面判定、列表接口改返回树、
+  前端两步 UI 改为消费树、确认无旧端后再删 `template_id` 列与兼容字段。
+  P4 只做后台 UX 与预览图收口，**后端 `mptemplate` / 迁移 / OpenAPI 零改动**，
+  这样两轴化全程不引入新的数据库或接口变更风险。
 
 ## 9. 守门 / 测试改动
 
@@ -202,21 +238,35 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
     的注释，避免以后有人「顺手优化」把竖版卡缩成小图标。
   - **反向验证 3 项必红**：删 warm 业绩布局 / warm 服务布局复制 default /
     把服务卡缩成小图标；还原后复绿。P3 不触碰任何 token，12 组 × 18 与 manifest 仍逐字一致。
-- **P4 待做**：
-  - `frontend/src/views/content/MpTheme.spec.ts` / `MpSettings.spec.ts`：payload 改两值、UI 两步选择、源码级守门改断言两轴与两步结构。
-  - 预览图改为 4 张布局长图 + 色卡条后，同步改写「12 张 PNG 与 Go 白名单一一对应」一类的守门。
-  - 全量门禁（eslint / vue-tsc / Vitest / vite build / git diff --check）与**反向验证必做**（改回旧单层模型必红）。
+- **P4 已做**：
+  - `MpTheme.spec.ts` 重写（20 例）：两步渲染、整页只有一个固定预览区、风格/色系切图、
+    非 `default` 自动清空色系且点色卡无效、保存只提交两轴、旧后端 `templateId` 拆分、
+    大图随组合切换、按张降级与重新加载重试、授权到期锁高级款、页面脱敏说明。
+  - `MpSettings.spec.ts` 改断言父组件切换栏「保存风格」只提交两轴值。
+  - `miniprogram/tests/theme.spec.ts` 改源码级守门：后台固定预览区 / 两轴 payload /
+    `theme-card` 不得回潮、脚本按 `STYLE_RULE_RE` 注入布局、`manifest.layouts` 与
+    `app.wxss` 原文逐字对账、12 张 PNG **按所属风格画布**逐张校验尺寸、四风格高度互不相同。
+    「12 张 PNG 与 Go 白名单一一对应 / 12 张内容两两不同」这批守门保留，没有为改结构而丢掉。
+  - **反向验证 8 项必红**（每项字节级还原、还原后复绿）：① 布局注入退回全 `default`
+    ② 布局规则写死不分风格 ③ `save()` 退回 `{ templateId }` ④ 固定预览区 `:src` 写死
+    ⑤ 切非 `default` 不清色系 ⑥ 退回每款一张 `theme-card` ⑦ `manifest.layouts` 与
+    WXSS 漂移（Vitest 与 `--check` 双红）⑧ `ink.png` 换错尺寸。复核确认 ①②⑤⑥
+    红的是对应断言行而非编译错误。
+  - 全量门禁 8 项实质全绿：`golangci-lint` 0 issues / `go test ./...` / `--check` /
+    `eslint .` / `vue-tsc --noEmit` / 全量 Vitest **95 文件 1605 例** / `vite build`
+    （首次撞环境 `CODEBUDDY_BROKER_TIMEOUT`，单独重跑绿）/ `git diff --check`。
 
 ## 10. 风险与待确认项
 
 1. ~~**品牌色归属哪个 Style**~~ ✅ **已拍板**：8 款 `brand-*` 全部归 `default` 风格之下（零突变，见 §2.3）。
-2. ~~**树 vs 叉乘**~~ ✅ **已定树形**：色系为每个风格单独调校，保证不撞风格；P1 以 `StyleOfBrand()` 表达归属，物理树化放 P4。
+2. ~~**树 vs 叉乘**~~ ✅ **已定树形**：色系为每个风格单独调校，保证不撞风格；P1 以 `StyleOfBrand()` 表达归属，P4 在后台 UI 上落实「非 `default` 无可用色系」。**白名单物理树化仍属后续阶段**。
 3. ~~**工作量爆炸**~~ ✅ **16 套模块布局已在 P2+P3 全部落地**，靠「4 风格 × 4 模块各有专属规则 +
    同模块布局互不雷同」守门替代人工逐套核对；**真机验收组合仍开放**（建议只覆盖「每风格默认色」
    +「每风格抽 1 个品牌色」，其余靠单元测试守门）。
 4. **兼容期双写**：P1 起 `template_id` 与两轴列同步写，读路径以两轴为准、未回填行回退 `Split(template_id)`；
    旧端仍读 `templateId`。任何一处漏同步都会造成「后台显示与访客所见不一致且无人报错」，改这块必带反向验证。
-5. **分期**：见 §11，先数据层后视觉层、先 2 模块后 4 模块 —— P1/P2/P3 已按此走完，只剩 P4。
+5. **分期**：见 §11，先数据层后视觉层、先 2 模块后 4 模块 —— P1/P2/P3/P4 已按此走完；
+   剩下的不是分期内的实施项，而是**独立的后续工作**（白名单树化 / 删兼容列 / 真机像素级验收）。
 
 ## 11. 实施分期（建议）
 
@@ -228,6 +278,13 @@ BrandColorID *string  `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
   辅以圆角 / 间距 / 描边 / 微阴影；`default` 逐字复述基线零突变。
   守门扩到 4×4 + 同模块布局互不雷同 + 服务卡不得缩放；3 项反向验证必红。
   **未触碰任何颜色 / 版式 token**，预览图与 manifest 保持原样。至此 4 风格 × 4 模块 = 16 套布局全部落地。
-- **P4 后台两步 UI + 预览图重生成 + 守门改写 + 全量真机验收**。
+- **P4 后台两步 UI + 预览图重生成 + 守门改写** ✅ **已实现并测试通过**：`MpTheme.vue` 重写为
+  左侧 sticky 固定预览区 + 右侧两步选择（用户反馈后定稿），保存只发两轴、兼容旧后端、
+  树形归属自动清空色系；`gen_theme_previews.py` 从 `app.wxss` 抽布局规则原文按风格注入，
+  12 张 PNG 全部重出并按每风格实测高度收口，`manifest.json` 增布局/画布快照；
+  `MpTheme.spec.ts` / `MpSettings.spec.ts` / `theme.spec.ts` 改写，8 项反向验证必红、
+  8 项全量门禁全绿。**本轮不动后端 / 迁移 / OpenAPI / 数据库。**
+  **未纳入本期的后续工作**：白名单物理树化 + 删 `template_id` 兼容列、`openapi` enum 收敛、
+  真机像素级验收（本环境无真机截图工具链，预览图只是复刻示意、不能替代）。
 
 > 每一期独立可交付、可回滚；P1 不触视觉，风险最低，建议先行。

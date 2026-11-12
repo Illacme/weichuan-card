@@ -225,6 +225,8 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
+      styleId: 'default',
+      brandColorId: null,
       templateId: 'default',
       templateEntitled: true,
       templates: [
@@ -377,7 +379,7 @@ describe('content/MpSettings', () => {
     expect(contentMocks.getHomeLayout.mock.calls.length).toBeGreaterThan(before)
   })
 
-  it('点切换栏上的「保存风格」只提交 templateId（风格页）', async () => {
+  it('点切换栏上的「保存风格」只提交两轴 styleId/brandColorId（风格页）', async () => {
     const { w } = await mountPage('?tab=theme')
     const save = w
       .find('.tab-actions')
@@ -386,7 +388,9 @@ describe('content/MpSettings', () => {
     expect(save).toBeDefined()
     await save!.trigger('click')
     await flush()
-    expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({ templateId: 'default' })
+    expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'default', brandColorId: null,
+    })
   })
 
   it('点切换栏上的「重新加载」会重新拉取入口配置（访客先看到谁页）', async () => {
