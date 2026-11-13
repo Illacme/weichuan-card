@@ -792,9 +792,30 @@ LOGO）与原件目视对比无可见差异。
 cd backend
 go run ./cmd/thumbbackfill -dry-run -force
 go run ./cmd/thumbbackfill -force
-
-# 2) Cloudflare Purge /uploads/*  ← 关键
 ```
+
+**2) Cloudflare → 缓存(Caching) → 配置(Configuration) → 清除缓存 → 自定义清除**：
+
+1. 「清除方式」选 **前缀**（对话框里第四项「目录中的任何资源都将从缓存中清除」）。
+2. 输入框只填**一行**，把 `<你的域名>` 换成实际域名：
+
+   ```
+   <你的域名>/uploads/
+   ```
+
+3. 点「清除」。Free / Pro / Business / Enterprise 计划均支持前缀清除。
+
+> ⚠️ **别照抄本文档里 `/uploads/*` 这个简写**：前缀清除是**字面字符串前缀匹配**，
+> 值里**不含 `https://`、不含 `*` 通配符、不含查询串或片段**。官方有效值形如
+> `www.example.com/foo/bar`。填 `https://<域名>/uploads/*` 或 `/uploads/*` 会被当作
+> 一条根本不存在的路径，Cloudflare 照样返回成功、UI 也提示完成，实际一个缓存都没清
+> —— 这是叠在 immutable 之上的**第二层静默失败**。带尾斜杠的 `<域名>/uploads/` 能
+> 精确框住该目录（含 `uploads/library/` 子目录与带查询串的变体），不误伤 `/assets/`
+> 与 `/theme-previews/`。若配过改写 URL 路径的 Transform Rule，要填**改写后**的源站路径。
+>
+> 备选：担心填错就用同一页的「清除所有缓存」(Purge Everything)。会顺带清掉
+> `/assets/`（hash 名）、`/theme-previews/`（URL 带构建戳）和公开接口 60 秒边缘缓存，
+> 都能自动重建；代价只是回源短暂上升，对小站点完全可接受。
 
 第 2 步不能省：`/uploads/` 的 200 响应是 `public, max-age=31536000, immutable`
 （见 §5.2.5），而 `-force` 是**原地覆盖同名文件**、URL 一个字都不变。不清 CDN 的话
@@ -803,13 +824,17 @@ go run ./cmd/thumbbackfill -force
 
 **验证**（Purge 之后）：
 
+> 清除请求成功**只代表 Cloudflare 收到了请求**，不确认真的清掉了缓存（官方明确说明）。
+> 所以必须看响应头：Purge 后首次请求应为 `MISS`（开了 Tiered Cache 可能是 `EXPIRED`），
+> 再次请求**同一个** URL 才变 `HIT`。首次就 `HIT` 说明前缀没匹配上，回去查填法。
+
 ```bash
 # 强制 MISS 取一张真实缩略图，看它确实是调色板 PNG
 curl -s "https://<域名>/uploads/<某个随机名>_thumb.png?cb=$RANDOM" -o /tmp/t.png
 python3 -c "b=open('/tmp/t.png','rb').read(26); print('PNG color type =', b[25], '(3 = 调色板)')"
 # 期望 3；若是 2/6（真彩）说明拿到的还是旧副本，Purge 没生效
 
-# 同一 URL 再打一次，看 cf-cache-status: HIT
+# 同一个 URL（含同一个 cb 随机值）再打一次，看 cf-cache-status: HIT
 curl -sI "https://<域名>/uploads/<同一个>_thumb.png?cb=<同一个随机值>" \
   | grep -iE 'cache-control|cf-cache-status'
 ```
