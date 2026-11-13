@@ -72,6 +72,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		req.Status = "pending"
+		// 写入侧归一（第五十九轮）。companyID 用上面校验过的 req.CompanyID，
+		// 不信客户端的第二个来源；访客头像走匿名上传端点，若那次没带 companyId
+		// 文件会落在 p/ 下，归一函数允许平台键出现在租户字段里（见 checkedScope）。
+		if v, err := normalizeResourceRef(cfg, req.CompanyID, "open-apply.avatar", req.Avatar); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "头像地址不合法，请重新上传"})
+			return
+		} else {
+			req.Avatar = v
+		}
 		if err := db.Create(&req).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "提交失败"})
 			return
@@ -144,6 +153,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if d := contentSecText(db, cfg, me.CompanyID, me.OpenID, patch.Name, patch.Title); !d.Allowed {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": d.Reason})
 			return
+		}
+		// 写入侧归一（第五十九轮）：头像是快照 JSON 里的一个字段，必须在**序列化之前**
+		// 归一，否则 pending 阶段的 snapshot 里又是历史形态。
+		// 审批侧还会再归一一次——本轮之前存下的历史快照里仍是 /uploads/... 或裸键混合。
+		if v, err := normalizeResourceRef(cfg, me.CompanyID, "card-modify.avatar", patch.Avatar); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "头像地址不合法，请重新上传"})
+			return
+		} else {
+			patch.Avatar = v
 		}
 		snap, _ := json.Marshal(patch)
 		apply := model.CardModifyApply{CompanyID: me.CompanyID, StaffID: staffID, Snapshot: string(snap), Status: "pending"}
@@ -344,7 +362,21 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码加密失败"})
 			return
 		}
-		emp := model.Employee{CompanyID: a.CompanyID, Name: a.Name, Phone: a.Phone, Phone2: a.Phone2, Email: a.Email, Title: a.Title, Landline: a.Landline, Avatar: a.Avatar, OpenID: a.OpenID, Nickname: a.Nickname, PasswordHash: hash, Status: "enabled"}
+		// 写入侧归一（第五十九轮）：a 是**已经躺在库里的申请单**，它的 avatar 可能是
+		// 历史形态（本轮之前提交的申请）或 /uploads/... 相对路径。建号时顺手收敛。
+		//
+		// 归一失败时头像是空，**不是原值**。两个理由：
+		//   - 出参侧 model.ResolveResourceRef 解析失败时返回原值，写什么就出什么，
+		//     `javascript:` 会原样进 <img src>；
+		//   - 审核是人工动作，为一张脏头像让整单批不了，管理员只会以为系统坏了。
+		// 空头像在端上是默认占位图，比裂图或注入面都好。
+		empAvatar := ""
+		if v, err := normalizeResourceRef(cfg, a.CompanyID, "employee.avatar", a.Avatar); err == nil {
+			empAvatar = v
+		} else {
+			log.Printf("[REF][WARN] 开通申请 id=%d 的头像非法，建号时置空 err=%v", a.ID, err)
+		}
+		emp := model.Employee{CompanyID: a.CompanyID, Name: a.Name, Phone: a.Phone, Phone2: a.Phone2, Email: a.Email, Title: a.Title, Landline: a.Landline, Avatar: empAvatar, OpenID: a.OpenID, Nickname: a.Nickname, PasswordHash: hash, Status: "enabled"}
 		// 建号失败必须报错：此前 db.Create 的错误被丢掉，失败时照样返回
 		// code:0 + staffId + 初始密码——管理员拿到一个**不存在的员工编号**
 		// 和一个**永远登不进去的密码**，而申请单还会被标成 approved
@@ -469,7 +501,20 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		updates := map[string]interface{}{}
 		// 非 PII：直接明文更新
 		if v, ok := patch["avatar"]; ok {
-			updates["avatar"] = v
+			// 写入侧归一（第五十九轮）：snapshot 可能是本轮之前存下的历史数据，
+			// 里面还是 /uploads/... 或绝对 URL。提交时已归一过一次，这里是第二道，
+			// 专门兜住存量待审单。
+			//
+			// 归一失败时**跳过这个字段**（保留员工现有头像），既不让整单批不了，
+			// 也不把脏值写进名片：出参侧 model.ResolveResourceRef 解析失败时
+			// **返回原值**而不是空串，也就是说写进去什么就出什么——`javascript:`
+			// 会原样进 <img src>。这一点与「解析失败就降级为空」的直觉相反，
+			// 别在这里放行。
+			if k, err := normalizeResourceRef(cfg, e.CompanyID, "employee.avatar", v); err != nil {
+				log.Printf("[REF][WARN] 名片修改申请 id=%d 的头像非法，已跳过该字段 err=%v", a.ID, err)
+			} else {
+				updates["avatar"] = k
+			}
 		}
 		if v, ok := patch["title"]; ok {
 			updates["title"] = v
@@ -586,6 +631,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该手机号已存在，请勿重复添加"})
 			return
 		}
+		// 写入侧归一（第五十九轮）：管理员手填 / 上传后的头像在这里收敛。
+		// 失败报错而不是放行——这是**人工即时操作**，报错能立刻被看到并纠正；
+		// 放行的话不合法值会一直躺在库里，直到某天出参渲染出意外结果。
+		if v, err := normalizeResourceRef(cfg, cid, "employee.avatar", req.Avatar); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "头像地址不合法，请重新上传"})
+			return
+		} else {
+			req.Avatar = v
+		}
 		pwd, err := genPassword()
 		if err != nil {
 			// 不回显 err.Error()：随机数失败的底层错误可能带出运行环境细节，
@@ -631,6 +685,13 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if req.Name == "" || req.Phone == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "姓名与手机为必填"})
 			return
+		}
+		// 写入侧归一（第五十九轮）：同上，人工即时操作，失败必须报错。
+		if v, err := normalizeResourceRef(cfg, targetCompanyID(c), "employee.avatar", req.Avatar); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "头像地址不合法，请重新上传"})
+			return
+		} else {
+			req.Avatar = v
 		}
 		updates := map[string]interface{}{
 			"title": req.Title, "landline": req.Landline, "avatar": req.Avatar,

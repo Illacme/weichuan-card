@@ -204,6 +204,40 @@ type Ref struct {
 > 出参侧零改动（`ResolveRef` 对 `/uploads/` 原样保留）。**严格裸键**（库里只写 `t/<cid>/x`）
 > 依赖 nginx `/uploads/`→桶 反代（R1），属云驱动阶段。W4/W6 因 `mediachk` 已把 URL 反推成裸键、
 > 且单桶下复用同一键，无需改动。
+>
+> ✅ **写入侧收敛（2026-11-13 / 第五十九轮）**：上面「库里仍写驱动返回的 URL」这句**本轮已改**。
+> 真正把 URL 送进业务字段的不是那 4 个上传点，而是 **12 个业务表单写入点**
+> （`content.go` 8 处单值 + 1 处数组、`apply.go` 6 处单值），它们收的都是前端回填的字符串。
+> 本轮在这 12 处落库前统一过 `storage.NormalizeOrKeep`，把落库形态从「三种混存」收敛到裸键。
+>
+> **归一函数为什么叫 `NormalizeOrKeep` 而不是 `NormalizeRef`**：`NormalizeRef` 是**严格**的
+> （推不出键就报错），但业务字段里合法存在外链（`video_url` 的 `url` 那一档、租户自建 CDN 的老图）。
+> 严格模式会让「填个 B 站链接」直接保存失败。四条分界：
+>
+> | 输入形态 | 处置 | 标记 |
+> | --- | --- | --- |
+> | 已带 `p/` / `t/<cid>/` 前缀 | 归一，校验 scope 归属 | `ref-normalized` |
+> | `/uploads/...` / 基址开头的 URL / 签名 URL | **必须先判「剥出来是否仍带前缀」**：带前缀（本地驱动返回的 `/uploads/t/5/x.jpg` 剥完就是完整键）→ 归一；不带前缀（第五十四轮前的老对象，键就是 `x.jpg`，对象真的在 `/uploads/x.jpg`）→ **原样保留** | `ref-normalized` / `ref-legacy-path` |
+> | 合法 `http(s)://` 外链（host ≠ 平台基址） | 原样保留 | `ref-foreign-url` |
+> | 同源却推不出键 / `javascript:` / `data:` / 路径穿越 | **报错**，不放行 | — |
+>
+> 两个会让功能整体不可用的陷阱，都写成了红测试：
+> ① 老对象**绝不能补前缀**（补了指向不存在的键，端上立刻 404，而写库那一刻毫无异常）；
+> ② 本地驱动的 `/uploads/t/5/x.jpg` 剥完**本身就是完整键**，再套一次 `ObjectKeyFor` 会撞「双重加前缀」
+> 而报错——那会让本地存储下**所有**表单保存全部失败。
+>
+> **scope 校验有意宽松**：平台对象（`p/...`）出现在租户字段里是**允许**的。真实链路是访客在小程序
+> 申请页上传头像时未登录，请求没带 `companyId` → 落在 `p/` 下（`handler.uploadCompanyID`），
+> 而申请单的 `company_id` 是某租户。真正要拒的是反过来：A 租户的键（`t/9/`）写进 B 租户字段。
+>
+> **两处审批侧不是「失败就报错」**：`ResolveResourceRef` 解析失败时**返回原值**（不是空串，
+> 与直觉相反），意味着宽松放行脏值会被原样出参，`javascript:` 会进 `<img src>`。
+> 故开通审批归一失败 → **置空**（审核是人工动作，不为一张脏头像让整单批不了），
+> 名片修改审批失败 → **跳过该字段**。两处都打 WARN，不静默。
+>
+> **回滚开关**：`STORAGE_REF_STRICT`，默认开；设 `0` / `false` 退回第五十八轮行为（整数原样落库）。
+> 选「默认开 + 可关」而非反向——收敛不默认生效等于债没还。回滚是安全降级：
+> 出参侧 `ResolveRef` 本来就兼容三种形态。每次调用读 env 而非包级变量（包级会污染测试）。
 
 > ✅ **P0a 落地订正（2026-11-13）**：上面草稿里写的 `storage.Resolve(ref) (string, error)`
 > 只是骨架示意，实际落地的 `backend/internal/storage/ref.go` 是一组**吃库里原始字符串**
@@ -456,6 +490,16 @@ type Resolver interface {
 > **P1 进度（2026-11-13 第五十八轮）**：前两项已落地（迁移 0044 + 模型进 `model.All()`，
 > 生成器可读），**配置界面与写接口未做**。已落地的守门见 §3.2「守门清单」；
 > 后半段（掩码回显 / 自检按钮 / `PlatformAdminMiddleware` / 越权集成测试）仍是待办。
+>
+> **P0 进度（2026-11-13 第五十九轮）**：P0 的验收判据「新上传库里是 objectKey」**已达成**。
+> 出参侧 9 条公开 GET + 后台五组出口（第五十三 / 五十七轮）、写入侧 12 个业务表单写入点
+> （第五十九轮）全部接好，`upload_base_url` 改动对存量不再有影响。剩余未做的是 P3 存量搬迁。
+> 守门名对账：§4 表里写的 `TestResolveKeepsLegacyAbsoluteURL` / `TestLegacyUploadsRelativeURL` /
+> `TestNoFullURLWrittenToBusinessColumns` 实际落地为
+> `TestResolveRefKeepsLegacyAbsoluteURL` / `TestResolveRefLegacyUploadsRelativeURL`
+> （`storage/ref_test.go`）+ `TestResourceRefWriteSiteCounts` / `TestResourceRefWriteNormalizesLocalPath`
+> （`handler/resourceref_test.go`）。第三个名字没有直接对应物：它原本设想的「源码级扫描业务列赋值」
+> 被拆成两件更可靠的事——写入点数对账（数量变了必红）与端到端落库断言（真的查库）。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→

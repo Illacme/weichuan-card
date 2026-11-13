@@ -85,6 +85,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		// 写入侧归一（第五十九轮）：落库前把资源字段收敛成带归属前缀的裸键。
+		// 失败必须放弃写入——收到的值要么属于别家企业（串号），要么是伪协议 / 穿越。
+		// 归一结果写回 req，下面的新建 / 更新两条分支共用。
+		if v, err := normalizeResourceRef(cfg, cid, "company-info.logo", req.Logo); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "LOGO 地址不合法，请重新上传"})
+			return
+		} else {
+			req.Logo = v
+		}
 		var ci model.CompanyInfo
 		if db.First(&ci, "company_id = ?", cid).Error != nil {
 			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
@@ -151,6 +160,27 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
+		}
+		// 写入侧归一（第五十九轮）：三个资源字段一起收敛。
+		//
+		// videoUrl 这里**不按 videoSource 分档**：归一函数本身对「合法外域 URL」
+		// 原样保留（RefForeignURL），所以「外部 MP4 直链」档填 CDN 地址照旧能存，
+		// 「自托管上传」档填本平台地址则被收敛成裸键。分档判反而要多维护一份
+		// 「哪一档算本平台资源」的映射，将来加档必漏。
+		for _, f := range []struct {
+			name string
+			ptr  *string
+		}{
+			{"company-profile.videoUrl", &req.VideoURL},
+			{"company-profile.videoBackupUrl", &req.VideoBackupURL},
+			{"company-profile.cover", &req.Cover},
+		} {
+			v, err := normalizeResourceRef(cfg, cid, f.name, *f.ptr)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "视频或封面地址不合法，请重新上传"})
+				return
+			}
+			*f.ptr = v
 		}
 		if !model.IsValidVideoSource(req.VideoSource) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "视频来源取值非法"})
@@ -247,6 +277,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		req.CompanyID = targetCompanyID(c) // 租户外键以服务端解析为准，不信客户端
+		// 写入侧归一（第五十九轮）。放在 CompanyID 赋值之后：scope 由 cid 推导，
+		// 而 cid 必须以服务端解析的为准，否则客户端传个 companyId 就能把键写到别家名下。
+		if v, err := normalizeResourceRef(cfg, req.CompanyID, "category.icon", req.Icon); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "图标地址不合法，请重新上传"})
+			return
+		} else {
+			req.Icon = v
+		}
 		if err := db.Create(&req).Error; err != nil {
 			dbWriteFailed(c, "新建业绩分类", "保存失败，请稍后重试", err)
 			return
@@ -268,11 +306,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		cid := targetCompanyID(c)
+		if v, err := normalizeResourceRef(cfg, cid, "category.icon", req.Icon); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "图标地址不合法，请重新上传"})
+			return
+		} else {
+			req.Icon = v
+		}
 		// 「未找到」用带租户条件的查询判定，不用 RowsAffected：重复保存相同值时
 		// MySQL 原样 UPDATE 的 RowsAffected=0，据此判「未找到」会把一次幂等保存报成错误。
 		// 先查出记录再更新，同时把租户越权拦在这里（查不到即无权或不存在）。
 		var cat model.AchievementCategory
-		if db.First(&cat, "id = ? AND company_id = ?", id, targetCompanyID(c)).Error != nil {
+		if db.First(&cat, "id = ? AND company_id = ?", id, cid).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -330,13 +375,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": data})
 	})
 	r.POST("/api/admin/projects", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
-		in, ok := bindProject(c)
+		cid := targetCompanyID(c)
+		in, ok := bindProject(c, cfg, cid)
 		if !ok {
 			return
 		}
 		alb, _ := json.Marshal(in.Album)
 		p := model.ProjectCase{
-			CompanyID: targetCompanyID(c), CategoryID: in.CategoryID, Name: in.Name, Summary: in.Summary, Detail: in.Detail,
+			CompanyID: cid, CategoryID: in.CategoryID, Name: in.Name, Summary: in.Summary, Detail: in.Detail,
 			Cover: in.Cover, Album: string(alb), IsHomeFeatured: in.IsHomeFeatured,
 			Enabled: in.Enabled, Sort: in.Sort,
 		}
@@ -349,12 +395,13 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	registerSortRoute(r, db, "/api/admin/projects/sort", &model.ProjectCase{}, targetCompanyID)
 	r.PUT("/api/admin/projects/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-		in, ok := bindProject(c)
+		cid := targetCompanyID(c)
+		in, ok := bindProject(c, cfg, cid)
 		if !ok {
 			return
 		}
 		var p model.ProjectCase
-		if db.First(&p, "id = ? AND company_id = ?", id, targetCompanyID(c)).Error != nil {
+		if db.First(&p, "id = ? AND company_id = ?", id, cid).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -409,7 +456,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		s := model.BizService{CompanyID: targetCompanyID(c), Title: req.Title, Icon: req.Icon, Content: req.Content, Sort: req.Sort}
+		cid := targetCompanyID(c)
+		if v, err := normalizeResourceRef(cfg, cid, "service.icon", req.Icon); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "图标地址不合法，请重新上传"})
+			return
+		} else {
+			req.Icon = v
+		}
+		s := model.BizService{CompanyID: cid, Title: req.Title, Icon: req.Icon, Content: req.Content, Sort: req.Sort}
 		if err := db.Create(&s).Error; err != nil {
 			dbWriteFailed(c, "新建业务服务", "保存失败，请稍后重试", err)
 			return
@@ -431,10 +485,17 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		cid := targetCompanyID(c)
+		if v, err := normalizeResourceRef(cfg, cid, "service.icon", req.Icon); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "图标地址不合法，请重新上传"})
+			return
+		} else {
+			req.Icon = v
+		}
 		// 与 categories 同理：先按租户查存在性，不用 RowsAffected 判「未找到」——
 		// MySQL 原样 UPDATE 的 RowsAffected=0 会把一次幂等保存报成错误。
 		var svc model.BizService
-		if db.First(&svc, "id = ? AND company_id = ?", id, targetCompanyID(c)).Error != nil {
+		if db.First(&svc, "id = ? AND company_id = ?", id, cid).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
@@ -516,6 +577,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
+		}
+		// 写入侧归一（第五十九轮）。bgImage 是 *string：nil 表示「本次不提交背景」，
+		// 必须在解引用**之前**判，否则会把「只改板块顺序」的请求当成「清空背景」。
+		if req.BgImage != nil {
+			v, err := normalizeResourceRef(cfg, cid, "home-layout.bgImage", *req.BgImage)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "背景图地址不合法，请重新上传"})
+				return
+			}
+			req.BgImage = &v
 		}
 		// 枚举值非法一律拒绝，不做「静默兜底成 date」：后台是唯一写入方，
 		// 存进一个不认识的档位只会让端上渲染出不显示也不报错的空白。
@@ -742,12 +813,31 @@ func registerSortRoute(r *gin.Engine, db *gorm.DB, path string, dest interface{}
 }
 
 // bindProject 解析项目案例的写请求体（album 为字符串数组，映射至 JSON 列）
-func bindProject(c *gin.Context) (projectInput, bool) {
+// bindProject 解析并归一项目案例入参。
+//
+// 归一放在这里而不是两个调用点各写一遍：POST 与 PUT 共用这个函数，两处各写一次的话，
+// 将来加第三个入口（批量导入 / 复制案例）必然漏，而漏了不会报错——只是那个入口写进
+// 库的又是历史形态，半年后查不出来是谁绕过了归一。
+//
+// 归一失败返回 false 且已经写好响应：cover / album 里出现别家企业的键或伪协议时，
+// 放弃整个保存比「把非法那一张丢掉、其余照写」安全——后者会让用户以为图集全存上了。
+func bindProject(c *gin.Context, cfg config.Config, companyID int64) (projectInput, bool) {
 	var in projectInput
 	if c.ShouldBindJSON(&in) != nil || in.Name == "" {
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 		return in, false
 	}
+	cover, err := normalizeResourceRef(cfg, companyID, "project.cover", in.Cover)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "封面地址不合法，请重新上传"})
+		return in, false
+	}
+	album, err := normalizeResourceRefs(cfg, companyID, "project.album", in.Album)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "图集地址不合法，请重新上传"})
+		return in, false
+	}
+	in.Cover, in.Album = cover, album
 	return in, true
 }
 

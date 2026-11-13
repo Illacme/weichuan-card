@@ -69,10 +69,14 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 >
 > **现状（2026-11-13）**：出参侧已在第五十三轮接好（见 §5.2）；写入侧在第五十四轮接入
 > 带归属前缀的对象键（W1/W2/W3/W5，见 §5.3）——对象真正落到 `t/<cid>/...` 或 `p/...`
-> 前缀下，但本地驱动仍把驱动返回的相对 URL（`/uploads/<key>`）写库，端上契约零改动。
-> 严格裸键（只写 `t/<cid>/x`）+ nginx `/uploads/`→桶 反代（R1）属云驱动阶段，尚未做。
+> 前缀下；**第五十九轮在 12 个业务表单写入点落库前统一归一（见 §5.5）**，库里也从
+> 「驱动返回的 `/uploads/<key>`」收敛成裸键 `t/<cid>/x`，端上契约零改动
+> （出参侧 `ResolveRef` 把裸键补回 `/uploads/`）。
+> 仍未做的是云驱动下的验收（R1 的 `/uploads/`→桶 反代）与存量回填（P3）——
+> 老对象（键不带前缀）**必须**原样保留，写入侧补前缀会让它们立刻 404。
 > 出参侧口径集中在 `backend/internal/model/refs.go`（`ResolveResourceRef` + 六个模型的 `ResolveRefs()`），
-> 经 `storage.ResolveRef(raw, "")` 走通，对现行数据零行为变更。
+> 经 `storage.ResolveRef(raw, "")` 走通；写入侧口径集中在 `storage.NormalizeOrKeep`
+> 与 `handler/resourceref.go`（含 `STORAGE_REF_STRICT` 回滚开关）。
 
 ---
 
@@ -353,3 +357,89 @@ sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `st
 
 **仍未做**：严格裸键、`NormalizeRef` 收敛（写入侧）、存量回填、迁移 0044、
 生成器接真实配置表（`tenant_storage_configs` → snippet）。
+
+### 5.5 写入侧收敛（2026-11-13 / 第五十九轮，落库形态从三种混存收敛到裸键）
+
+§1 的 W1–W9 表容易让人以为「把上传接口改掉就收敛了」。**不是。** 真正把 URL 送进业务字段的
+是 **12 个业务表单写入点**——它们收的是前端回填上来的字符串，与哪个驱动、哪次上传无关。
+本轮在这 12 处落库前统一过 `storage.NormalizeOrKeep`：
+
+| # | 落点 | `field` 标签 | 备注 |
+| --- | --- | --- | --- |
+| 1 | `content.go:91` PUT company-info | `company-info.logo` | 失败回「LOGO 地址不合法，请重新上传」 |
+| 2 | `content.go:178` PUT company-profile | `videoUrl` / `videoBackupUrl` / `cover` | **按 `videoSource` 分档就错了**：`url` 档本就是外链，归一函数原样保留；分档反而会让「换档后旧值留在库里」 |
+| 3 | `content.go:282` POST categories | `category.icon` | |
+| 4 | `content.go:310` PUT categories | `category.icon` | 顺带把 `targetCompanyID(c)` 提成局部 `cid`，避免一处取一处算 |
+| 5 | `content.go:460` POST services | `service.icon` | |
+| 6 | `content.go:489` PUT services | `service.icon` | |
+| 7 | `content.go:584` PUT home-layout | `home-layout.bgImage` | `*string`，nil 表示「本次不提交」，必须在解引用前判 |
+| 8 | `content.go:830` `bindProject` | `project.cover` | 函数签名加 `cfg`，POST/PUT 两个调用点都传 `cid` |
+| 9 | `content.go:835` `bindProject` | `project.album` | 唯一的数组落点（`json:"-"` 的 JSON 字符串列） |
+| 10 | `apply.go:78` POST `/api/apply/open` | `open-apply.avatar` | |
+| 11 | `apply.go:160` PUT `/api/employee/me` | `card-modify.avatar` | 必须在 `json.Marshal(patch)` **之前**归一，否则归一的是一份拷贝 |
+| 12 | `apply.go:374` 开通审批 | `employee.avatar` | 归一失败**置空** + WARN，不整单拒绝 |
+| 13 | `apply.go:513` 名片修改审批 | `card-modify.avatar` | 归一失败**跳过该字段**（不写 `updates["avatar"]`）+ WARN |
+| 14 | `apply.go:637` POST `/api/admin/employees` | `employee.avatar` | |
+| 15 | `apply.go:690` PUT `/api/admin/employees/:id` | `employee.avatar` | 必填校验之后归一 |
+
+> 上表 15 行对应 12 个业务语义点（第 2 行是 3 个字段的循环），与守门
+> `TestResourceRefWriteSiteCounts` 的 `content.go {single:8, multi:1} / apply.go {single:6}` 精确对账。
+> 数量变了就报红，逼人重新确认「新增的写入点接了没有」。
+
+**第 12/13 行为什么不是「失败就报错」**：`model.ResolveResourceRef` 解析失败时**返回原值**
+（不是空串，与直觉相反）。也就是说写进去什么脏值，出参就原样吐什么，`javascript:` 会进 `<img src>`。
+所以这两处宁可置空 / 跳过也不能保留原值。普通表单则直接报错——用户就在页面上，可以改。
+
+**四条分界**（详细论证见 `docs/tenant-storage-design.md` §3.1 的第五十九轮块）：
+
+| 输入 | 处置 | 标记 |
+| --- | --- | --- |
+| 已带 `p/` / `t/<cid>/` 前缀 | 归一 + 校验归属 | `normalized` |
+| `/uploads/...`、基址开头、签名 URL，且剥完**仍带前缀** | 归一 | `normalized` |
+| 剥完**不带前缀**（第五十四轮前的老对象） | **原样保留**，P3 才搬 | `legacy-path` |
+| 合法 `http(s)` 外域 URL | **原样保留** | `foreign-url` |
+| 同源却推不出键 / `javascript:` / `data:` / 穿越 | 报错 | — |
+
+**两个会让功能整体不可用的陷阱**（都写成了红测试）：
+
+1. **老对象绝不能补前缀**。`/uploads/x.jpg` 剥完是 `x.jpg`，对象真的就在 `/uploads/x.jpg`。
+   补成 `t/5/x.jpg` 不报错，但出参变成 `/uploads/t/5/x.jpg` —— 一个不存在的对象，端上立刻裂图。
+2. **本地驱动返回的 `/uploads/t/5/x.jpg` 剥完就是完整键**。再走一次 `ObjectKeyFor` 会撞
+   「双重加前缀」报错，那会让本地存储下**所有**表单保存全部失败。
+
+**回滚**：`STORAGE_REF_STRICT=0` / `false` 退回第五十八轮行为（原样落库）。
+默认开——收敛不默认生效等于债没还。每次调用读 env，不用包级变量（会污染测试）。
+
+**新增测试**（`handler/resourceref_test.go` 9 条 + `storage/ref_keep_test.go` 8 条）：
+
+| 测试 | 钉住什么 |
+| --- | --- |
+| `TestResourceRefWriteNormalizesLocalPath` | PUT `/uploads/t/1/logo.png` → DB `t/1/logo.png` → GET 出参还原 |
+| `TestResourceRefAlbumNormalized` | 三元素分别：租户键归一 / 外链原样 / 空保持空 |
+| `TestResourceRefKeepsForeignURL` | `videoSource=url` 存外链原样；`upload` 档 `/uploads/t/1/v.mp4` 收敛 |
+| `TestResourceRefRejectsForeignTenantKey` | `/uploads/t/9/stolen.png` → `code:1`，**整条请求放弃**（全名也不改） |
+| `TestResourceRefRejectsUnsafeValue` | `javascript:alert(1)` → `code:1`，**连行都不建** |
+| `TestResourceRefStrictOffRollsBack` | 开关关掉后库里退回 `/uploads/t/1/logo.png`，出参照样正确 |
+| `TestResourceRefUploadThenSave` | 真实 multipart 上传 → 保存 → 库里带 `p/`/`t/` 前缀且不含 `/uploads/` → 出参与上传返回值一致 |
+
+**反向验证六处**（每处只断开一个点，各自红在自己那一行）：
+
+| 反向动作 | 报红的测试 |
+| --- | --- |
+| helper 直接返回原值（不归一） | `TestResourceRefWriteNormalizesLocalPath`（`库里必须是带归属前缀的裸键`） |
+| env 开关写死成回滚 | 同上一条 |
+| `checkedScope` 无脑放行 | `TestNormalizeOrKeepRejectsScopeMismatch` + `TestResourceRefRejectsForeignTenantKey`（报出 `logo:/uploads/t/9/stolen.png` 已写库） |
+| 给历史对象硬加前缀 | `TestNormalizeOrKeepKeepsLegacyObjects` |
+| 删掉 `content.go` 一个调用点 | `TestResourceRefWriteSiteCounts`（调用点数变了） |
+| 从 `sanctioned` 移除 `resourceref.go` | `TestRefWiringGate`（报 `resourceref.go:72` 越界） |
+
+**MySQL parity 的边界（写清楚，别当成证明）**：`TestAPIFlowMySQL` 16 个 flow 全绿，
+但流里发的值是 `logo: "l.png"`、`bgImage: /uploads/library/...`、`avatar: http://x/a.png`
+——按上面的分界分别落进「legacy-path」和「foreign-url」，**被原样保留**。
+所以 MySQL parity 证明的是**无回归**，不是「归一生效」。归一的落库形态由 SQLite 侧的
+端到端查库用例保证（`TestResourceRefWriteNormalizesLocalPath` 等真的 `db.First` 断言）。
+这样分工是有意的：归一发生在任何 SQL 之前，列是 `VARCHAR` / `JSON`，不构成驱动相关差异；
+在 MySQL 侧重复同一条断言只是把同一段逻辑再跑一遍，收益接近零而成本是多一套 MySQL 引导。
+
+**仍未做**：严格裸键的云驱动验收（需 R1 的 `/uploads/`→桶 反代）、存量回填 P3、
+`UploaderResolver` 按租户选桶（P2）、配置写接口与后台界面（P1 后半段）。

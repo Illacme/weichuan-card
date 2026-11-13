@@ -4027,3 +4027,132 @@ album 单独注一次是必要的：cover 与 album 在同一个出参里，只�
 - **下一步顺序（不可颠倒）**：③ 写入侧 `NormalizeRef` 收敛（一个 env 可整体回滚）→
   配置写接口 + 后台界面（`PlatformAdminMiddleware`）→ `UploaderResolver` 5 处注入（P2，
   此时表里的配置才开始真正承载流量）→ 存量回填 P3。
+
+> **订正（第五十九轮已完成 ③）**：上面「下一步」里的第 ③ 步已落地——写入侧不再写驱动返回的
+> URL，14 个单值落点 + 1 个数组落点全部在落库前过 `storage.NormalizeOrKeep`，
+> 回滚开关是 `STORAGE_REF_STRICT=0`。函数名从计划里的 `NormalizeRef` 改成
+> `NormalizeOrKeep`，原因见下一节（严格归一会让「填个外链」保存失败）。
+> 剩余顺序不变：配置写接口 + 后台界面 → `UploaderResolver`（P2）→ 存量回填（P3）。
+
+---
+
+## 第五十九轮：写入侧收敛（2026-11-13，落库形态从三种混存收敛到裸键）
+
+### 这一轮的判断错了一次，先说错在哪
+
+开工前的定调是「真正写库的是 **12 个业务表单写入点**（`content.go` 6 处、`apply.go` 6 处），
+不是上传接口」。方向对，数字错：实际扫出来是 **14 个单值落点 + 1 个数组落点**——
+`content.go` 8 个单值（其中 `company-profile` 那处是 `videoUrl`/`videoBackupUrl`/`cover`
+三个字段的**循环**，看上去是一处，实际落三个字段）+ 1 个数组，`apply.go` 6 个。
+
+这个偏差本身不重要，但它说明一件事：**「数一遍写入点」必须由守门来数，不能靠肉眼。**
+所以本轮新增的 `TestResourceRefWriteSiteCounts` 不是「顺手加个测试」，它是防止
+「以后有人在第三个文件里写业务字段，而所有人都以为已经覆盖完了」的唯一手段。
+
+### 为什么函数不叫 `NormalizeRef`，叫 `NormalizeOrKeep`
+
+计划里写的是「写入侧接 `NormalizeRef`」。真动手时发现 `NormalizeRef` 的契约是
+**必须产出带归属前缀的键，推不出来就报错**——而写入侧收到的值里有三类**不该被改**：
+
+| 不该被改的值 | 真实来源 | 硬归一后的症状 |
+| --- | --- | --- |
+| 外域 URL | `video_source` 的 `url` 档就是任意外域 MP4 直链；员工也会把别处的 CDN 链接贴进头像框 | 一次正常保存变成「保存失败」，用户只会反复重试 |
+| 无前缀的老对象（`x.jpg`） | 第五十四轮之前上传的，对象真的就在 `/uploads/x.jpg` | **不报错**，但补成 `t/5/x.jpg` 后出参是 `/uploads/t/5/x.jpg`——一个不存在的对象，端上立刻裂图 |
+| 空值 | `avatar` / `cover` / `logo` 大量为空 | 「清空头像」这个操作直接失败 |
+
+所以落成 `NormalizeOrKeep(raw, baseURL, scope, companyID) (string, RefKeepKind, error)`，
+返回的第二值是**为什么没归一**（`normalized` / `foreign-url` / `legacy-path`）。
+用三值枚举而不是一个 bool，是因为「没归一」的两种原因处置方式完全相反：
+外链要留着，历史形态是待搬迁的债。混成一个 bool，日志里只能写「没归一」，
+半年后没人分得清是哪种。
+
+### 两个会让功能整体不可用的陷阱
+
+这两个都不是推演出来的，是写测试时被自己的用例打回来的：
+
+1. **本地驱动的返回值和历史对象长得几乎一样，但处置相反。**
+   `LocalUploader` 返回 `/uploads/t/5/x.jpg`——剥掉 `/uploads/` 后是 `t/5/x.jpg`，
+   **本身就是完整对象键**。如果按老对象处理（原样保留），下次出参就多一层前缀；
+   如果按新键处理却再走一次 `ObjectKeyFor`，会撞「禁止双重加前缀」而报错。
+   后者更糟：那会让**本地存储下所有表单保存全部失败**——功能整体不可用，而且
+   报错信息（「rel 已带归属前缀」）看起来像调用方传错了参数，排查方向直接被带偏。
+   正确做法是先 `legacyRel` 剥前缀，**剥完再 `ParseRef` 试一次**，成功就归一。
+2. **老对象绝不能补前缀。** 补了不报错，只是指向一个不存在的键。
+   这是「写库那一刻没有任何异常、端上才裂图」的典型，最贵的一类 bug。
+
+### 一个反直觉的既有行为，改变了审批侧策略
+
+写注释时我原本写「归一失败保留原值，反正出参 `ResolveRef` 会拦掉」。
+读 `model/refs.go:33-42` 才发现 **`ResolveResourceRef` 解析失败时返回的是原值**，
+不是空串——也就是说写什么脏值，出参就原样吐什么，`javascript:` 会进 `<img src>`。
+
+于是两处审批侧不能照抄普通表单的「失败就报错」：
+
+- **开通申请审批**（`apply.go:374`）：归一失败 → **置空** + WARN。审核是人工动作，
+  不能为一张脏头像让整单批不了；但也绝不能保留原值。
+- **名片修改审批**（`apply.go:513`）：归一失败 → **跳过该字段**（不写 `updates["avatar"]`）+ WARN。
+
+普通表单则直接 `code:1`——用户就在页面上，可以改。
+
+### scope 校验为什么故意宽松一档
+
+`checkedScope` 允许**平台对象出现在租户字段里**。这不是漏判，是跟着真实链路走的：
+访客在小程序申请页上传头像时还没登录，请求没带 `companyId`，上传就落在 `p/` 下
+（见 `handler.uploadCompanyID`），而申请单的 `company_id` 是某家租户。
+这是既有数据形态，不是串号。
+
+真正要拒的是**反过来**：A 租户的键（`t/9/...`）写进 B 租户的字段。
+那会让 B 的页面显示 A 的文件，两端都看不出异常。
+反向验证时把 `checkedScope` 改成无脑放行，`TestResourceRefRejectsForeignTenantKey`
+直接把明文报出来：`logo:/uploads/t/9/stolen.png` 已经写进库了。
+
+### 回滚：默认开，可关
+
+`STORAGE_REF_STRICT`，默认开；设 `0` / `false` 退回第五十八轮行为（原样落库）。
+选「默认开 + 可关」而不是「默认关 + 可开」——**收敛不默认生效等于债没还**。
+关掉是安全降级：出参侧 `ResolveRef` 本来就兼容三种形态，只会让库里退回历史形态，不会裂图。
+每次调用读 env 而不是包级变量（包级会污染同包测试）。
+
+### 反向验证六处
+
+| 反向动作 | 谁红了 |
+| --- | --- |
+| helper 直接返回原值 | `TestResourceRefWriteNormalizesLocalPath`（`库里必须是带归属前缀的裸键`） |
+| env 开关写死成回滚 | 同上 |
+| `checkedScope` 无脑放行 | `TestNormalizeOrKeepRejectsScopeMismatch` + `TestResourceRefRejectsForeignTenantKey` |
+| 给历史对象硬加前缀 | `TestNormalizeOrKeepKeepsLegacyObjects` |
+| 删掉 `content.go` 一个调用点 | `TestResourceRefWriteSiteCounts` |
+| 从 `sanctioned` 移除 `resourceref.go` | `TestRefWiringGate`（报 `resourceref.go:72` 越界） |
+
+### MySQL parity 证明的是「无回归」，不是「归一生效」
+
+`TestAPIFlowMySQL` 16 个 flow + `TestMySQLMigrations` 全绿。但要说清楚它能证明什么：
+流里发的是 `logo: "l.png"`、`bgImage: /uploads/library/...`、`avatar: http://x/a.png`，
+按分界分别落进 `legacy-path` 与 `foreign-url`，**被原样保留**。
+所以它证明的是「写入侧这 14+1 个点没在 MySQL 下把任何流程改坏」，**不是**「归一生效」。
+
+归一的落库形态由 SQLite 侧的端到端查库用例保证（真的 `db.First` 断言库里的字符串）。
+这个分工是有意的：归一发生在任何 SQL 之前，列是 `VARCHAR` / `JSON`，不构成驱动相关差异；
+在 MySQL 侧重复同一条断言只是把同一段逻辑再跑一遍，收益接近零，成本是多一套 MySQL 引导。
+
+### 门禁
+
+- `go vet ./...` exit 0；`go test ./... -count=1` 31 个包全绿（handler 约 49s）；
+- `TEST_MYSQL_DSN` 实跑 `TestAPIFlowMySQL`（16 flow）+ `TestMySQLMigrations`，19 条 PASS、0 FAIL；
+- `gofmt -l` 本轮改动文件干净（`setting/settings_test.go`、`stat.go`、`stat_test.go`、
+  `cdn.go`、`storage_test.go` 长期在列，非本轮引入）；
+- 前端与小程序零改动。端上契约没变：裸键出参时 `ResolveRef` 补回 `/uploads/`，
+  与第五十四轮之后的行为完全一致，所以 `vue-tsc` / Vitest / eslint / `vite build` 未跑；
+- `golangci-lint` 本沙箱无二进制（沿用前几轮结论），用 `go vet` 代偿。
+
+### 边界与下一步
+
+- **已做**：`NormalizeOrKeep` 纯函数 + 8 条单测、handler 归一 helper + env 开关、
+  14 个单值落点 + 1 个数组落点、端到端 9 条、守门 2 条、反向验证 6 处；
+- **未做（有意的）**：云驱动下的验收。裸键要真能出图，依赖 `/uploads/`→桶 反代（R1）
+  或 `UploaderResolver` 按租户选桶（P2）。**本地驱动的闭环是真的**（对象在
+  `UPLOAD_DIR/t/5/x.jpg`，`/uploads/t/5/x.jpg` 同源可达），但云驱动下这条链还没接；
+- **仍未做**：存量回填 P3（老对象搬迁 + 改库），以及 P1 后半段（配置写接口 + 后台界面）；
+- **顺序不变**：配置写接口 + 后台界面 → `UploaderResolver` 5 处注入（P2）→ P3 回填。
+  这一轮做完后，表里的配置离「真正承载流量」只差 P2，但**仍差 P2**——别看到写入侧收敛了
+  就以为多租户存储能用了。

@@ -43,9 +43,13 @@ func TestRefWiringGate(t *testing.T) {
 		filepath.Join(root, "handler", "wechat.go"):          true, // W3 小程序码用 ObjectKeyFor 落 p/ 前缀
 		filepath.Join(root, "handler", "content.go"):         true, // 后台内容类出参（R11–R13）+ projectToMap 的 cover/album
 		filepath.Join(root, "handler", "apply.go"):           true, // 小程序「我的」与后台员工导出（avatar）
+		// 第五十九轮：写入侧归一的唯一落地点。所有业务表单都经它调 storage.NormalizeOrKeep，
+		// 不允许各自直接调纯函数——否则「读写从哪进」这件事就散在十几个 handler 里了。
+		filepath.Join(root, "handler", "resourceref.go"):      true,
+		filepath.Join(root, "handler", "resourceref_test.go"): true,
 	}
 
-	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)
+	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|NormalizeOrKeep|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)
 	resolveRefAPI := regexp.MustCompile(`storage\.ResolveRef\s*\(`)
 	resolveResourceRefAPI := regexp.MustCompile(`model\.ResolveResourceRef\s*\(|\.ResolveRefs\(\)`)
 
@@ -156,6 +160,9 @@ func TestP0aRefIsPureStdlibOnly(t *testing.T) {
 		"type Scope string", "type Ref struct",
 		"func ObjectKeyFor(", "func ParseRef(", "func IsNormalizedRef(",
 		"func NormalizeRef(", "func ResolveRef(",
+		// 第五十九轮：写入侧宽松归一的闸门。它同样必须是纯函数——
+		// 一旦它开始读 env / 写日志，handler 那条「回滚开关只有一个」的承诺就散了。
+		"func NormalizeOrKeep(",
 	} {
 		require.Contains(t, src, want, "ref.go 缺少设计稿约定的 API %q", want)
 	}

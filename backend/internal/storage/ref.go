@@ -16,9 +16,12 @@ import (
 // 改 upload_base_url 只影响新上传，正是这个结构造成的（backend/README.md:280）。
 // 详见 docs/tenant-storage-design.md §3.1。
 //
-// **本文件没有接进任何 handler / repository / 出参**：P0a 阶段线上行为零变化，
-// 整体删掉即可回滚。接入点清单与源码级守门在 P0b 建立；在 P0a 里
-// ref_p0a_test.go 会反向钉住「生产包不许调用这些函数」，防止有人顺手接线。
+// **接入现状（原「本文件没有接进任何 handler」的说法已过时，2026-11-13 订正）**：
+// 出参侧第五十三 / 五十七轮接入（9 条公开 GET + signHandler + 后台 R11–R15），
+// 写入侧第五十四轮接入带前缀键、第五十九轮接入落库前归一。接入点清单与源码级守门
+// 在 ref_p0a_guard_test.go 的 TestRefWiringGate；**集成不再需要删本文件回滚**——
+// 回滚写入侧归一用 STORAGE_REF_STRICT=0（见 handler/resourceref.go），
+// 回滚出参侧解析才是「改回不调 ResolveRefs」。
 //
 // 这里只依赖标准库，不 import mediachk / handler / config，避免把纯函数拖进
 // 依赖环。与 mediachk.ObjectKey 同构的那段「从 URL 反推键」刻意保持同语义，
@@ -331,4 +334,141 @@ func cleanOrigin(origin string) (string, error) {
 // 底层复用 legacyRel，保证与 NormalizeRef 反推键的口径完全一致。
 func ObjectKeyFromURL(raw, baseURL string) (string, error) {
 	return legacyRel(raw, baseURL)
+}
+
+// RefKeepKind 说明 NormalizeOrKeep 对输入做了什么。
+//
+// 分三类而不是一个 bool，是因为「没归一」有两种完全不同的原因，处置方式也相反：
+// 外链要原样留着（用户就是要外链），历史形态是待搬迁的债（P3 才处理）。
+// 混成一个 bool，日志里就只能写一句「没归一」，半年后没人分得清是哪种。
+type RefKeepKind string
+
+const (
+	// RefNormalized 已归一成带归属前缀的裸键（本轮唯一要写库的形态）。
+	RefNormalized RefKeepKind = "normalized"
+	// RefForeignURL 合法外域 URL，原样保留：video_url 的「外部 MP4 直链」档
+	// 就是任意外域地址，硬归一会让正常保存失败。
+	RefForeignURL RefKeepKind = "foreign-url"
+	// RefLegacyPath 第五十四轮之前上传的老对象，键不带归属前缀（对象真的就在
+	// /uploads/x.jpg）。**绝不能给它补前缀**：补了指向的键根本不存在，
+	// 端上立刻 404，而且是「保存时静默改指向」这种最难查的错。
+	// 这类数据归 P3 搬迁处理（搬对象 + 改库），不是写入侧能修的。
+	RefLegacyPath RefKeepKind = "legacy-path"
+)
+
+// NormalizeOrKeep 写入侧**宽松归一**：能确认是本平台对象就收敛成裸键，
+// 合法外链与历史形态原样保留，不安全的输入显式报错。
+// 返回的 key 就是要写进库的字符串。
+//
+// 为什么不能直接用 NormalizeRef：NormalizeRef 的契约是「必须产出带前缀的键」，
+// 而写入侧收到的值有三种都不该被改：
+//
+//   - **外域 URL**：company_profile.video_url 有一档「外部 MP4 直链」
+//     （model.VideoSourceURL）就是任意外域地址；员工也可能从别处复制一个
+//     CDN 链接贴进头像框。硬归一会让一次正常保存变成「保存失败」，用户只会反复重试。
+//   - **无前缀的历史对象**：第五十四轮之前上传的文件键是 "x.jpg"，对象真的就在
+//     /uploads/x.jpg。给它补成 t/5/x.jpg 不会报错，但出参解析会得到
+//     /uploads/t/5/x.jpg —— 一个不存在的对象，端上直接裂图。
+//   - **空值**：avatar / cover / logo 大量为空，出参侧 ResolveRef 已约定空值不报错，
+//     两侧口径必须一致，否则「清空头像」这个操作会失败。
+//
+// 但宽松不等于什么都收。仍然显式失败的四种：
+//
+//  1. 不安全的伪协议 / 路径穿越 / 反斜杠 —— data: 、javascript: 、//evil.com 、
+//     t/5/../../etc 进了 <img src> 或库字段就是实打实的注入面；
+//  2. 归属不一致 —— 把 A 租户的键用 B 租户身份再存一次，被静默改写成 t/B/...
+//     正是多租户最怕的串号；
+//  3. **同源却推不出键** —— 基址配错时（比如接入租户自有域名后 upload_base_url
+//     改了、库里还是老域名的绝对 URL）本平台的老 URL 会推不出键。若当外链放过，
+//     库里形态就静默退回绝对 URL，而**出参侧看不出任何异常**（绝对 URL 本就原样
+//     返回），这一轮就白做了；
+//  4. 非 http(s) 也不是相对路径的怪东西。
+func NormalizeOrKeep(raw, baseURL string, scope Scope, companyID int64) (string, RefKeepKind, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", RefNormalized, nil
+	}
+
+	// ① 已是带归属前缀的裸键（第五十四轮之后新写入的形态）。
+	if ref, err := ParseRef(s); err == nil {
+		return checkedScope(ref.ObjectKey, ref, scope, companyID)
+	}
+
+	// ② 剥掉 /uploads/ 或基址，拿到不含 /uploads/ 的相对部分。
+	//    这一步顺带挡掉全部不安全输入（伪协议、穿越、反斜杠），
+	//    所以 ② 失败后只剩「外链 or 同源异常」两种可能。
+	rel, relErr := legacyRel(s, baseURL)
+	if relErr == nil {
+		// ②-a 剥完仍带前缀 —— 这就是本地驱动返回的 /uploads/t/5/x.jpg。
+		//      这是最常见的形态（本地存储 + 云存储都走这里），必须走通。
+		if ref, perr := ParseRef(rel); perr == nil {
+			return checkedScope(ref.ObjectKey, ref, scope, companyID)
+		}
+		// ②-b 剥完不带前缀 —— 第五十四轮之前的老对象。原样保留，等 P3 搬迁。
+		return s, RefLegacyPath, nil
+	}
+
+	// ③ 剥不出来：要么是合法外链，要么是同源异常。
+	if !isHTTPURL(s) {
+		return "", "", relErr
+	}
+	if sameHostAsBase(s, baseURL) {
+		return "", "", fmt.Errorf("%w（与本平台基址同源，多为 upload_base_url 配错或数据形态异常）", relErr)
+	}
+	return s, RefForeignURL, nil
+}
+
+// checkedScope 校验归属，通过则返回可写库的键。
+//
+// 这里比 NormalizeRef 宽松一档：**平台对象出现在租户字段里是允许的**。
+// 理由是一条真实的链路：访客在小程序申请页上传头像时还没登录，若请求没带
+// companyId，上传就落在 p/ 下（见 handler.uploadCompanyID），随后
+// open_apply.avatar 里存的就是 p/xxx.jpg 而 company_id 是某个租户。
+// 这是既有数据形态，不是串号——对象在哪不影响「它属于谁的业务字段」。
+//
+// 真正要拒的是反过来的情况：A 租户的键（t/9/...）写进 B 租户的字段（t/5）。
+// 那会让 B 的页面显示 A 的文件，且两端都看不出异常。
+func checkedScope(key string, ref Ref, scope Scope, companyID int64) (string, RefKeepKind, error) {
+	if ref.Scope == ScopePlatform {
+		return key, RefNormalized, nil
+	}
+	if scope == ScopeTenant && ref.CompanyID == companyID {
+		return key, RefNormalized, nil
+	}
+	return "", "", fmt.Errorf("%w: 键 %q 归属 (%s,%d)，目标 (%s,%d)",
+		ErrScopeMismatch, key, ref.Scope, ref.CompanyID, scope, companyID)
+}
+
+// isHTTPURL 判断是否形如 http(s)://host/... 的合法绝对 URL。
+// 只做形态判断，不保证可访问——这里不联网。
+func isHTTPURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return u.Host != ""
+}
+
+// sameHostAsBase 判断 s 与本平台基址是否同 host。
+//
+// 只比 host 不比 path：基址常写成 .../uploads 或干脆是 CDN 域名，路径段在接入层
+// 改过好几次；host 才是「这是不是我们自己的域名」的判据。
+// baseURL 为空时恒 false——本地驱动没有绝对基址，不存在「同源」这回事。
+func sameHostAsBase(s, baseURL string) bool {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return false
+	}
+	bu, err := url.Parse(base)
+	if err != nil || bu.Host == "" {
+		return false
+	}
+	su, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(bu.Host, su.Host)
 }
