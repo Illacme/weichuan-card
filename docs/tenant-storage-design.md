@@ -1,0 +1,301 @@
+# 多租户自有存储 · 详细设计（第一阶段）
+
+> **状态：设计稿，未实施。** 本轮只做代码事实核查与设计，没有改任何生产代码、
+> 没有写迁移、没有动线上 nginx。文中所有文件路径、标识符与行号都来自
+> 2026-11-13 对仓库的实读，不引用印象。
+>
+> 关联决策：`docs/commercial-readiness.md` 第五十二轮。方向由用户明确选定为
+> **多租户各自用自己的存储（数据主权 / 产品能力）**，架构分叉由用户明确选定为
+> **平台域名统一入口 + 按租户回源，客户自有域名留作未来可选开关**。
+
+---
+
+## 0. 解决什么，不解决什么
+
+**解决**：让每个企业能把图片 / 视频物理存到自己的对象存储账号里，凭据由平台安全保管，
+配置错只影响本租户，随时能切回平台默认、存量能搬回来。
+
+**验收判据不看首屏毫秒数**，改看四件事：
+
+| 判据 | 含义 |
+| --- | --- |
+| 可移植性 | 新上传对象真的落在指定桶；库里不再写死某个域名的完整 URL |
+| 租户隔离 | A 租户配置错不影响 B；对象键不互串；平台本地盘不接租户文件 |
+| 凭据安全 | 密钥不回显、不进审计、加密落库；密钥策略在写第一条配置前定死 |
+| 迁移可逆 | 搬过去能搬回来，且搬迁过程有 dry-run、有记录、有 rollback |
+
+**明确不纳入第一阶段**：
+
+- 性能优化（多域名分流、按文件类型 / 图片子集选平台、同步到多个 CDN）；
+- 客户自有域名（端上域名一变，小程序合法域名就要逐个登记）；
+- 私有桶限时签名接入统一入口（第一阶段按公开读桶试点，见 R1）；
+- 小程序包内 `.js/.wxml/.wxss/.json` 与管理后台 `/assets/`、`/theme-previews/`
+  —— 前者必须随包、不允许远程加载，后者是 Vite/nginx 本地产物，都不在
+  `storage.Uploader` 抽象范围内。
+
+---
+
+## 1. 已确认的架构决策
+
+```
+端上（小程序 / 浏览器）
+    │  https://weichuan.ziyuanxingqiu.cn/uploads/t/<cid>/<name>
+    ▼
+平台统一入口（nginx / CDN，域名不变）
+    │  按 t/<cid>/ 前缀回源
+    ▼
+各租户自己的对象存储桶
+```
+
+**为什么选它**：`docs/deploy-runbook.md`、`docs/real-device-acceptance.md`、
+`docs/launch-checklist.md` 里微信三类合法域名（request / uploadFile / downloadFile）
+当前都只登记 `https://weichuan.ziyuanxingqiu.cn`。端上域名不变 ⇒ 小程序零改动、
+零重新登记、零发版。代价是字节链路仍经过平台接入层；这是为「端上不动」付的钱，
+不是性能优化。
+
+路径里带 `t/<cid>/` 还有一个顺带好处：缓存键天然按租户隔离，不会串号。
+
+---
+
+## 2. 现状盘点（逐条带证据）
+
+| 主题 | 事实 | 证据 |
+| --- | --- | --- |
+| 存储抽象 | `Uploader` 只有两个方法 `Save` / `SaveBytes`；另有可选能力接口 `Presigner`、`Signer`、`CDNRefresher` | `backend/internal/storage/storage.go:16-21`、`capabilities.go` |
+| 实现 | `LocalUploader` / `MinioUploader`（`s3` 共用）/ `OssUploader`；CDN 刷新五家（aliyun / tencent / qiniu / cloudflare / cloudfront） | `storage.go:25`、`minio.go:21`、`oss.go:19`、`cdn.go:11-23` |
+| **单实例** | 启动时构造**一个** `up`，注入 5 处 `Register*`；`r.Static("/uploads", cfg.UploadDir)` 本地托管 | `backend/cmd/server/main.go:362-394` |
+| **静默降级** | `newUploaderWithFallback` 构造失败时降级本地盘，理由是「改错可自愈」 | `main.go:525-541` |
+| URL 形态双轨 | local 返 `/uploads/<name>`；云驱动返 `<BaseURL>/<key>` | `storage.go:106`、`minio.go:84`、`oss.go:84` |
+| **URL 落库** | `avatar` / `logo` / `cover` / `bgImage` / `videoUrl` / `videoBackupUrl` / `album` 等业务字段直接存字符串；`media_check.url`、`object_key` 另有一份 | `backend/internal/model/models.go:17,76,155,197,267,341`、`media_check.go:27-31` |
+| 老坑 | README 明说改 `upload_base_url` **只影响新上传，已入库完整 URL 不自动更新** | `backend/README.md:280` |
+| 端上契约 | 小程序 `assetUrl`：绝对地址原样返回，相对路径拼 `baseUrl()`；管理端 `thumbnailURL` 按 URL 末位插 `_thumb` | `miniprogram/utils/request.ts:31-35`、`frontend/src/utils/thumb.spec.ts:6-15` |
+| 从 URL 反推 key | `signHandler` 按 `cfg.UploadBaseURL` 前缀 TrimPrefix；`mediachk.ObjectKey` 同构；推不出就拒绝 | `backend/internal/handler/storage.go:135-147`、`internal/mediachk/mediachk.go:159-176` |
+| 平台级资源 | 素材采用 `library/<id>.<ext>`、小程序码 `wxacode/<staffID>.jpg`、违规下架覆盖 `row.ObjectKey` —— 都走同一个 `up` | `handler/assets.go:155`、`wechat.go:254-255`、`media_check.go:459-460` |
+| 租户计量 | `storage_usage` 已按 `company_id` 累计；`cid<=0` = 平台自身，不计量不拦 | `migrations/0032_storage_usage.sql`、`handler/storage_quota.go:74-78` |
+| 匿名上传 | `uploadCompanyID` 取 `PostForm("companyId")`，**不校验企业是否存在 / 是否有效** | `storage_quota.go:163-174` |
+| 配额 | `checkStorageQuota` 按 `storage_usage.bytes` 拦新上传 | `storage_quota.go:74-95` |
+| 能力探测 | `capabilityHandler` 按**全局** `cfg.StorageDriver` 判 `videoUpload` | `storage.go:93-117` |
+| 凭据加密现成件 | `pii` 包有 `Encrypt/Decrypt/IsEncrypted/SetKey/Reload/UsingPlaceholderKey`；`v1:` 前缀、AES-256-GCM、`base64.StdEncoding`、密钥 `PII_ENC_KEY` | `internal/pii/pii.go:32,36,90-109` |
+| 租户级配置样板 | `CompanyWXApp` 按 `company_id` 唯一；`AppSecret` / `UploadKey` 是 `json:"-"`，只写不读、接口只回掩码 | `model/models.go:463-499` |
+| 迁移基线 | 最新为 `0043_drop_template_id.sql`；迁移只建表、不许 `INSERT INTO`；模型必须进 `model.All()` | `backend/migrations/`、`model/all.go:12-27` |
+
+---
+
+## 3. 核心设计
+
+### 3.1 资源引用去 URL 化（P0 地基）
+
+现状是三种形态混在业务字段里：绝对 URL（云驱动）、`/uploads/...`（local）、以及
+`media_check.object_key` 里那份从 URL 反推出的裸键。改 `upload_base_url` 只影响新上传，
+正是这个结构造成的。
+
+引入统一引用：
+
+```go
+type Scope string
+
+const (
+    ScopePlatform Scope = "platform" // 平台自有对象，company_id = 0
+    ScopeTenant   Scope = "tenant"   // 归属某个企业
+)
+
+type Ref struct {
+    ObjectKey string
+    Scope     Scope
+    CompanyID int64
+}
+```
+
+统一对象键布局：
+
+- 平台对象：`p/<原有相对路径>`，例如 `p/library/cat-1.png`、`p/wxacode/42.jpg`
+- 租户对象：`t/<companyID>/<rand>.<ext>`，缩略图 `t/<companyID>/<rand>_thumb.<ext>`
+
+**不一次性回填全库**。业务字段继续存字符串，但：
+
+1. **写入侧**：上传 / 采用 / 小程序码 / 预签名一律只写 `objectKey`，不再写完整 URL；
+2. **读取侧**：所有出参序列化前统一过 `storage.Resolve(ref) (string, error)`，兼容三种历史形态：
+   - `http(s)://...`（旧绝对 URL）→ 原样返回，保证存量不裂图；
+   - `/uploads/...`（旧相对）→ 按平台统一入口拼；
+   - 裸 `objectKey`（新写入）→ 按 `Scope` + `CompanyID` 解析到对应基址。
+
+这样零回填即可升级，P3 搬迁时把前两类批量改写成第三类即可；
+`signHandler` 与 `mediachk.ObjectKey` 那段「从 URL 反推 key」的脆弱逻辑随之退休
+（改为直接对 `objectKey` 签名 / 覆盖）。
+
+`Resolve` 必须覆盖 **P1 刚加了 60 秒边缘缓存的五条公开只读接口**，否则会出现
+「列表页是绝对旧 URL、名片页是新解析 URL」的双轨。
+
+### 3.2 `tenant_storage_configs`（迁移 0044）
+
+字段草案（**只建表，不写任何业务数据 / 演示配置**）：
+
+| 列 | 说明 |
+| --- | --- |
+| `id` / `company_id` | 主键；`company_id` 唯一索引 |
+| `driver` | `local` / `minio` / `oss` / `s3`，与现有枚举一致 |
+| `endpoint` / `bucket` / `region` / `use_ssl` | 与 `config.OverlayFromSettings` 现有字段一一对应 |
+| `access_key_enc` / `secret_key_enc` | 密文列；模型上 `json:"-"`，只写不读 |
+| `key_id` | 密钥版本标识，为将来换钥匙留口子 |
+| `public_base_url` | 第一阶段**留空**（= 走平台统一入口）；客户自有域名开关启用时才填 |
+| `public_read` | 桶是否公开读；第一阶段试点要求为 true |
+| `enabled` / `status` / `last_checked_at` / `last_error` | 开关 / 连通性自检结果 / 脱敏错误摘要 |
+| `created_at` / `updated_at` | 时间戳 |
+
+三条硬约束：
+
+- 迁移写 **MySQL 8.0 裸 DDL**，不得出现 `DROP/ADD COLUMN IF EXISTS`（0043 线上 1064 事故的钉子，见 `migrate/apply_test.go` 的 `TestMigrationsUseMySQL8DDL`）；
+- 新增模型必须进 `model.All()`，否则 devserver 与 `handler_test.go` 运行期 `no such table`；
+- 配置由后台界面写入，**不放在 `sys_setting`**——`sys_setting` 是全局单值，没有租户维度。
+
+### 3.3 `UploaderResolver`（P2）
+
+```go
+type Resolver interface {
+    For(cid int64) (Uploader, error)              // cid <= 0 → 平台默认实例
+    PresignerFor(cid int64) (Presigner, bool)
+    SignerFor(cid int64) (Signer, bool)
+    RefresherFor(cid int64) CDNRefresher
+}
+```
+
+要点：
+
+- **实例缓存**：按 `company_id + updated_at` 版本号失效，别每次上传都重建 S3 客户端；
+- **去掉租户级静默降级**：租户配置解析失败必须显式 `code=1` + 审计 + 后台标红。
+  现在 `newUploaderWithFallback`（`main.go:528`）的降级是为了「改错还能进后台改回来」，
+  在平台级保留合理；但**绝不能当租户的兜底**——客户以为文件在自己桶里、实际躺在
+  平台本地盘，是「没人报错时用户无从察觉」的典型静默失败，比直接报错严重得多；
+- **注入点**：`main.go:387-394` 的 `RegisterUpload` / `RegisterStorage` /
+  `RegisterMediaCheck` / `RegisterAssets` / `RegisterWechat`，
+  以及 `cmd/devserver/main.go:207-211` 与 `handler/handler_test.go:135` 的 `buildEngine`。
+  按项目纪律：新增 `handler.RegisterX` 必须同时改这三处，漏 devserver = 静默 404；
+- `capabilityHandler`（`storage.go:93`）改为按当前租户实例判 `videoUpload`，不再看全局
+  `cfg.StorageDriver`——否则 A 配了 S3、B 仍是 local，后台会给 B 也显示「可直传」；
+- `presignHandler`（`storage.go:65`）的 `storage.RandName(ext)` 生成裸 key，必须带上
+  `t/<cid>/` 前缀；`signHandler` 改为直接按 `objectKey` 签名。
+
+### 3.4 平台域名统一入口 + 按租户回源（P2 的接入层）
+
+**这是本设计唯一尚未验证的假设，也是第一阶段最大风险（R1）。**
+
+链路：`/uploads/t/<cid>/<name>` → 平台接入层按前缀反代到该租户桶的公网读域名 → 回源。
+字节不经过 Go 服务（`capabilityHandler` 已经写过：大视频经应用服务器中转会拖垮服务）。
+
+必须同步处理的既有事实：
+
+- `deploy/baota/nginx-site.live.conf` 的 `/uploads/` 现在是本地静态托管，且 P1 给它配了
+  `public, max-age=31536000, immutable`；改成反代要同步改这里，并**先验证**反代与缓存头不打架；
+- 新增 / 修改租户要生成 nginx snippet → `nginx -t` → reload；要有守门脚本对账
+  「配置表里 enabled 的租户」与「生成的 snippet」，漏一条就是 404；
+- `refreshCDN`（`upload.go:126`）现在只接 URL 列表。统一入口下 URL 带 `t/<cid>/`，
+  要么按租户分别 Purge，要么接受清整个 `/uploads/` 会误伤所有租户缓存；第一阶段
+  建议 `refreshCDN` 增加 `companyID` 参数，先用平台 refresher 按精确 URL 清。
+
+**第一阶段试点口径**：租户桶公开读 + 单租户试点。私有桶签名、跨地域 CDN、
+客户自有域名都留到后续阶段再评估。
+
+### 3.5 归属与 scope 判定（四个必须钉住的坑）
+
+1. **平台级资源不归租户**：素材采用（`assets.go:155`）、小程序码（`wechat.go:254`）、
+   违规下架占位图（`media_check.go:459`）、内容安全送检回写，全部 `ScopePlatform` /
+   `company_id=0`，不受 JWT 里的 `companyId` 带跑；`storage_quota.go:76` 的
+   「平台自身对象不计量不限配额」继续成立。
+2. **下架要带租户**：`takedownMediaCheck` 现在用 `row.ObjectKey` 覆盖却不带租户信息。
+   多租户下必须用 `row.CompanyID` 选实例，否则占位图写进平台桶、违规图还在客户桶里在线。
+3. **匿名上传必须校验归属**：`uploadCompanyID`（`storage_quota.go:163`）从表单取
+   `companyId` 但没校验企业存在 / 状态有效。接 resolver 后必须补校验，不能让伪造的
+   `companyId` 把文件写进任意租户桶；`cid=0` 也不许悄悄落到平台桶，要显式拒绝。
+4. **配额语义要显式改**：`checkStorageQuota`（`storage_quota.go:74`）按累计字节拦上传。
+   租户用自己的桶后成本不在平台，配额应从「限制」改成「计量 / 展示」（或按套餐开关），
+   不能继续拦客户自己的空间。这一条不写进设计就会悄悄留下来，变成上线后的怪事。
+
+### 3.6 凭据加密与密钥策略
+
+现成机制在 `internal/pii/pii.go`：`Encrypt` / `Decrypt` / `IsEncrypted` / `SetKey` /
+`Reload`，`v1:` 前缀、AES-256-GCM、`base64.StdEncoding`，密钥来自 `PII_ENC_KEY`，
+且有启动自检 `UsingPlaceholderKey()`。项目基线是 **写任何 PII 之前必须把密钥定死，
+没有 re-key**；租户凭据同理，第一条配置写进去之前就要定死。
+
+**推荐**：抽 `internal/secrets`，用独立的 `STORAGE_ENC_KEY`，不与 PII 共用一把钥匙。
+理由：两类数据的保留期、轮换需求、泄露后果都不同；`key_id` 列预留在表里，将来换钥匙
+只需按版本解密重加密，不必动 PII。代价是要复制一套启动自检与守门。
+
+**降级路径**：直接复用 `pii.Encrypt/Decrypt` + `PII_ENC_KEY`（省事、已有测试覆盖），
+但必须在评审时写进文档：钥匙与 PII 绑定、将来分离要引入 `v2:` 前缀 + 全量重加密。
+不能等写进去了才发现。
+
+界面沿用 `CompanyWXApp`（`models.go:467`）口径：凭据只写不读、回掩码、提交才覆盖。
+连通性自检（HEAD / PUT 一个探针对象）结果落 `status` / `last_error`；
+**错误原文不进审计**——与 `refreshCDN`（`upload.go:121`）同口径，刷新 / 连接错误常带
+连接串或签名 token，审计表泄密比不记更糟。
+
+### 3.7 审计与前端对账
+
+- 新增动作常量（`internal/audit/audit.go`）：`company.storage_config.update`、
+  `company.storage_config.test`、`tenant_storage.resolve_failed`；
+- 同步 `frontend/src/api/audit.ts` 的 `ACTION_LABELS`。`frontend/src/api/audit.spec.ts:41-46`
+  会把后端常量与前端标签逐字对账，漏一个必红。
+
+### 3.8 与 P1 边缘缓存的关系
+
+- 五条公开只读接口的 60 秒缓存（`cdnCache(c, 60)`）应在 `Resolve` **之后**发出，
+  响应里是平台统一入口 URL；
+- `staffId → company_id` 是确定映射，且 `staffId` 进 cache key ⇒ 不会跨租户串号；
+- **但将来开放客户自有域名时，cache key 必须含 `Host`**，否则同一 `staffId` 在 A / B
+  两个域名下会复用同一份响应 → 跨租户串图。这条写进 P4 守门；
+- 改动后必须重跑 CF 行为验收：五条路径 + 错误分支 `BYPASS` + 查询串不折叠。
+
+---
+
+## 4. 分期与验收
+
+| 期 | 交付 | 验收判据 | 守门 |
+| --- | --- | --- | --- |
+| **P0** | `Ref` / `Resolve` / 统一对象键；写入侧只写 objectKey；读取侧兼容三种历史形态 | 存量数据零裂图；新上传库里是 objectKey；`upload_base_url` 改动不再影响存量 | `TestResolveKeepsLegacyAbsoluteURL`、`TestLegacyUploadsRelativeURL`、`TestNoFullURLWrittenToBusinessColumns` |
+| **P1** | `0044` 建表 + 模型进 `model.All()` + 配置界面（掩码 / 自检 / 审计） | 装完零业务数据；配置写库为密文；改错能改回来 | 迁移只建表守门；`audit.spec.ts` 常量对账 |
+| **P2** | `UploaderResolver` + 5 处注入 + 三处组装同步 + 接入层反代试点 | 单租户新对象落在自己桶；其它租户不受影响；配置错显式失败且不落平台盘 | `TestResolverFailureDoesNotAffectOtherTenants`、`TestTenantUploadNeverFallsBackToPlatformLocal`、`TestAnonymousUploadRejectsForeignCompanyID`、nginx snippet 对账 |
+| **P3** | 存量搬迁命令（dry-run / force / rollback，记录 `old_url → object_key → config`） | 可搬过去、可搬回来；对象不删；失败可重跑 | 搬迁幂等 + 反向验证 |
+| **P4** | 密钥轮换、审计前端标签、配额口径、数据保留 / 解约后清理策略 | 换钥匙后老配置仍可解；解约租户数据按策略清理 | `key_id` 分支覆盖 |
+
+**门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
+（需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→
+`eslint .` → `vite build --outDir dist-check-*` → nginx-check → `git diff --check`，
+串行不并行（并行会 137）。新增接口必进 `runAPIFlow`；每个新守门都要做反向验证
+（注入坏改动必红、还原后零漂移）。上线必同步整个 `migrations/`。
+
+---
+
+## 5. 验收清单（不以毫秒衡量）
+
+1. 切到租户自有桶后，新上传对象能在该租户桶里 HEAD 到 200，库里是 `t/<cid>/...`；
+2. 把该租户配置改错 → 上传显式 `code=1`，其它租户上传照常，平台本地盘不出现该租户文件；
+3. 关掉配置切回平台默认 → 老对象仍可访问（搬迁可逆）；
+4. 匿名上传带合法 `companyId` 落到正确租户桶；伪造 / 不存在的 `companyId` 被拒；
+5. 素材采用、小程序码、违规下架占位图仍落在平台桶，不进任何租户桶；
+6. 小程序 / 管理端不新增合法域名，现有页面图片、视频、`_thumb` 全绿；
+7. 配置界面不回显密钥，审计里没有凭据 / 错误原文。
+
+---
+
+## 6. 风险登记
+
+| # | 风险 | 处置 |
+| --- | --- | --- |
+| **R1** | **nginx 按租户反代尚未验证**：现有 `/uploads/` 是本地静态 + immutable 一年，改反代要动线上接入层，且私有桶要签名 | 第一阶段单租户 + 公开读桶试点，先在测试环境 `nginx -t` + 行为验收跑通再铺开；不通则退回「客户自有域名开关」路线重新评审，**不硬上** |
+| R2 | 静默降级被沿用为租户兜底 → 数据主权叙事失效且无人察觉 | 租户解析失败必须显式失败 + 审计；平台级降级仅服务 `company_id=0` |
+| R3 | URL 契约双轨：小程序 `assetUrl` 绝对原样返回、管理端 `thumbnailURL` 按 URL 末位插 `_thumb` | `Resolve` 统一出参；`_thumb` 派生规则前后端对账守门 |
+| R4 | 平台级资源被 JWT `companyId` 带跑 | scope 显式枚举，四类平台资源单测逐个钉住 |
+| R5 | 解约 / 换桶后对象残留在平台桶，或搬迁把旧 URL 洗没了 | P3 保留 `old_url` 记录 + rollback；对象只复制不删除 |
+| R6 | CF Purge 按租户误伤 / 漏清；P1 的 60 秒边缘缓存跨租户串号 | 刷新带 `companyID`；开放自有域名前把 `Host` 纳入 cache key 写进守门 |
+| R7 | 密钥与 PII 绑定、将来无法独立轮换 | 推荐独立 `STORAGE_ENC_KEY` + `key_id`；若复用必须写进评审结论 |
+| R8 | 新 `RegisterX` 漏改 devserver / `handler_test.go` → 静默 404 | 三处同步清单 + 源码级守门 |
+
+---
+
+## 7. 本轮边界
+
+- 只核准了代码事实、写了本设计稿；**未改生产代码、未写迁移、未动线上 nginx**；
+- 未跑全量门禁（没有代码改动）；
+- 存量业务数据零改动；
+- 下一步需要用户确认一个决策后才能进入 P0，见对话。
