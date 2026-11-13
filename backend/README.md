@@ -175,6 +175,39 @@ go build -o licensectl ./cmd/license
 - 这两个子命令是 `scripts/backup.sh` / `restore.sh` / `restore_drill.sh` 的底层，
   容器部署时由脚本 `docker exec` 调用，原生部署可设 `SERVER_BIN` 直接跑。
 
+### 存量回填盘点：cmd/storage-backfill（P3，只读）
+
+多租户自有存储（`docs/tenant-storage-design.md`）上线前，必须知道**库里还有多少条
+历史形态资源引用**（`/uploads/x.jpg`、绝对 URL、无前缀裸键）、分布在哪些表 / 列，
+以及每一条搬完**应该**写成什么键。这个命令只回答这三个问题：
+
+```bash
+go build -o storage-backfill ./cmd/storage-backfill
+
+# 全量盘点（人读报告）
+./storage-backfill plan \
+  --dsn 'root:pw@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true' \
+  --base-url 'https://card.example.com/uploads'
+
+# 单租户试点 + 落 JSON（下一轮执行器读这份，不要自己再扫库）
+./storage-backfill plan --dsn "$DSN" --company 7 --out /tmp/plan.json
+
+# CI：有串号 / 非法值时退出码 2
+./storage-backfill plan --dsn "$DSN" --fail-on-problem
+```
+
+- **它不写任何数据**：不 UPDATE、不 INSERT、不访问对象存储。九张表的 `CHECKSUM TABLE`
+  在盘点前后逐字节一致（取证方法见 `docs/commercial-readiness.md` 第六十四轮）。
+- `--dsn` **没有默认值**，刻意如此：默认值意味着某天有人在生产 shell 里少打一个参数就直接读生产。
+- `--base-url` 传 `UPLOAD_BASE_URL`（形如 `https://host/uploads`）；留空时退到「`/uploads/` 段匹配」。
+- 退出码：0 正常 / 1 出错 / 2 有需人工处理的条目（仅 `--fail-on-problem`）。`go run` 不传递
+  子进程退出码，验证退出码要用 `go build` 的产物。
+- 7 种归类的处置各不相同（`platform` 永不搬、`foreign-url` 原样保留、`foreign-tenant` /
+  `invalid` 必须人工），理由写在 `internal/refmigrate/plan.go` 的 `Class` 注释里。
+- **没有 `apply` / `rollback`**：搬迁跨对象存储与 MySQL 两个非事务系统，必须先有幂等与
+  回滚测试才敢给会改数据的命令。
+- 取证数据：`tools/backfill-fixture/seed.sql`（只能灌进一次性库，文件头部先清九张表）。
+
 ```bash
 # 1. 建库并导入全部迁移（含 7 分类种子 / 审核流表 / 软删除 / token_version / 会话黑名单 / 多租户 company_id）——仅 MySQL 需要
 for f in migrations/000*.sql; do mysql -u root -p weichuan < "$f"; done

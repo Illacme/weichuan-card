@@ -371,6 +371,69 @@ MySQL 实跑记录（2026-11-13，本地 `mysql:8.0.46` 容器）：
 合法）」，被 `TestMigrationsTableNamesMatchModels` 扫成一张**叫 `IF` 的幽灵表**并报红——
 那个正则不剥注释。注释改写成「建表语句自带 `IF NOT EXISTS`」才过。
 
+#### ✅ 第六十四轮：P3 拆成两半，先交「只读的计划层」
+
+搬迁由「复制对象 + 改库 + 台账」三步组成，对象存储与 MySQL **不在同一个事务里**，失败必然要能续跑和回滚。在不知道分布的情况下开跑，等于把不可回滚的操作压在一次运行上。所以 P3 拆两半，本轮只交前半：
+
+| 层 | 交付 | 能不能改数据 |
+| --- | --- | --- |
+| 计划（本轮） | `storage.PlanNormalize` + `internal/refmigrate` + `cmd/storage-backfill plan` | **不能**：不 UPDATE、不 INSERT、不访问对象存储 |
+| 执行（下一轮） | 按计划复制对象 → 改库 → 台账 → `--force` / `--rollback` | 能，且必须先有幂等与回滚测试 |
+
+三条不能省的约束：
+
+1. **执行器消费计划 JSON，不许自己再扫库**（`--out` 产出的那份）。否则「计划看到的」与「执行改的」会分叉，而这种分叉在两边各自的单测里都看不出来。
+2. **`PlanNormalize` 与写入侧 `NormalizeOrKeep` 同源**：写入侧的「能不能原样留」与搬迁计划的「搬完该是什么」共用同一套判定（`ParseRef → legacyRel → ObjectKeyFor`），不各写一份。分叉的症状是「迁移脚本搬过去的键，写入侧又不认」。用**差分守门**钉住（同一批 13 个输入喂两个函数逐条比对语义），而不是各写一份期望值。
+3. **对象按「源键 → 目标键」去重**：同一张图可能被多个字段引用（实测 `shared-logo.png` 被 3 个字段引用、`media_check` 的 `url` 与 `object_key` 指向同一对象），复制只做一次，改库仍逐条。
+
+7 种归类，每一种处置都不同（压成一个 bool 就丢信息）：
+
+| 归类 | 含义 | 执行器该做什么 |
+| --- | --- | --- |
+| `empty` | 空值 | 不进计划（单值列 SQL 层排除、数组空槽跳过） |
+| `tenant-ready` | 已是 `t/<cid>/` | 库不用改；对象在不在桶里另查（要联网） |
+| `platform` | `p/` 平台对象（访客未登录上传头像的真实形态） | **永不搬** |
+| `migrate` | 历史形态（`/uploads/x.jpg`、绝对 URL、裸键） | 复制对象 + 改键 |
+| `foreign-url` | 外域直链（`video_source=url` 那一档） | 原样保留 |
+| `foreign-tenant` | 别人的租户键（`t/9/` 出现在 `t/5` 的行） | **人工确认**，不许跳过 |
+| `invalid` | 伪协议 / 路径穿越 / 坏图集 / `company_id=0` | **人工确认**，不许猜 |
+
+真实 MySQL 取证（`mysql:8.0.46`，44 个迁移全应用 + `tools/backfill-fixture/seed.sql` 灌 13 张表共 31 条引用）：
+
+```
+合计：31 条引用
+  待搬迁 15 条（去重后 12 个对象要复制）
+  已就绪 3 条 · 平台对象 4 条（永不搬）· 外域直链 3 条（原样保留）
+⚠ 需要人工处理 6 条（脚本不猜）
+```
+
+三处交叉验证：
+
+- 两次运行 `--out` 的 JSON **逐字节相同**（Items 随列清单 + 主键有序）；
+- 九张表 `CHECKSUM TABLE` 在盘点前后**逐字节不变**；
+- 反向验证：往扫描里注入一次 `UPDATE <表> SET <列>='t/0/x'` 后，九张表校验和**全部变化**、`TestScanIsReadOnlyAndIdempotent` 变红——说明上面那条「不变」是真检测，不是巧合。
+
+本轮自己踩到并修掉的四件事：
+
+1. **`text/tabwriter` 排不好中文表**：它按 rune 个数补空格，而中文是双宽字符，「员工头像」（8 列宽）与「case1-a.jpg」被算成同样宽，整表错位。换成按显示宽度对齐的 `renderTable`（东亚宽字符算 2 列）。这不是美观问题：列错位后运维会**读错列的数字**。
+2. **对齐用例不能自己量自己**：第一版只断言「每行宽度相同」，而它用的尺子就是被测的 `dispWidth`——尺子整体算错时仍然通过。补 `TestRenderTableGolden` 写死整段期望输出。
+3. **退出码契约写错**：`usage` 承诺「有异常数据 → 2、命令出错 → 1」，第一版实现把两者都走成 1。CI 里这两种红灯的处置完全相反（重跑命令 vs 去改数据）。抽出 `exitFor` 并单测。
+4. **`album` 是 MySQL 的 `json` 列**：`not-json` 这类语法坏值在 INSERT 阶段就被拒（`ERROR 3140`），生产库里**不可达**；真实能出现的坏形态只有「JSON 合法、解不成 `[]string`」（如 `["/uploads/ok.jpg", 123]`）。单测用 SQLite 造坏 JSON 是个更宽的口子，fixture 必须用真实可达的那种。
+
+新增守门（都做过反向验证）：
+
+| 守门 | 盯什么 |
+| --- | --- |
+| `TestInventoryCoversEveryResolveRefsField` | 源码扫描 `model/refs.go` 的 `ResolveRefs`，每个被解析的字段在 `Inventory` 里必须有对应列。漏掉的后果是**那批对象永远留在平台盘上，且没有任何报错** |
+| `TestInventoryHasNoDuplicateColumn` | 同一「表 + 列」不许盘点两次（否则合计翻倍、执行器重复复制同一个对象） |
+| `TestPlanNormalizeMatchesNormalizeOrKeep` | 差分守门（13 子例，覆盖空值/新形态/相对路径/绝对 URL/缓存戳/裸键/外链/伪协议/穿越/串号） |
+| `TestObjectsDedupesBySource` | 去重（3 条引用 → 1 个对象、`Refs==3`） |
+| `TestAlbumBrokenJSONIsReported` | 坏图集报 `invalid` 而不是当空消失 |
+| `TestScanIsReadOnlyAndIdempotent` | 两次扫描完全一致 + 库里值一字节不变 |
+| `TestRenderTableGolden` / `TestExitForDistinguishesProblemsFromFailures` | 中文表格对齐与退出码契约的绝对预期 |
+
+边界：**本轮没有 `apply` / `rollback` 子命令**，也不打算在缺幂等与回滚测试之前给出。`--dsn` 刻意没有默认值（避免误连生产）。
+
 #### ✅ P1 后半段已落地（2026-11-13 / 第六十轮，表终于能写了）
 
 第五十八轮之后这张表的状态是「能读不能写」——`access_key_enc` 没有任何代码在写，
@@ -656,6 +719,14 @@ type Resolver interface {
 > （`storage/ref_test.go`）+ `TestResourceRefWriteSiteCounts` / `TestResourceRefWriteNormalizesLocalPath`
 > （`handler/resourceref_test.go`）。第三个名字没有直接对应物：它原本设想的「源码级扫描业务列赋值」
 > 被拆成两件更可靠的事——写入点数对账（数量变了必红）与端到端落库断言（真的查库）。
+
+> **P3 进度（2026-11-13 第六十四轮）**：P3 拆成「计划 / 执行」两层，**计划层已交付**——
+> `storage.PlanNormalize` + `internal/refmigrate` + `cmd/storage-backfill plan`，
+> 并在真实 MySQL（44 个迁移 + 13 张表 31 条引用）上取证：15 条待搬、去重 12 个对象、
+> 6 条需人工。命令只读（九张表校验和盘点前后逐字节不变）。
+> **执行器（复制对象 + 改库 + 台账 + rollback）仍未做**，本节验收判据「可搬过去、
+> 可搬回来；对象不删；失败可重跑」原样保留，等执行器落地时逐条校验。
+> 详见 §3「✅ 第六十四轮」。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→
