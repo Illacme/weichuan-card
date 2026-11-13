@@ -1501,6 +1501,33 @@ curl -s -o /dev/null -D- "https://<域名>/api/card?staffId=999999" \
 # 期望：没有 cache-control 那一行，cf-cache-status: DYNAMIC 或 BYPASS
 ```
 
+#### 线上实测结论（2026-11-13 10:41，已生效）
+
+CF 规则列表现有 5 条生效规则，第 5 条 `公开接口短缓存` 状态「活动」。列表页**看不到**
+TTL 具体值、也看不到条件之间是「或」还是「与」，因此用行为验收代替目测——下面这组
+结果同时把三条硬约束都证了一遍：
+
+```bash
+BASE="https://<域名>"
+for p in "/api/card?staffId=1" "/api/home-layout?companyId=1" \
+         "/api/projects?companyId=1" "/api/services?companyId=1" \
+         "/api/achievements?companyId=1"; do
+  curl -s -o /dev/null -D - "$BASE$p" | grep -iE '^HTTP/|cache-control|cf-cache-status'
+done
+```
+
+| 检查 | 实测 | 说明 |
+| --- | --- | --- |
+| 五条成功响应 | 全部 `200` + `cache-control: public, max-age=60, s-maxage=60` + `cf-cache-status: MISS` | `MISS`（不是 `DYNAMIC`）说明五条路径**都已获得缓存资格**，也反证表达式里五条路径齐全、用「或」并列 |
+| 同一 URL 连打 3 次 | `MISS → HIT(age:1) → HIT(age:3)` | 边缘缓存真的在命中，TTL 跟着源站走 |
+| `?staffId=999999` 错误分支 | `cf-cache-status: BYPASS`，**无** `cache-control` | 边缘 TTL 确实是「使用缓存控制标头，否则绕过缓存」，故障没被缓存 |
+| `/api/admin/login` | `cf-cache-status: DYNAMIC` | 没有用 `/api/*` 兜底，管理端没获得缓存资格 |
+| `?staffId=1&v=a` 与 `&v=b` | 两次都 `MISS` | Cache Level = Standard，查询串进缓存键，`staffId` 不会串号 |
+
+> **判据提醒**：`MISS` 与 `DYNAMIC` 是两回事——`MISS` = 有缓存资格、这次没命中；
+> `DYNAMIC` = 根本没资格、永远不会命中。规则没配上时五条接口会是 `DYNAMIC`，
+> 只盯着 `cache-control` 头是对的，会误判成「已经生效」。
+
 #### 代价与例外
 
 - **可见代价**：后台改了职务 / 业务服务后，访客最长 **60 秒**后才看到。管理员改完

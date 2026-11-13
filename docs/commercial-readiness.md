@@ -3346,3 +3346,12 @@ listen :8080 (storage driver=s3)
 ③ P1 第 5 条 CF Cache Rule（runbook §5.2.7）；④ **按 runbook §4 替换线上 0043 `.sql`
 并跑 `migrate`，确认启动日志无 `[MIGRATE][FATAL]`**；⑤ 确认 `server` 主程序与
 `thumbbackfill` 同 revision 且含 `quantizePNG`；⑥ P4「接入路径」仍开放。
+
+> ✅ **订正（2026-11-13 10:41）**：上面待办 ③「P1 第 5 条 CF Cache Rule」用户
+> **已经建好，且线上验收通过**，不需要再建。CF 规则列表 5 条生效，第 5 条
+> `公开接口短缓存` 状态「活动」。不靠截图猜 TTL，直接做行为验收：五条接口全部
+> `200` + `public, max-age=60, s-maxage=60` + `cf-cache-status: MISS`；同一 URL
+> 连打三次 `MISS → HIT(age:1) → HIT(age:3)`；错误分支 `BYPASS` 且无头；
+> `/api/admin/login` 为 `DYNAMIC`；`&v=a` / `&v=b` 各自 `MISS`（查询串不折叠）。
+> `MISS` 不等于 `DYNAMIC`：前者是有资格没命中，后者是根本没资格。
+> 详见 runbook §5.2.7「线上实测结论」。本轮剩余待办只剩 ① / ② / ④ / ⑤ / ⑥。
