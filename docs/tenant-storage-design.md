@@ -6,7 +6,8 @@
 >
 > 关联决策：`docs/commercial-readiness.md` 第五十二轮。方向由用户明确选定为
 > **多租户各自用自己的存储（数据主权 / 产品能力）**，架构分叉由用户明确选定为
-> **平台域名统一入口 + 按租户回源，客户自有域名留作未来可选开关**。
+> **平台域名统一入口 + 按租户回源，客户自有域名留作未来可选开关**，
+> 权限模型由用户明确拍板为 **只有平台超管代填，企业管理员不给这条权限**（见 §1.1）。
 
 ---
 
@@ -54,6 +55,42 @@
 不是性能优化。
 
 路径里带 `t/<cid>/` 还有一个顺带好处：缓存键天然按租户隔离，不会串号。
+
+### 1.1 权限模型（用户 2026-11-13 拍板：平台超管代填）
+
+> 用户原话：「平台超管代填，这种权限肯定不能放给企业管理员的」。
+
+**结论**：`tenant_storage_configs` 的**新增 / 修改 / 删除 / 启停 / 连通性自检 / 切回平台默认 /
+触发搬迁**，全部只允许平台超级管理员操作；企业管理员连配置读接口都不给，更不给写接口。
+理由不只是「权限收敛」，而是这条配置里装的是**客户的云凭据**：企业管理员一旦能改，
+就能把自己企业的对象写到任意桶、把别人的桶指到自己账号下，且平台无法从业务侧察觉。
+与 R2「静默失败」同源，属于必须在入口就堵死的越权面。
+
+落地口径（全部是仓库里已有的现成机制，不新造轮子）：
+
+| 层 | 做法 | 实读证据 |
+| --- | --- | --- |
+| 后端中间件 | 新配置路由一律挂 `middleware.PlatformAdminMiddleware(db)`，**不要沿用** `AuthMiddleware(db, "admin")` —— 后者只校验登录 + `role=admin`，企业管理员照样能过 | `backend/internal/middleware/auth.go:81-94`（`companyId != 0` → `code=403 仅平台超级管理员可操作`）、`handler/companies.go:144-149` |
+| 后端既有样板 | 租户级微信凭据已是同一口径，照抄即可 | `handler/company_wx.go:31` `plat := middleware.PlatformAdminMiddleware(db)` |
+| 前端路由 | 新页面挂 `meta: { platformOnly: true }`，守卫把非超管重定向 | `frontend/src/router/index.ts:121,129,138,146,153,161` 与 `:196` |
+| 前端菜单 | 菜单组按 `platformOnly` 过滤，企业管理员看不到入口 | `frontend/src/layout/AdminLayout.vue:376,394`；身份来自 `store/auth.ts:19` 的 `isPlatform` |
+| 双保险 | 前端隐藏只是体验，**后端必须独立拦截**；不能因为菜单藏了就省掉中间件 | `router/index.ts:182-183` 注释已写明这个口径 |
+
+三条附加约束：
+
+1. **前端不回显凭据给任何非超管**：企业管理员侧最多显示一句「存储由平台托管」的状态文案，
+   不给 endpoint / bucket / 掩码 / 自检按钮。凭据只写不读、提交才覆盖，沿用
+   `CompanyWXApp`（`model/models.go:463-499`）口径。
+2. **审计要能还原「谁替谁改的」**：动作记录必须带上操作者（平台超管）与目标 `company_id`；
+   企业管理员拿着接口地址硬调，应拿到 403 且不产生任何配置变更（见 §5 验收第 8 条）。
+3. **运营流程**：客户提供凭据 → 平台超管在「企业管理」选中目标租户填写 → 连通性自检 →
+   启用 → 审计留痕 → 企业管理员只看到状态。第一阶段不做「客户自助填凭据」的开关，
+   将来若要开放，须单独评审密钥归属与解约清理，不能顺手把 `platformOnly` 摘掉。
+
+> 注意：`RegisterStorage`（`handler/storage.go:20-34`）现有的预签名 / 签名 / CDN 刷新 / 私有文件
+> 路由全部是 `AuthMiddleware(db, "admin")`，企业管理员可调用。**本轮不改这些既有路由**；
+> 但新增的租户存储配置接口绝不能照抄这个写法，否则权限模型从第一天就是漏的。
+> P1 实现时应加一条源码级守门：配置路由的中间件必须是 `PlatformAdminMiddleware`。
 
 ---
 
@@ -126,6 +163,36 @@ type Ref struct {
 `Resolve` 必须覆盖 **P1 刚加了 60 秒边缘缓存的五条公开只读接口**，否则会出现
 「列表页是绝对旧 URL、名片页是新解析 URL」的双轨。
 
+> ✅ **P0a 落地订正（2026-11-13）**：上面草稿里写的 `storage.Resolve(ref) (string, error)`
+> 只是骨架示意，实际落地的 `backend/internal/storage/ref.go` 是一组**吃库里原始字符串**
+> 的纯函数，签名如下（P0a 阶段不接任何 handler，线上行为零变化）：
+>
+> | API | 职责 |
+> | --- | --- |
+> | `ObjectKeyFor(scope, companyID, rel)` | 生成 `p/...` / `t/<cid>/...`；拒绝双重前缀与路径穿越 |
+> | `ParseRef(raw) (Ref, error)` | 从新键前缀还原 `Scope` / `CompanyID`；历史形态返回 `ErrLegacyRef` |
+> | `IsNormalizedRef(raw) bool` | 是否已归一化 |
+> | `NormalizeRef(raw, baseURL, scope, companyID) (Ref, error)` | 写入侧：剥 URL / `/uploads/` 前缀并套归属；幂等；跨租户改绑报 `ErrScopeMismatch` |
+> | `ResolveRef(raw, origin) (string, error)` | 读取侧：三形态 → 端上 URL；`origin` 必须是**纯 origin**（不含路径） |
+>
+> 为什么不是「先 Parse 成 Ref 再 Resolve」：出参侧拿到的本来就是三种历史形态混在一起的字符串，
+> 多一层对象转换只会给「漏兼容」制造空间。将来接 `UploaderResolver` / 客户自有域名时，
+> 在 `ResolveRef` 外包一层「按租户选 origin」即可，端上契约不变。
+>
+> 三条额外钉子：① 存量绝对 URL **原样返回**（含 `?v=` 缓存戳），改了老数据立刻裂图；
+> ② 空值返回空串且无错误（`avatar` / `logo` / `videoUrl` 常为空，出参侧不能整条报错）；
+> ③ `data:` / `javascript:` / 路径穿越 / 带 `?` 的业务字段一律显式报错，绝不静默改写。
+> `legacyRel` 与 `mediachk.ObjectKey` 同构且**先判 `/uploads/` 相对路径**——反过来会把
+> `/uploads/x.jpg` 推成 `uploads/x.jpg`（多一层目录），下架覆盖写错位置。
+>
+> **守门名对账**：§4 表里草稿写的 `TestResolveKeepsLegacyAbsoluteURL` /
+> `TestLegacyUploadsRelativeURL`，实际落地为 `TestResolveRefKeepsLegacyAbsoluteURL` /
+> `TestResolveRefLegacyUploadsRelativeURL`（`backend/internal/storage/ref_test.go`）。
+> 另有 `TestP0aRefIsNotWiredIntoProduction` 钉住「P0a 不许接进生产包」——
+> **P0b 开始接线时它必然变红，那是有意信号**：先交付边界清单、把它替换成逐点接入守门，
+> 不许直接删掉。反向验证已做两组：改坏绝对 URL 分支必红、在 handler 包插一行真实调用必红；
+> 还原后三个文件 sha256 零漂移、全包复绿。
+
 ### 3.2 `tenant_storage_configs`（迁移 0044）
 
 字段草案（**只建表，不写任何业务数据 / 演示配置**）：
@@ -142,11 +209,14 @@ type Ref struct {
 | `enabled` / `status` / `last_checked_at` / `last_error` | 开关 / 连通性自检结果 / 脱敏错误摘要 |
 | `created_at` / `updated_at` | 时间戳 |
 
-三条硬约束：
+四条硬约束：
 
 - 迁移写 **MySQL 8.0 裸 DDL**，不得出现 `DROP/ADD COLUMN IF EXISTS`（0043 线上 1064 事故的钉子，见 `migrate/apply_test.go` 的 `TestMigrationsUseMySQL8DDL`）；
 - 新增模型必须进 `model.All()`，否则 devserver 与 `handler_test.go` 运行期 `no such table`；
-- 配置由后台界面写入，**不放在 `sys_setting`**——`sys_setting` 是全局单值，没有租户维度。
+- 配置由后台界面写入，**不放在 `sys_setting`**——`sys_setting` 是全局单值，没有租户维度；
+- **只有平台超管可写**（§1.1）：配置界面挂 `platformOnly`，接口挂 `PlatformAdminMiddleware`；
+  企业管理员侧不暴露写接口、菜单隐藏、连读接口都不给。表里的密文列 `json:"-"`，
+  模型上永远不参与序列化。
 
 ### 3.3 `UploaderResolver`（P2）
 
@@ -235,7 +305,10 @@ type Resolver interface {
 - 新增动作常量（`internal/audit/audit.go`）：`company.storage_config.update`、
   `company.storage_config.test`、`tenant_storage.resolve_failed`；
 - 同步 `frontend/src/api/audit.ts` 的 `ACTION_LABELS`。`frontend/src/api/audit.spec.ts:41-46`
-  会把后端常量与前端标签逐字对账，漏一个必红。
+  会把后端常量与前端标签逐字对账，漏一个必红；
+- 配置类动作要能回答「哪个平台超管、替哪家企业、改了什么」：记录操作者与目标
+  `company_id`，但**不记凭据、endpoint、连接串、签名 token 或自检错误原文**（§3.6 口径）。
+  企业管理员硬调被 403 拦截的请求不产生配置变更，也不写成「操作成功」。
 
 ### 3.8 与 P1 边缘缓存的关系
 
@@ -253,7 +326,7 @@ type Resolver interface {
 | 期 | 交付 | 验收判据 | 守门 |
 | --- | --- | --- | --- |
 | **P0** | `Ref` / `Resolve` / 统一对象键；写入侧只写 objectKey；读取侧兼容三种历史形态 | 存量数据零裂图；新上传库里是 objectKey；`upload_base_url` 改动不再影响存量 | `TestResolveKeepsLegacyAbsoluteURL`、`TestLegacyUploadsRelativeURL`、`TestNoFullURLWrittenToBusinessColumns` |
-| **P1** | `0044` 建表 + 模型进 `model.All()` + 配置界面（掩码 / 自检 / 审计） | 装完零业务数据；配置写库为密文；改错能改回来 | 迁移只建表守门；`audit.spec.ts` 常量对账 |
+| **P1** | `0044` 建表 + 模型进 `model.All()` + 配置界面（掩码 / 自检 / 审计，仅平台超管可见可写） | 装完零业务数据；配置写库为密文；改错能改回来；**企业管理员读写一律 403 且不产生变更** | 迁移只建表守门；`audit.spec.ts` 常量对账；配置路由必须挂 `PlatformAdminMiddleware` 的源码级守门；企业管理员越权集成测试 |
 | **P2** | `UploaderResolver` + 5 处注入 + 三处组装同步 + 接入层反代试点 | 单租户新对象落在自己桶；其它租户不受影响；配置错显式失败且不落平台盘 | `TestResolverFailureDoesNotAffectOtherTenants`、`TestTenantUploadNeverFallsBackToPlatformLocal`、`TestAnonymousUploadRejectsForeignCompanyID`、nginx snippet 对账 |
 | **P3** | 存量搬迁命令（dry-run / force / rollback，记录 `old_url → object_key → config`） | 可搬过去、可搬回来；对象不删；失败可重跑 | 搬迁幂等 + 反向验证 |
 | **P4** | 密钥轮换、审计前端标签、配额口径、数据保留 / 解约后清理策略 | 换钥匙后老配置仍可解；解约租户数据按策略清理 | `key_id` 分支覆盖 |
@@ -274,7 +347,10 @@ type Resolver interface {
 4. 匿名上传带合法 `companyId` 落到正确租户桶；伪造 / 不存在的 `companyId` 被拒；
 5. 素材采用、小程序码、违规下架占位图仍落在平台桶，不进任何租户桶；
 6. 小程序 / 管理端不新增合法域名，现有页面图片、视频、`_thumb` 全绿；
-7. 配置界面不回显密钥，审计里没有凭据 / 错误原文。
+7. 配置界面不回显密钥，审计里没有凭据 / 错误原文；
+8. 以企业管理员身份访问配置页被路由守卫挡下、菜单里没有入口；直接拿接口地址带该企业管理员
+   令牌硬调 CRUD / 自检 / 启停 / 搬迁，全部 `code=403`，配置表零变更；
+9. 以平台超管身份替某企业改配置，审计里能查到操作者与目标 `company_id`，且不带密钥原文。
 
 ---
 
@@ -290,6 +366,7 @@ type Resolver interface {
 | R6 | CF Purge 按租户误伤 / 漏清；P1 的 60 秒边缘缓存跨租户串号 | 刷新带 `companyID`；开放自有域名前把 `Host` 纳入 cache key 写进守门 |
 | R7 | 密钥与 PII 绑定、将来无法独立轮换 | 推荐独立 `STORAGE_ENC_KEY` + `key_id`；若复用必须写进评审结论 |
 | R8 | 新 `RegisterX` 漏改 devserver / `handler_test.go` → 静默 404 | 三处同步清单 + 源码级守门 |
+| **R9** | **权限误放开**：新配置接口照抄 `RegisterStorage` 的 `AuthMiddleware(db,"admin")`，企业管理员就能改客户云凭据；或前端只藏菜单、后端没拦 | 用户已拍板「只有平台超管代填」（§1.1）；P1 加源码级守门 + 企业管理员 403 集成测试，前端 `platformOnly` 只当体验层 |
 
 ---
 
@@ -299,3 +376,14 @@ type Resolver interface {
 - 未跑全量门禁（没有代码改动）；
 - 存量业务数据零改动；
 - 下一步需要用户确认一个决策后才能进入 P0，见对话。
+
+> ✅ **订正（2026-11-13 14:04）**：该决策点**已闭环**。用户明确：「平台超管代填，这种权限
+> 肯定不能放给企业管理员的」。已写进 §1.1、§3.2、§3.7、§4、§5、R9，并同步
+> `docs/commercial-readiness.md` 第五十二轮。
+>
+> 因此 P0 可以开工，且按「零行为变更、可逆」拆两步：
+> **P0a** 只落 `backend/internal/storage/ref.go` 的纯函数与守门单测（不接任何 handler，
+> 线上行为零变化）；**P0b** 先扫出所有把上传 URL 写库的业务边界并立源码级守门，
+> 再谈接入 `NormalizeRef` / `ResolveRef`。
+>
+> 第一阶段试点口径（单租户 + 公开读桶，§3.4）是设计默认值，进入 P2 前复核，不阻塞 P0。

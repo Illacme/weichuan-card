@@ -3434,3 +3434,76 @@ listen :8080 (storage driver=s3)
 
 > 设计稿末尾留了一个需要用户拍板的决策点（配置由谁填写 / 第一阶段试点口径），
 > 确认后才进入 P0。本轮未跑全量门禁（无代码改动）。
+
+### 第五十二轮补记：权限模型拍板 + P0 拆步（2026-11-13 14:04）
+
+> ✅ **订正上面那句**：「配置由谁填写」已由用户明确拍板——
+> **平台超管代填，企业管理员不给这条权限**（用户原话：「这种权限肯定不能放给企业管理员的」）。
+> 设计稿 §1.1 已把落地口径钉死：后端 `PlatformAdminMiddleware`
+> （`backend/internal/middleware/auth.go:83`，`role=admin && company_id=0`，越权 `code=403`）、
+> 前端 `meta.platformOnly`（`frontend/src/router/index.ts:196` 守卫 +
+> `frontend/src/layout/AdminLayout.vue:394` 菜单过滤）、凭据只写不读沿用
+> `CompanyWXApp`（`backend/internal/handler/company_wx.go:31` 是同口径样板）。
+> 并新增 R9 登记「照抄 `RegisterStorage` 的 `AuthMiddleware(db, "admin")` 会把企业管理员
+> 放进配置接口」这个风险：P1 验收加了企业管理员 403 集成测试与路由中间件源码级守门。
+> **前端隐藏不是权限，后端必须独立拦截**，沿用项目既有双保险口径。
+>
+> 「第一阶段试点口径」按设计稿 §3.4 的默认值（单租户 + 公开读桶）执行，进入 P2 前复核，
+> 不阻塞 P0。
+
+**P0 拆两步**（按「零行为变更、可逆」原则）：
+
+| 步 | 交付 | 明确不做的事 |
+| --- | --- | --- |
+| P0a | `backend/internal/storage/ref.go` + 单测：`Scope` / `Ref`、`ParseRef`、`NormalizeRef`、`ResolveRef`，兼容绝对 URL / `/uploads/` 相对 / 裸 objectKey 三种历史形态 | 不接任何 handler、不改库字段、不改出参、不写迁移、不动 nginx —— 线上行为零变化，随时可整体删除回滚 |
+| P0b | 扫出所有把上传 URL 写库的业务边界（写入侧 + 出参侧）清单，并立源码级守门 | 仍不改生产行为；清单用于防止将来接入时漏点，尤其不能漏 P1 刚加了 60 秒边缘缓存的五条公开只读接口 |
+
+本补记与随后 P0a / P0b 的工作仍**只改文档与纯函数 / 守门单测**，
+不改任何生产代码路径、不写迁移、不动线上 nginx。
+
+### 第五十二轮补记二：P0a / P0b 落地（2026-11-13）
+
+**交付物**（全部零行为变更、可逆）：
+
+| 文件 | 内容 |
+| --- | --- |
+| `backend/internal/storage/ref.go` | 纯函数地基：`Scope` / `Ref`、`ObjectKeyFor`、`ParseRef`、`IsNormalizedRef`、`NormalizeRef`、`ResolveRef`。只依赖标准库，键布局 `p/` 与 `t/<cid>/` |
+| `backend/internal/storage/ref_test.go` | 16 组行为守门：三形态兼容、幂等、跨租户改绑拒绝、路径穿越、`_thumb` 派生契约、空值无错透传 |
+| `backend/internal/storage/ref_p0a_guard_test.go` | 源码级守门：P0a 阶段生产包**不许调用** ref API；`ref.go` 不许有 init / 外部依赖 |
+| `backend/internal/storage/ref_boundaries_test.go` | P0b 五组边界守门：写入侧文件集合、公开 GET 路由集合、资源 json 字段集合、小程序 `assetUrl` 消费文件集合、清单锚点存在性 |
+| `docs/tenant-storage-url-boundaries.md` | P0b 业务 URL 边界清单（写入侧 W1–W9、库字段、出参侧 R1–R15、端上 C1–C3、守门说明） |
+
+**本轮最重要的发现**：P1 加的 60 秒边缘缓存只覆盖 **5 条**公开只读接口
+（`handler/handler.go` 里 `cdnCache(c, 60)` 恰好 5 处），但下发资源 URL 的公开 GET 有
+**9 条**。另 4 条 `/api/company`（logo）、`/api/team`（avatar，`:206` 刻意不设缓存）、
+`/api/projects/:id`（cover + album 数组）、`/api/services/:id`（内嵌整个 `model.BizService`）
+同样要过 `ResolveRef`。设计稿 §3.1 原来只写「必须覆盖五条缓存接口」**不够**，
+已补订正：正确口径是所有出参序列化点都要过，缓存只是其中一层的时序约束。
+
+**两个隐藏边界**：`ProjectCase.Album`（`models.go:198`）是 `json:"-"` 的 URL 数组列，
+靠 `handler/content.go:745` 的 `projectToMap` 与 `handler.go:275-284` 展开，
+按「扫 json tag 找边界」必然漏；`MediaCheck.ObjectKey`（`media_check.go:31`）是
+从 URL 反推的裸键，P0 之后 `mediachk.ObjectKey` 那段脆弱逻辑应退休。
+另有 4 个名字带 URL 语义但**不是**资源的字段（`videoFallbackUrl` bool / `bgMask` int /
+`bgId` 标识 / `files` 计数），守门逐条登记为白名单，避免误接。
+
+**出参侧不该逐点改 handler**：R11–R15 显示后台接口大多是模型直接序列化
+（`content.go` 的 `"data": ci` / `cp` / `list` / `projectToMap(p)`），逐个 `gin.H` 补
+`ResolveRef` 一定会漏，且每新增一个后台接口就多一处漏点。真正接线时应在统一序列化
+出口做一次，再按清单逐点验收。**这个决策留到 P0b 之后的实现轮拍板，本轮只把边界钉死。**
+
+**反向验证（必做项）**：
+
+- P0a 两组：① 改坏 `ResolveRef` 的绝对 URL 原样返回分支 →
+  `TestResolveRefKeepsLegacyAbsoluteURL` 必红；② 在 `handler` 包插一行真实
+  `storage.ResolveRef("", "")` 调用 → `TestP0aRefIsNotWiredIntoProduction` 必红。
+- P0b 三组：同时注入「新增上传写入点」「新增公开 GET 路由」「新增资源 json 字段」→
+  `TestP0bUploaderWriteSitesMatchBoundaryList` /
+  `TestP0bPublicGetRoutesMatchBoundaryList` /
+  `TestP0bResourceJSONFieldsMatchBoundaryList` 三条必红。
+- 还原后 8 个文件 `sha256` 零漂移、`go test ./internal/storage -count=1` 全绿、
+  临时探针文件全部清理（`git status` 无残留）。
+
+**边界**：只有新增的 4 个 Go 文件 + 3 份文档；`handler.go` 仅在反向验证期间被临时
+插过一行并已还原（哈希校验通过）。没有改任何生产代码路径、没有写迁移、
+没有动 `deploy/baota/nginx-site.live.conf`、没有回填存量数据、没有跑 `./server migrate`。
