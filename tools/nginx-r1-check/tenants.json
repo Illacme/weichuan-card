@@ -1,13 +1,5 @@
-# R1 验证装置 · 租户表（模拟 tenant_storage_configs 的 enabled 行）
-#
-# 这里刻意只放「第一阶段试点」的最小字段集：cid / driver / 桶地址 / 桶名 / 是否 TLS。
-# 真表还有 access_key_enc / secret_key_enc / public_base_url / public_read / status，
-# 那些不进 nginx snippet —— 桶是公开读，nginx 不需要任何凭据。
-#
-# 注意 companyId=9 刻意 enabled=false：用来验证「关掉配置切回平台默认」时
-# /uploads/t/9/... 必须回落到平台 Go，而不是 404（验收第 3 条）。
 {
-  "comment": "R1 验证用租户表；hostTemplate 是真实部署时要填的桶域名（OSS/S3 用 virtual-hosted-style）",
+  "comment": "R1 验证装置的租户表，模拟 tenant_storage_configs 的 enabled 行。只放进 nginx 需要的字段：桶是公开读，snippet 不需要任何凭据。companyId=9 刻意 enabled=false，用来验证「关掉配置切回平台默认」时 /uploads/t/9/... 回落平台盘而不是 404。",
   "tenants": [
     {
       "companyId": 5,
@@ -15,9 +7,8 @@
       "endpoint": "127.0.0.1:9001",
       "bucket": "wc-t5",
       "useSsl": false,
-      "publicRead": true,
-      "enabled": true,
-      "hostTemplate": "127.0.0.1:9001"
+      "hostHeader": "127.0.0.1:9001",
+      "enabled": true
     },
     {
       "companyId": 6,
@@ -25,9 +16,8 @@
       "endpoint": "127.0.0.1:9002",
       "bucket": "wc-t6",
       "useSsl": false,
-      "publicRead": true,
-      "enabled": true,
-      "hostTemplate": "127.0.0.1:9002"
+      "hostHeader": "127.0.0.1:9002",
+      "enabled": true
     },
     {
       "companyId": 8,
@@ -35,9 +25,8 @@
       "endpoint": "127.0.0.1:9003",
       "bucket": "wc-t8",
       "useSsl": false,
-      "publicRead": true,
-      "enabled": true,
-      "hostTemplate": "127.0.0.1:9003"
+      "hostHeader": "127.0.0.1:9003",
+      "enabled": true
     },
     {
       "companyId": 9,
@@ -45,9 +34,8 @@
       "endpoint": "127.0.0.1:9009",
       "bucket": "wc-t9",
       "useSsl": false,
-      "publicRead": true,
-      "enabled": false,
-      "hostTemplate": "127.0.0.1:9009"
+      "hostHeader": "127.0.0.1:9009",
+      "enabled": false
     }
   ]
 }

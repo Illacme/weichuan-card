@@ -1,5 +1,5 @@
-# 运行时生成物（由 run.sh / gen_site.py / make_fixtures.py / mkcerts.sh 产生，不入库）
-/conf.d/
+# 运行时生成物（由 run.sh / make_fixtures.py / mkcerts.sh / nginx-snippets 产生，不入库）
+/snippets/
 /cert/
 /logs/
 /www/

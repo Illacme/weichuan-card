@@ -3733,3 +3733,93 @@ Purge 用的是**平台**那把 refresher。第一阶段试点（公开读桶 + 
 2. 切出参侧：`ResolveRef` 对裸键补 `<origin>/uploads/` 前缀，两种历史形态保持原样；
 3. 切写入侧：`NormalizeRef` 收敛成裸键，**开关必须能一个 env 回滚**；
 4. 之后才是存量回填（P3）与迁移 0044。
+
+---
+
+## 第五十六轮：snippet 生成器落地（2026-11-13，纯新增，不接线）
+
+> 承接第五十五轮结论「R1 有条件成立」与它给的下一步 ①：落 snippet 生成器
+> （DNS 预检 + 配置表↔snippet 对账）。本轮只新增纯函数与 CLI，**不接库、不改路由、
+> 不动线上 nginx**。
+
+### 为什么生成器是后端代码，而不是运维脚本
+
+第一版是 `tools/nginx-r1-check/gen_site.py`（第五十五轮的验证装置里）。本轮把它删了，
+换成 `backend/internal/nginxsnippet` + `backend/cmd/nginx-snippets`。三个理由：
+
+1. **它最终要读 `tenant_storage_configs`、要被配置接口调用**，属于后端而不是部署目录；
+2. snippet 里每一行都对应一个静默失败的坑，必须能用单测钉住——脚本里那些断言只能靠
+   跑一遍容器才发现，而容器验证不会在 `go test ./...` 时执行；
+3. **两个实现必然漂移**，而漂移的表现正是本轮要防的那类故障：「本地全绿、线上裂图」。
+   现在装置直接跑将要上线的那个生成器，断言绿才说明它是对的。
+
+### 三条不变量（写进包注释 + 单测）
+
+| # | 规则 | 改坏的后果 |
+| --- | --- | --- |
+| 1 | `location ^~ /uploads/t/<cid>/` **必须带尾斜杠** | `/uploads/t/50/...` 被 `t/5` 吃掉，用户的图从别人的桶里取，页面照常 200 |
+| 2 | `proxy_pass` **不带 URI 部分**，靠 `rewrite ^/uploads/(.*)$ /$1 break;` 剥前缀 | 键布局在 Go 与 nginx 双写，改一处漏一处 ⇒ 那家租户全站裂图 |
+| 3 | `proxy_hide_header Cache-Control/Expires` 必须在 `add_header` **之前** | 桶的头与站点头叠成两条，CDN 取哪条不确定，无报错 |
+
+另有两条同源约束：`NeedsSnippet()` 同时判「启用」与「驱动不是 local」——
+只判启用，把驱动改回 local 时会留下一条指向不存在桶的 location，那家租户所有图 404
+而后台显示配置正常；重复 `company_id` 直接拒绝，否则 nginx 只会报 `duplicate location` 的行号，
+指不到是哪家配了两遍。
+
+### 只产出 `location` 段（不含 map、不含 server）
+
+`map` 是 http 级指令，塞进 `server{}` 里 `nginx -t` 直接报 `directive is not allowed here`。
+生产上生成物要被 include 进 `nginx-site.live.conf` 的 `server{}`，所以：
+
+```nginx
+# 线上只需加一行（放在 server{} 里）
+include /www/server/panel/vhost/nginx/tenant-storage/*.conf;
+```
+
+`$uploads_cache` 那个 map 已在 live.conf 的 http 级存在，snippet 里不能再定义一次。
+验证装置也跟着改成同样的结构（手写 `site.conf` 壳 + `include snippets/*.conf`），
+于是**连 include 机制本身一起验了**。
+
+### DNS 预检：必须在落盘之前
+
+`--dns-precheck` 解析每个桶域名，失败就**拒绝生成、不留半成品文件**，并报出是哪家租户、哪个域名。
+不这么做的话：`proxy_pass` 里的主机名在 reload 时解析，解不出来 `nginx -t` emerg，
+宝塔 test 失败就不 reload ⇒ **整份配置的更新全被卡住**，现象是「保存了但没生效」。
+
+装置里这两条防线分开验：
+- **G1** 让 nginx 自己去解析（`nginx-dns-probe.conf`）→ 确认它确实 emerg，说明前置检查不是多余的；
+- **G2** 生成器面对同一个坏域名 → 确认它拒绝落盘且点明 `company_id=99`，产物文件不存在。
+
+### 对账：两个方向都是故障
+
+`Missing`：配了桶却没有 snippet → 请求落回平台盘 → 404、页面裂；
+`Extra`：有 snippet 但配置表已停用 → 白开一个口子，把流量送进没人维护的桶。
+装置 F 组改成双向反向验证（删一段 / 多一段），都要求报红且点明租户。
+
+### 门禁
+
+- `gofmt -l` 新包干净；`go vet ./...` 通过；**`go test ./...` 30 个包全绿**；
+- 新包单测 14 个（渲染不变量、SSL/SNI、local 与停用跳过、空配置、7 类非法输入、
+  重复 cid、双向对账、自产自消对账、DNS 四例、hostOnly 七例）；
+- 装置：**39 项断言全绿**（原 36 + F5/F6/F7）；
+- 反向验证三组（改在 Go 生成器里）：删 `proxy_hide_header` → C1/C2/C6/D8 红；
+  rewrite 剥错前缀 → A1/A2/A5/C2/C5 红；location 去尾斜杠 → B1 + F1/F4/F7 红；
+  还原后全绿、`snippet.go` 字节零漂移。
+
+**已知既有状态（本轮未动）**：`gofmt -l .` 全树会列出 12 个既有文件，全部是结构体字段
+对齐差异（例如 `internal/storage/cdn.go`）。这不是本轮引入的，重排会产生上千行噪声 diff，
+故不改——真要统一应单独一轮做「格式化基线」，并同步 `golangci-lint` 口径。
+
+### 边界
+
+- **新增**：`backend/internal/nginxsnippet`（2 源 + 2 测）、`backend/cmd/nginx-snippets`、
+  装置里的 `site.conf`（手写壳）；
+- **删除**：`tools/nginx-r1-check/gen_site.py`（唯一生成器原则）；
+- **未做**：接 `tenant_storage_configs`（表属迁移 0044）、把 DNS 预检结果写进后台
+  `status`/`last_error`、reload 编排与审计、出参侧认裸键、写入侧收敛。
+
+### 下一步
+
+按第五十五轮定的顺序，第 2 步是**出参侧认裸键**：`storage.ResolveRef` 对 `t/<cid>/...`
+补 `<origin>/uploads/` 前缀，`/uploads/` 与绝对 URL 两种历史形态保持原样。
+这一步对现行数据零行为变更，可以先做；但真正写入裸键前，生成器必须先接上真实配置表并跑过一遍。

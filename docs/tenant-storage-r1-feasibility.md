@@ -2,7 +2,7 @@
 
 > **状态：验证已完成，结论「有条件成立」。** 本轮只加验证装置与文档，
 > **未改一行生产代码、未动线上 nginx、未写迁移、未改库中数据形态。**
-> 全部结论来自 `tools/nginx-r1-check/` 的实测（36 项行为断言 + 1 项失败预期 + 3 组反向验证），
+> 全部结论来自 `tools/nginx-r1-check/` 的实测（39 项行为断言 + 2 项失败预期 + 6 组反向验证），
 > 不引用印象。日期 2026-11-13。
 
 ---
@@ -49,7 +49,7 @@ nginx 手上没有 `root`，也就没有静态文件路径。
 
 ## 2. 六问的答案（全部实测）
 
-装置：`tools/nginx-r1-check/`，`bash run.sh` 一键跑，36 项断言全绿。
+装置：`tools/nginx-r1-check/`，`bash run.sh` 一键跑，39 项断言全绿。
 桩上游用 nginx 自己扮演桶（静态文件 + Range + 桶风格头），并打 `X-Amz-Request-Id`
 区分是哪家桶——**「有没有串桶」是靠响应头断言的，不是靠看日志猜**。
 
@@ -79,12 +79,27 @@ nginx 手上没有 `root`，也就没有静态文件路径。
 
 ```
 端上 → nginx(8090 产品段 / 8091 对照探针)
-        ├─ /uploads/t/5/  → 桶A(9001)      ← 生成物：每租户一段
+        ├─ /uploads/t/5/  → 桶A(9001)      ← 生成物 snippets/*.conf（Go 生成器产出）
         ├─ /uploads/t/6/  → 桶B(9002)
         ├─ /uploads/t/8/  → 故障桶(9003, 恒 500)
-        ├─ /uploads/      → 平台 Go(8080)  ← 生成物：回退段（= 线上现状）
+        ├─ /uploads/      → 平台 Go(8080)  ← 手写回退段（= 线上现状，不是生成物）
         └─ /probe/sni|no-sni|no-hide|opt-a → 对照探针（手写，非产品形态）
 ```
+
+生成物与手写件的边界是刻意切的，而且**生产上走同一条路径**：线上往
+`nginx-site.live.conf` 的 `server{}` 里加一行 `include .../tenant-storage/*.conf`，
+生成器只往那个目录写 `location` 段。本装置因此连「include 机制本身」一起验了
+（`site.conf` 里那行 `include /cfg/snippets/*.conf`）。
+
+**生成器在 `backend/internal/nginxsnippet` + `backend/cmd/nginx-snippets`**，
+不是运维脚本：它要读 `tenant_storage_configs`、要被配置接口调用，属于后端代码；
+而且 snippet 里每一行都对应一个静默失败的坑，必须能用单测钉住。
+三条不变量（尾斜杠、`proxy_pass` 不带 URI、hide 在 add 之前）写在包注释里，
+由 `snippet_test.go` 逐条断言。
+
+> 曾有第二份实现（`tools/nginx-r1-check/gen_site.py`），验证轮之后已删除：
+> 两个生成器必然漂移，而漂移的表现是「本地全绿、线上裂图」，正是本轮要防的那类故障。
+> 现在装置只跑 Go 生成器 —— 断言绿等于**将要上线的那个生成器**是对的。
 
 **可信的部分**：nginx 自己当上游时，Range 分片、`ETag`/`Last-Modified`/`Accept-Ranges`
 都是真产生的，所以 Q4、Q5 测的是真行为；容器里桩桶挂 TLS + SAN=`bucket-a.test`，
@@ -171,7 +186,7 @@ E2 实测：不写 `proxy_hide_header Cache-Control` 时，响应里两条 `Cach
 
 **R1 成立，有条件。**
 
-- nginx 层语义全部通过（36 项断言 + 1 项失败预期），四个设计稿未预见的坑
+- nginx 层语义全部通过（39 项断言 + 2 项失败预期），四个设计稿未预见的坑
   （尾斜杠隔离、头叠加、DNS 与 reload、SNI）都有对应断言与反向验证兜住；
 - 成立的前提是第一阶段口径不被顺手放宽：**单租户试点 + 公开读桶 + `public_base_url` 留空**；
 - 一旦要开客户自有域名 / 自有 CDN，**R1-b 必须先解决**，否则内容安全链在最贵的一步静默断掉。
@@ -187,14 +202,20 @@ E2 实测：不写 `proxy_hide_header Cache-Control` 时，响应里两条 `Cach
 第 1 步不做就切裸键的后果：库里出现 `t/<cid>/x` 而 nginx 还没有对应 location →
 全部落回平台 Go → 文件不在平台盘 → **404，页面全裂，且平台侧没有任何报错**。
 
+> ✅ **第 1 步已落地（同一日，紧接本轮）**：`backend/internal/nginxsnippet`（渲染 + DNS 预检 +
+> 对账，纯函数，14 个单测）+ `backend/cmd/nginx-snippets`（`render` / `check` 两个子命令）。
+> 装置改为直接跑这个生成器：断言从 36 项扩到 **39 项**（F 组改成双向对账 + G 组加了
+> 「生成器自己挡住不可解析域名」那条），全绿。**仍未接库**——输入是 JSON 文件，
+> 等迁移 0044 建表后再换成表读取，渲染/预检/对账三层不用动。
+
 ---
 
 ## 6. 本轮边界
 
 - **新增** `tools/nginx-r1-check/`（验证装置）与本文件；生产代码零改动；
 - 未改 `deploy/baota/nginx-site.live.conf`、未 reload 线上 nginx、未 `nginx -t` 线上配置；
-- 未写迁移、未改库、未碰线上二进制、未跑全量门禁（没有 Go/前端代码改动）；
-- 装置的产物（`conf.d/`、`cert/`、`logs/`、`www/`）全部 gitignore，不进仓库；
+- 未写迁移、未改库、未碰线上二进制；
+- 装置的产物（`snippets/`、`cert/`、`logs/`、`www/`）全部 gitignore，不进仓库；
 - 反向验证三组：删 `proxy_hide_header`（C1/C2/C6/D8 报红 4 项）、
-  rewrite 剥错前缀（A1/A2/A5/C2/C5 报红）、location 去掉尾斜杠（B1 + 对账 F1/F4 报红）；
-  还原后 36 项复绿、`gen_site.py` 与备份字节一致。
+  rewrite 剥错前缀（A1/A2/A5/C2/C5 报红）、location 去掉尾斜杠（B1 + 对账 F1/F4/F7 报红）；
+  还原后全绿、生成器源码字节零漂移。

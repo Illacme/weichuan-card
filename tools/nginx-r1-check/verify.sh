@@ -3,7 +3,8 @@
 #
 # 断言分组即可行性问题分组：
 #   A 路径映射与租户隔离 / B 前缀边界与回退 / C 缓存头 / D Range·HEAD·304
-#   E 对照探针（证明某条指令必需）/ F 生成器对账（含反向验证）
+#   E 对照探针（证明某条指令必需）/ F 生成器对账（含双向反向验证）
+# G 组（DNS 两道防线）在 run.sh 里，因为它要跑容器外的 go/nginx -t。
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
@@ -91,23 +92,37 @@ ck "E3 HTTPS 桶不带 SNI → 421（故 proxy_ssl_server_name 必需）" 421 "$
 ck "E4 带 SNI + 证书校验 → 200" 200 "$(req "$PROBE/probe/sni/only-a.jpg")"
 
 echo "== F 组：配置表 ↔ snippet 对账 =="
-python3 gen_site.py --check >/tmp/r1.check 2>&1
-ck "F1 一致时 --check 通过" 0 "$?"
-cp conf.d/00-site.conf /tmp/r1.site.orig
+SNIP="$HERE/snippets/00-tenants.conf"
+reconcile() { # 用 Go 生成器自己的 check 子命令对账，回显退出码
+  ( cd "$HERE/../../backend" && go run ./cmd/nginx-snippets check \
+      --targets "$HERE/tenants.json" --snippet "$SNIP" ) >/tmp/r1.check 2>&1
+}
+reconcile
+ck "F1 一致时 check 通过" 0 "$?"
+cp "$SNIP" /tmp/r1.snip.orig
 python3 - <<'PY'
 import pathlib, re
-p = pathlib.Path("conf.d/00-site.conf")
+p = pathlib.Path("snippets/00-tenants.conf")
 t = p.read_text(encoding="utf-8")
 t2 = re.sub(r"    # 租户 6 ·.*?\n    \}\n", "", t, flags=re.S)
 assert t2 != t, "反向验证无效：没有删掉任何 location 段"
 p.write_text(t2, encoding="utf-8")
 PY
-python3 gen_site.py --check >/tmp/r1.check2 2>&1
-ck "F2 少生成一段（模拟加租户忘记 reload）→ --check 报红" 1 "$?"
-ckc "F3 报红能点明是哪家租户" "6" "$(cat /tmp/r1.check2)"
-cp /tmp/r1.site.orig conf.d/00-site.conf
-python3 gen_site.py --check >/dev/null 2>&1
+reconcile
+ck "F2 少生成一段（配了桶但没 snippet）→ 报红" 1 "$?"
+ckc "F3 报红点明是哪家租户" "6" "$(cat /tmp/r1.check)"
+cp /tmp/r1.snip.orig "$SNIP"
+reconcile
 ck "F4 复原后重新一致" 0 "$?"
+
+# 反方向：snippet 里有但配置表已停用（cid=9 是 enabled=false）→ 必须报「白开了个口子」。
+printf '\n    location ^~ /uploads/t/9/ {\n    }\n' >> "$SNIP"
+reconcile
+ck "F5 多出已停用租户的段 → 报红" 1 "$?"
+ckc "F6 报红说明这是多余的口子" "白开了个口子" "$(cat /tmp/r1.check)"
+cp /tmp/r1.snip.orig "$SNIP"
+reconcile
+ck "F7 复原后重新一致" 0 "$?"
 
 echo
 if [ "$fail" -eq 0 ]; then

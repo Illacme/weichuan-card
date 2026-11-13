@@ -300,6 +300,14 @@ type Resolver interface {
 > 4. **阻断项 R1-b**：`takedownMediaCheck` 覆盖写 + `/uploads/` immutable 一年 ⇒ 下架能否生效**完全依赖 Purge**。
 >    平台 refresher 打不到客户自有 CDN，所以「开客户自有域名」之前必须先回答「谁负责 Purge 租户自有边缘」。
 >    第一阶段口径（公开读桶 + `public_base_url` 留空）下这条不触发，可继续推进。
+>
+> ✅ **snippet 生成器已落地（同日）**：`backend/internal/nginxsnippet`（渲染 + DNS 预检 + 对账，
+> 三条不变量写进包注释与单测）+ `backend/cmd/nginx-snippets`（`render` / `check`）。
+> 它只产出 **`location` 段**（不含 map / server），生产上被 include 进 `site.live.conf` 的 `server{}`；
+> 三条硬规则：`location ^~ /uploads/t/<cid>/` **带尾斜杠**、`proxy_pass` **不带 URI 部分**
+> （键布局只在 `storage.ObjectKeyFor` 定义）、`proxy_hide_header Cache-Control/Expires` 必须在
+> `add_header` 之前。**尚未接 `tenant_storage_configs`**（表还没建，属 0044）；
+> 渲染/预检/对账三层与数据源无关，建表后只换读取层。
 
 
 ### 3.5 归属与 scope 判定（四个必须钉住的坑）

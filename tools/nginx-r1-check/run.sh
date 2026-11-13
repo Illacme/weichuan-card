@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# R1 一键验证：生成桩对象 + 生成 snippet + 起容器 + 三组检查 + 关容器。
-# 前置：docker（nginx:alpine）、openssl、python3、curl。
+# R1 一键验证：生成 snippet（Go 生成器）+ 生成桩对象 → 起容器 → 三组检查 → 关容器。
+# 前置：docker（nginx:alpine）、go、openssl、python3、curl。
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
-mkdir -p logs conf.d cert www
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+mkdir -p logs snippets cert www
 
 rc=0
 
 echo "== 生成桩对象 =="
 python3 make_fixtures.py || exit 1
 
-echo "== 生成产品形态 snippet =="
-python3 gen_site.py || exit 1
+echo "== 生成租户 snippet（backend/cmd/nginx-snippets）=="
+if ! ( cd "$REPO_ROOT/backend" && go run ./cmd/nginx-snippets render \
+        --targets "$HERE/tenants.json" \
+        --out "$HERE/snippets/00-tenants.conf" \
+        --dns-precheck ); then
+  echo "  ✗ 生成失败"; exit 1
+fi
 
 echo "== 准备桩桶证书 =="
 bash mkcerts.sh
@@ -43,14 +49,34 @@ if [ "$pass_t" = 0 ]; then
 fi
 
 echo
-echo "== G 组：桶域名解析不出来时 nginx -t 会失败吗（预期**失败**）=="
+echo "== G 组：桶域名解析失败的两道防线 =="
+# G1：如果让 nginx 去发现，会发生什么（预期**失败** —— 这正是要避免的场景）
 out="$(docker run --rm -v "$HERE:/cfg:ro" nginx:alpine nginx -t -c /cfg/nginx-dns-probe.conf 2>&1)"
 dns_rc=$?
 if [ "$dns_rc" -ne 0 ] && printf '%s' "$out" | grep -q "host not found in upstream"; then
-  echo "  ✓ G1 解析失败 → nginx -t emerg（退出码 ${dns_rc}），报错：$(printf '%s' "$out" | grep -o 'host not found in upstream[^"]*' | head -1)"
-  echo "  → 结论：snippet 生成器必须先做 DNS 预检，不能靠 nginx 去发现（见可行性文档 R1-c）"
+  echo "  ✓ G1 nginx 自己去解析 → -t emerg（退出码 ${dns_rc}）⇒ 必须前置检查，不能让它去发现"
 else
   echo "  ✗ G1 预期失败但没有失败（退出码 ${dns_rc}）：$out"
+  rc=1
+fi
+
+# G2：生成器自己挡住（预期**拒绝落盘**并点明是哪家租户，不留半成品文件）
+bad_targets=/tmp/r1-bad-tenants.json
+bad_out=/tmp/r1-bad-snippet.conf
+cat > "$bad_targets" <<'JSON'
+{"tenants":[
+  {"companyId":5,"driver":"minio","endpoint":"127.0.0.1:9001","bucket":"wc-t5","enabled":true},
+  {"companyId":99,"driver":"oss","endpoint":"bucket-does-not-exist.invalid","bucket":"wc-t99","useSsl":true,"enabled":true}
+]}
+JSON
+rm -f "$bad_out"
+gout="$( cd "$REPO_ROOT/backend" && go run ./cmd/nginx-snippets render \
+          --targets "$bad_targets" --out "$bad_out" --dns-precheck 2>&1 )"
+g2_rc=$?
+if [ "$g2_rc" -ne 0 ] && printf '%s' "$gout" | grep -q "company_id=99" && [ ! -f "$bad_out" ]; then
+  echo "  ✓ G2 生成器拒绝落盘并点明 company_id=99（没有产出半成品文件）"
+else
+  echo "  ✗ G2 生成器没有挡住（退出码 ${g2_rc}，产物存在=$([ -f "$bad_out" ] && echo yes || echo no)）：$gout"
   rc=1
 fi
 

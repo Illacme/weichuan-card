@@ -59,6 +59,8 @@ license-private.key
 backend/cmd/server/server
 backend/cmd/devserver/devserver
 backend/devserver
+backend/cmd/nginx-snippets/nginx-snippets
+backend/nginx-snippets
 backend/server
 backend/thumbbackfill
 backend/license
