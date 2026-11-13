@@ -19,7 +19,7 @@ import (
 type OssUploader struct {
 	Client   *oss.Client
 	Bucket   *oss.Bucket
-	BaseURL  string            // 公开访问基址，如 https://cdn.xxx 或 https://<bucket>.oss-cn-xx.aliyuncs.com
+	BaseURL  string // 公开访问基址，如 https://cdn.xxx 或 https://<bucket>.oss-cn-xx.aliyuncs.com
 	MaxBytes int64
 	AllowExt map[string]bool
 }
@@ -45,8 +45,11 @@ func NewOssUploader(endpoint, accessKeyID, accessKeySecret, bucket, baseURL stri
 	return &OssUploader{Client: client, Bucket: b, BaseURL: baseURL, MaxBytes: maxBytes, AllowExt: allow}, nil
 }
 
-func (o *OssUploader) Save(fh *multipart.FileHeader) (string, error) {
+func (o *OssUploader) Save(fh *multipart.FileHeader, key string) (string, error) {
 	if err := checkFile(fh, o.MaxBytes, o.AllowExt); err != nil {
+		return "", err
+	}
+	if err := validateObjectKey(key); err != nil {
 		return "", err
 	}
 	src, err := fh.Open()
@@ -56,10 +59,6 @@ func (o *OssUploader) Save(fh *multipart.FileHeader) (string, error) {
 	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
-	name, err := RandName(ext)
-	if err != nil {
-		return "", err
-	}
 	// 读取全部字节：剥离 EXIF + 按长边压缩原图，并额外生成缩略图。
 	raw, err := io.ReadAll(src)
 	if err != nil {
@@ -69,19 +68,19 @@ func (o *OssUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 对象名直接用 name：URL 为 BaseURL/name，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/name）形态一致
-	if err := o.Bucket.PutObject(name, bytes.NewReader(full), oss.ContentType(fh.Header.Get("Content-Type"))); err != nil {
+	// 对象名直接用 key（带归属前缀）：URL 为 BaseURL/key，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/key）形态一致
+	if err := o.Bucket.PutObject(key, bytes.NewReader(full), oss.ContentType(fh.Header.Get("Content-Type"))); err != nil {
 		return "", fmt.Errorf("oss put: %w", err)
 	}
 	// 缩略图 best-effort：生成失败不影响主图上传（列表页改用原图即可）。
-	// 约定命名 <hash>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
+	// 约定命名 <key 去扩展名>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
 	if thumb != nil {
-		tn := strings.TrimSuffix(name, "."+ext) + "_thumb." + ext
+		tn := strings.TrimSuffix(key, filepath.Ext(key)) + "_thumb" + filepath.Ext(key)
 		if perr := o.Bucket.PutObject(tn, bytes.NewReader(thumb), oss.ContentType(fh.Header.Get("Content-Type"))); perr != nil {
 			log.Printf("[WARN] 缩略图上传失败 %s: %v", tn, perr)
 		}
 	}
-	return strings.TrimRight(o.BaseURL, "/") + "/" + name, nil
+	return strings.TrimRight(o.BaseURL, "/") + "/" + key, nil
 }
 
 func (o *OssUploader) SaveBytes(relPath string, data []byte, contentType string) (string, error) {

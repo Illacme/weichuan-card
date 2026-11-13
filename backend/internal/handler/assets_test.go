@@ -183,13 +183,13 @@ func TestAssetLibrary(t *testing.T) {
 	require.EqualValues(t, 0, body["code"])
 	require.GreaterOrEqual(t, int(body["data"].(map[string]interface{})["total"].(float64)), 6)
 
-	// 3. 采用图标：URL 落进上传存储（/uploads/library/...），静态托管可取到真实 PNG
+	// 3. 采用图标：URL 落进上传存储（/uploads/p/library/...，写入侧接线后平台资源落 p/ 前缀），静态托管可取到真实 PNG
 	_, body = plat.doWithCookie("POST", "/api/admin/assets/adopt", map[string]interface{}{"id": "icon-house"})
 	require.EqualValues(t, 0, body["code"])
 	adopted := body["data"].(map[string]interface{})["url"].(string)
-	require.True(t, strings.HasSuffix(adopted, "/uploads/library/icon-house.png"), "采用 URL: %s", adopted)
+	require.True(t, strings.HasSuffix(adopted, "/uploads/p/library/icon-house.png"), "采用 URL: %s", adopted)
 
-	req := httptest.NewRequest("GET", "/uploads/library/icon-house.png", nil)
+	req := httptest.NewRequest("GET", "/uploads/p/library/icon-house.png", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -222,7 +222,7 @@ func TestAssetLibrary(t *testing.T) {
 	_, body = plat.doWithCookie("POST", "/api/admin/assets/adopt", map[string]interface{}{"id": "bg-deepspace"})
 	require.EqualValues(t, 0, body["code"])
 	bgURL := body["data"].(map[string]interface{})["url"].(string)
-	require.True(t, strings.HasSuffix(bgURL, "/uploads/library/bg-deepspace.jpg"), "背景采用 URL: %s", bgURL)
+	require.True(t, strings.HasSuffix(bgURL, "/uploads/p/library/bg-deepspace.jpg"), "背景采用 URL: %s", bgURL)
 
 	// 6. 异常分支：未知素材 / 空参数 / 路径穿越 / 不存在文件
 	_, body = plat.doWithCookie("POST", "/api/admin/assets/adopt", map[string]interface{}{"id": "not-exist"})

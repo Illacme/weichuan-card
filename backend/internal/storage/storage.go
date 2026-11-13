@@ -14,8 +14,10 @@ import (
 
 // Uploader 文件存储抽象：本地磁盘 / MinIO / OSS 实现同一接口即可互换（云托管可逆）
 type Uploader interface {
-	// Save 接收上传表单文件，返回可公开访问的 URL
-	Save(fh *multipart.FileHeader) (string, error)
+	// Save 接收上传表单文件，按调用方给定的 key（带归属前缀的对象键，如 t/5/abc.jpg、
+	// p/library/x.png）落盘 / 落桶，返回可公开访问的 URL（本地驱动为 /uploads/<key>，
+	// 云驱动为 <BaseURL>/<key>）。key 由调用方经 storage.ObjectKeyFor 生成。
+	Save(fh *multipart.FileHeader, key string) (string, error)
 	// SaveBytes 保存程序生成的内容（如小程序码），relPath 为对象相对路径（如 "wxacode/12.jpg"），返回可公开访问的 URL
 	SaveBytes(relPath string, data []byte, contentType string) (string, error)
 }
@@ -62,12 +64,32 @@ func isVideoExt(ext string) bool { return ext == "mp4" }
 // 返回 nil 时 checkFile 退用传入的 LocalUploader.AllowExt（默认白名单）。
 var AllowExtProvider func() map[string]bool
 
-// Save 落盘并返回相对 URL（/uploads/<name>）。
+// validateObjectKey 防御性校验对象键：拒绝空值、路径穿越（..）、绝对路径、
+// 反斜杠。ObjectKeyFor 已保证键是干净的，但 Save 是公开方法，调用方可能直接传脏键，
+// 必须挡在「写入磁盘 / 对象存储」之前——否则 filepath.Join(Dir, "../etc/x") 会写出 Dir 之外。
+func validateObjectKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("%w: 对象键为空", ErrInvalidRef)
+	}
+	if strings.ContainsAny(key, "\\") || strings.HasPrefix(key, "/") || strings.Contains(key, "..") {
+		return fmt.Errorf("%w: 非法对象键 %q", ErrInvalidRef, key)
+	}
+	return nil
+}
+
+// Save 落盘并返回相对 URL（/uploads/<key>）。
+// key 为带归属前缀的对象键（如 t/5/abc.jpg、p/library/x.png），由调用方经
+// storage.ObjectKeyFor 生成；本函数只负责把字节写到该 key 对应的本地路径，不自己生成键名。
 // 故意返回相对路径而非绝对 localhost URL：各端按自身源拼绝对地址，
 // 浏览器/管理后台经反向代理或 vite 代理解析，小程序经 assetUrl 拼 baseUrl，
 // 实现「零配置多端可达」——避免把 127.0.0.1 写死进库导致手机端裂图。
-func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
+// 写入侧接线（第五十四轮）后，新上传的对象一律落在 t/<cid>/ 或 p/ 前缀下，
+// 端上契约不变（仍是 <origin>/uploads/<key>），为将来按租户隔离 / 迁移做准备。
+func (l *LocalUploader) Save(fh *multipart.FileHeader, key string) (string, error) {
 	if err := checkFile(fh, l.MaxBytes, l.AllowExt); err != nil {
+		return "", err
+	}
+	if err := validateObjectKey(key); err != nil {
 		return "", err
 	}
 	src, err := fh.Open()
@@ -77,10 +99,6 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
-	name, err := RandName(ext)
-	if err != nil {
-		return "", err
-	}
 	// 读取全部字节：剥离 EXIF + 按长边压缩原图，并额外生成缩略图。
 	raw, err := io.ReadAll(src)
 	if err != nil {
@@ -90,7 +108,7 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dst := filepath.Join(l.Dir, name)
+	dst := filepath.Join(l.Dir, key)
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return "", err
 	}
@@ -98,12 +116,12 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader) (string, error) {
 		return "", err
 	}
 	// 缩略图 best-effort：生成失败不影响主图上传（列表页改用原图即可）。
-	// 约定命名 <hash>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
+	// 约定命名 <key 去扩展名>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
 	if thumb != nil {
-		thumbName := strings.TrimSuffix(name, "."+ext) + "_thumb." + ext
+		thumbName := strings.TrimSuffix(key, filepath.Ext(key)) + "_thumb" + filepath.Ext(key)
 		_ = os.WriteFile(filepath.Join(l.Dir, thumbName), thumb, 0644) // 缩略图失败不阻断主图上传
 	}
-	return "/uploads/" + name, nil
+	return UploadsPathPrefix + key, nil
 }
 
 // SaveBytes 写入本地并返回相对 URL（relPath 直接作为子路径，如 "wxacode/12.jpg"）。

@@ -1,7 +1,9 @@
 # 多租户自有存储 · P0b 业务 URL 边界清单
 
-> **状态：清单 + 源码级守门已落地；出参侧（9 条公开 GET + signHandler）已接入，
-> 写入侧（W1–W9 / NormalizeRef）仍未接。**
+> **状态：清单 + 源码级守门已落地；出参侧（9 条公开 GET + signHandler）已接入；
+> 写入侧（W1 上传 / W2 素材 / W3 小程序码 / W5 预签名）已接入带归属前缀的对象键
+> （`t/<cid>/...` / `p/...`；本地驱动仍存驱动返回的相对 URL，严格裸键 + nginx R1
+> 属云驱动阶段）。**
 > 所有行号来自 2026-11-13 对仓库的实读。守门在
 > `backend/internal/storage/ref_boundaries_test.go`。
 >
@@ -65,7 +67,10 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 > 正确顺序的依据：出参侧用 `ResolveRef` 兼容三形态（云端绝对 URL 原样、本地 `/uploads/` 原样、
 > 将来裸键/`p/`/`t/` 前缀自动补回 `/uploads/`）对**现行数据零行为变更**，因此先接出参侧是安全的。
 >
-> **现状（2026-11-13）**：出参侧已在本轮接好（见 §5）；写入侧（W1–W9 / `NormalizeRef`）是下一阶段，尚未接。
+> **现状（2026-11-13）**：出参侧已在第五十三轮接好（见 §5.2）；写入侧在第五十四轮接入
+> 带归属前缀的对象键（W1/W2/W3/W5，见 §5.3）——对象真正落到 `t/<cid>/...` 或 `p/...`
+> 前缀下，但本地驱动仍把驱动返回的相对 URL（`/uploads/<key>`）写库，端上契约零改动。
+> 严格裸键（只写 `t/<cid>/x`）+ nginx `/uploads/`→桶 反代（R1）属云驱动阶段，尚未做。
 > 出参侧口径集中在 `backend/internal/model/refs.go`（`ResolveResourceRef` + 六个模型的 `ResolveRefs()`），
 > 经 `storage.ResolveRef(raw, "")` 走通，对现行数据零行为变更。
 
@@ -226,3 +231,42 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 定位到 `handler/storage.go`，还原后复绿。
 
 **仍未做**：写入侧（W1–W9 / `NormalizeRef` 收敛成裸键）、存量回填、迁移、碰线上二进制——下一阶段。
+
+### 5.3 写入侧实装（2026-11-13 / 第五十四轮，本地驱动安全版）
+
+**核心取舍**：本轮只让**对象真正落到带归属前缀的键**（`t/<cid>/...` / `p/...`），
+而**库里仍写驱动返回的 URL**。本地驱动下该 URL 本就是相对路径 `/uploads/<key>`
+（与第五十三轮前的 `/uploads/<name>` 同形态），所以端上契约、前端、出参侧**零改动**，
+`ResolveRef` 对 `/uploads/...` 原样保留（no-op）。**严格裸键**（库里只写 `t/<cid>/x`）
++ nginx `/uploads/`→桶 反代（R1）留到云驱动阶段——那时才需要把 `<origin>/uploads/<key>`
+反代到对象桶，否则会 404。
+
+**实际改动（生产代码路径）**：
+
+| 落点 | 改动 |
+| --- | --- |
+| **W1** `handler/upload.go` | `Uploader.Save` 接口由 `Save(fh)` 改为 `Save(fh, key)`（Local/MinIO/OSS 三实现同步）；上传循环先 `ObjectKeyFor(scope, cid, RandName(ext))` 生成带前缀键再 `up.Save(fh, objKey)`。平台超管（cid=0）落 `p/`，员工/租户落 `t/<cid>/` |
+| **W2** `handler/assets.go` | 素材采用 rel 经 `ObjectKeyFor(ScopePlatform, 0, rel)` 落 `p/library/...` |
+| **W3** `handler/wechat.go` | 小程序码 key 经 `ObjectKeyFor(ScopePlatform, 0, rel)` 落 `p/wxacode/...` |
+| **W5** `handler/storage.go` | 预签名签的是带前缀键（`ObjectKeyFor(scope, cid, name)`），客户端直传落桶即落该前缀；返回的 `url`（finalURL）形态不变 |
+| **W4/W6** `handler/media_check.go` | **无需改**：`submitMediaCheck` 经 `mediachk.Plan` 已把 URL 反推成裸键（`d.Key`），下架占位图直接复用 `row.ObjectKey`（已带前缀）。单桶阶段写同一键即可，P2 多桶时才需按 `row.CompanyID` 选实例 |
+| **W7–W9** 前端 | **无需改**：后端返回的仍是驱动 URL（本地 `/uploads/<key>`），前端存/预览逻辑不变 |
+
+**接口变更（`storage.Uploader`）**：`Save(fh *multipart.FileHeader, key string) (string, error)`。
+`key` 由调用方经 `storage.ObjectKeyFor` 生成；`Save` 内部新增 `validateObjectKey` 防御
+（拒绝空值 / `..` 路径穿越 / 绝对路径 / 反斜杠，防止 `filepath.Join(Dir, "../x")` 写出 Dir 之外）。
+
+**守门升级**：`TestRefWiringGate` 的 sanctioned 集合新增 `upload.go` / `assets.go` / `wechat.go`，
+并修正 `writeAPI` 分支漏了的 `&& !sanctioned[p]`（此前它无条件封禁写入侧 API，接线后必须放行
+sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `storage.ObjectKeyFor(...)` 锚点。
+
+**反向验证**：临时在非 sanctioned 文件（`handler/zzz_ref_probe_test.go`）调用 `storage.ObjectKeyFor`，
+`TestRefWiringGate` 正确报红并定位到该行；删除探针后复绿。新增 `storage/save_key_test.go`
+锁住「对象落在带前缀键下 + 非法键拒写」。
+
+**门禁**：`gofmt` 干净、`go vet ./...` 通过、`go test ./...` 全包绿（含 handler 58s、storage 9s）。
+`golangci-lint` 本沙箱无二进制（上一轮已 lint 绿，本轮只增 Go 源码，未重跑）。
+前端零改动 → 未跑 vue-tsc / Vitest / eslint / vite build。
+
+**仍未做**：严格裸键（库里只写 `t/<cid>/x`）、nginx R1（`/uploads/`→桶 反代）、
+`NormalizeRef` 收敛、存量回填、迁移 0044、云驱动多桶切换——下一阶段。

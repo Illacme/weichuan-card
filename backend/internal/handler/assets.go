@@ -153,7 +153,14 @@ func assetAdoptHandler(db *gorm.DB, up storage.Uploader, refresher storage.CDNRe
 		}
 		// 采用路径含素材 ID：重复采用同一素材为幂等覆盖（内容不变，还省存储）
 		rel := "library/" + item.ID + item.File[strings.LastIndex(item.File, "."):]
-		url, err := up.SaveBytes(rel, data, assets.ContentType(item.File))
+		// 写入侧接线（第五十四轮）：平台资源固定 ScopePlatform，落到 p/ 前缀；
+		// 端上契约不变（仍是 <origin>/uploads/<key>），为将来按租户隔离 / 迁移做准备。
+		objKey, kerr := storage.ObjectKeyFor(storage.ScopePlatform, 0, rel)
+		if kerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "采用失败：" + kerr.Error()})
+			return
+		}
+		url, err := up.SaveBytes(objKey, data, assets.ContentType(item.File))
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "采用失败：" + err.Error()})
 			return

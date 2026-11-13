@@ -21,7 +21,7 @@ import (
 type MinioUploader struct {
 	Client   *minio.Client
 	Bucket   string
-	BaseURL  string            // 公开访问基址，如 https://cdn.xxx 或 https://minio.example.com/bucket
+	BaseURL  string // 公开访问基址，如 https://cdn.xxx 或 https://minio.example.com/bucket
 	MaxBytes int64
 	AllowExt map[string]bool
 }
@@ -41,8 +41,11 @@ func NewMinioUploader(endpoint, accessKey, secretKey, bucket, baseURL, region st
 	return &MinioUploader{Client: client, Bucket: bucket, BaseURL: baseURL, MaxBytes: maxBytes, AllowExt: allow}, nil
 }
 
-func (m *MinioUploader) Save(fh *multipart.FileHeader) (string, error) {
+func (m *MinioUploader) Save(fh *multipart.FileHeader, key string) (string, error) {
 	if err := checkFile(fh, m.MaxBytes, m.AllowExt); err != nil {
+		return "", err
+	}
+	if err := validateObjectKey(key); err != nil {
 		return "", err
 	}
 	src, err := fh.Open()
@@ -52,10 +55,6 @@ func (m *MinioUploader) Save(fh *multipart.FileHeader) (string, error) {
 	defer func() { _ = src.Close() }() // 只读句柄，关闭错误无处可报也无后果
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
-	name, err := RandName(ext)
-	if err != nil {
-		return "", err
-	}
 	// 读取全部字节：剥离 EXIF + 按长边压缩原图，并额外生成缩略图。
 	raw, err := io.ReadAll(src)
 	if err != nil {
@@ -65,23 +64,23 @@ func (m *MinioUploader) Save(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 对象名直接用 name：URL 为 BaseURL/name，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/name）形态一致
-	if _, err := m.Client.PutObject(context.Background(), m.Bucket, name, bytes.NewReader(full), int64(len(full)), minio.PutObjectOptions{
+	// 对象名直接用 key（带归属前缀）：URL 为 BaseURL/key，与本地驱动（静态路由 /uploads -> Dir，文件落 Dir/key）形态一致
+	if _, err := m.Client.PutObject(context.Background(), m.Bucket, key, bytes.NewReader(full), int64(len(full)), minio.PutObjectOptions{
 		ContentType: fh.Header.Get("Content-Type"),
 	}); err != nil {
 		return "", fmt.Errorf("minio put: %w", err)
 	}
 	// 缩略图 best-effort：生成失败不影响主图上传（列表页改用原图即可）。
-	// 约定命名 <hash>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
+	// 约定命名 <key 去扩展名>_thumb.<ext>，列表页按「原 URL 末位扩展名前插 _thumb」派生。
 	if thumb != nil {
-		tn := strings.TrimSuffix(name, "."+ext) + "_thumb." + ext
+		tn := strings.TrimSuffix(key, filepath.Ext(key)) + "_thumb" + filepath.Ext(key)
 		if _, perr := m.Client.PutObject(context.Background(), m.Bucket, tn, bytes.NewReader(thumb), int64(len(thumb)), minio.PutObjectOptions{
 			ContentType: fh.Header.Get("Content-Type"),
 		}); perr != nil {
 			log.Printf("[WARN] 缩略图上传失败 %s: %v", tn, perr)
 		}
 	}
-	return strings.TrimRight(m.BaseURL, "/") + "/" + name, nil
+	return strings.TrimRight(m.BaseURL, "/") + "/" + key, nil
 }
 
 func (m *MinioUploader) SaveBytes(relPath string, data []byte, contentType string) (string, error) {

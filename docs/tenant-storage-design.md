@@ -169,7 +169,15 @@ type Ref struct {
 > `/api/services/:id`(内嵌 `BizService`)。照「五条」接会漏一半出参。
 > **正确口径：所有出参序列化点都要过，缓存只是其中一层的时序约束。**
 > 该出参侧已在第五十三轮实际接好（9 条 GET + `signHandler` 全部过 `model/refs.go`），
-> 对现行数据零行为变更；写入侧（W1–W9 / `NormalizeRef` 收敛裸键）是下一阶段。
+> 对现行数据零行为变更。
+>
+> ✅ **写入侧实装（2026-11-13 / 第五十四轮，本地驱动安全版）**：W1 上传 / W2 素材 /
+> W3 小程序码 / W5 预签名已改为**对象落带归属前缀的键**（`t/<cid>/...` / `p/...`）；
+> `Uploader.Save` 接口由 `Save(fh)` 改为 `Save(fh, key)`，键由 `ObjectKeyFor` 生成。
+> **但库里仍写驱动返回的 URL**（本地驱动即相对 `/uploads/<key>`），因此端上契约、前端、
+> 出参侧零改动（`ResolveRef` 对 `/uploads/` 原样保留）。**严格裸键**（库里只写 `t/<cid>/x`）
+> 依赖 nginx `/uploads/`→桶 反代（R1），属云驱动阶段。W4/W6 因 `mediachk` 已把 URL 反推成裸键、
+> 且单桶下复用同一键，无需改动。
 
 > ✅ **P0a 落地订正（2026-11-13）**：上面草稿里写的 `storage.Resolve(ref) (string, error)`
 > 只是骨架示意，实际落地的 `backend/internal/storage/ref.go` 是一组**吃库里原始字符串**

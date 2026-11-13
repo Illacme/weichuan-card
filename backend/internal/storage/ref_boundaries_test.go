@@ -37,15 +37,19 @@ type boundaryToken struct {
 // boundaryTokens 是清单里每个点的「锚」。代码挪走 / 改名 / 重写后锚必须还在，
 // 否则说明清单腐了，先更新清单再谈接入。
 var boundaryTokens = []boundaryToken{
-	{handlerDir + "/upload.go", "up.Save(fh)", "W1 上传主入口"},
+	{handlerDir + "/upload.go", "up.Save(fh, objKey)", "W1 上传主入口（写入侧已接：落带前缀键）"},
+	{handlerDir + "/upload.go", "storage.ObjectKeyFor(scope, cid, randName)", "W1 生成带前缀键（写入侧接线，第五十四轮）"},
 	{handlerDir + "/upload.go", "submitMediaCheck(db, cfg, c, u)", "W1→W6 送检写 url / object_key"},
-	{handlerDir + "/assets.go", "up.SaveBytes(rel, data, assets.ContentType(item.File))", "W2 素材采用（固定平台 scope）"},
+	{handlerDir + "/assets.go", "up.SaveBytes(objKey, data, assets.ContentType(item.File))", "W2 素材采用（固定平台 scope）"},
+	{handlerDir + "/assets.go", "storage.ObjectKeyFor(storage.ScopePlatform, 0, rel)", "W2 平台资源落 p/ 前缀（写入侧接线，第五十四轮）"},
 	{handlerDir + "/wechat.go", `up.SaveBytes(key, b, "image/jpeg")`, "W3 小程序码（固定平台 scope）"},
+	{handlerDir + "/wechat.go", "storage.ObjectKeyFor(storage.ScopePlatform, 0, rel)", "W3 小程序码落 p/ 前缀（写入侧接线，第五十四轮）"},
 	{handlerDir + "/wechat.go", `gin.H{"url": url}`, "R10 小程序码出参"},
 	{handlerDir + "/media_check.go", "up.SaveBytes(row.ObjectKey, data, contentType)", "W4 下架占位图覆盖（将来必须带 row.CompanyID）"},
 	{handlerDir + "/media_check.go", "func submitMediaCheck(", "W6 送检入口"},
 	{handlerDir + "/media_check.go", "ObjectKey: d.Key", "W6 落库对象键"},
 	{handlerDir + "/storage.go", `"url": finalURL`, "W5 直传 finalURL 回端上"},
+	{handlerDir + "/storage.go", "storage.ObjectKeyFor(scope, cid, name)", "W5 预签名落带前缀键（写入侧接线，第五十四轮）"},
 	{handlerDir + "/content.go", "func projectToMap(", `R12 album 展开（模型是 json:"-" 的隐藏边界）`},
 	{handlerDir + "/handler.go", `"album":`, "R5/R6 案例详情 album 数组出参（已接 ResolveResourceRef）"},
 	{handlerDir + "/handler.go", "ResolveResourceRef(ci.Logo)", "R2/R3 企业 logo 出参（已接 ResolveResourceRef）"},

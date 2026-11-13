@@ -62,9 +62,20 @@ func presignHandler(db *gorm.DB, up storage.Uploader) gin.HandlerFunc {
 				return
 			}
 		}
-		key, err := storage.RandName(ext)
+		// 写入侧接线（第五十四轮）：预签名签的是带归属前缀的键（平台 p/...、租户 t/<cid>/...），
+		// 客户端直传落桶即落到该前缀下；返回给前端的 url（finalURL）形态不变。
+		name, err := storage.RandName(ext)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			return
+		}
+		scope := storage.ScopeTenant
+		if cid == 0 {
+			scope = storage.ScopePlatform
+		}
+		key, kerr := storage.ObjectKeyFor(scope, cid, name)
+		if kerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": kerr.Error()})
 			return
 		}
 		// 签名时长取系统设置（后台「系统设置 → 上传」可改，即时生效）；

@@ -64,7 +64,7 @@ func TestOssSave(t *testing.T) {
 	up := newTestOssUploader(t, srv)
 
 	fh := makeFileHeader(t, "logo.jpg", jpgWithExif())
-	url, err := up.Save(fh)
+	url, err := up.Save(fh, "t/5/logo.jpg")
 	require.NoError(t, err)
 
 	// 图片上传会 PUT 两次：原图 + <name>_thumb.<ext> 缩略图（E4）。
@@ -88,7 +88,7 @@ func TestOssSaveRejectsBadExtBeforeHTTP(t *testing.T) {
 	defer srv.Close()
 	up := newTestOssUploader(t, srv)
 
-	_, err := up.Save(makeFileHeader(t, "evil.exe", []byte("MZ")))
+	_, err := up.Save(makeFileHeader(t, "evil.exe", []byte("MZ")), "t/5/evil.exe")
 	require.Error(t, err)
 	require.Equal(t, 0, fake.hits, "扩展名不合法应在发请求前就被拒绝")
 }

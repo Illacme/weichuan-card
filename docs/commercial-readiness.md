@@ -3583,3 +3583,65 @@ SQL 运行期读盘、改动 `.sql` 只需换文件 + `./server migrate` 不必�
 ### 待用户侧动作
 
 `git push origin main`（沙箱拦截 push，本地 commit 已完成）；写入侧接线待拍板后实施。
+
+---
+
+## 第五十四轮：写入侧接线（2026-11-13）
+
+> 承接第五十三轮「出参侧已接、写入侧待拍板」。用户确认生产为 **local 驱动**（`STORAGE_DRIVER`
+> 默认值，仓库无覆盖，上一轮实读到线上 nginx 把 `/uploads/` 反代本地盘），据此推进写入侧。
+
+### 关键取舍：scoped 对象键 + 存驱动 URL（本地驱动安全版）
+
+写入侧真正要做的是「让对象落到带归属前缀的键」。本轮只做到这一步，**没**把库里的值改成严格裸键：
+
+- **对象键带前缀**：W1 上传落 `t/<cid>/...`（租户）或 `p/...`（平台超管 cid=0）；
+  W2 素材落 `p/library/...`；W3 小程序码落 `p/wxacode/...`；W5 预签名签带前缀键。
+- **库里仍写驱动返回的 URL**：本地驱动即相对 `/uploads/<key>`，与第五十三轮前的
+  `/uploads/<name>` 同形态 ⇒ 前端、出参侧、端上契约**零改动**，`ResolveRef` 对 `/uploads/` 原样保留。
+- **为什么不做严格裸键**：裸键（只写 `t/<cid>/x`）要靠 `ResolveRef` 还原成 `<origin>/uploads/...`，
+  云驱动下必须先把 nginx `/uploads/` 反代到对象桶（设计稿 R1，未验证），否则新上传 404。
+  本地驱动无此问题，所以严格裸键 + R1 留到云驱动阶段。
+
+### 接口变更（`storage.Uploader`）
+
+`Save(fh *multipart.FileHeader)` → `Save(fh *multipart.FileHeader, key string)`。三实现
+（Local/MinIO/OSS）改为按给定 `key` 落盘/落桶，不再自己 `RandName`；`Save` 内新增
+`validateObjectKey`（拒绝空值 / `..` 穿越 / 绝对路径 / 反斜杠，挡住 `filepath.Join(Dir,"../x")`）。
+
+### 落点改动
+
+| 落点 | 改动 |
+| --- | --- |
+| W1 `handler/upload.go` | 循环内 `ObjectKeyFor(scope, cid, RandName(ext))` → `up.Save(fh, objKey)` |
+| W2 `handler/assets.go` | rel 经 `ObjectKeyFor(ScopePlatform,0,rel)` 落 `p/library/...` |
+| W3 `handler/wechat.go` | key 经 `ObjectKeyFor(ScopePlatform,0,rel)` 落 `p/wxacode/...` |
+| W5 `handler/storage.go` | 预签名 key 经 `ObjectKeyFor(scope,cid,name)` |
+| W4/W6 `handler/media_check.go` | **无需改**：`mediachk.Plan` 已把 URL 反推成裸键 `d.Key`；单桶下复用 `row.ObjectKey` |
+| W7–W9 前端 | **无需改**：后端仍返回驱动 URL（本地 `/uploads/<key>`） |
+
+### 守门 + 反向验证
+
+- `TestRefWiringGate`：sanctioned 新增 `upload.go`/`assets.go`/`wechat.go`；**修正 `writeAPI` 分支
+  漏掉的 `&& !sanctioned[p]`**（此前无条件封禁写入侧 API，接线后必须放行 sanctioned 文件）。
+- 边界 token：W1/W2 标识符更新 + 新增 4 条 `storage.ObjectKeyFor(...)` 锚点。
+- 反向验证：临时在非 sanctioned 文件 `handler/zzz_ref_probe_test.go` 调用 `storage.ObjectKeyFor`
+  → `TestRefWiringGate` 报红定位到该行；删除后复绿。
+- 新增 `storage/save_key_test.go`：锁「对象落带前缀键下（`t/5/x.jpg` / `p/library/x.jpg` + 同前缀 thumb）」
+  与「非法键拒写（`../x`、`/abs`、`t\5\x`、空值）」。
+
+### 门禁
+
+`gofmt` 干净、`go vet ./...` 通过、`go test ./...` 全包绿（handler 58s、storage 9s）。
+`golangci-lint` 本沙箱无二进制（上一轮已 lint 绿，本轮只增 Go 源码未重跑）。
+前端零改动 → 未跑 vue-tsc / Vitest / eslint / vite build。
+
+### 边界
+
+- **已做**：W1/W2/W3/W5 落带前缀键、`Uploader.Save` 接口变更、守门升级、反向验证、文档同步；
+- **未做**（云驱动阶段）：严格裸键（只写 `t/<cid>/x`）、nginx R1（`/uploads/`→桶反代）、
+  `NormalizeRef` 收敛、存量回填、迁移 0044、多桶切换。
+
+### 待用户侧动作
+
+`git push origin main`（沙箱拦截 push，本地 commit 待做）。

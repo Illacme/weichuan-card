@@ -1694,7 +1694,9 @@ func applyMigrations(t *testing.T, db *gorm.DB) {
 // fakeUploader 同时实现 Uploader + Presigner + Signer，用于验证成功路径。
 type fakeUploader struct{}
 
-func (fakeUploader) Save(*multipart.FileHeader) (string, error) { return "http://up/x.png", nil }
+func (fakeUploader) Save(*multipart.FileHeader, string) (string, error) {
+	return "http://up/x.png", nil
+}
 func (fakeUploader) SaveBytes(key string, _ []byte, _ string) (string, error) {
 	// 按 key 回 URL：素材采用 / 小程序码两条「固定对象名」路径都走这里，
 	// 测试据此断言刷新的是刚覆盖写的那个对象，而不是上传的随机名对象。
@@ -1803,20 +1805,20 @@ func TestCDNRefreshOnOverwritePaths(t *testing.T) {
 	// 1. 素材采用：对象名固定，重复采用 = 覆盖写 → 必须让 CDN 边缘失效
 	_, body := c.do("POST", "/api/admin/assets/adopt", map[string]interface{}{"id": "icon-house"}, adminToken)
 	require.EqualValues(t, 0, body["code"])
-	require.Equal(t, []string{"http://final/library/icon-house.png"}, ref.urls,
-		"采用后应刷新刚覆盖写的对象（而非上传的随机名对象）")
+	require.Equal(t, []string{"http://final/p/library/icon-house.png"}, ref.urls,
+		"采用后应刷新刚覆盖写的对象（而非上传的随机名对象）；写入侧接线后平台资源落 p/ 前缀")
 
-	// 2. 小程序码：对象名固定 wxacode/<staffID>.jpg，TTL 到期重生成 = 覆盖写
+	// 2. 小程序码：对象名固定 p/wxacode/<staffID>.jpg，TTL 到期重生成 = 覆盖写
 	const staffID = 990001 // 偏僻 ID：小程序码缓存是进程级全局 map，避免与其它用例串扰
 	t.Cleanup(func() { wxacodeDrop(staffID) })
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
 	require.EqualValues(t, 0, body["code"], "响应：%v", body)
-	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
+	require.Equal(t, fmt.Sprintf("http://final/p/wxacode/%d.jpg", staffID),
 		body["data"].(map[string]interface{})["url"])
 	require.Equal(t, []string{
-		"http://final/library/icon-house.png",
-		fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
-	}, ref.urls, "小程序码覆盖写后应刷新公开 URL")
+		"http://final/p/library/icon-house.png",
+		fmt.Sprintf("http://final/p/wxacode/%d.jpg", staffID),
+	}, ref.urls, "小程序码覆盖写后应刷新公开 URL（写入侧接线后带 p/ 前缀）")
 
 	// 3. 刷新失败不冒泡：接口仍返回成功
 	ref.err = errors.New("cdn down")
@@ -1925,13 +1927,13 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 	// 普通码
 	_, body := c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
 	require.EqualValues(t, 0, body["code"], "响应：%v", body)
-	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
+	require.Equal(t, fmt.Sprintf("http://final/p/wxacode/%d.jpg", staffID),
 		body["data"].(map[string]interface{})["url"])
 
 	// 海报码：对象名带 _poster，且 scene 带来源标记
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d&from=poster", staffID), nil, "")
 	require.EqualValues(t, 0, body["code"], "响应：%v", body)
-	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d_poster.jpg", staffID),
+	require.Equal(t, fmt.Sprintf("http://final/p/wxacode/%d_poster.jpg", staffID),
 		body["data"].(map[string]interface{})["url"], "海报码不能复用普通码的对象名")
 
 	// scene 口径：普通码只有 staffId，海报码多 &from=poster
@@ -1942,7 +1944,7 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 
 	// 普通码重新请求仍走缓存（分键后海报码的 entry 顶不掉默认码的）
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d", staffID), nil, "")
-	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d.jpg", staffID),
+	require.Equal(t, fmt.Sprintf("http://final/p/wxacode/%d.jpg", staffID),
 		body["data"].(map[string]interface{})["url"])
 	require.Len(t, gotScenes, 2, "第三次请求应命中缓存，不再调微信")
 
@@ -1950,7 +1952,7 @@ func TestPosterWxacodeUsesDistinctObjectKey(t *testing.T) {
 	// 一次 miss = 调微信 + 写存储 + 刷 CDN 三个同步外网往返，全压在海报页首屏上。
 	// 分键之前这里每请求一次就多调一次微信（海报页「很慢」的直接原因）。
 	_, body = c.do("GET", fmt.Sprintf("/api/wechat/wxacode?staffId=%d&from=poster", staffID), nil, "")
-	require.Equal(t, fmt.Sprintf("http://final/wxacode/%d_poster.jpg", staffID),
+	require.Equal(t, fmt.Sprintf("http://final/p/wxacode/%d_poster.jpg", staffID),
 		body["data"].(map[string]interface{})["url"])
 	require.Len(t, gotScenes, 2, "海报码重复请求必须命中缓存（否则每次打开海报页都要重走一遍微信 + 存储 + CDN）")
 }

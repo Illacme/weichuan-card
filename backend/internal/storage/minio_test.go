@@ -77,7 +77,7 @@ func TestMinioSave(t *testing.T) {
 	up := newTestMinioUploader(t, srv)
 
 	fh := makeFileHeader(t, "logo.jpg", jpgWithExif())
-	url, err := up.Save(fh)
+	url, err := up.Save(fh, "t/5/logo.jpg")
 	require.NoError(t, err)
 
 	// 图片上传会 PUT 两次：原图 + <name>_thumb.<ext> 缩略图（E4）。
@@ -102,7 +102,7 @@ func TestMinioSaveRejectsBadExtBeforeHTTP(t *testing.T) {
 	defer srv.Close()
 	up := newTestMinioUploader(t, srv)
 
-	_, err := up.Save(makeFileHeader(t, "evil.exe", []byte("MZ")))
+	_, err := up.Save(makeFileHeader(t, "evil.exe", []byte("MZ")), "t/5/evil.exe")
 	require.Error(t, err)
 	require.Equal(t, 0, fake.hits, "扩展名不合法应在发请求前就被拒绝")
 }
@@ -169,9 +169,9 @@ func TestMinioBaseURLPathPrefix(t *testing.T) {
 
 	// multipart 回退（直传被 CORS 拦下时）走的是 Save()，这条最容易被漏测：
 	// 它单独拼一次 BaseURL，改坏 TrimRight 后用户按文档填了前缀仍然 404。
-	// 对象名是随机 hash，从假 S3 记录的实际 PUT 路径里取，别把随机值写死。
+	// 键由调用方传入（写入侧接线后带归属前缀），从假 S3 记录的实际 PUT 路径里取以对账。
 	hitsBefore := len(fake.paths)
-	saveURL, err := up.Save(makeFileHeader(t, "clip.jpg", jpgWithExif()))
+	saveURL, err := up.Save(makeFileHeader(t, "clip.jpg", jpgWithExif()), "t/5/clip.jpg")
 	require.NoError(t, err)
 	require.Greater(t, len(fake.paths), hitsBefore, "Save 应至少 PUT 一次原文件")
 	objName := strings.TrimPrefix(fake.paths[hitsBefore], "/weichuan/")

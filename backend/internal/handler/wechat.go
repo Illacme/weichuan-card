@@ -251,7 +251,14 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 		// 海报码生成完，内存缓存里默认码的 entry 仍指向同一个对象 → 扫普通码
 		// 拿到的是「带 from=poster 的码」，来源被记成 poster，裂变榜虚高；反之同理。
 		// 这种错**不报错、码也能打开**，只会在数据对不上时才被发现。
-		key := fmt.Sprintf("wxacode/%d%s.jpg", staffID, suffix)
+		rel := fmt.Sprintf("wxacode/%d%s.jpg", staffID, suffix)
+		// 写入侧接线（第五十四轮）：平台资源固定 ScopePlatform，落到 p/ 前缀；
+		// 端上契约不变（仍是 <origin>/uploads/<key>），私有桶签名按 p/ 前缀 key 走。
+		key, kerr := storage.ObjectKeyFor(storage.ScopePlatform, 0, rel)
+		if kerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": kerr.Error()})
+			return
+		}
 		publicURL, err := up.SaveBytes(key, b, "image/jpeg")
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})

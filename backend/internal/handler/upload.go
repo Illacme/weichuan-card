@@ -3,6 +3,8 @@ package handler
 import (
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"weichuan/internal/audit"
@@ -83,6 +85,13 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 		}
 		// 本次上传计入哪个租户（见 uploadCompanyID）：0 = 平台自身对象，不计量不限配额。
 		cid := uploadCompanyID(c)
+		// 写入侧接线（第五十四轮）：新上传的对象一律落到带归属前缀的键——
+		// 平台对象 p/...、租户对象 t/<cid>/...；端上契约不变（仍是 <origin>/uploads/<key>），
+		// 为将来按租户隔离 / 迁移做准备。键由 ObjectKeyFor 生成（含前缀 + 路径穿越校验）。
+		scope := storage.ScopeTenant
+		if cid == 0 {
+			scope = storage.ScopePlatform
+		}
 		urls := make([]string, 0, len(files))
 		for _, fh := range files {
 			// 配额检查必须在**落盘之前**：先存后判会留下一堆"传上去了但没记用量"的
@@ -91,7 +100,18 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
 				return
 			}
-			u, err := up.Save(fh)
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fh.Filename), "."))
+			randName, err := storage.RandName(ext)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+				return
+			}
+			objKey, err := storage.ObjectKeyFor(scope, cid, randName)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+				return
+			}
+			u, err := up.Save(fh, objKey)
 			if err != nil {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 				return
