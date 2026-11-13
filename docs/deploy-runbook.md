@@ -787,6 +787,19 @@ mysql -u<用户> -p <库名> -e "
 # 第一个查询应为 0，第二个应返回 1 行
 ```
 
+> **不必手工加 `migrate` 参数**：不带参数启动服务时，只要 `driver=mysql` 且
+> `AUTO_MIGRATE` 没设成 0，启动流程自己就会调 `migrate.ApplyWithReport`
+> （`cmd/server/main.go`），与 `server migrate` 是**同一条代码路径**。区别只有两点：
+> 子命令跑完就退出、不监听端口；子命令失败 `os.Exit(1)` 可进流水线，而启动自动
+> 迁移失败是 fail-open（打 `[MIGRATE][FATAL]` 但服务继续起）。所以「替换 `.sql`
+> 后直接重启」与「替换 `.sql` 后跑一次 `migrate`」对数据库的效果完全一样。
+>
+> 2026-11-13 10:40 线上实测：替换 0043 后**不带参数重启**，启动日志
+> `[MIGRATE] 已应用 1 个迁移：0043_drop_template_id.sql` 紧跟 `listen :8080`，
+> 无 FATAL，事故闭环。`ApplyWithReport` 只有 `applyFile` 与 `recordVersion`
+> **都成功**才会把文件名放进 `applied`，因此这一行日志同时证明了「裸 DROP
+> 执行成功」与「0043 已记账」；下次启动应打「数据库已是最新（无待应用迁移）」。
+
 ### 想自己掌控：拆成流水线里的一步
 
 ```bash

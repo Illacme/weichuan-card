@@ -3355,3 +3355,13 @@ listen :8080 (storage driver=s3)
 > `/api/admin/login` 为 `DYNAMIC`；`&v=a` / `&v=b` 各自 `MISS`（查询串不折叠）。
 > `MISS` 不等于 `DYNAMIC`：前者是有资格没命中，后者是根本没资格。
 > 详见 runbook §5.2.7「线上实测结论」。本轮剩余待办只剩 ① / ② / ④ / ⑤ / ⑥。
+
+> ✅ **订正（2026-11-13 10:58）**：待办 ④（0043 线上应急）**也已闭环**。用户替换
+> 线上 `migrations/0043_drop_template_id.sql` 后**不带 `migrate` 参数直接重启**，
+> 10:40:26 启动日志为 `database driver=mysql` →
+> `[MIGRATE] 已应用 1 个迁移：0043_drop_template_id.sql` →
+> `listen :8080 (storage driver=s3)`，无 FATAL。不带参数启动时 MySQL 会自动应用
+> 待执行迁移（`AUTO_MIGRATE≠0`），与 `server migrate` 同一条代码路径，效果相同；
+> 该日志只有 `applyFile` + `recordVersion` 都成功才会打印，等于同时证明 DDL 成功
+> 与版本已记账。剩余待办仅 ① push、② CF Purge `/uploads/` 验收、
+> ⑤ 确认 `server` 与 `thumbbackfill` 同 revision、⑥ P4 接入路径。
