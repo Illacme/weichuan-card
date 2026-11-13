@@ -389,3 +389,53 @@ func TestTrafficEnabledFollowsRouteSwitch(t *testing.T) {
 	require.Equal(t, true, tenantStorageView(row)["trafficEnabled"], "开关打开后必须如实回报")
 	require.Equal(t, true, emptyTenantStorageView(1)["trafficEnabled"], "没配过的企业也要同一个口径")
 }
+
+// TestActiveForTenantReasons 钉住「这家到底在不在用自有桶」的五种未生效成因。
+//
+// 只回一个 false 是不够的：五种成因的处置方式完全不同（去填 / 设计如此 / 改驱动 /
+// 找运维开开关 / 补凭据），超管拿到 false 只能猜。所以每一条都要能单独断言到。
+func TestActiveForTenantReasons(t *testing.T) {
+	full := func(mu func(*model.TenantStorageConfig)) *model.TenantStorageConfig {
+		row := &model.TenantStorageConfig{
+			CompanyID: 7, Driver: "minio", Endpoint: "127.0.0.1:9000", Bucket: "b",
+			Enabled: true, PublicRead: true,
+			AccessKeyEnc: "v1:x", SecretKeyEnc: "v1:y",
+		}
+		if mu != nil {
+			mu(row)
+		}
+		return row
+	}
+
+	t.Setenv("TENANT_STORAGE_ROUTE", "on")
+	ok, why := tenantStorageActive(full(nil))
+	require.True(t, ok)
+	require.Empty(t, why, "生效时不该有理由文案")
+
+	cases := []struct {
+		name string
+		row  *model.TenantStorageConfig
+		want string
+	}{
+		{"没配过", nil, "尚未配置"},
+		{"未启用", full(func(r *model.TenantStorageConfig) { r.Enabled = false }), "配置未启用"},
+		{"驱动是本地", full(func(r *model.TenantStorageConfig) { r.Driver = "local" }), "驱动为本地磁盘"},
+		{"凭据不完整", full(func(r *model.TenantStorageConfig) { r.AccessKeyEnc = "" }), "凭据不完整"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, why := tenantStorageActive(tc.row)
+			require.False(t, ok)
+			require.Contains(t, why, tc.want)
+		})
+	}
+
+	// 路由关掉时，其余条件再齐也不算生效——否则界面会在关着开关的部署上
+	// 显示「正在使用自有桶」，而文件其实全在平台盘上。
+	t.Run("路由未开", func(t *testing.T) {
+		t.Setenv("TENANT_STORAGE_ROUTE", "off")
+		ok, why := tenantStorageActive(full(nil))
+		require.False(t, ok)
+		require.Contains(t, why, "TENANT_STORAGE_ROUTE")
+	})
+}

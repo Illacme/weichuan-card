@@ -3988,7 +3988,9 @@ paths:
   # 权限：**只有平台超级管理员**（PlatformAdminMiddleware）。企业管理员 role 也是 admin，
   # 用 AuthMiddleware 会直接放行，因此四个接口都不能照抄 /api/admin/storage 那批的写法。
   # 原因：这条配置里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶。
-  # 边界：本期只保存配置，**尚未承载流量**（上传与出参仍走平台实例，按租户分桶属 P2）。
+  # 边界：写入与自检一直是可用的；**是否承载流量**由进程的 TENANT_STORAGE_ROUTE 决定
+  # （第六十一轮接入，默认 off）。出参 trafficEnabled 回报进程开关，activeForTenant
+  # 回报「这家此刻是不是真的在用自有桶」——两者不是一回事，别只取一个。
   /api/admin/companies/{id}/storage:
     get:
       summary: 某企业的自有对象桶配置（平台超管，凭据只回掩码）
@@ -5078,7 +5080,19 @@ components:
           description: 非空说明库里密文解不开（PII_ENC_KEY 与写入时不一致），需重新填一次密钥
         trafficEnabled:
           type: boolean
-          description: 本期恒为 false —— 配置尚未参与上传路由（按租户分桶属 P2）
+          description: >-
+            本进程是否已开启租户存储路由（TENANT_STORAGE_ROUTE），进程级。默认 false。
+            它回答的是「配置保存后能不能生效」，**不是**「这家企业此刻在不在用自有桶」。
+        activeForTenant:
+          type: boolean
+          description: >-
+            该企业此刻的文件是否真的写进自己的桶。与 trafficEnabled 不是一回事：
+            开关开着但这家的 enabled=false 时仍为 false。
+        inactiveReason:
+          type: string
+          description: >-
+            activeForTenant=false 时的原因（未配置 / 未启用 / 驱动是 local /
+            进程未开路由 / 凭据不完整）。五种成因处置方式不同，故直接回文案。
 
     TenantStorageSave:
       type: object

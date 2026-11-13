@@ -476,7 +476,39 @@ func tenantStorageView(row *model.TenantStorageConfig) gin.H {
 	// 把这句写死会在开关打开后继续骗人说「尚未承载流量」——
 	// 而「填了以为没生效」和「以为生效其实没生效」是同一个错误的两个方向。
 	view["trafficEnabled"] = tenantStorageTrafficEnabled()
+	// 「这家此刻到底在不在用自有桶」与上面那个进程级开关**不是一回事**：
+	// 开关开着但这家 enabled=false，它照样写平台存储。两个字段都要给，
+	// 否则界面只能二选一地撒谎。inactiveReason 是给超管看的下一步动作。
+	view["activeForTenant"], view["inactiveReason"] = tenantStorageActive(row)
 	return view
+}
+
+// tenantStorageActive 判断「该企业此刻的文件是不是真的写进自己的桶」，并给出未生效的原因。
+//
+// 为什么不能只回一个 bool：未生效有五种成因，处置方式完全不同——
+// 「没配」要去填、「没启用」是设计如此、「驱动是 local」要去改驱动、「进程没开路由」
+// 是部署决策、「凭据不完整」是上传会直接失败（最急）。只回 false 时超管只能猜。
+//
+// 判定顺序刻意与「谁会先挡住上传」一致：先看路由开关（关着的话别的都不重要），
+// 再看这家自己的开关，最后才是凭据（凭据坏了在开关关着时不构成问题）。
+func tenantStorageActive(row *model.TenantStorageConfig) (bool, string) {
+	if row == nil {
+		return false, "尚未配置该企业的自有存储"
+	}
+	if !tenantStorageTrafficEnabled() {
+		return false, "本进程未开启租户存储路由（TENANT_STORAGE_ROUTE=off）：该企业仍写入平台存储"
+	}
+	if !row.Enabled {
+		return false, "配置未启用：该企业仍写入平台存储"
+	}
+	if row.Driver == nginxsnippet.DriverLocal {
+		return false, "驱动为本地磁盘：该企业仍写入平台存储（切到 minio/oss/s3 才会用自有桶）"
+	}
+	if row.AccessKeyEnc == "" || row.SecretKeyEnc == "" {
+		// 这一条不是「未生效」，是「生效了但会失败」——必须排在最后并说清后果。
+		return false, "凭据不完整：该企业的上传会直接失败，请补齐 AccessKey / SecretKey"
+	}
+	return true, ""
 }
 
 // emptyTenantStorageView 是「没配过」时的视图：字段齐全但值全是空的。
@@ -504,6 +536,10 @@ func emptyTenantStorageView(cid int64) gin.H {
 		"accessKeyMasked":     "",
 		"credentialError":     "",
 		"trafficEnabled":      tenantStorageTrafficEnabled(),
+		// 没配过就一定不生效，理由也唯一。这两个字段在 tenantStorageView 里会被重算，
+		// 放在这里是为了让「没配过」与「配了」走同一个渲染路径（前端少一个分支）。
+		"activeForTenant": false,
+		"inactiveReason":  "尚未配置该企业的自有存储",
 	}
 }
 

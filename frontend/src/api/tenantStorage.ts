@@ -39,8 +39,15 @@ export interface TenantStorageConfig {
   accessKeyMasked: string
   /** 非空说明库里的密文解不开（PII_ENC_KEY 换过），需重新填一次 */
   credentialError: string
-  /** 本期恒为 false：配置尚未参与上传路由 */
+  /** 本进程是否开启了租户存储路由（TENANT_STORAGE_ROUTE）。进程级，不是按企业 */
   trafficEnabled: boolean
+  /**
+   * 这家企业此刻的文件是否真的写进自己的桶。
+   * 与 `trafficEnabled` **不是一回事**：开关开着但这家的 enabled=false 时它仍是 false。
+   */
+  activeForTenant: boolean
+  /** activeForTenant=false 时的原因，可直接展示给超管（五种成因处置方式不同） */
+  inactiveReason: string
 }
 
 export interface TenantStorageSavePayload {

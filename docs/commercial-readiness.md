@@ -4364,3 +4364,85 @@ P2 的前半。目标只有一个：把「哪份配置决定文件落在哪个�
 - 下一轮（P2 后半）：真桶 + 真 nginx + 真回源的端到端验收，后台把「配置已生效 /
   未生效」显式标出来，再决定是否把默认值翻成 on；
 - 之后仍是存量回填（P3）与 `public_base_url` / 密钥轮换（P4）。
+
+## 第六十二轮：按企业的生效状态 + 键前缀跨包契约（2026-11-13，真桶验收未完成）
+
+上一轮结尾写的是「下一轮做真桶 + 真 nginx + 真回源的端到端验收，并把按企业的
+『配置已生效 / 未生效』标出来」。这一轮**只完成了后半句**，前半句没做成，
+原因如实写在本节最后——不写成「已验证」。
+
+### 一、按企业的生效状态（做完）
+
+上一轮的 `trafficEnabled` 只答「配置保存后能不能生效」（进程级开关），
+答不了「这家此刻是不是真的在用自有桶」。这两件事在运营现场是不同的动作：
+前者是部署决策（找运维），后者是配置问题（去改）。所以补两个字段：
+
+| 字段 | 答什么 |
+| --- | --- |
+| `trafficEnabled` | 本进程开没开租户存储路由（`TENANT_STORAGE_ROUTE`） |
+| `activeForTenant` | 这家此刻的文件是不是真的写进自己的桶 |
+| `inactiveReason` | 未生效时的**具体成因文案** |
+
+五种成因，处置方式完全不同，所以不能压成一个 bool：
+
+1. 尚未配置 → 去填；
+2. 配置未启用 → 设计如此，勾上即可；
+3. 驱动是本地磁盘 → 要改驱动（`NeedsSnippet` 判为平台存储）；
+4. 本进程未开启路由 → 改配置没用，要找运维；
+5. 凭据不完整 → 最急：生效了但上传会直接失败。
+
+判定顺序刻意与「谁会先挡住上传」一致，且第 5 条排在最后并明写后果。
+对话框顶部提示从两态扩成三态（已生效 / 路由开了但这家没生效 / 路由没开），
+中态直接把 `inactiveReason` 显示出来。
+
+### 二、键前缀跨包契约（做完，这才是 R1 缺的那一环）
+
+`tools/nginx-r1-check` 用桩上游验证的是 **nginx 语义**（路径映射、Host/SNI、
+缓存头、Range）。它验不了另一件事：**Go 侧写对象的键前缀，与 nginx 侧
+`location` 认的路径，是不是同一个东西**。两边各自独立拼字符串：
+
+- `storage.ObjectKeyFor` → `TenantKeyPrefix + cid + "/"`；
+- `nginxsnippet.writeLocation` → `location ^~ /uploads/t/<cid>/`。
+
+任何一边被改，症状都是「对象写进去了、URL 也返回了、取图 404」，后台配置显示正常。
+新增 `TestLocationPrefixMatchesGoObjectKey` / `TestRewriteKeepsObjectKeyIntact`
+把两个实现绑在一起（放在 `internal/storage` 包内：那里的文件被
+`TestRefWiringGate` 的写侧 sanctioned 名单跳过；放 nginxsnippet 包会同时撞上
+「storage 已 import nginxsnippet」的导入环与那条守门，两个坑都踩过）。
+
+反向验证三处，各自红在自己那一行：
+
+| 反向动作 | 结果 |
+| --- | --- |
+| `TenantKeyPrefix` 改成 `t2/`（nginx 侧没跟） | 红 |
+| `location` 忘了带 cid | 红 |
+| `rewrite` 顺手多剥一层 `t/<cid>/` | 红 |
+
+### 三、真桶端到端验收：**没做成**
+
+计划：起一个本地 MinIO → 用 `uploadroute.DBLoader` + `Resolver` 真上传 →
+用同一行配置生成 snippet → 起 nginx 反代 → 把对象取回来比对字节。
+这是唯一能把「我们从来没对真 S3 端点跑过 PutObject」这一条补掉的办法。
+
+卡点：`docker pull minio/minio:latest` 在本机跑了 **15 分 38 秒没有任何进展**，
+最终手动终止。本地镜像里也没有 S3 兼容服务（只有 nginx/mysql/golang/node 等）。
+**所以这一轮没有真桶证据**，不做替代性宣称——用桩服务器冒充真桶只会得到
+一个「看起来验过了」的结论，这正是本项目一直在防的那类失败。
+
+补的办法（下一轮或有人有外网时）：拉取 `minio/minio` 后按上面那条链路跑一遍；
+或用一份真实 OSS/S3 的测试桶（凭据只放临时环境变量，不落库不落盘）。
+
+### 门禁
+
+- `go vet ./...` 0；`go test ./... -count=1` **32 个包**全绿；
+- `TEST_MYSQL_DSN`：`TestAPIFlowMySQL` 20 条 PASS + `TestMySQLMigrations`；
+- 前端：`vue-tsc --noEmit` 0、全量 Vitest **97 文件 / 1632 用例**、`eslint` 0、
+  `vite build --outDir dist-check-activefor` 0；
+- `gofmt -l` 本轮文件干净；`openapi.yaml` 经 `yaml.safe_load` 校验（106 paths），
+  `TenantStorageConfig` 新增 `activeForTenant` / `inactiveReason`。
+
+### 边界与下一步
+
+- 开关仍默认 off，本轮不翻默认值；
+- 真桶验收仍是唯一未完成的 P2 事项（见上）；
+- 之后：存量回填（P3）、`public_base_url` 与密钥轮换（P4）。

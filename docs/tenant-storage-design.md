@@ -457,7 +457,7 @@ type Resolver interface {
 | `internal/uploadroute` | `Resolver`（按 cid 取实例、按 `updated_at` 缓存）、`DBLoader`（单行查询 + 解密）、`Verify`（启动自检表在不在）、`RouteEnabled` |
 | 装配 | `main.go` / `cmd/devserver/main.go` / `buildEngine` 三处；`TENANT_STORAGE_ROUTE` 默认 off，只有 `on/1/true/yes` 才开 |
 | 行为变更 | 只有两处**判定**：`capabilityHandler` 按租户实例判、`signHandler` 按租户实例签。off 下两者等价于旧实现 |
-| 生效状态回报 | 出参 `trafficEnabled` 改为 `uploadroute.RouteEnabled()`，对话框顶部提示随之切换；写死 `false` 会在开关打开后继续骗人 |
+| 生效状态回报 | 出参 `trafficEnabled` 改为 `uploadroute.RouteEnabled()`，对话框顶部提示随之切换；写死 `false` 会在开关打开后继续骗人。第六十二轮补 `activeForTenant` / `inactiveReason`（按企业，五态） |
 
 **键前缀 ⇔ 实例必须同源**（本轮新增的一条硬约束）：
 
@@ -474,11 +474,18 @@ type Resolver interface {
 - `public_base_url` 的消费方（第一阶段恒空 = 走平台统一入口，由 §3.4 的回源段承接）；
 - CDN 刷新按租户分桶（`refreshCDN` 目前按精确 URL 清，统一入口下 URL 已带 `t/<cid>/`，够用）。
 
-> 注：`trafficEnabled` 的显式回报本轮已做（不再硬编码 false），但它回报的是**进程级开关**
-> （本进程会不会按租户路由），不是「这家企业此刻正在用自有桶」。两者不是一回事：
-> 开关打开而某企业 `enabled=false` 时，它仍走平台存储。所以界面文案写的是
-> 「启用后即刻生效」而不是「已在生效」——这个区分必须留着。下一轮若要做按企业的
-> 「正在生效」徽标，另出一个字段（例如 `activeForTenant`），**不要复用这一个**。
+> ✅ 第六十二轮已按上面的区分补了 `activeForTenant` + `inactiveReason` 两个字段：
+> `trafficEnabled` 只答「配置保存后能不能生效」（进程级），`activeForTenant` 答
+> 「这家此刻是不是真的在用自有桶」，未生效时 `inactiveReason` 说明是五种成因里的哪一种
+> （未配置 / 未启用 / 驱动是 local / 进程未开路由 / 凭据不完整）——五种成因的处置动作
+> 完全不同，只回一个 bool 会让超管拿着 false 去猜。界面顶部提示据此分三态。
+>
+> 另外补了一条跨包契约守门 `TestLocationPrefixMatchesGoObjectKey`：
+> `storage.ObjectKeyFor` 拼出的键前缀必须**等于** `nginxsnippet` 生成的
+> `location ^~ /uploads/t/<cid>/` 前缀。两边各自独立拼字符串，任何一边被改
+> （`t/` → `tenants/`、location 漏了 cid、rewrite 多剥一层）都是「写进去了、URL 也有、
+> 取图 404」，且后台显示正常。这条是 R1 里真正缺的那一环：不是 nginx 语义对不对，
+> 而是 Go 侧写的键与 nginx 侧认的路径是不是同一个东西。
 
 守门与验证（第六十一轮实跑）：
 
