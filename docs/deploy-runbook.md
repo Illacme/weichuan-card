@@ -822,21 +822,33 @@ go run ./cmd/thumbbackfill -force
 边缘节点会继续喂一年前的旧 `_thumb`，页面全 200、控制台零报错，只是流量一点没省
 ——和 §5.2.6 那次预览图事故是同一类静默失败。浏览器 Ctrl+F5 只清本地，不算验收。
 
-**验证**（Purge 之后）：
+**验证**（Purge 之后，两件事要分开验）：
 
 > 清除请求成功**只代表 Cloudflare 收到了请求**，不确认真的清掉了缓存（官方明确说明）。
-> 所以必须看响应头：Purge 后首次请求应为 `MISS`（开了 Tiered Cache 可能是 `EXPIRED`），
-> 再次请求**同一个** URL 才变 `HIT`。首次就 `HIT` 说明前缀没匹配上，回去查填法。
+> 另外 **Standard 缓存级别下 `?cb=<随机值>` 是另一个 cache key**：打一个带随机串的
+> 新 URL 必然 `MISS`，这只能证明「CDN 在正常缓存」，**证明不了旧缓存被清掉了**。
+> 要验 Purge 是否生效，必须打**不带查询串的原始 URL**。
 
 ```bash
-# 强制 MISS 取一张真实缩略图，看它确实是调色板 PNG
-curl -s "https://<域名>/uploads/<某个随机名>_thumb.png?cb=$RANDOM" -o /tmp/t.png
-python3 -c "b=open('/tmp/t.png','rb').read(26); print('PNG color type =', b[25], '(3 = 调色板)')"
-# 期望 3；若是 2/6（真彩）说明拿到的还是旧副本，Purge 没生效
+# A) 验「旧缓存确实被清掉」：同一个不带查询串的 URL 连打两次（用 GET，别用 HEAD）
+URL="https://<域名>/uploads/<某个真实缩略图名>_thumb.png"
+curl -s -o /dev/null -D - "$URL" | grep -iE 'cf-cache-status|cache-control'
+# 首次期望 MISS / EXPIRED（开了 Tiered Cache）；首次就 HIT 说明前缀没匹配上
+curl -s -o /dev/null -D - "$URL" | grep -iE 'cf-cache-status|cache-control'
+# 第二次期望 HIT，且 cache-control: public, max-age=31536000, immutable
 
-# 同一个 URL（含同一个 cb 随机值）再打一次，看 cf-cache-status: HIT
-curl -sI "https://<域名>/uploads/<同一个>_thumb.png?cb=<同一个随机值>" \
-  | grep -iE 'cache-control|cf-cache-status'
+# B) 验「源站产物确实是 PNG8」：直接在服务器本地读，最不受 CDN 干扰
+python3 -c "
+import glob
+f = glob.glob('./uploads/**/*_thumb.png', recursive=True)[0]
+b = open(f,'rb').read(26)
+print(f, 'PNG color type =', b[25], '(3 = 调色板)')
+"
+
+# 想从公网也取一份新副本的话（注意：带 ?cb= 的 MISS 是必然的，别拿来判断 Purge）
+curl -s "$URL?cb=$RANDOM" -o /tmp/t.png
+python3 -c "b=open('/tmp/t.png','rb').read(26); print('PNG color type =', b[25], '(3 = 调色板)')"
+# 期望 3；2/6（真彩）说明拿到的还是旧副本
 ```
 
 服务器装了 ImageMagick 的话也可以 `magick identify -format '%[channels] %[colors] colors\n'
