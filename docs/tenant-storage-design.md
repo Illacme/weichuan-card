@@ -432,7 +432,9 @@ MySQL 实跑记录（2026-11-13，本地 `mysql:8.0.46` 容器）：
 | `TestScanIsReadOnlyAndIdempotent` | 两次扫描完全一致 + 库里值一字节不变 |
 | `TestRenderTableGolden` / `TestExitForDistinguishesProblemsFromFailures` | 中文表格对齐与退出码契约的绝对预期 |
 
-边界：**本轮没有 `apply` / `rollback` 子命令**，也不打算在缺幂等与回滚测试之前给出。`--dsn` 刻意没有默认值（避免误连生产）。
+边界：**本轮（第六十四轮）没有 `apply` / `rollback` 子命令**，也不打算在缺幂等与
+回滚测试之前给出。`--dsn` 刻意没有默认值（避免误连生产）。
+第六十五轮在补齐幂等 / 回滚测试之后交付了执行器，见 §4 的 P3 进度。
 
 #### ✅ P1 后半段已落地（2026-11-13 / 第六十轮，表终于能写了）
 
@@ -724,9 +726,20 @@ type Resolver interface {
 > `storage.PlanNormalize` + `internal/refmigrate` + `cmd/storage-backfill plan`，
 > 并在真实 MySQL（44 个迁移 + 13 张表 31 条引用）上取证：15 条待搬、去重 12 个对象、
 > 6 条需人工。命令只读（九张表校验和盘点前后逐字节不变）。
-> **执行器（复制对象 + 改库 + 台账 + rollback）仍未做**，本节验收判据「可搬过去、
-> 可搬回来；对象不删；失败可重跑」原样保留，等执行器落地时逐条校验。
+> **执行器仍未全部完成**，本节验收判据「可搬过去、可搬回来；对象不删；失败可重跑」原样保留，等执行器落地时逐条校验。
 > 详见 §3「✅ 第六十四轮」。
+>
+> **P3 执行器（2026-11-13 第六十五轮）**：`apply` / `rollback` / `status` 已交付，
+> 台账落迁移 `0045_storage_backfill_refs`。**消费同一份计划 JSON，不重扫库**，
+> 并逐条做过期检测（库值不是计划的 Raw 就整批停下）。分成两段：
+> ① 复制对象（只增不删、临时文件 + rename 原子落盘）；
+> ② 改库 + 记台账（**同一个 MySQL 事务**，用 gorm callback 注入记账失败做过原子性反向验证）。
+> `writeRef` 是比较并交换，预检到提交之间有人改库也不会被覆盖。
+> 真实 MySQL 8.0 取证：dry-run 零写入 → apply 3 条引用 / 1 个对象 → 重跑零改动 →
+> rollback 后九张业务表 `CHECKSUM` 与搬迁前逐字节一致、对象仍在；
+> 四种拒绝场景（含异常条目的全量计划 / 过期计划 / 篡改目标键 / 目标半截对象）均退出码 2。
+> **仍未做**：按 `company_id` 回源真桶的 S3 适配器与「真桶 + 存量对象」灰度，
+> 这也是 `TENANT_STORAGE_ROUTE` 翻默认值剩下的前置条件。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→

@@ -47,6 +47,12 @@ func TestRefWiringGate(t *testing.T) {
 		// 不允许各自直接调纯函数——否则「读写从哪进」这件事就散在十几个 handler 里了。
 		filepath.Join(root, "handler", "resourceref.go"):      true,
 		filepath.Join(root, "handler", "resourceref_test.go"): true,
+		// 第六十五轮：P3 存量回填执行器。它不是业务写入路径，但**必须**调
+		// ObjectKeyFor / ParseRef 来重算计划里的目标键——直接信计划 JSON 里的
+		// 字符串会把对象搬到别人的租户前缀下，而两端都不报错。这里放行的是
+		// 「校验用的一次重算」，不是第三个键生成入口；它不产出新键，只否决错的键。
+		filepath.Join(root, "refmigrate", "apply.go"):   true,
+		filepath.Join(root, "refmigrate", "execute.go"): true,
 	}
 
 	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|NormalizeOrKeep|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)

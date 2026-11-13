@@ -51,4 +51,5 @@ var expectedMigrations = []string{
 	"0042_mp_theme_two_axis.sql",
 	"0043_drop_template_id.sql",
 	"0044_tenant_storage_configs.sql",
+	"0045_storage_backfill_refs.sql",
 }

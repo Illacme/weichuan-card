@@ -25,5 +25,6 @@ func All() []interface{} {
 		&TenantLicense{},       // 按租户（企业）的授权记录：席位 / 到期 / 功能开关（Phase 4）
 		&StorageUsage{},        // 按租户累计的存储用量（上传字节数 / 文件数，配额检查用）
 		&TenantStorageConfig{}, // 租户自有对象桶配置（按企业登记 endpoint/bucket/凭据密文，只有平台超管可写）
+		&StorageBackfillRef{},  // 存量回填台账（P3；old_value 是回滚依据，见 migrations/0045）
 	}
 }

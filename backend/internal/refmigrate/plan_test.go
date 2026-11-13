@@ -23,7 +23,7 @@ func newDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(
 		&model.Employee{}, &model.OpenApply{}, &model.CompanyInfo{}, &model.CompanyProfile{},
 		&model.AchievementCategory{}, &model.ProjectCase{}, &model.BizService{},
-		&model.HomeLayout{}, &model.MediaCheck{},
+		&model.HomeLayout{}, &model.MediaCheck{}, &model.StorageBackfillRef{},
 	))
 	return db
 }

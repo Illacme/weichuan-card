@@ -4666,3 +4666,107 @@ P3 要的恰好相反：历史形态必须算出「搬完该写成什么」。�
 - 顺带记一条**既有**问题（与本轮无关，未修）：`gofmt -l` 在仓库里有 12 个文件不干净，
   都是早前手工按中文宽度对齐过的结构体字段注释。本轮新增/修改的文件是干净的；
   要让 `gofmt -l` 变成可用信号，需要单独一次纯格式提交。
+
+## 第六十五轮：P3 执行器（2026-11-13，apply / rollback / status）
+
+上一轮交出了只读的盘点与计划，并在最后写着「没有 apply / rollback，也不打算在缺幂等与
+回滚测试之前给出」。这一轮把测试补齐，然后给了命令。
+
+### 一、第一个决定：台账必须落在业务库里
+
+若台账是个 JSON 文件，「改库成功、台账写失败」这个窗口会让那批行**永远回不去**，
+而且没人知道缺了哪几条。放进同一个库之后，「改业务行 + 记台账」可以放在**同一个
+MySQL 事务**里：要么都成，要么都不成。于是三步的失败面被压成这样：
+
+| 步骤 | 在哪 | 失败后重跑 |
+| --- | --- | --- |
+| ① 复制对象 | 对象存储（不可回滚，只增不删） | 目标对象已存在且大小一致 → 跳过，只重试 ② |
+| ② 改库 + 记台账 | **同一个 MySQL 事务** | 全部回滚，业务行与台账一起，库一行未动 |
+
+对象复制用临时文件 + `rename` 原子落盘：写到一半（尤其是进程被 kill、来不及跑
+`defer`）时 `Stat` 看不见目标对象，重跑不会被「存在但短一截」的残件骗过去。
+
+### 二、交付物
+
+| 文件 | 职责 |
+| --- | --- |
+| `migrations/0045_storage_backfill_refs.sql` + `model/backfill.go` | 台账表：一行 = 一条被改写的引用，`old_value` 是回滚依据 |
+| `internal/refmigrate/apply.go` | 计划文件读取与**校验白名单**、`ObjectStore` 接口、`LocalStore`、`Stores.Copy` |
+| `internal/refmigrate/execute.go` | 预检 / `Apply` / `Rollback` / `Status` 状态机 |
+| `cmd/storage-backfill/execute.go` | `apply` / `rollback` / `status` 子命令（判断全在 refmigrate，这里只管参数与打印） |
+
+新增模型同步改了 `model.All()`、`manifest_gen.go`（重跑生成脚本）、
+`TestMySQLMigrations` 的表清单，以及 `ref_p0a_guard_test.go` 的 sanctioned 白名单
+——执行器要调 `ObjectKeyFor` 重算目标键，白名单里写明了「放行的是一次校验用的重算，
+不是第三个键生成入口」。
+
+### 三、执行器拒绝什么（全部整批停下，绝不跳过坏的那条）
+
+跳过会造成「一部分搬了、一部分没搬」：库里从此混着两种形态，而手里那份计划
+既不能重跑（会撞过期检测）也不能直接回滚（台账只有一半）。
+
+1. **计划里有 `foreign-tenant` / `invalid`** → 人工确认，脚本不猜；
+2. **过期计划**：库里当前值既不是计划生成时的 `Raw`、也不是 `TargetKey` → 有人在中间改过库；
+3. **库里已是目标键但台账没有 applied 记录** → 谁改的？不能当作「已搬完」；
+4. **篡改的计划**：`Counts` 与 `Items` 条数不符、表名 / 主键与 `Inventory` 对不上、
+   **目标键不等于 `ObjectKeyFor(company_id, source_key)` 的重算结果**；
+5. **源对象不存在** / **目标对象已存在但大小与源不一致**（后者加 `--force` 才覆盖）；
+6. **复制阶段任何一次失败** → 库一行未动；
+7. **回滚时库值已不是搬迁后的值** → 绝不覆盖用户搬迁后改的新值。
+
+第 4 条里的重算是本轮最要紧的一条：直接信计划 JSON 里的 `target_key`，
+被改过的文件会把对象搬到别人的租户前缀下，**两端都不报错**。
+同理，拼 SQL 的列名 / 表名一律取 `Inventory()` 的代码常量，
+计划文件里那些字符串只用来对账——否则一个文本文件就成了 SQL 注入面。
+`--force` 只放宽对象覆盖，**绝不放宽库值检测**（有单测专门钉这一条）。
+
+### 四、真实 MySQL 8.0 取证（`weichuan_backfill_demo`，0045 实跑）
+
+`./server migrate` 应用 0045（1 个迁移），`SHOW CREATE TABLE` 得到 15 列 + 唯一键
+`uk_backfill_refs_plan_ref(plan_hash, ref_id)`；注释用 utf8mb4 连接复查完整保留。
+
+用 `tools/backfill-fixture/seed.sql` 的 company 7 子集（4 条引用、3 条待搬、
+去重 1 个对象）跑完整链路：
+
+| # | 动作 | 结果 |
+| --- | --- | --- |
+| ① | `apply` 不加 `--yes` | 自动按 dry-run，10 张表 `CHECKSUM` 逐字节不变，目标目录仍为空 |
+| ② | `apply --yes` | 复制 1 个对象、改写 3 条引用；三张表的值都变成 `t/7/shared-logo.png`；台账 3 行 `applied`；目标对象字节与源一致 |
+| ③ | `apply --yes` 再跑 | 复制 0 / 改写 0 / 跳过 1 个对象 3 条引用；台账仍 3 行 |
+| ④ | `rollback`（不加 `--yes`） | 只打印「待回滚 3 条」，零写入 |
+| ⑤ | `rollback --yes` | 3 条改回 `/uploads/shared-logo.png`；**九张业务表校验和与搬迁前逐字节一致**；对象仍在（R5）；台账 3 行 `rolled_back` |
+| ⑥ | 全量计划（含 6 条异常）`apply` | 退出码 2，拒绝 |
+| ⑦ | 计划生成后改一行库值再 `apply` | 退出码 2，且人工修改的值原样保留 |
+| ⑧ | 把计划里 `target_key` 改成 `t/9/...` | 退出码 2，报「应是 t/7/…，计划里是 t/9/…」 |
+| ⑨ | 目标对象写成 1 字节半截 | 退出码 2；加 `--force` 后用源（20 字节）覆盖成功 |
+| ⑩ | 回滚后重跑 | 复用台账行，仍是 3 行、状态回到 `applied` |
+
+### 五、反向验证（7 处，全红后还原、零漂移）
+
+| 改坏什么 | 谁变红 |
+| --- | --- |
+| 不重算目标键 | `TestApplyRefusesTamperedTargetKey` |
+| 去掉 `writeRef` 的比较并交换 | `TestWriteRefIsCompareAndSwap`（单值列与数组元素两例） |
+| 过期计划也照搬 | `TestApplyStopsOnStalePlan` / `TestForceDoesNotBypassStaleDBValue` |
+| 放行含异常条目的计划 | `TestApplyRefusesPlanWithProblems` |
+| 把「改库 + 台账」从事务里拿出来 | `TestTransactionRollsBackDBWhenLedgerInsertFails`（gorm callback 在第 3 条记账处注入失败） |
+| `Put` 改成直接写目标路径 | `TestLocalStorePutNeverExposesPartialObject` |
+| `RefID` 忽略数组下标 | `TestRefIDIsStableAndIndexSensitive` |
+
+第六处在写的过程中还发现**测试本身是假的**：第一版 `TestLocalStorePutIsAtomic` 只断言
+「失败后没有残留文件」，而「直接写目标 + `defer` 删除」也能通过——它测的是清理，
+不是原子性。于是补了并发观察用例：让 reader 在第一次 Read 后卡住，在写到一半的窗口里
+`Stat` 目标键，必须看不见对象。改用直接写目标后，这条才真的变红。
+
+### 六、边界与下一步
+
+- **本轮对象复制只有本地盘适配器**（`--source-dir` → `--target-dir`，各租户共用根目录、
+  键自带 `t/<cid>/` 不会串号）。`ObjectStore` 接口已按 `Stat/Open/Put` 三个动作收好，
+  真桶侧接 minio-go 的 `GetObject`/`PutObject`/`StatObject` 即可；
+  缺目标配置时**不许回退到平台盘**，必须显式报错。
+- **下一步**：按 `company_id` 解密 `tenant_storage_configs` 组装真桶适配器，
+  复用 `tools/s3-e2e`（versitygw）做「真桶 + 存量对象」灰度。这是
+  `TENANT_STORAGE_ROUTE` 翻默认值剩下的最后一个前置条件。
+- P4 仍待：密钥轮换 `key_id`、`public_base_url` / `public_read` 消费方、审计前端标签、
+  配额口径、解约后清理策略。
+- `gofmt -l` 的 12 个既有文件仍未动（上一轮记的那条，需单独一次纯格式提交）。

@@ -121,6 +121,22 @@ func dbColumn(t *testing.T, model any, goField string) string {
 	return f.DBName
 }
 
+// TestInventoryLabelsAreUnique 是执行器的前提：计划 JSON 里用 Label 标识列，
+// 执行器靠 columnByLabel 把它解析回代码常量。标签重名时解析会变得不确定，
+// 而「不确定」在执行器里意味着改错表——所以必须在盘点侧就唯一。
+func TestInventoryLabelsAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, col := range Inventory() {
+		if col.Label == "" {
+			t.Errorf("Inventory 里有空标签（%s.%s）", reflect.TypeOf(col.Model).Elem().Name(), col.Col)
+		}
+		if seen[col.Label] {
+			t.Errorf("Inventory 里标签 %q 重复", col.Label)
+		}
+		seen[col.Label] = true
+	}
+}
+
 // TestInventoryHasNoDuplicateColumn 同一条「表 + 列」不许出现两次。
 // 重复的症状是报告里出现两行同名数据、合计翻倍，而库里的数据只有一份——
 // 执行器照计划执行会重复复制同一个对象、重复改同一行。

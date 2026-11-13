@@ -175,7 +175,7 @@ go build -o licensectl ./cmd/license
 - 这两个子命令是 `scripts/backup.sh` / `restore.sh` / `restore_drill.sh` 的底层，
   容器部署时由脚本 `docker exec` 调用，原生部署可设 `SERVER_BIN` 直接跑。
 
-### 存量回填盘点：cmd/storage-backfill（P3，只读）
+### 存量回填：cmd/storage-backfill（P3 盘点 + 执行）
 
 多租户自有存储（`docs/tenant-storage-design.md`）上线前，必须知道**库里还有多少条
 历史形态资源引用**（`/uploads/x.jpg`、绝对 URL、无前缀裸键）、分布在哪些表 / 列，
@@ -189,23 +189,42 @@ go build -o storage-backfill ./cmd/storage-backfill
   --dsn 'root:pw@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true' \
   --base-url 'https://card.example.com/uploads'
 
-# 单租户试点 + 落 JSON（下一轮执行器读这份，不要自己再扫库）
+# 单租户试点 + 落 JSON（apply / rollback 读这份，不要自己再扫库）
 ./storage-backfill plan --dsn "$DSN" --company 7 --out /tmp/plan.json
 
 # CI：有串号 / 非法值时退出码 2
 ./storage-backfill plan --dsn "$DSN" --fail-on-problem
+
+# 先预检（零写入）；不加 --yes 时 apply / rollback 自动按 dry-run 处理
+./storage-backfill apply --plan /tmp/plan.json --dsn "$DSN" \
+  --source-dir /var/lib/weichuan/uploads --target-dir /tmp/tenant-root
+./storage-backfill apply    --plan /tmp/plan.json --dsn "$DSN" --source-dir … --target-dir … --yes
+./storage-backfill status   --plan /tmp/plan.json --dsn "$DSN"
+./storage-backfill rollback --plan /tmp/plan.json --dsn "$DSN" --yes
 ```
 
-- **它不写任何数据**：不 UPDATE、不 INSERT、不访问对象存储。九张表的 `CHECKSUM TABLE`
+- **`plan` 不写任何数据**：不 UPDATE、不 INSERT、不访问对象存储。九张表的 `CHECKSUM TABLE`
   在盘点前后逐字节一致（取证方法见 `docs/commercial-readiness.md` 第六十四轮）。
-- `--dsn` **没有默认值**，刻意如此：默认值意味着某天有人在生产 shell 里少打一个参数就直接读生产。
-- `--base-url` 传 `UPLOAD_BASE_URL`（形如 `https://host/uploads`）；留空时退到「`/uploads/` 段匹配」。
-- 退出码：0 正常 / 1 出错 / 2 有需人工处理的条目（仅 `--fail-on-problem`）。`go run` 不传递
-  子进程退出码，验证退出码要用 `go build` 的产物。
+- **`apply` / `rollback` 会改库**，但只消费 `--plan` 指定的那份 JSON，**绝不重扫库**。
+  计划是某一时刻看到的库，重扫一次看到的是另一个时刻的库；执行器对每条引用做过期检测，
+  值对不上就整批停下（退出码 2），绝不跳过坏的那条。
+- 三步分工：**① 复制对象**（只增不删、原子落盘）与 **② 改库 + 记台账**（同一个 MySQL 事务）
+  分开。① 失败库一行未动；② 失败业务行与台账一起回滚，不留「改了库却没有回滚依据」的半截状态。
+  台账表 `storage_backfill_refs` 由迁移 `0045` 建，`old_value` 就是回滚依据。**必须跑 migrate**。
+- `--base-url` 传 `UPLOAD_BASE_URL`（形如 `https://host/uploads`），用来剥历史绝对 URL；
+  留空时退到「`/uploads/` 段匹配」。
+- `--dsn` / `--plan` / `--source-dir` / `--target-dir` **都没有默认值**，刻意如此：
+  缺目标目录时绝不能悄悄回退到平台盘——那会复制出一堆看似成功的对象，客户桶里其实一个都没有。
+- `--force` 只放宽一件事：目标对象已存在但大小与源不一致时用源覆盖（上次复制到一半的残件）。
+  它**绝不放宽库值的过期检测**：库被别人改过要么停下、要么人工修数据，没有 force 选项。
+- 退出码：0 正常 / 1 命令出错 / 2 数据需人工处理。`go run` 不传递子进程退出码，
+  验证退出码要用 `go build` 的产物。
 - 7 种归类的处置各不相同（`platform` 永不搬、`foreign-url` 原样保留、`foreign-tenant` /
   `invalid` 必须人工），理由写在 `internal/refmigrate/plan.go` 的 `Class` 注释里。
-- **没有 `apply` / `rollback`**：搬迁跨对象存储与 MySQL 两个非事务系统，必须先有幂等与
-  回滚测试才敢给会改数据的命令。
+- **本轮对象复制只有本地盘适配器**（`--source-dir` → `--target-dir`，各租户共用根目录，
+  键自带 `t/<cid>/` 不会串号）。按 `company_id` 解密 `tenant_storage_configs`、走 S3
+  `GetObject`/`PutObject` 的真桶适配器与「真桶 + 存量对象」灰度是下一轮，
+  也是 `TENANT_STORAGE_ROUTE` 翻默认值的前置条件。
 - 取证数据：`tools/backfill-fixture/seed.sql`（只能灌进一次性库，文件头部先清九张表）。
 
 ```bash

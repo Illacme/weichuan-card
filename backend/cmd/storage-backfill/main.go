@@ -1,18 +1,20 @@
-// Command storage-backfill 是 P3 存量回填的**盘点命令**：只读，不写库、不搬对象。
+// Command storage-backfill 是 P3 存量回填的**盘点 + 执行**命令。
 //
 // 用法：
 //
-//	storage-backfill plan --dsn 'root:pw@tcp(127.0.0.1:3306)/weichuan' [--base-url URL] [--company N] [--out plan.json]
+//	storage-backfill plan --dsn DSN --out plan.json
+//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-dir DIR [--dry-run] [--yes]
+//	storage-backfill rollback --plan plan.json --dsn DSN --yes
+//	storage-backfill status --plan plan.json --dsn DSN
 //
-// 它回答三个问题，且只回答这三个：
-//  1. 库里有多少条历史形态引用，分布在哪些表/列；
-//  2. 每一条搬完**应该**写成什么键（由 ObjectKeyFor 单点产出）；
-//  3. 哪些是必须人工确认的异常（串号 / 伪协议 / 推不出键）。
+// plan 只读；apply / rollback 会改库，二者**消费同一份计划 JSON，不重扫库**。
+// 计划是某一时刻看到的库，重扫一次看到的是另一个时刻的库——两者相等时看不出
+// 差别，一旦中间有人改了数据，重扫会把新值当成计划的一部分搬走，而回滚依据
+// 仍是手里那份旧计划。所以执行器对每条引用做过期检测，值对不上就整批停下。
 //
-// 为什么没有 apply/rollback 子命令：搬迁由「复制对象 + 改库 + 台账」三步组成，
-// 对象存储与 MySQL 不在同一个事务里，失败必然要能续跑和回滚。在执行器的每一段
-// 都有幂等与回滚测试之前，给出一个会改数据的命令，比不给更危险。
-// 计划与执行必须共用同一份输入：执行器读 --out 写出的 JSON，而不是自己再扫一遍库。
+// 执行器的三步分工（为什么这样切）见 internal/refmigrate/apply.go 的包注释：
+// 复制对象（不可回滚，只增不删）与「改库 + 记台账」（同一个 MySQL 事务）分开，
+// 任一处失败都能原样重跑。
 package main
 
 import (
@@ -38,11 +40,17 @@ func main() {
 	switch os.Args[1] {
 	case "plan":
 		err = runPlan(os.Args[2:])
+	case "apply":
+		err = runApply(os.Args[2:])
+	case "rollback":
+		err = runRollback(os.Args[2:])
+	case "status":
+		err = runStatus(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return
 	default:
-		err = fmt.Errorf("未知子命令 %q（当前只有 plan）", os.Args[1])
+		err = fmt.Errorf("未知子命令 %q（可用：plan / apply / rollback / status）", os.Args[1])
 	}
 	if err != nil {
 		// 「有异常数据」不是「命令失败」：CI 里要能区分「盘点跑挂了（1，去看日志）」
@@ -68,7 +76,7 @@ func exitFor(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, errProblems):
+	case errors.Is(err, errProblems), errors.Is(err, refmigrate.ErrNeedsHuman):
 		return 2
 	default:
 		return 1
@@ -76,22 +84,33 @@ func exitFor(err error) int {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `storage-backfill —— P3 存量资源引用的盘点与计划（只读）
+	fmt.Fprint(os.Stderr, `storage-backfill —— P3 存量资源引用的盘点 / 搬迁 / 回滚
 
-  plan --dsn DSN [--base-url URL] [--company N] [--out FILE] [--json] [--fail-on-problem]
+  plan     --dsn DSN [--base-url URL] [--company N] [--out FILE] [--json] [--fail-on-problem]
+  apply    --plan FILE --dsn DSN --source-dir DIR --target-dir DIR [--dry-run] [--yes] [--force]
+  rollback --plan FILE --dsn DSN [--dry-run] [--yes]
+  status   --plan FILE --dsn DSN
 
+plan（只读）:
   --dsn             数据库 DSN（MySQL 或 SQLite，按形态自动选驱动）
-  --base-url        平台统一入口基址（cfg.UploadBaseURL，如 https://host/uploads）。
-                    用来剥历史绝对 URL；留空时会退到「/uploads/ 段匹配」
+  --base-url        平台统一入口基址（cfg.UploadBaseURL，如 https://host/uploads）
   --company         只盘点这一家（试点用）；默认全量
-  --out             把完整计划写成 JSON（执行器下一轮读它，不再自己扫库）
-  --json            把计划打到 stdout（便于管道）
+  --out             把完整计划写成 JSON（apply / rollback 读它，不再自己扫库）
+  --json            把计划打到 stdout
   --fail-on-problem 发现串号 / 非法值时以退出码 2 结束（CI 用）
 
-退出码：0 正常；1 出错；2 有需要人工处理的条目（仅 --fail-on-problem）。
+apply / rollback（会改数据）:
+  --plan            必填，plan --out 产出的那份 JSON；执行器不重扫库
+  --dsn             必填，无默认值（避免误连生产）
+  --source-dir      平台侧现有对象所在的本地目录
+  --target-dir      目标对象根目录。本轮本地适配器把各租户映射到同一根目录，
+                    对象键自带 t/<cid>/ 前缀，不会串号；真桶按租户回源见 README
+  --dry-run         只做预检，零写入
+  --yes             确认真的执行。不加时自动按 dry-run 处理
+  --force           仅允许「目标对象已存在但大小与源不一致」时用源覆盖；
+                    绝不放宽库值的过期检测
 
-**本命令不写任何数据**：不 UPDATE、不 INSERT、不访问对象存储。
-复制对象与改写库是下一轮执行器的事，它会消费 --out 产出的同一份计划。
+退出码：0 正常 / 需要人工确认时加 --yes；1 命令出错；2 数据需人工处理。
 `)
 }
 
@@ -205,7 +224,7 @@ func printReport(plan *refmigrate.Plan, driver string, company int64) {
 		}
 	}
 
-	fmt.Printf("\n下一步（本轮未实现）：执行器按这份计划复制对象 → 改库 → 记台账，支持 dry-run/force/rollback。\n")
+	fmt.Printf("\n下一步：apply --plan <这份 JSON> --dsn … --source-dir … --target-dir … --dry-run（先预检）。\n")
 }
 
 // renderTable 按**显示宽度**对齐，第一列左对齐、其余右对齐。
