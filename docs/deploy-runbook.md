@@ -957,6 +957,31 @@ python3 -c "b=open('/tmp/t.png','rb').read(26); print('PNG color type =', b[25],
 # 期望 3；2/6（真彩）说明拿到的还是旧副本
 ```
 
+#### 线上实测结论（2026-11-13 11:08，已生效）
+
+Purge 后从公网打**不带查询串**的原始 URL，5 张 `_thumb.png` 首次全部 `MISS`
+（不是 `HIT`，说明旧副本确实被清掉了），响应体 PNG 头齐刷刷是
+`color_type=3 / bit_depth=8`，`cache-control: public, max-age=31536000, immutable`。
+原图仍是 `color_type=6`（RGBA），证明量化只发生在 `_thumb` 链路、原图没被动过：
+
+| 对象 | 原图 | 缩略图 | 降幅 |
+| --- | --- | --- | --- |
+| `cat-1` | 42,686 B（type 6） | 12,917 B（type 3） | −69.7% |
+| `svc-1` | 140,441 B（type 6） | 26,923 B（type 3） | −80.8% |
+| `logo` | 76,966 B（type 6） | 12,426 B（type 3） | −83.9% |
+
+> ⚠️ **「第二次必须 HIT」不是绝对判据**：CF 是任播网络，同一 URL 的连续请求可能落到
+> 不同 PoP。实测 `cf-ray` 尾部在 `PDX` / `HKG` / `SEA` 之间跳，于是
+> `cat-2_thumb.png` 第 2 次仍是 `MISS`、`avatar-gaolixin_thumb.png` 第 3 次又 `MISS`
+> —— 那是**另一个边缘节点第一次见这个对象**，不是 Purge 失败。正确做法：连打 3~5 次，
+> 看是否陆续变成 `HIT` 且 `age` 递增，并用 `cf-ray` 尾部确认是不是换了节点；
+> **别因为一次 MISS 就把正确的配置改掉**。
+>
+> 最硬的双证据是：`cf-cache-status` 首次为 `MISS`（旧缓存已清）**且**该响应的 PNG 头
+> `color_type=3`（边缘发的是新副本）。反过来「首次就 `HIT` + `color_type=6`」才是
+> Purge 没匹配上、旧无损副本还在。单看 `?cb=` 的新 URL 拿到 type 3 不能算数——
+> 那条 URL 必然 MISS，用户实际访问的原始 URL 可能还锁着旧图。
+
 服务器装了 ImageMagick 的话也可以 `magick identify -format '%[channels] %[colors] colors\n'
 /tmp/t.png`，期望 ≤256 colors；上面的 Python 只依赖标准库，任何机器都能跑。
 

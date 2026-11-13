@@ -3365,3 +3365,13 @@ listen :8080 (storage driver=s3)
 > 该日志只有 `applyFile` + `recordVersion` 都成功才会打印，等于同时证明 DDL 成功
 > 与版本已记账。剩余待办仅 ① push、② CF Purge `/uploads/` 验收、
 > ⑤ 确认 `server` 与 `thumbbackfill` 同 revision、⑥ P4 接入路径。
+
+> ✅ **订正（2026-11-13 11:08）**：待办 ②「CF Purge `/uploads/` 验收」**也已闭环**。
+> 用户清除后从公网打不带查询串的原始 URL 实测：5 张 `_thumb.png` 首次全部
+> `MISS`（旧副本已清）、响应体 `color_type=3 / bit_depth=8`（PNG8）、
+> `cache-control: public, max-age=31536000, immutable`；原图仍是 `color_type=6`。
+> 三组体积 `cat-1 42,686→12,917`（−69.7%）、`svc-1 140,441→26,923`（−80.8%）、
+> `logo 76,966→12,426`（−83.9%）。另订正判据：**「第二次必 HIT」不绝对**——
+> CF 任播下 `cf-ray` 在 `PDX`/`HKG`/`SEA` 间跳，换 PoP 会再现一次 MISS，
+> 应连打 3~5 次看陆续 HIT 且 `age` 递增。详见 runbook §4.5.1「线上实测结论」。
+> 剩余待办仅 ① push、⑤ server revision 确认、⑥ P4。
