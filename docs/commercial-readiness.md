@@ -3896,3 +3896,134 @@ album 单独注一次是必要的：cover 与 album 在同一个出参里，只�
   边界清单 §3.2，不是「忘了」；
 - **未做**：③ 写入侧 `NormalizeRef` 收敛（必须留一个 env 能整体回滚）→ ④ 存量回填 P3 +
   迁移 0044 + 生成器接真实 `tenant_storage_configs`。
+  （**订正**：其中「迁移 0044 + 生成器接真实配置表」已由第五十八轮完成，见下一节；
+  ③ 与 ④ 仍未做，顺序不可颠倒。）
+
+---
+
+## 第五十八轮：迁移 0044 建配置表 + 生成器接真实配置表（2026-11-13，对现行数据零行为变更）
+
+### 为什么先做这一步
+
+第五十六轮把 snippet 生成器做出来了，但它的输入是**手写 JSON**（`--targets tenants.json`）。
+这意味着「哪些租户存自己桶里」这个事实只存在于运维的某个文件里，不在库里——
+后台看不到、审计记不到、换个人接手就断。多租户存储要成立，配置必须落表。
+
+本轮先把「表 + 读」做完，**不做写接口**。理由与③的顺序约束有关：写入侧
+`NormalizeRef` 收敛（③）必须做到「一个 env 能整体回滚」，在这之前贸然开一个能改
+桶地址的写接口，等于同时动「对象键形态」和「回源目标」两件互相放大的事。
+表先建好、生成器先能读真配置，③落地后接写接口就是纯加法。
+
+### 做了什么
+
+| 落点 | 内容 |
+| --- | --- |
+| `backend/migrations/0044_tenant_storage_configs.sql` | 19 列 + `company_id` 唯一索引，`InnoDB` / `utf8mb4`，只建表不写数据 |
+| `backend/internal/model/tenant_storage.go` | `TenantStorageConfig`，显式 `TableName()`，两个凭据列 `json:"-"` |
+| `backend/internal/model/all.go` | 进 `model.All()`（否则 devserver / `handler_test` 运行期 `no such table`） |
+| `backend/internal/migrate/manifest_gen.go` | 重跑 `scripts/gen_migrations_manifest.py`（44 个文件） |
+| `backend/internal/repository/storage_config.go` | `ListStorageTargets` + `StorageTarget` 窄视图 + `NginxTarget()` 映射 |
+| `backend/cmd/nginx-snippets/main.go` | 新增 `--dsn`（与 `--targets` 互斥且必须给一个）、原子落盘、零 location 覆盖守卫 |
+| `backend/internal/handler/handler_test.go` | `TestMySQLMigrations` 表清单加 `tenant_storage_configs` |
+
+唯一比设计稿多出来的列是 **`host_header`**：R1 真桶实测（第五十五轮）表明，只给
+`proxy_ssl_verify` + CA + `ssl_name` 而漏 `proxy_ssl_server_name` 会被桶以 **421** 拒绝；
+而这个 Host 的取值逐厂商不同（MinIO path-style、OSS/S3 virtual-hosted-style），
+推导等于猜，所以给一列让超管照控制台抄。
+
+### 关键判断：三种结果必须彼此可区分
+
+这一轮真正的风险不在「能不能读库」，而在**读库失败 / 读成空 / 表不存在**三种情况
+退化成同一种。三者都会返回 `len==0`，症状是「生成器成功、snippet 为空、`nginx -t` 通过、
+平台照常工作」，直到某家租户上传完发现图全裂——而那时距离出错已经很久了。
+
+落地成三条互斥的返回契约，并且各有测试钉住：
+
+| 现场 | 返回值 | 运维看到的文案 |
+| --- | --- | --- |
+| 真的没人配 | `([], nil)` | `共 0 行` + `⚠️ 没有任何租户接管存储` + 退出码 0 |
+| 表不存在 | `(nil, ErrStorageConfigMissing)` | `先跑 ./server migrate 应用迁移 0044（若目录里也没有 0044_...sql，说明发布包不完整）` |
+| 连不上 / 库不存在 | `(nil, 包装后的错误)` | `打开数据库失败（driver=mysql）：Error 1049 ...` |
+
+一个实现细节值得记住：gorm 的 `Migrator().HasTable` **只返回 bool、把 error 吞掉了**，
+所以不能靠它区分「表不存在」和「连不上」；先打一发 `db.Exec("SELECT 1")` 把后者摘出去。
+（真实现场里大多数「连不上」在 `dbopen.Open` 就失败了，`SELECT 1` 兜的是连接随后失效、
+以及将来有人加 `DisableAutomaticPing` 的情形——注释里写清了这层分工，没夸大。）
+
+### 另一组判断：不该做的事
+
+- **不过滤** `enabled=false` 与 `driver=local`。判定只允许在 `Target.NeedsSnippet` 一处
+  （第五十六轮已写明：只判 `enabled` 会在驱动改成 `local` 时留下一条指向不存在桶的
+  `location`，那家租户全站图 404 而后台显示配置是好的）。repository 提前过滤等于把
+  这个单点判定复制成两处。
+- **凭据列不进 SELECT**。生成器只需要 8 个非密文列；`cmd/nginx-snippets` 跑在能写
+  nginx 配置的机器上，把 AccessKey/SecretKey 密文读进内存没有收益、只有风险。
+  用 `StorageTarget` 这个窄类型而不是直接返回模型，是让「缺的列」变成编译错误，
+  而不是靠注释提醒——返回完整模型时 `PublicRead=false` 到底是「库里就是 false」
+  还是「没查这一列」无法分辨，这类误读三个月后一定会发生。
+- **`--targets` / `--dsn` 都不许省略，也不许从环境变量自动取**。这份输出决定线上
+  哪些 `/uploads/t/<cid>/` 被代理到哪个桶；数据源不确定，等于「这次生成用的是哪份配置」
+  无法回答，出事复盘的第一步就断了。两个都给同样拒绝（`--targets` 常是上次演练的残留文件）。
+
+### 落盘安全：两处新增的「拒绝」
+
+1. **原子替换**：写同目录临时文件 → `Sync` → `chmod 644` → `rename`。直接
+   `os.WriteFile` 被中断会留下半截配置，最坏形态是某段 `location` 的 `{` 已写出、
+   `}` 还没写，`nginx -t` 直接 emerg、下次 reload 卡住，而运维看到的是「文件更新过」。
+2. **零 location 不许覆盖非空文件**：配置表被误清、DSN 指到空库、容器挂错卷，
+   三种都会走到这里。默认拒绝并提示 `--allow-empty`；首次部署（目标文件不存在）放行。
+
+### 实测记录（本地 `mysql:8.0.46`，docker `wc-mysql-ci`）
+
+| 验证 | 结果 |
+| --- | --- |
+| 0044 连跑两次（干净库） | 两次 `exit=0`，只有密码 warning；`SHOW CREATE TABLE` 得 19 列 + 唯一索引 + `utf8mb4`，注释全部保留 |
+| `TEST_MYSQL_DSN` + `TestMySQLMigrations` | PASS（经真实 `migrate.Apply` 建表） |
+| `TEST_MYSQL_DSN` + `TestAPIFlowMySQL` | PASS（完整 parity，13 个业务 flow 全绿） |
+| `render --dsn` 对真库（4 行：minio 启用 / oss 启用 / local / s3 停用） | 产出 2 段 `location`，`check --dsn` 对账一致；`status=unknown` 的租户被抖到 stderr |
+| 表不存在 / 库不存在 / 端口不通 | 三种文案互不相同，且**全部不落盘**（目标文件未创建） |
+| 0 行 + 目标非空 | 拒绝并把字节数说出来；`--allow-empty` 后清空并输出「没有任何租户接管存储」 |
+
+### 反向验证（十处，逐点）
+
+| 注入的坏改动 | 红在哪 | 现象 |
+| --- | --- | --- |
+| 模型 `TableName()` 改单数 | `migrations_guard_test.go:104/:107` | 双向各报一条（模型缺迁移 / 迁移多表） |
+| `storageTargetCols` 偷偷加两个凭据列 | `storage_config_test.go:117` | `should not contain "access_key_enc"` |
+| 表缺失分支改成 `return []StorageTarget{}, nil` | `storage_config_test.go:92` | `An error is expected but got nil` |
+| 删 `--targets`/`--dsn` 互斥分支 | `main_test.go:36` | 错误变成 `open tenants.json`，证明它走到了读文件 |
+| 零 location 守卫置假 | `main_test.go:112` | `An error is expected but got nil` |
+| 去掉 `chmod 0644` | `main_test.go`（`TestWriteFileAtomic`） | `expected 0x1a4 / actual 0x180`（0600） |
+| 0044 混入 `ADD COLUMN IF NOT EXISTS` | `apply_test.go:201` | 守门报 MariaDB 方言 |
+| 0044 混入 `INSERT INTO` | `apply_test.go:153` | 守门报「迁移只放表结构」 |
+| `publicBaseUrl` 从白名单移除 | `ref_boundaries_test.go` | 集合多出一项报红 |
+| 模型 json tag 改名躲关键字 | 同上 | 仍红——守门是**双向精确对账**，改成什么都瞒不过 |
+
+### 一个被守门抓到的真事
+
+新增 `TenantStorageConfig` 后 `TestP0bResourceJSONFieldsMatchBoundaryList` 立刻红：
+新模型的 `publicBaseUrl` 落进了「名字带 url」的扫描集合。没人会主动想到
+「配置表里的基址算不算资源引用」，但这条守门逼着回答了一次。
+
+结论写进边界清单 §2：它**确实是 URL，但角色相反**——它是 `ResolveRef(raw, origin)` 里
+`origin` 的候选值，是解析器的**输入**不是输出。对它调 `ResolveRef` 不会裂图，
+只会把配置页显示的基址悄悄改形，而且要到客户启用自有域名之后才暴露。
+这类字段进白名单时单独写了理由，不留「同类合并」的余地。
+
+### 门禁
+
+- `gofmt -l` 本轮改动文件干净；`go vet ./...` exit 0；`go test ./...` 全包绿
+  （handler / storage / model / migrate / repository / cmd 全 PASS）；
+- 前端与小程序零改动 → 未跑 `vue-tsc` / Vitest / eslint / `vite build`；
+- `golangci-lint` 本沙箱无二进制（沿用前几轮结论），用 `go vet` 代偿。
+
+### 边界与下一步
+
+- **已做**：0044 建表、模型进 `model.All()`、repository 窄视图映射、生成器 `--dsn`、
+  对账同源、原子落盘、零 location 守卫、十条守门 + 十处反向验证、MySQL 双次实跑与完整 parity；
+- **未做（且是有意的）**：写接口与后台配置界面。**表现在能读不能写**，生产上只能手工
+  SQL 插入；`access_key_enc` 这一列目前**没有任何代码在写**。看到「表在、生成器能读」
+  就以为功能可用，是这一轮最可能的误读，所以设计稿 §3.2 与 §4 都单独标了这一点；
+- **下一步顺序（不可颠倒）**：③ 写入侧 `NormalizeRef` 收敛（一个 env 可整体回滚）→
+  配置写接口 + 后台界面（`PlatformAdminMiddleware`）→ `UploaderResolver` 5 处注入（P2，
+  此时表里的配置才开始真正承载流量）→ 存量回填 P3。

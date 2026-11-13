@@ -1672,7 +1672,11 @@ func TestMySQLMigrations(t *testing.T) {
 
 	// 校验 migrations 确实建出了关键表（表名与 gorm 模型一致——复数；
 	// 单数名是 2026-10-21 修掉的历史不一致，见 model 包的守门测试）
-	for _, tbl := range []string{"employees", "achievement_categories", "home_layouts", "project_cases", "admins", "open_applies", "card_modify_applies"} {
+	//
+	// tenant_storage_configs 在列表里，是因为 0044 的失败模式特别安静：
+	// 表没建出来时，生成器只会报「表不存在」而平台照常工作，直到某家租户
+	// 上传完发现图全裂。让 parity 在迁移阶段就撞出来。
+	for _, tbl := range []string{"employees", "achievement_categories", "home_layouts", "project_cases", "admins", "open_applies", "card_modify_applies", "tenant_storage_configs"} {
 		var cnt int64
 		require.NoError(t, db.Raw(
 			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", tbl,

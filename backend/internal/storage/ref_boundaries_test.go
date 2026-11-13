@@ -140,7 +140,11 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 
 // TestP0bResourceJSONFieldsMatchBoundaryList 钉住 §2 的字段集合。
 // 名字里带 url/image/logo/cover/avatar/icon/bg/file/album 的 json 字段，
-// 必须是「8 个资源字段 + 4 个已写明理由的非 URL 字段」——新增同类字段必红。
+// 必须是「8 个资源字段 + 5 个已写明理由的非资源字段」——新增同类字段必红。
+//
+// 这条守门在第五十八轮真拦下过一次：新增 model.TenantStorageConfig 时带了
+// publicBaseUrl，没人会主动想到「配置表里的基址算不算资源引用」。红一次，
+// 逼着把「它是 origin 的候选值、是解析器输入」写进清单，比事后回忆可靠。
 func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 	tagRe := regexp.MustCompile(`json:"([^"]+)"`)
 	kw := regexp.MustCompile(`(?i)(url|image|logo|cover|avatar|icon|bg|file|album)`)
@@ -176,11 +180,16 @@ func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 		// 8 个真资源字段
 		"avatar": true, "logo": true, "videoUrl": true, "videoBackupUrl": true,
 		"cover": true, "icon": true, "bgImage": true, "url": true,
-		// 4 个同名但不是 URL 的白名单（理由见清单 §2）
+		// 5 个同名但不是「资源引用」的白名单（理由见清单 §2）
 		"videoFallbackUrl": true, // bool 开关
 		"bgMask":           true, // int 蒙层浓度
 		"bgId":             true, // 内置背景 id
 		"files":            true, // 存储用量累计文件数
+		// publicBaseUrl 是唯一「确实是 URL、但角色相反」的一条：它是租户自有访问域名，
+		// 也就是 ResolveRef(raw, origin) 里 origin 的候选值——解析器的**输入**，不是输出。
+		// 对它调 ResolveRef 不会裂图，只会把配置页显示的基址悄悄改形，而且要到客户
+		// 启用自有域名之后才暴露。第五十八轮新增模型时被这条守门抓到，登记在案。
+		"publicBaseUrl": true,
 	}
 	require.Equal(t, want, got,
 		"资源相关 json 字段集合变了：新增字段必须判断是不是 URL，并登记到边界清单 §2")

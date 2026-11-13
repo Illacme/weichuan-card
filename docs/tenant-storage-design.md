@@ -1,8 +1,25 @@
 # 多租户自有存储 · 详细设计（第一阶段）
 
-> **状态：设计稿，未实施。** 本轮只做代码事实核查与设计，没有改任何生产代码、
-> 没有写迁移、没有动线上 nginx。文中所有文件路径、标识符与行号都来自
-> 2026-11-13 对仓库的实读，不引用印象。
+> **状态：部分实施。** 本文原为设计稿（2026-11-13 首版只做代码事实核查），
+> 后续多轮已按 §4 分期推进，当前进度：
+>
+> | 已落地 | 轮次 / 落点 |
+> | --- | --- |
+> | 出参侧资源引用解析（9 条公开 GET + signHandler + 后台 R11–R15） | 第五十三、五十七轮 |
+> | R1 按租户前缀反代可行性验证（36 项断言） | 第五十五轮，`tools/nginx-check/` |
+> | nginx snippet 生成器（`nginxsnippet` + `cmd/nginx-snippets`） | 第五十六轮 |
+> | 写入侧落带前缀裸键（W1–W7） | 第五十六轮 |
+> | 迁移 0044 建 `tenant_storage_configs` + 模型进 `model.All()` | 第五十八轮 |
+> | 生成器接真实配置表（`--dsn`，含对账同一来源） | 第五十八轮 |
+>
+> | **尚未落地**（按既定顺序，不可颠倒） | 影响 |
+> | --- | --- |
+> | 配置写接口 + 后台界面（掩码 / 自检 / 审计，仅平台超管） | 目前表能读不能写：生产上只能手工 SQL 插入 |
+> | 写入侧 `NormalizeRef` 收敛（③，必须一个 env 能回滚） | 落库形态仍是三种混存 |
+> | `UploaderResolver` + 5 处注入（P2） | 上传仍走平台那一套存储，`--dsn` 生成的 snippet 暂无实际流量 |
+> | 存量回填 P3 | 老数据仍是绝对 URL / `/uploads/` 形态 |
+>
+> 文中所有文件路径、标识符与行号都来自对仓库的实读，不引用印象。
 >
 > 关联决策：`docs/commercial-readiness.md` 第五十二轮。方向由用户明确选定为
 > **多租户各自用自己的存储（数据主权 / 产品能力）**，架构分叉由用户明确选定为
@@ -246,6 +263,57 @@ type Ref struct {
   企业管理员侧不暴露写接口、菜单隐藏、连读接口都不给。表里的密文列 `json:"-"`，
   模型上永远不参与序列化。
 
+#### ✅ 已落地（2026-11-13 / 第五十八轮）
+
+迁移 `backend/migrations/0044_tenant_storage_configs.sql` 已建表，模型
+`backend/internal/model/tenant_storage.go` 已进 `model.All()`。与上面草案的差异只有一处：
+
+**多了 `host_header` 列**（草案里没有）。理由是 R1 真桶实测（第五十五轮）：只给
+`proxy_ssl_verify` + CA + `ssl_name` 而漏掉 `proxy_ssl_server_name` + `proxy_ssl_name`，
+请求被桶以 **421** 拒绝。而这个 Host 的取值**逐厂商不同**——MinIO 走 path-style、
+OSS/S3 走 virtual-hosted-style，桶名拼在 endpoint 前面还是后面不是一条通用规则。
+所以给一列让超管照控制台抄，胜过写一段「智能推断」。
+
+实际执行的三条口径：
+
+1. `public_base_url` / `public_read` / `key_id` 三列**建了但当前无人消费**。
+   它们是为「客户自有域名」与「密钥轮换」留的位置，写进表比下一轮再动表便宜；
+   但也意味着后台若有界面，这三项现在不该出现在表单上（填了不生效比不填更坏）。
+2. 凭据列 `access_key_enc` / `secret_key_enc` 走 `pii.Encrypt` 密文（与 0024 的
+   `company_wx_app.app_secret` 明文策略**不同**：那次靠「读取只回掩码」就够了，
+   本表的凭据要参与真实 S3 签名，漏一次明文就随报错带出去）。
+3. **本轮没有写接口**。配置表目前只能靠手工 SQL 写入，接口与后台界面是下一轮的事。
+   这点必须写明：否则看到「表存在、生成器能读」会以为功能可用。
+   `access_key_enc` 这一列现在**没有任何代码在写**，`pii.Encrypt` 的调用点落地时才补。
+
+守门清单（全部已做反向验证：改坏必红、还原后 sha256 零漂移）：
+
+| 守门 | 位置 | 盯什么 |
+| --- | --- | --- |
+| `TestMigrationsUseMySQL8DDL` / `TestMigrationsCarryNoBusinessData` / `TestManifestMatchesMigrationsDir` | `internal/migrate/` | 0044 不许混入 MariaDB 方言与业务数据；清单登记 |
+| `TestMigrationsTableNamesMatchModels` | `internal/model/` | 模型表名与迁移表名双向一致 |
+| `TestListStorageTargetsMapsAllRows` | `internal/repository/storage_config_test.go` | 逐字段映射；**不过滤** `enabled=false` / `driver=local`，判定只归 `NeedsSnippet` |
+| `TestListStorageTargetsMissingTableIsRecognizable` | 同上 | 表缺失是 `errors.Is(ErrStorageConfigMissing)`，不是一句混在一起的 `Error 1146` |
+| `TestListStorageTargetsEmptyIsSuccess` | 同上 | 空表 = 正常成功。与上一条互为反面，两者都返回 `len==0`，唯一区别是 err |
+| `TestListStorageTargetsNeverSelectsCredentials` | 同上 | `storageTargetCols` 静态断言 + gorm `DryRun` 双保险：凭据列绝不进 SELECT |
+| `TestResolveTargetsRequiresExplicitSource` / `...RejectsBothSources` | `cmd/nginx-snippets/main_test.go` | `--dsn` / `--targets` 必须且只能给一个 |
+| `TestRenderRefusesToWipeExistingSnippet` | 同上 | 零 location 覆盖非空目标文件默认拒绝，要清空必须 `--allow-empty` |
+| `TestWriteFileAtomic` | 同上 | 权限 0644（`CreateTemp` 是 0600）+ 临时文件不残留 |
+| `TestMySQLMigrations`（表清单新增 `tenant_storage_configs`） | `internal/handler/handler_test.go` | 0044 在真实 MySQL 8.0 上必须建出这张表 |
+
+MySQL 实跑记录（2026-11-13，本地 `mysql:8.0.46` 容器）：
+- 0044 连跑两次退出码均为 0、只有密码 warning，`SHOW CREATE TABLE` 得到 19 列 + 唯一索引 +
+  `utf8mb4`，注释全部保留；
+- `TEST_MYSQL_DSN` 跑 `TestMySQLMigrations` 与 `TestAPIFlowMySQL`（完整 parity，含全部业务
+  flow）全绿；
+- 生成器对真库（4 行：minio 启用 / oss 启用 / local / s3 停用）实跑，产出 2 段 location，
+  `check --dsn` 对账一致；三种失败现场（表不存在 / 库不存在 / 端口不通）的错误文案互不相同，
+  且**全部不落盘**。
+
+一个不值得复制的坑：0044 的注释里原本有一句「（`CREATE TABLE IF NOT EXISTS` 在 MySQL 8.0
+合法）」，被 `TestMigrationsTableNamesMatchModels` 扫成一张**叫 `IF` 的幽灵表**并报红——
+那个正则不剥注释。注释改写成「建表语句自带 `IF NOT EXISTS`」才过。
+
 ### 3.3 `UploaderResolver`（P2）
 
 ```go
@@ -385,6 +453,10 @@ type Resolver interface {
 | **P3** | 存量搬迁命令（dry-run / force / rollback，记录 `old_url → object_key → config`） | 可搬过去、可搬回来；对象不删；失败可重跑 | 搬迁幂等 + 反向验证 |
 | **P4** | 密钥轮换、审计前端标签、配额口径、数据保留 / 解约后清理策略 | 换钥匙后老配置仍可解；解约租户数据按策略清理 | `key_id` 分支覆盖 |
 
+> **P1 进度（2026-11-13 第五十八轮）**：前两项已落地（迁移 0044 + 模型进 `model.All()`，
+> 生成器可读），**配置界面与写接口未做**。已落地的守门见 §3.2「守门清单」；
+> 后半段（掩码回显 / 自检按钮 / `PlatformAdminMiddleware` / 越权集成测试）仍是待办。
+
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→
 `eslint .` → `vite build --outDir dist-check-*` → nginx-check → `git diff --check`，
@@ -441,3 +513,14 @@ type Resolver interface {
 > 再谈接入 `NormalizeRef` / `ResolveRef`。
 >
 > 第一阶段试点口径（单租户 + 公开读桶，§3.4）是设计默认值，进入 P2 前复核，不阻塞 P0。
+>
+> ✅ **补充（2026-11-13 / 第五十八轮）**：本轮只做「表 + 读」——迁移 0044、模型、
+> repository 映射、生成器 `--dsn`、以及全部守门。**没有**写接口、没有后台界面、
+> 没有接线到上传链路，因此对现行数据与线上行为零变更（本表无人写入 = 零行 =
+> 生成器输出与手写 JSON 时一致）。
+>
+> 明确的下一步顺序（不可颠倒）：
+> 1. ③ 写入侧 `NormalizeRef` 收敛——必须先做到「一个 env 能回滚」；
+> 2. 配置写接口 + 后台界面（仅平台超管，挂 `PlatformAdminMiddleware`）；
+> 3. `UploaderResolver` + 5 处注入（P2），此时表里的配置才开始真正承载流量；
+> 4. 存量回填 P3。
