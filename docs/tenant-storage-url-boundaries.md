@@ -1,13 +1,13 @@
 # 多租户自有存储 · P0b 业务 URL 边界清单
 
-> **状态：清单 + 源码级守门已落地；出参侧（9 条公开 GET + signHandler）已接入；
-> 写入侧（W1 上传 / W2 素材 / W3 小程序码 / W5 预签名）已接入带归属前缀的对象键
+> **状态：清单 + 源码级守门已落地；出参侧（9 条公开 GET + signHandler + R11–R15 后台出口）
+> 已全部接入；写入侧（W1 上传 / W2 素材 / W3 小程序码 / W5 预签名）已接入带归属前缀的对象键
 > （`t/<cid>/...` / `p/...`；本地驱动仍存驱动返回的相对 URL，严格裸键 + nginx R1
 > 属云驱动阶段）。**
 > 所有行号来自 2026-11-13 对仓库的实读。守门在
 > `backend/internal/storage/ref_boundaries_test.go`。
 >
-> 关联：`docs/tenant-storage-design.md` §3.1 / §4、`docs/commercial-readiness.md` 第五十三轮。
+> 关联：`docs/tenant-storage-design.md` §3.1 / §4、`docs/commercial-readiness.md` 第五十三／五十七轮。
 
 ---
 
@@ -95,9 +95,13 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 **两个隐藏边界**（守门单独钉住，最容易漏）：
 
 - `ProjectCase.Album`（`models.go:198`）是 `json:"-"`、列 `column:album;type:json`，
-  **存的是 URL 数组字符串**，靠 `handler/content.go:745-746` 的 `projectToMap`
-  与 `handler.go:275-284` 的 `json.Unmarshal` 展开成 `album` 数组出参。
+  **存的是 URL 数组字符串**，靠 `handler/content.go:767` 的 `projectToMap`
+  与 `handler.go:291-297` 的 `json.Unmarshal` 展开成 `album` 数组出参。
   它不在 json 字段集合里，按「扫 json tag」找边界必然漏掉。
+  模型方法解不开 JSON 字符串，所以**只能在两处展开点手工调 `model.ResolveResourceRefs`**
+  （`content.go:776`、`handler.go:297`）——守门 `TestAlbumExpansionSitesResolved`
+  钉住「展开点恰好 2 处，且这两处必须调 `model.ResolveResourceRefs`」：
+  数量变了就报红，逼人重新确认「新增的展开点接了没有」，而不是等线上裂图。
 - `MediaCheck.ObjectKey`（`media_check.go:31`，`json:"objectKey"`）是从 URL 反推的裸键；
   P0 之后 `mediachk.ObjectKey`（`mediachk.go:159`）那段反推逻辑应退休。
 
@@ -138,20 +142,36 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 
 ### 3.2 其它出参出口
 
-| # | 位置 | 标识符 | 说明 |
+| # | 位置 | 标识符 | 接入情况 |
 | --- | --- | --- | --- |
-| R10 | `handler/wechat.go:238,271` | `gin.H{"url": url}` | 小程序码；私有桶走 `resolveWxacodeURL` 限时签名 |
-| R11 | `handler/content.go:70,105,114,121,220` | `"data": ci` / `"data": cp` | 后台企业信息 / 公司简介，模型直接序列化 |
-| R12 | `handler/content.go:331,360` | `"data": projectToMap(p)` | 后台案例详情 / 编辑，`album` 在这里展开 |
-| R13 | `handler/content.go:227,380` | `"data": list` | 后台列表，模型数组直接序列化 |
-| R14 | `handler/apply.go:837` | `"data": e` | 申请表 / 员工模型（含 `avatar`） |
-| R15 | `handler/settings.go:73` / `handler/wechat_admin.go:91` | `"data": items` / `rows` | 后台列表类，形态各异 |
+| R10 | `handler/wechat.go:238,271` | `gin.H{"url": url}` | 小程序码；私有桶走 `resolveWxacodeURL` 限时签名（第五十三轮已接） |
+| R11 | `handler/content.go:72,111,129,230` | `"data": ci` / `"data": cp` | 后台企业信息 / 公司简介 GET + PUT，**第五十七轮已接**（GET 就地解析、PUT 对副本解析） |
+| R12 | `handler/content.go:347,376` → `:775-776` | `"data": projectToMap(p)` | 后台案例详情 / 编辑，**第五十七轮已接**：`p.ResolveRefs()` + `album = model.ResolveResourceRefs(album)` |
+| R13 | `handler/content.go:239,397`（列表）/ `:255,418`（POST 回显） | `"data": list` / `"data": resp` | 后台分类 / 服务，**第五十七轮已接**（`for i := range list { list[i].ResolveRefs() }`） |
+| R14 | `handler/apply.go:109`（`/api/employee/me`）、`:842`（员工导出） | `"data": e` | 员工模型（含 `avatar`），**第五十七轮已接** |
+| R15 | `handler/settings.go:73` / `handler/wechat_admin.go:91` | `"data": items` / `rows` | **核查后判定无需接**（见下） |
 
-> R11–R15 说明一件事：**出参侧不该逐点改 handler**。模型直接序列化是主流，
-> 逐个 `gin.H` 补 `ResolveRef` 一定会漏，而且每新增一个后台接口就多一处漏点。
-> 真正接线时应在**统一序列化出口**（model 的 marshal hook 或在 repository 层
-> 统一投影）做一次，再用本清单逐点验收。这个决策留到 P0b 之后的实现轮拍板，
-> 本轮只把边界钉死。
+**R15 为什么不需要接**（这属于判断，不是漏点，所以写清依据）：
+
+- `settings.go:73` 出的是 `setting.All()`，即 `setting/setting.go` 的配置项元数据
+  （`miniprogram_base_url` / `upload_base_url` / `upload_video_max_mb` 等）。这些是
+  **基址与阈值**，不是某张图的引用；`setting.go` 里也**没有任何** logo/image/avatar 类键
+  （已 grep 确认零命中）。将来若要加「品牌 LOGO 走设置项」，那一刻它才变成资源字段，
+  必须同步 §2 与 `model/refs.go`。
+- `wechat_admin.go:91` 出的是 `buildBindingRows` 产出的 `wechatBindingRow`
+  （`Kind`/`ID`/`Name`/`CompanyID`/`CompanyName`/`WechatBound`/`WXOpenidMasked`/`CreatedAt`），
+  `wechat_admin.go:191-228` 逐字段看过，**不含任何资源字段**。刻意不塞 `avatar` 也是隐私口径：
+  这个接口是「按 openid 反查绑定关系」的运维入口，回传越多越像信息泄露面。
+
+> **原方案已作废**：本清单初版建议「在统一序列化出口（model marshal hook 或 repository 层）
+> 一次做掉，不要逐点改 handler」。实装时放弃了这个方案，理由有两条：
+> 一是 `gin.H` 内联出参（`/api/company`、`/api/team`、`/api/projects/:id`、`/api/home-layout`、
+> `projectToMap`）根本不经过模型序列化，marshal hook 覆盖不到，会留下一半接了一半没接的裂缝；
+> 二是 marshal hook 意味着**任何**序列化都自动改写，包括将来可能出现的「原样回吐给写接口」
+> 路径——那正是把 `/uploads/...` 写回库的入口。
+> 逐点改的代价是「新增接口要记得接」，对策是把清单和守门当作验收关卡（§4），
+> 并且用 `TestAlbumExpansionSitesResolved` 钉住「album 展开点必须调解析」，
+> 让漏点变成红测试而不是线上裂图。
 
 ### 3.3 端上消费契约（改 URL 形态必须两端对账）
 
@@ -184,6 +204,11 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 `TestRefWiringGate`（在 `ref_p0a_guard_test.go`，原 `TestP0aRefIsNotWiredIntoProduction`）一样，在真正接线时会变红——
 那是要求「按清单逐点接入、逐点把断言改成已接入」的信号，不是让人删断言。
 实装轮已把该守门升级为三集合对账（见 §5.2），出参侧接入后由它兜底「写入侧 API 不出 storage 包」。
+
+第五十七轮在同文件（`ref_p0a_guard_test.go`）新增 `TestAlbumExpansionSitesResolved`：
+盯 `album` 的两处展开点数量与解析调用。它守的是**清单之外的漏点**——
+`album` 不在 json 字段集合里，`TestP0bResourceJSONFieldsMatchBoundaryList` 看不见它，
+只能靠「展开点必须带解析」这一层拦住。
 
 ---
 
@@ -270,3 +295,56 @@ sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `st
 
 **仍未做**：严格裸键（库里只写 `t/<cid>/x`）、nginx R1（`/uploads/`→桶 反代）、
 `NormalizeRef` 收敛、存量回填、迁移 0044、云驱动多桶切换——下一阶段。
+
+### 5.4 后台出参收口（2026-11-13 / 第五十七轮，对现行数据零行为变更）
+
+第五十三轮只接了**公开**那 9 条 + `signHandler`，R11–R15 这五组后台出口一直挂着「未接」。
+本轮补齐，理由不是「清单要求」，而是一个具体的失效场景：
+
+> **后台裂图比公开页裂图难被发现。** 公开页坏了立刻有人报；后台是运营一个人看到编辑页
+> 预览破图，第一反应通常是「前端 bug」，而此时公开页正常，排查方向直接被带偏。
+
+写入侧还没收敛成裸键，所以这一步对现行数据是 no-op（库里是 `/uploads/...` 或云绝对 URL，
+`ResolveRef` 原样返回）。它接的是**将来**：写入侧一旦收敛成 `t/<cid>/x`，
+后台与公开页同时认，不会出现「一半好一半坏」。
+
+**实际改动**：
+
+| 落点 | 改动 |
+| --- | --- |
+| `model/refs.go` | 新增 `ResolveResourceRefs([]string) []string`（nil/空原样返回，避免 `null`→`[]` 的契约变化）；重写注释，把覆盖范围明确为「所有出参」并写入落地纪律 |
+| `handler/content.go` | GET company-info / company-profile 就地 `ResolveRefs()`；PUT 两者用 `resp := x; resp.ResolveRefs()`；categories/services 的 GET 走 `for i := range list`、POST 回显用副本；`projectToMap` 加 `p.ResolveRefs()` + `album = model.ResolveResourceRefs(album)` |
+| `handler/apply.go` | `/api/employee/me`（`:109`）与员工导出（`:842`）各加 `e.ResolveRefs()` |
+| `handler/handler.go` | `album` 的 for 循环改为 `model.ResolveResourceRefs(album)`（与 `content.go` 同一实现，两份口径合成一处） |
+| `ref_p0a_guard_test.go` | sanctioned 新增 `content.go` / `apply.go`；新增 `TestAlbumExpansionSitesResolved` |
+
+**落地纪律（本轮最重要的结论，已写进 `model/refs.go` 注释）**：
+**只解析「本次请求不会再写库」的值。**
+
+- GET：查询结果是局部变量，就地解析；
+- PUT/POST：先落库，再对**副本**解析后出参（`resp := x; resp.ResolveRefs()`）。
+
+反过来（先解析再 Save）会把 `/uploads/t/5/x.jpg` 写回库，形态从裸键退回历史形态，
+**而且没有任何报错**——`upload_base_url` 改动影响存量的老问题就是这么复发的。
+这条靠测试钉住：`TestAdminExitsResolveBareKeys` / `TestEmployeeMeResolvesAvatar`
+在断言出参的同时，直接回查 DB 断言仍是裸键。
+
+**新增测试**（`handler/refs_exit_test.go`，三条）：
+
+| 测试 | 钉住什么 |
+| --- | --- |
+| `TestAdminExitsResolveBareKeys` | 后台 company-info 出参把 `t/1/logo.png` 补成 `/uploads/t/1/logo.png`；且 DB 未被污染 |
+| `TestAdminProjectExitResolvesCoverAndAlbum` | cover 走模型方法、album 走展开点手工解析；三元素分别验证「裸键补前缀 / 存量绝对 URL 原样 / 空保持空」 |
+| `TestEmployeeMeResolvesAvatar` | `/api/employee/me` 的 avatar；DB 未被污染 |
+
+**反向验证（逐点，必须做）**：三处解析分别注掉，三条测试各自报红且报在**自己那一行**——
+`refs_exit_test.go:33`（logo）、`:64`（cover）、`:86`（avatar）；
+再单独只注掉 album 那一行，报在 `:67`（`t/1/a1.jpg` vs `/uploads/t/1/a1.jpg`）。
+四处还原后哈希零漂移、三测复绿。
+
+**门禁**：`gofmt -l` 本轮改动文件干净（仓内另有 5 个既有文件因结构体字段对齐而长期在列，
+非本轮引入，要统一应单独一轮做格式化基线）、`go vet ./...` 通过、
+`go test ./...` 全包绿（handler 50s、storage 6s）。前端零改动 → 未跑 vue-tsc / Vitest / eslint / build。
+
+**仍未做**：严格裸键、`NormalizeRef` 收敛（写入侧）、存量回填、迁移 0044、
+生成器接真实配置表（`tenant_storage_configs` → snippet）。

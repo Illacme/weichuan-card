@@ -3823,3 +3823,76 @@ include /www/server/panel/vhost/nginx/tenant-storage/*.conf;
 按第五十五轮定的顺序，第 2 步是**出参侧认裸键**：`storage.ResolveRef` 对 `t/<cid>/...`
 补 `<origin>/uploads/` 前缀，`/uploads/` 与绝对 URL 两种历史形态保持原样。
 这一步对现行数据零行为变更，可以先做；但真正写入裸键前，生成器必须先接上真实配置表并跑过一遍。
+
+---
+
+## 第五十七轮：后台出参收口 R11–R15（2026-11-13，对现行数据零行为变更）
+
+> 用户「继续下一步」→ 按第五十六轮结尾给的顺序做第 2 步。落地时发现这一步真正缺的不是
+> 「`ResolveRef` 认不认裸键」（它从第五十三轮起就认），而是「**后台那五组出口有没有调它**」。
+
+### 缺口：公开页认了，后台没认
+
+第五十三轮只接了**公开** 9 条 GET + `signHandler`，边界清单 §3.2 的 R11–R15 一直挂「未接」。
+这是当时刻意的取舍（先做影响面最大的那条），但它留了一个很难被发现的不对称：
+
+> 写入侧一旦收敛成裸键，公开页正常、**后台编辑页裂图**。
+> 公开页坏了立刻有人报；后台是运营一个人看到预览破图，第一反应往往是「前端 bug」，
+> 而公开页一切正常，排查方向直接被带偏。
+
+所以这一步的验收标准不是「清单打勾」，而是「库里放裸键时，后台出参也是可访问 URL」。
+
+### 实际改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `model/refs.go` | 新增 `ResolveResourceRefs([]string) []string`（nil / 空原样返回，避免「没有图集」从 `null` 变成 `[]` 的契约变化）；重写注释，覆盖范围明确为「所有出参」 |
+| `handler/content.go` | GET company-info / company-profile 就地 `ResolveRefs()`；PUT 两者 `resp := x; resp.ResolveRefs()`；categories / services 列表 `for i := range list`、POST 回显用副本；`projectToMap` 加 `p.ResolveRefs()` + `album = model.ResolveResourceRefs(album)` |
+| `handler/apply.go` | `/api/employee/me` 与员工导出各加 `e.ResolveRefs()` |
+| `handler/handler.go` | `album` 的 for 循环改调 `model.ResolveResourceRefs`（与 `content.go` 合成一处口径） |
+| `ref_p0a_guard_test.go` | sanctioned 新增 `content.go` / `apply.go`；新增 `TestAlbumExpansionSitesResolved` |
+| `handler/refs_exit_test.go`（新增） | 三条接线测试（见下） |
+
+### 落地纪律：只解析「本次请求不会再写库」的值
+
+- GET：查询结果是局部变量，就地解析；
+- PUT/POST：**先落库，再对副本解析出参**（`resp := x; resp.ResolveRefs()`）。
+
+反过来（先解析再 Save）会把 `/uploads/t/5/x.jpg` 写回库，形态从裸键退回历史形态，
+**而且没有任何报错**——`upload_base_url` 影响存量的老问题就是这么复发的。
+
+### 反向验证（逐点，四处）
+
+| 注掉的解析 | 报红位置 | 实测信息 |
+| --- | --- | --- |
+| `ci.ResolveRefs()`（后台 company-info） | `refs_exit_test.go:33` | `t/1/logo.png` ≠ `/uploads/t/1/logo.png` |
+| `p.ResolveRefs()`（projectToMap cover） | `refs_exit_test.go:64` | `t/1/cover.jpg` ≠ `/uploads/t/1/cover.jpg` |
+| 仅 `album = model.ResolveResourceRefs(...)` | `refs_exit_test.go:67` | `t/1/a1.jpg` ≠ `/uploads/t/1/a1.jpg` |
+| `e.ResolveRefs()`（employee/me） | `refs_exit_test.go:86` | `t/1/av.jpg` ≠ `/uploads/t/1/av.jpg` |
+
+album 单独注一次是必要的：cover 与 album 在同一个出参里，只注 cover 只能证明 cover 那条通。
+
+### 守门新增：album 展开点
+
+`album` 是 `json:"-"` 的 JSON 数组字符串，模型方法解不开，只能在两处展开点
+（`handler.go:297`、`content.go:776`）手工解析；而它又不在「扫 json tag」的字段集合里，
+`TestP0bResourceJSONFieldsMatchBoundaryList` **看不见它**。
+`TestAlbumExpansionSitesResolved` 因此盯两件事：展开点恰好 2 处；这两处必须调 `model.ResolveResourceRefs`。
+数量变了就报红——逼人重新确认「新加的展开点接了没有」。
+
+### 门禁
+
+- `gofmt -l` 本轮改动文件干净（仓内另有 5 个既有文件长期在列，全是结构体字段对齐差异，
+  非本轮引入，未动）；`go vet ./...` 通过；`go test ./...` 全包绿（handler 50s、storage 6s）；
+- 前端零改动 → 未跑 `vue-tsc` / Vitest / eslint / `vite build`；
+- `golangci-lint` 本沙箱无二进制（沿用上一轮结论，本轮只增 Go 源码）。
+
+### 边界与下一步
+
+- **已做**：R11–R15 五组后台出口、`ResolveResourceRefs`、album 展开点守门、三条接线测试、
+  四处逐点反向验证；
+- **R15 判定无需接**：`settings.go:73` 出的是配置项元数据（基址 / 阈值，`setting.go` 内零 logo 类键），
+  `wechat_admin.go:91` 出的 `wechatBindingRow` 逐字段看过不含资源字段——依据写在
+  边界清单 §3.2，不是「忘了」；
+- **未做**：③ 写入侧 `NormalizeRef` 收敛（必须留一个 env 能整体回滚）→ ④ 存量回填 P3 +
+  迁移 0044 + 生成器接真实 `tenant_storage_configs`。

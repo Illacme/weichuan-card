@@ -67,6 +67,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "data": model.CompanyInfo{CompanyID: cid}})
 			return
 		}
+		// 后台出参也过解析（与公开接口同一口径）：库里是裸键时，编辑页的 logo 预览
+		// 需要一个可访问的 URL。ci 是本次查询的局部变量，解析不会写回库。
+		ci.ResolveRefs()
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ci})
 	})
 	r.PUT("/api/admin/company-info", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -102,7 +105,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			ci.Tel = req.Tel
 			ci.Logo = req.Logo
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ci})
+		// 已经落库了，这里解析的是**副本**：直接改 ci 再 Save 会把 /uploads/t/5/x.jpg
+		// 写回库，形态从裸键退回历史形态且无任何报错（见 model/refs.go 的落地纪律）。
+		resp := ci
+		resp.ResolveRefs()
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
 	// ===== 公司简介 + 视频（按租户） =====
@@ -118,6 +125,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if cp.VideoSource == "" {
 			cp.VideoSource = model.VideoSourceNone
 		}
+		// cover / videoUrl / videoBackupUrl 三处都可能来自上传，后台预览要用可访问 URL
+		cp.ResolveRefs()
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
 	})
 	r.PUT("/api/admin/company-profile", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -217,13 +226,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
+		resp := cp
+		resp.ResolveRefs()
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
 	// ===== 业绩分类（按租户） =====
 	r.GET("/api/admin/categories", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		var list []model.AchievementCategory
 		db.Where("company_id = ?", targetCompanyID(c)).Order("sort asc").Find(&list)
+		for i := range list {
+			list[i].ResolveRefs()
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": list})
 	})
 	r.POST("/api/admin/categories", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -237,7 +251,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "新建业绩分类", "保存失败，请稍后重试", err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": req})
+		resp := req
+		resp.ResolveRefs()
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 	registerSortRoute(r, db, "/api/admin/categories/sort", &model.AchievementCategory{}, targetCompanyID)
 	r.PUT("/api/admin/categories/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -377,6 +393,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.GET("/api/admin/services", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		var list []model.BizService
 		db.Where("company_id = ?", targetCompanyID(c)).Order("sort asc").Find(&list)
+		for i := range list {
+			list[i].ResolveRefs()
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": list})
 	})
 	r.POST("/api/admin/services", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -395,7 +414,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "新建业务服务", "保存失败，请稍后重试", err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
+		resp := s
+		resp.ResolveRefs()
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 	registerSortRoute(r, db, "/api/admin/services/sort", &model.BizService{}, targetCompanyID)
 	r.PUT("/api/admin/services/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -748,6 +769,11 @@ func projectToMap(p model.ProjectCase) gin.H {
 	if p.Album != "" {
 		_ = json.Unmarshal([]byte(p.Album), &album)
 	}
+	// 后台出参与公开 /api/projects/:id 同一口径：库里是裸键时也要补回 /uploads/ 前缀，
+	// 否则运营在编辑页看到封面/图集破图，而公开页正常——这种「一半好一半坏」最容易被
+	// 当成前端 bug 排查半天。p 是入参的值副本，解析不会影响 DB。
+	p.ResolveRefs()
+	album = model.ResolveResourceRefs(album)
 	return gin.H{
 		"id":             p.ID,
 		"categoryId":     p.CategoryID,

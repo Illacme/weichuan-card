@@ -14,13 +14,17 @@ import (
 
 // P0b 出参侧接入 + 写入侧接线守门：
 //
-// 第五十三轮接了出参侧（9 条公开 GET + signHandler），第五十四轮接写入侧
-// （W1 上传 / W2 素材 / W3 小程序码 / W5 预签名改用带前缀键）。守门现在守四件事：
+// 第五十三轮接了公开出参（9 条公开 GET + signHandler），第五十四轮接写入侧
+// （W1 上传 / W2 素材 / W3 小程序码 / W5 预签名改用带前缀键），第五十七轮把后台出参
+// （R11–R15：content.go 的公司信息/简介/分类/案例/服务、apply.go 的「我的」与导出）也收口。
+// 守门现在守四件事：
 //  1. 写入侧 API（NormalizeRef / ObjectKeyFor / ParseRef / IsNormalizedRef）只允许在
 //     sanctioned 写侧 / 出参侧文件出现，防止有人把键生成散落到后台接口；
 //  2. storage.ResolveRef 只允许在 model/refs.go 内调用（集中口径，handler 走 model 封装）；
 //  3. model.ResolveResourceRef / .ResolveRefs() 只许在出参侧 sanctioned 文件调用，
-//     防止有人顺手把解析接到后台接口（R11–R15）或写入路径，绕过边界清单。
+//     防止有人顺手把解析接到写入路径（那会让解析值被 Save 回库，形态静默退回历史形态）；
+//  4. album 这类「模型方法解不开、只能在展开点手工解析」的字段，展开点必须跟着解析
+//     （见 TestAlbumExpansionSitesResolved）。
 //
 // 若将来要扩展接入点，先更新本守门的 sanctioned 集合与 docs/tenant-storage-url-boundaries.md，
 // 而不是把断言删掉。
@@ -37,6 +41,8 @@ func TestRefWiringGate(t *testing.T) {
 		filepath.Join(root, "handler", "upload.go"):          true, // W1 上传主入口用 ObjectKeyFor 生成带前缀键
 		filepath.Join(root, "handler", "assets.go"):          true, // W2 素材采用用 ObjectKeyFor 落 p/ 前缀
 		filepath.Join(root, "handler", "wechat.go"):          true, // W3 小程序码用 ObjectKeyFor 落 p/ 前缀
+		filepath.Join(root, "handler", "content.go"):         true, // 后台内容类出参（R11–R13）+ projectToMap 的 cover/album
+		filepath.Join(root, "handler", "apply.go"):           true, // 小程序「我的」与后台员工导出（avatar）
 	}
 
 	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)
@@ -81,6 +87,54 @@ func TestRefWiringGate(t *testing.T) {
 		"storage.ResolveRef 只允许在 model/refs.go 内调用；违规：%v", resolveRefOffenders)
 	require.Empty(t, resolveOffenders,
 		"ResolveResourceRef / ResolveRefs 只允许在出参侧 sanctioned 文件调用；违规：%v", resolveOffenders)
+}
+
+// album 是多租户存储里最特殊的资源字段：`json:"-"`、列类型 json、存的是 URL 数组字符串，
+// 模型方法（ResolveRefs）解不开它，只能在两处展开点手工解析。
+//
+// 这条守门盯两件事：
+//  1. 展开点数量必须还是 2（公开 /api/projects/:id、后台 projectToMap）。新增第三处、
+//     或者某处被删，都要在这里显式确认——否则新展开点忘了解析，表现只是「后台图集裂图」；
+//  2. 有展开点的文件必须真的调了 model.ResolveResourceRefs。
+func TestAlbumExpansionSitesResolved(t *testing.T) {
+	const root = ".."
+	const wantSites = 2
+	albumUnmarshal := regexp.MustCompile(`json\.Unmarshal\(\[\]byte\(\w+\.Album\)`)
+
+	sites := 0
+	var unparsed []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if p == filepath.Join(root, "storage") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(p) != ".go" || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		src := string(b)
+		n := len(albumUnmarshal.FindAllString(src, -1))
+		if n == 0 {
+			return nil
+		}
+		sites += n
+		if !strings.Contains(src, "model.ResolveResourceRefs(") {
+			unparsed = append(unparsed, p)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, wantSites, sites,
+		"album 展开点数量变了（%d→%d）：新增/删除展开点都必须同步解析与 docs/tenant-storage-url-boundaries.md", wantSites, sites)
+	require.Empty(t, unparsed, "这些文件展开了 album 却没调 model.ResolveResourceRefs：%v", unparsed)
 }
 
 // ref.go 必须是纯函数集合：不注册 init、不碰文件系统 / 数据库 / 全局配置，

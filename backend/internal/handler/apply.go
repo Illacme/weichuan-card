@@ -103,6 +103,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				companyShortName = comp.ShortName
 			}
 		}
+		// 出参解析：头像是资源引用，库里是裸键（t/<cid>/x）时必须补回 /uploads/ 前缀。
+		// 少了这一步，小程序 assetUrl 会把裸键当相对路径拼成 /t/5/x.jpg（少一层 uploads），
+		// 头像静默裂图——请求 200、无报错。e 是本次查询的局部变量，解析不影响 DB。
+		e.ResolveRefs()
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "data": e, "pendingModify": pending > 0,
 			// 是否已绑定微信：「我的」页据此显示「已绑定 / 点击绑定」。
@@ -834,9 +838,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			TargetID:   strconv.FormatInt(id, 10),
 			Detail:     map[string]any{"companyId": e.CompanyID},
 		})
+		// 导出给运营看的也是「可访问 URL」，不是库里的裸键，与其它出参同一口径。
+		e.ResolveRefs()
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": e})
 	})
-
 	// 超管修改自己密码
 	r.PUT("/api/admin/password", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		adminID := c.GetInt64("staffId")

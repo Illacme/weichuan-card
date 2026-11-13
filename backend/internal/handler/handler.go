@@ -292,11 +292,9 @@ func New(db *gorm.DB) *gin.Engine {
 		if p.Album != "" {
 			_ = json.Unmarshal([]byte(p.Album), &album)
 		}
-		// 出参侧资源引用解析（多租户自有存储 P0b）：cover 与 album 各元素零行为变更。
+		// 出参侧资源引用解析（多租户自有存储）：cover 与 album 各元素零行为变更。
 		// 此接口刻意不设 Cache-Control（见上方注释），故无需考虑缓存时序。
-		for i := range album {
-			album[i] = model.ResolveResourceRef(album[i])
-		}
+		album = model.ResolveResourceRefs(album)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"id":           p.ID,
 			"name":         p.Name,

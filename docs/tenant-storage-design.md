@@ -171,6 +171,15 @@ type Ref struct {
 > 该出参侧已在第五十三轮实际接好（9 条 GET + `signHandler` 全部过 `model/refs.go`），
 > 对现行数据零行为变更。
 >
+> ✅ **后台出参补齐（2026-11-13 / 第五十七轮）**：上面「所有出参序列化点」在第五十三轮
+> 只落实了**公开**那 9 条，后台 R11–R15 五组出口（`content.go` 的 company-info /
+> company-profile / categories / services / `projectToMap`、`apply.go` 的 `/api/employee/me`
+> 与员工导出）当时未接。本轮补齐——裂图在后台更难被发现（公开页正常时，运营只会怀疑前端）。
+> 落地纪律：**只解析「本次请求不会再写库」的值**，PUT/POST 先落库再对副本解析，
+> 否则会把 `/uploads/...` 写回库、把裸键形态静默退回历史形态。
+> `album` 是 `json:"-"` 的 JSON 数组字符串，只能在两处展开点手工调
+> `model.ResolveResourceRefs`，故新增 `TestAlbumExpansionSitesResolved` 盯住展开点数量与解析调用。
+>
 > ✅ **写入侧实装（2026-11-13 / 第五十四轮，本地驱动安全版）**：W1 上传 / W2 素材 /
 > W3 小程序码 / W5 预签名已改为**对象落带归属前缀的键**（`t/<cid>/...` / `p/...`）；
 > `Uploader.Save` 接口由 `Save(fh)` 改为 `Save(fh, key)`，键由 `ObjectKeyFor` 生成。
