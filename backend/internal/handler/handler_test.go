@@ -179,12 +179,17 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// 静态托管需要目录存在
 	require.NoError(t, os.MkdirAll(cfg.UploadDir, 0755))
 	r.Static("/uploads", cfg.UploadDir)
-	RegisterUpload(r, db, cfg, up, refresher)
-	RegisterStorage(r, db, up, refresher, cfg)
-	RegisterAssets(r, db, up, refresher) // 常用素材库（内嵌 Lucide 图标 + 通用封面/LOGO）
-	RegisterWechat(r, db, cfg, up, refresher)
-	RegisterMediaCheck(r, db, cfg, up, refresher) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
-	RegisterSettings(r, db, cfg)                  // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	// 测试里一律用 StaticResolver：所有租户都用同一个 up 实例，与生产
+	// TENANT_STORAGE_ROUTE=off 的默认行为一致。这也让「形状改了、行为没变」
+	// 成为可验证的事实——本文件几十处断言一行没改就全绿。
+	// 需要验证租户分流的用例直接构造 uploadroute.Resolver，不走 buildEngine。
+	res := storage.NewStaticResolver(up, cfg.StorageDriver)
+	RegisterUpload(r, db, cfg, res, refresher)
+	RegisterStorage(r, db, res, refresher, cfg)
+	RegisterAssets(r, db, res, refresher) // 常用素材库（内嵌 Lucide 图标 + 通用封面/LOGO）
+	RegisterWechat(r, db, cfg, res, refresher)
+	RegisterMediaCheck(r, db, cfg, res, refresher) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
+	RegisterSettings(r, db, cfg)                   // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
 
 	return r
 }

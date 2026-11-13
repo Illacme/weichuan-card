@@ -30,11 +30,11 @@ import (
 // refresher 可选：采用路径是固定对象名（library/<素材ID>.<ext>），重复采用 = 覆盖写，
 // 这是全系统少数几个「同名不同内容」的场景（素材库升级换了图），覆盖后必须让 CDN
 // 边缘失效——2026-10-23 之前刷新只挂在上传接口（对象名随机、永不覆盖），等于没接线。
-func RegisterAssets(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher) {
+func RegisterAssets(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher storage.CDNRefresher) {
 	r.GET("/api/assets/file/*path", assetFileHandler)
 	r.GET("/api/assets/posters", posterListHandler)
 	r.GET("/api/admin/assets/library", middleware.AuthMiddleware(db, "admin"), libraryListHandler)
-	r.POST("/api/admin/assets/adopt", middleware.AuthMiddleware(db, "admin"), assetAdoptHandler(db, up, refresher))
+	r.POST("/api/admin/assets/adopt", middleware.AuthMiddleware(db, "admin"), assetAdoptHandler(db, res, refresher))
 }
 
 // assetFileHandler 提供素材预览图（选择器缩略图 + 原图）。
@@ -132,8 +132,18 @@ func posterListHandler(c *gin.Context) {
 }
 
 // assetAdoptHandler 采用素材：复制进上传存储并返回 URL。
-func assetAdoptHandler(db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher) gin.HandlerFunc {
+//
+// 写的是**平台实例**，不是当前租户的实例：对象键是 p/library/<素材ID>.<ext>
+// （见下方的 ScopePlatform），而 p/ 前缀由平台 nginx 的 /uploads/ 回退段托管。
+// 写进客户桶会让「键在平台前缀下、内容在客户桶里」——取图 404，而且因为
+// 采用是幂等覆盖写，谁也不会在第一次就发现。键前缀与实例必须同源。
+func assetAdoptHandler(db *gorm.DB, res storage.Resolver, refresher storage.CDNRefresher) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		up := res.Platform()
+		if up == nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "存储未初始化"})
+			return
+		}
 		var req struct {
 			ID string `json:"id"`
 		}

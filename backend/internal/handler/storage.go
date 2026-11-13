@@ -17,19 +17,26 @@ import (
 )
 
 // RegisterStorage 注册存储增强接口：直传预签名 / 私有桶限时签名 / CDN 刷新 / 本地私有文件流
-func RegisterStorage(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher, cfg config.Config) {
+//
+// 从第六十一轮起这里拿的是 storage.Resolver 而不是单个实例：三条写路径
+// （直传预签名、违规图下架覆盖、普通上传）要按 company_id 取该租户自己的桶。
+// 另外两条（素材采用、小程序码）的对象键前缀写死了 p/，必须留在平台实例上——
+// 见 storage.Resolver.Platform 的注释。
+func RegisterStorage(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher storage.CDNRefresher, cfg config.Config) {
 	// 直传预签名（超管 / 员工）：客户端拿 putUrl 后直接 PUT 到对象存储
-	r.GET("/api/admin/upload/presign", middleware.AuthMiddleware(db, "admin"), presignHandler(db, up))
-	r.GET("/api/employee/upload/presign", middleware.AuthMiddleware(db, "employee"), presignHandler(db, up))
+	r.GET("/api/admin/upload/presign", middleware.AuthMiddleware(db, "admin"), presignHandler(db, res))
+	r.GET("/api/employee/upload/presign", middleware.AuthMiddleware(db, "employee"), presignHandler(db, res))
 	// 存储能力探测：后台「公司简介 → 视频来源」用它判断「云存储上传」档是否可选
-	r.GET("/api/admin/upload/capability", middleware.AuthMiddleware(db, "admin"), capabilityHandler(up, cfg))
+	r.GET("/api/admin/upload/capability", middleware.AuthMiddleware(db, "admin"), capabilityHandler(res))
 	// 私有桶：已存 URL → 限时签名 URL（超管 / 员工）
-	r.POST("/api/admin/storage/sign", middleware.AuthMiddleware(db, "admin"), signHandler(up, cfg))
-	r.POST("/api/employee/storage/sign", middleware.AuthMiddleware(db, "employee"), signHandler(up, cfg))
+	r.POST("/api/admin/storage/sign", middleware.AuthMiddleware(db, "admin"), signHandler(res, cfg))
+	r.POST("/api/employee/storage/sign", middleware.AuthMiddleware(db, "employee"), signHandler(res, cfg))
 	// CDN 刷新（超管）
 	r.POST("/api/admin/cdn/refresh", middleware.AuthMiddleware(db, "admin"), cdnRefreshHandler(refresher))
-	// 本地私有文件流（仅本地驱动 + 私有模式：文件不通过 /uploads 静态公开，需鉴权后读取）
-	if local, ok := up.(*storage.LocalUploader); ok && !cfg.StoragePublic {
+	// 本地私有文件流（仅本地驱动 + 私有模式：文件不通过 /uploads 静态公开，需鉴权后读取）。
+	// 判的是**平台实例**：本路由只会读到平台盘上的文件，租户桶里的对象由客户自己的桶托管，
+	// 不经过这个进程。用 For(0) 只是绕一圈得同一个东西，直接取 Platform() 更明确。
+	if local, ok := res.Platform().(*storage.LocalUploader); ok && !cfg.StoragePublic {
 		r.GET("/api/storage/file", middleware.AuthMiddleware(db, "admin"), localFileHandler(local))
 		r.GET("/api/employee/storage/file", middleware.AuthMiddleware(db, "employee"), localFileHandler(local))
 	}
@@ -44,8 +51,17 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, up storage.Uploader, refresher 
 // ② 签名成功即按 size 记一次用量——**即使随后 PUT 失败也会记**。
 // 这个偏向是有意的：不记就完全统计不到对象存储的用量（那配额等于形同虚设），
 // 记多了只会让该租户早一点看到"空间不足"，用户可核对、平台可调；反过来则永远查不出谁在占。
-func presignHandler(db *gorm.DB, up storage.Uploader) gin.HandlerFunc {
+func presignHandler(db *gorm.DB, res storage.Resolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		cid := uploadCompanyID(c)
+		// 先取实例再判能力：能力是"实例的属性"，不是全局配置的属性。
+		// 顺序反过来（先看全局 cfg.StorageDriver）会在 A 配了桶、B 没配时给出
+		// 「B 也能直传」的结论，而 B 的请求落到本地驱动上必然失败。
+		up, uerr := res.For(cid)
+		if uerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
+			return
+		}
 		p, ok := up.(storage.Presigner)
 		if !ok {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "当前存储模式不支持直传预签名，已回退普通上传"})
@@ -55,7 +71,6 @@ func presignHandler(db *gorm.DB, up storage.Uploader) gin.HandlerFunc {
 		contentType := c.Query("contentType")
 		// size 为可选：老客户端不带 → 不计量也不拦（不能因为缺一个可选参数就让上传失败）
 		size, _ := strconv.ParseInt(c.Query("size"), 10, 64)
-		cid := uploadCompanyID(c)
 		if size > 0 {
 			if okq, msg := checkStorageQuota(db, cid, size); !okq {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
@@ -95,19 +110,37 @@ func presignHandler(db *gorm.DB, up storage.Uploader) gin.HandlerFunc {
 	}
 }
 
-// capabilityHandler 返回当前存储驱动的能力，供后台决定「云存储上传」档能不能选。
+// capabilityHandler 返回**当前租户**的存储能力，供后台决定「云存储上传」档能不能选。
 //
-// 判据：驱动必须是对象存储（非 local），且实现了 Presigner。
+// 判据：该租户实际生效的实例必须是对象存储（非 local），且实现了 Presigner。
 // 本地磁盘驱动下上传视频会把文件落在应用服务器上——磁盘占我们的、出网带宽也算我们的，
 // 与「客户自己承担存储与流量」的前提相悖；没有预签名则大视频只能经服务器中转，
 // 几十上百 MB 走内存拷贝会拖垮服务。两种情况都让界面禁用该档并给出可操作的引导。
-func capabilityHandler(up storage.Uploader, cfg config.Config) gin.HandlerFunc {
+//
+// 第六十一轮把「按全局 cfg.StorageDriver 判」改成「按该租户的实例判」：
+// 全局单值只有一个，而 A 配了自有桶、B 仍走本地盘是常态——按全局判的结果是
+// 后台会给 B 也显示「可直传」，用户选了那一档，直传请求落到本地驱动必然失败，
+// 而界面全程没给出任何提示。
+func capabilityHandler(res storage.Resolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		_, presign := up.(storage.Presigner)
-		driver := cfg.StorageDriver
-		if driver == "" {
-			driver = "local"
+		cid := uploadCompanyID(c)
+		up, uerr := res.For(cid)
+		if uerr != nil {
+			// 配置坏了不静默回退成「看起来能用」：把原因原样回给后台，
+			// 这是企业管理员唯一能看到自家存储出错的地方（写接口只有平台超管能看）。
+			// 用 code=0 + videoUpload=false 而不是 code=1：这是「探测结果」而不是
+			// 「请求失败」，后者会让前端整块降级成 fallback，连 reason 都显示不出来。
+			c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+				"driver":      res.DriverFor(cid),
+				"presign":     false,
+				"videoUpload": false,
+				"videoMaxMb":  setting.GetInt("upload_video_max_mb", 100),
+				"reason":      uerr.Error(),
+			}})
+			return
 		}
+		_, presign := up.(storage.Presigner)
+		driver := res.DriverFor(cid)
 		reason := ""
 		switch {
 		case driver == "local":
@@ -129,8 +162,19 @@ func capabilityHandler(up storage.Uploader, cfg config.Config) gin.HandlerFunc {
 }
 
 // signHandler 私有桶场景：把已存的公网 URL 换成限时签名 URL（key 由 BaseURL 前缀反推）
-func signHandler(up storage.Uploader, cfg config.Config) gin.HandlerFunc {
+//
+// 第六十一轮只改「用哪个实例签」，**不动入参契约**：设计稿 §3.3 原写「改为直接按
+// objectKey 签名」，但那条要求已经不必成立——storage.legacyRel 在基址对不上时会
+// 退到「只认 /uploads/ 段」的兜底，而租户对象存库的形态是
+// <平台入口>/uploads/t/<cid>/x.jpg，从里面反推 t/<cid>/x.jpg 是确定性的。
+// 改入参形态等于让前端跟着改，收益为零、回归面却是一整条链路。
+func signHandler(res storage.Resolver, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		up, uerr := res.For(uploadCompanyID(c))
+		if uerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
+			return
+		}
 		s, ok := up.(storage.Signer)
 		if !ok {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "当前存储模式不支持限时签名访问（仅对象存储私有桶支持）"})

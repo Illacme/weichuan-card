@@ -13,6 +13,7 @@ import (
 	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/pii"
 	"weichuan/internal/storage"
+	"weichuan/internal/uploadroute"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -30,9 +31,10 @@ import (
 // 但本文件任何一个接口若挂成 AuthMiddleware，权限模型从第一天就是漏的。
 // 这条由 TestTenantStorageRoutesUsePlatformAdminGuard 做源码级守门。
 //
-// 这一轮只做「配置能写进去、能自检、能切回默认」。**配置还不承载流量**：
-// 上传 / 出参仍走平台那一个实例，要等 P2 的 UploaderResolver 才真正按租户分桶。
-// 界面上必须写清这一点，否则超管填完会以为已经生效。
+// 这一轮做「配置能写进去、能自检、能切回默认」。配置究竟生不生效由进程的
+// TENANT_STORAGE_ROUTE 决定（第六十一轮接入）：off 时上传/出参仍走平台那一个实例，
+// on 时按 company_id 分流到客户桶。出参里的 trafficEnabled 如实回报这件事，
+// 界面据此切换顶部提示——写死 false 会在开关打开后继续骗人。
 
 // tenantStorageCheckLimitPerMin 自检接口每分钟每管理员的上限。
 //
@@ -469,9 +471,11 @@ func tenantStorageView(row *model.TenantStorageConfig) gin.H {
 			view["credentialError"] = "凭据无法解密（PII_ENC_KEY 与写入时不一致），需重新填一次密钥"
 		}
 	}
-	// 这一轮明确告诉界面「配置尚未承载流量」，由它显示在对话框顶部。
-	// 少这句话，超管填完会以为已经生效——而真正生效要等 P2。
-	view["trafficEnabled"] = false
+	// 这份配置到底生不生效，如实告诉界面。
+	// 第六十一轮起不再是硬编码 false：路由由 TENANT_STORAGE_ROUTE 控制，
+	// 把这句写死会在开关打开后继续骗人说「尚未承载流量」——
+	// 而「填了以为没生效」和「以为生效其实没生效」是同一个错误的两个方向。
+	view["trafficEnabled"] = tenantStorageTrafficEnabled()
 	return view
 }
 
@@ -499,9 +503,15 @@ func emptyTenantStorageView(cid int64) gin.H {
 		"secretKeyConfigured": false,
 		"accessKeyMasked":     "",
 		"credentialError":     "",
-		"trafficEnabled":      false,
+		"trafficEnabled":      tenantStorageTrafficEnabled(),
 	}
 }
+
+// tenantStorageTrafficEnabled 回报「本进程是否已打开租户存储路由」。
+//
+// 单独抽出来是为了两个出参走同一个判定（有行 / 没行）：两处各写一次，
+// 迟早出现「没配过的企业显示未生效、配过的显示已生效」这种自相矛盾。
+func tenantStorageTrafficEnabled() bool { return uploadroute.RouteEnabled() }
 
 // maskCredential 把 AccessKey 打码成「前4****后4」。
 //

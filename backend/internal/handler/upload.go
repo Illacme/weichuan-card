@@ -51,13 +51,14 @@ func uploadLimiter(db *gorm.DB) *middleware.RateLimiter {
 
 // RegisterUpload 注册文件上传接口：超管(/api/admin/upload) 与 员工(/api/employee/upload)
 // 返回可访问 URL，填回封面/相册/头像/LOGO/员工头像等。
-// 存储实现通过 storage.Uploader 注入：本地磁盘（默认）/ MinIO / OSS 可互换，业务代码不变。
+// 存储实例通过 storage.Resolver 注入：平台自带（本地磁盘 / MinIO / OSS）与
+// 租户自有对象桶按 company_id 分流，业务代码不变。
 // refresher 可选：上传后 best-effort 触发 CDN 刷新（覆盖写使边缘旧缓存失效）。
 //
 // 需要 cfg：图片上传后要异步送内容安全检测（media_check_async），
 // 送检地址由 UPLOAD_BASE_URL 拼出来（微信必须能访问到），见 submitMediaCheck。
-func RegisterUpload(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
-	h := uploadHandler(db, cfg, up, refresher)
+func RegisterUpload(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.Resolver, refresher storage.CDNRefresher) {
+	h := uploadHandler(db, cfg, res, refresher)
 	r.POST("/api/admin/upload", middleware.AuthMiddleware(db, "admin"), h)
 	r.POST("/api/employee/upload", middleware.AuthMiddleware(db, "employee"), h)
 	// 访客自助开通申请上传头像：无鉴权公开端点。
@@ -71,7 +72,7 @@ func RegisterUpload(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Up
 	r.POST("/api/apply/open/avatar", uploadLimiter(db).Handler(), h)
 }
 
-func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) gin.HandlerFunc {
+func uploadHandler(db *gorm.DB, cfg config.Config, res storage.Resolver, refresher storage.CDNRefresher) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		form, err := c.MultipartForm()
 		if err != nil {
@@ -85,6 +86,14 @@ func uploadHandler(db *gorm.DB, cfg config.Config, up storage.Uploader, refreshe
 		}
 		// 本次上传计入哪个租户（见 uploadCompanyID）：0 = 平台自身对象，不计量不限配额。
 		cid := uploadCompanyID(c)
+		// 该租户实际生效的存储实例：配了自有桶就写进客户的桶，否则平台实例。
+		// 取不到实例必须整单失败——**绝不退回平台实例**：那会把客户的图写在我们盘上，
+		// 而且从用户视角看不出任何异常（见 storage.Resolver 纪律第 1 条）。
+		up, uerr := res.For(cid)
+		if uerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
+			return
+		}
 		// 写入侧接线（第五十四轮）：新上传的对象一律落到带归属前缀的键——
 		// 平台对象 p/...、租户对象 t/<cid>/...；端上契约不变（仍是 <origin>/uploads/<key>），
 		// 为将来按租户隔离 / 迁移做准备。键由 ObjectKeyFor 生成（含前缀 + 路径穿越校验）。

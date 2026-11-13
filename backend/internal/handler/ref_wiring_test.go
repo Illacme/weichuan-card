@@ -34,7 +34,9 @@ func (stubSigner) SignGetURL(key string, _ time.Duration) (string, error) {
 func TestSignHandlerEmptyBaseFix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.Config{UploadBaseURL: ""}
-	h := signHandler(newStubSigner(), cfg)
+	// 第六十一轮起 signHandler 拿的是 Resolver：桩用 StaticResolver 包一层，
+	// 这样本用例仍然只验证「URL → key 反推」这一件事，不被租户分流干扰。
+	h := signHandler(storage.NewStaticResolver(newStubSigner(), ""), cfg)
 
 	body, _ := json.Marshal(map[string][]string{"urls": {"/uploads/x.jpg"}})
 	w := httptest.NewRecorder()

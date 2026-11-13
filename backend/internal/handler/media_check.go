@@ -48,14 +48,14 @@ var mediaCheckAsync = wechat.MediaCheckAsync
 //   - GET  /api/admin/media-checks     检测记录列表
 //   - GET  /api/admin/media-checks/config  推送配置状态（给后台显示该填什么）
 //   - POST /api/admin/media-checks/:id/takedown  一键下架
-func RegisterMediaCheck(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
+func RegisterMediaCheck(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.Resolver, refresher storage.CDNRefresher) {
 	r.GET("/api/wechat/msgpush", msgPushEcho(cfg))
 	r.POST("/api/wechat/msgpush", msgPushReceive(db, cfg))
 
 	admin := middleware.AuthMiddleware(db, "admin")
 	r.GET("/api/admin/media-checks", admin, listMediaChecks(db))
 	r.GET("/api/admin/media-checks/config", admin, mediaCheckConfig(db, cfg))
-	r.POST("/api/admin/media-checks/:id/takedown", admin, takedownMediaCheck(db, up, refresher))
+	r.POST("/api/admin/media-checks/:id/takedown", admin, takedownMediaCheck(db, res, refresher))
 }
 
 // ---- ① 送检 ----
@@ -430,7 +430,7 @@ func countMediaChecks(db *gorm.DB, companyID int64, status model.MediaCheckStatu
 	return n
 }
 
-func takedownMediaCheck(db *gorm.DB, up storage.Uploader, refresher storage.CDNRefresher) gin.HandlerFunc {
+func takedownMediaCheck(db *gorm.DB, res storage.Resolver, refresher storage.CDNRefresher) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		if id <= 0 {
@@ -452,8 +452,16 @@ func takedownMediaCheck(db *gorm.DB, up storage.Uploader, refresher storage.CDNR
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该记录不可下架（仅命中违规且未处置的记录可下架）"})
 			return
 		}
-		if up == nil {
+		// 下架是**覆盖写** row.ObjectKey：必须写到该对象原本所在的那个桶。
+		// 用平台实例覆盖租户桶里的键，结果是「平台盘上多出一个没人引用的占位图，
+		// 违规图仍在客户桶里活着」——后台显示已下架，用户看到的还是那张图。
+		if res == nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "存储未初始化"})
+			return
+		}
+		up, uerr := res.For(row.CompanyID)
+		if uerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "下架失败：" + uerr.Error()})
 			return
 		}
 		data, contentType := mediachk.PlaceholderFor(row.ObjectKey)

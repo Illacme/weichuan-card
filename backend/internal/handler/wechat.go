@@ -124,7 +124,12 @@ func wxacodeParams(scene, page string) wechat.WXACodeParams {
 // wxacode/<staffID>_poster.jpg），TTL 到期重新生成 = 覆盖写，
 // 覆盖后要让 CDN 边缘失效，否则已分享出去的旧链接会一直拿到旧图
 // （2026-10-23 之前刷新只挂在随机名的上传接口，这条覆盖路径根本没触发）。
-func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) {
+func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.Resolver, refresher storage.CDNRefresher) {
+	// 小程序码对象键固定是 p/wxacode/<staffID>.jpg（平台前缀），所以实例也只能用
+	// 平台那一份：键在平台前缀下、内容写进客户桶，取图必然 404。
+	// 注意这与「按 staffId 归属租户取**凭据**」不冲突——用的是客户的小程序 AppID，
+	// 但产出的图是平台自己生成的资源，由平台 nginx 的 /uploads/ 回退段托管。
+	up := res.Platform()
 	// 按租户取凭据：staffId / companyId → 该企业的小程序凭据，未配则回落
 	// 全局设置（sys_setting）与环境变量。取值链见 wxAppOf。
 	// 之所以不写成「平台模式走全局、企业版走租户」两条分支：全局那一份本来就是

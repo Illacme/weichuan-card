@@ -4258,3 +4258,109 @@ endpoint 不许带 scheme、bucket 不许含路径与 `..`、hostHeader 不许�
 - 私有桶、密钥轮换属 P2/P4；
 - **下一步只剩 P2**：`UploaderResolver` 5 处注入 + 去掉租户级静默降级。做完那一轮，
   这张表才第一次真正决定文件落在哪个桶。
+
+## 第六十一轮：`UploaderResolver` 接入（2026-11-13，只改形状，开关默认 off）
+
+P2 的前半。目标只有一个：把「哪份配置决定文件落在哪个桶」这条路修通，但**不打开它**。
+`TENANT_STORAGE_ROUTE` 默认 off 时注入 `StaticResolver`，进程内只剩一条路径，
+与第六十轮逐字节一致——这就是出事时能一秒退回的那条路。
+
+### 开工前先核出两处文档漂移
+
+设计稿 §3.3 有两条要点在开工时已经过期，照抄会做重复功：
+
+| §3.3 原文 | 实际代码 | 处置 |
+| --- | --- | --- |
+| `presignHandler` 用 `RandName(ext)` 生成裸 key，必须补 `t/<cid>/` | 第五十四轮 W5 已改成 `storage.ObjectKeyFor(scope, cid, name)` | 划掉，标「已落地」 |
+| `signHandler` 改为直接按 `objectKey` 签名 | `legacyRel` 的 `/uploads/` 兜底已能从 `<平台入口>/uploads/t/<cid>/x.jpg` 反推 `t/<cid>/x.jpg` | 划掉，本轮只换实例、不动入参契约（前端零改动） |
+
+同时把 Resolver 从四个方法收缩成三个（`For` / `Platform` / `DriverFor`）：
+`PresignerFor` / `SignerFor` / `RefresherFor` 都会退化成「先 For 再断言」，
+而且静态、租户两套实现要各写一遍。同一个口子写三遍，漏一处的症状是
+「A 租户能直传、B 租户不能」，查起来比现在多绕两圈。
+
+### 一条新发现的硬约束：键前缀 ⇔ 实例必须同源
+
+量注入点时才发现，五个 handler 里只有 **3 处写** 需要按租户分流，
+另 2 处的对象键前缀就写死了平台：
+
+| 写路径 | 键前缀 | 实例 |
+| --- | --- | --- |
+| 普通上传 / 直传预签名 / 违规图下架覆盖 | `t/<cid>/` | `For(cid)` |
+| 素材采用（`assets.go`） | `p/library/` | `Platform()` |
+| 小程序码（`wechat.go`） | `p/wxacode/` | `Platform()` |
+
+`p/` 由平台 nginx 的 `/uploads/` 回退段托管。若把这两处改用租户实例，
+结果是「键在平台前缀下、内容在客户桶里」→ 取图 404；而这两处都是
+**固定对象名 + 幂等覆盖写**，第一次错不会有人发现（直到某天有人点开那张图）。
+所以加了一条源码级守门，逐文件钉死 `For` / `Platform` 的用法。
+
+顺带澄清一个措辞：`newUploaderWithFallback` 是**平台级**的，本轮之前并不存在
+「租户级降级」；这一轮的纪律是**新代码不许复用它**，不是删掉它。
+
+### 落地的四条口径
+
+1. **无静默降级**：读配置失败 / 解密失败 / 缺凭据 / 缺基址 → `code:1`，
+   错误文案里明写「已按要求不回退平台存储」。客户以为文件在自己桶里、实际躺在
+   平台盘上，没有任何人会报错，比上传失败严重得多；
+2. **判定复用 `nginxsnippet.Target.NeedsSnippet`**：Go 侧「要不要用租户桶」与 nginx 侧
+   「要不要生成回源段」必须是同一个判定。各写一份的结果是「上传写进客户桶、
+   nginx 还在从平台盘回源」→ 全站 404 而后台配置显示正常；
+3. **缓存按 `updated_at`**：只缓存「构造实例」这一半，配置行每次读一行（唯一索引单行查询）。
+   第六十轮的 PUT 走 gorm `Updates`，会自动刷新 `updated_at`，改完立即生效、不必重启；
+4. **启动自检**：`on` 时先校验 `tenant_storage_configs` 存在，缺表直接 Fatal 并给出
+   「跑 `./server migrate`」。不这么做的话，缺表会让**所有租户**的上传同时不可用
+   （不读表就不知道谁配了桶），而第一现场只有一句 MySQL 1146。
+
+### 行为变更只有三处，且都在「判定」上
+
+- `capabilityHandler`：从「按全局 `cfg.StorageDriver` 判」改成「按该租户的实例判」。
+  旧实现在「全局 local + A 企业已有自己桶」时会把 A 的「云存储上传」档禁用；
+- `signHandler`：从「用平台实例签」改成「用该租户实例签」；
+- `trafficEnabled`（配置接口出参）：从硬编码 `false` 改成 `uploadroute.RouteEnabled()`，
+  对话框顶部提示随它切换「配置已生效 / 尚未承载流量」。这是本轮自己引入的必须修项：
+  开关能打开之后，写死的「尚未承载流量」会在生效后继续骗人，
+  而「填了以为没生效」与「以为生效其实没生效」是同一个错误的两个方向。
+
+### 反向验证（改坏一处 → 对应用例必须红）
+
+| 反向动作 | 谁红了 |
+| --- | --- |
+| `capabilityHandler` 退回按全局驱动判 | `TestCapabilityJudgesTenantInstanceNotGlobalConfig` |
+| `For` 读配置失败时静默回退平台实例 | `TestForLoadErrorNeverFallsBack` |
+| `DBLoader` 不再判 `NeedsSnippet`（禁用行也当启用） | `TestDBLoaderSkipsRowsThatDontNeedSnippet` |
+| 素材采用改用 `res.For(0)`（`p/` 前缀写到客户桶） | `TestUploadWritesRouteByObjectKeyPrefix` |
+| `TENANT_STORAGE_ROUTE` 默认改为打开 | `TestRouteEnabledOnlyOnExplicitValues`（8 个「关」子用例全红） |
+
+每次改回后文件零漂移、全包复绿。
+
+### 端到端冒烟（devserver，`TENANT_STORAGE_ROUTE=on`）
+
+对一个匿名上传端点连打三次，只改库里的配置行：
+
+| 状态 | 结果 |
+| --- | --- |
+| 该企业没有配置行 | `code:0`，URL `/uploads/t/1/<rand>.png`（平台实例） |
+| 有行、`enabled=1`、凭据为空 | `code:1`，`企业 1 的自有存储不可用（已按要求不回退平台存储…）：凭据不完整` |
+| 删掉配置行 | `code:0`，回到平台实例 |
+
+另外 `off` 态启动日志里**没有任何** `[STORAGE]` 行，`on` 态恰有一行——
+证明开关两侧真的是两条不同的装配路径，而不是同一条路加了个空判断。
+
+### 门禁
+
+- `go vet ./...` 0；`go test ./... -count=1` **32 个包**全绿（handler 约 54s）；
+- `TEST_MYSQL_DSN`：`TestAPIFlowMySQL` 20 条 PASS + `TestMySQLMigrations`；
+- 前端（因 `trafficEnabled` 如实回报而小幅改动）：`vue-tsc --noEmit`（4G 堆，单独跑）0、
+  全量 Vitest **97 文件 / 1632 用例**通过、`eslint` 0、`vite build --outDir dist-check-routing` 0
+  （该目录被 `.gitignore` 的 `**/dist-check-*/` 覆盖）；
+- `gofmt -l` 本轮文件干净（两处 `main.go` 的尾注释对齐因 `up`→`res` 变宽，已重排）。
+
+### 边界与下一步
+
+- **开关仍默认 off**。这一轮交付的是「通路」，不是「已经切了」；
+- 开关打开后**只影响新上传**：老对象仍在平台侧，URL 形态不变（都是
+  `<平台入口>/uploads/<key>`），所以不会裂图；
+- 下一轮（P2 后半）：真桶 + 真 nginx + 真回源的端到端验收，后台把「配置已生效 /
+  未生效」显式标出来，再决定是否把默认值翻成 on；
+- 之后仍是存量回填（P3）与 `public_base_url` / 密钥轮换（P4）。

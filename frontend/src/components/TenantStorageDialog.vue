@@ -9,11 +9,15 @@
     <!-- 本期边界必须写在最上面。不写的话，超管填完保存成功就会以为
          「客户的文件已经进自己的桶了」——而实际要等按租户路由（P2）才生效。 -->
     <el-alert
-      type="warning"
+      :type="live ? 'success' : 'warning'"
       :closable="false"
       show-icon
-      title="本期只保存配置，尚未承载流量"
-      description="上传与出参仍走平台存储；按租户分桶要等「接入层/按租户路由」落地后才生效。这份配置的价值是：先把客户的桶信息与凭据登记好、当场验通，避免切量那天才发现填错。"
+      :title="live ? '租户存储路由已开启：启用后即刻生效' : '本期只保存配置，尚未承载流量'"
+      :description="
+        live
+          ? '本进程已开启租户存储路由（TENANT_STORAGE_ROUTE）。该企业勾选「启用」并保存后，新上传即写入客户桶，出参 URL 形态不变；存量对象仍在平台侧。若这里填错，该企业的上传会直接失败，不会退回平台存储。'
+          : '上传与出参仍走平台存储；按租户分桶要等本进程开启租户存储路由后才生效。这份配置的价值是：先把客户的桶信息与凭据登记好、当场验通，避免切量那天才发现填错。'
+      "
       style="margin-bottom: 12px"
     />
 
@@ -184,6 +188,9 @@ const checkResult = ref<TenantStorageCheckResult | null>(null)
 // 独立一个标记而不是直接把输入框清空：输入框为空本身就表示「不改」，
 // 两种意图必须能分开表达，否则「清空」会被当成「不改」而静默失败。
 const clearCredentialsPending = ref(false)
+// 这份配置到底生不生效，以后端回报为准（它读 TENANT_STORAGE_ROUTE）。
+// 前端不推断、不写死：写死的那句话会在开关打开后继续骗人说「尚未承载流量」。
+const live = computed(() => cfg.value?.trafficEnabled === true)
 
 const form = reactive({
   driver: 'minio' as StorageDriver,

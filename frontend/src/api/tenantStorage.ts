@@ -7,9 +7,9 @@ import http from './request'
 // 所以四个接口后端全挂 PlatformAdminMiddleware，企业管理员连读都拿不到（403）。
 // 前端这边是 experience 层：页面挂在「企业管理」里，本身只有平台超管能进。
 //
-// 一句话说清本期边界：**配置写进去了，但还不承载流量**。
-// 上传与出参仍走平台那一个实例，要等按租户路由（P2）落地后才真正按桶分流。
-// 界面上必须显示这句（trafficEnabled=false），否则超管填完会以为已经生效。
+// 一句话说清边界：**配置能不能生效由后端的 TENANT_STORAGE_ROUTE 决定**。
+// 出参 `trafficEnabled` 就是这个开关的实况（后端读环境变量后原样回报），
+// 界面按它切换顶部提示——不要在前端写死「尚未生效」，那句话会过期。
 
 export type StorageDriver = 'local' | 'minio' | 'oss' | 's3'
 export type StorageStatus = 'unknown' | 'ok' | 'error'

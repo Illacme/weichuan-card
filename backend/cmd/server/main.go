@@ -22,6 +22,7 @@ import (
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
+	"weichuan/internal/uploadroute"
 
 	"github.com/gin-gonic/gin"
 )
@@ -387,17 +388,32 @@ func main() {
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。
 	r.Static("/uploads", cfg.UploadDir)
-	handler.RegisterUpload(r, db, cfg, up, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
-	handler.RegisterStorage(r, db, up, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
+	// 该用哪个存储实例：平台那份，还是租户自己的桶。
+	//
+	// TENANT_STORAGE_ROUTE 默认 off —— off 时注入 StaticResolver，所有租户仍然只用
+	// 平台实例，与本轮之前逐字节一致。这是本系列「先接形状、再翻开关」的分界线：
+	// 形状改了（5 个 Register 的参数从 Up 变 Resolver），行为没改。
+	// 翻开关前必须确认迁移 0044 已应用：Verify 会在启动阶段把它挡下来，
+	// 而不是等到第一个上传才发现「表不存在」——那时所有租户的上传都会失败。
+	var res storage.Resolver = storage.NewStaticResolver(up, cfg.StorageDriver)
+	if tenantStorageRouteEnabled() {
+		if err := uploadroute.Verify(db); err != nil {
+			log.Fatalf("[STORAGE] TENANT_STORAGE_ROUTE 已启用，但无法启用租户存储路由：%v", err)
+		}
+		res = uploadroute.New(up, cfg.StorageDriver, uploadroute.DBLoader(db, cfg.UploadBaseURL))
+		log.Print("[STORAGE] 租户存储路由已启用：已启用自有桶的租户，其新上传将写入客户的对象存储")
+	}
+	handler.RegisterUpload(r, db, cfg, res, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
+	handler.RegisterStorage(r, db, res, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
 	// 图片内容安全：微信消息推送回调 + 后台检测记录列表 + 一键下架
-	handler.RegisterMediaCheck(r, db, cfg, up, refresher)
+	handler.RegisterMediaCheck(r, db, cfg, res, refresher)
 	// 刷新器往下传给「会覆盖同名对象」的两条路径（素材采用 / 小程序码重生成），
 	// 普通上传的对象名是随机的、永不覆盖，刷新对它本就无意义（见 handler.refreshCDN 注释）
-	handler.RegisterAssets(r, db, up, refresher)      // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
-	handler.RegisterWechat(r, db, cfg, up, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId 归属租户取凭据）
-	handler.RegisterSettings(r, db, cfg)              // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
-	handler.RegisterClientError(r)                    // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
-	handler.RegisterPoster(r, db)                     // 海报个性化设置：GET/PUT /api/employee/poster-prefs（自定义背景 + 版式）
+	handler.RegisterAssets(r, db, res, refresher)      // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
+	handler.RegisterWechat(r, db, cfg, res, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId 归属租户取凭据）
+	handler.RegisterSettings(r, db, cfg)               // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                     // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                      // 海报个性化设置：GET/PUT /api/employee/poster-prefs（自定义背景 + 版式）
 	// 首次配置状态查询（只读）：已配置时返回 configured=true；未配置时进程根本进不到这里
 	// （见开头 setup.Unconfigured 分支）。前端据此决定是否显示配置引导。
 	// /setup 别名：安装完成后还有人手动敲 /setup 时 302 回首页，不给裸 404。
@@ -542,6 +558,10 @@ func newUploaderWithFallback(cfg config.Config) storage.Uploader {
 		AllowExt: storage.DefaultAllowExt,
 	}
 }
+
+// tenantStorageRouteEnabled 见 uploadroute.RouteEnabled —— 判定只留一处，
+// cmd/server 与 cmd/devserver 必须认同一个环境变量。
+func tenantStorageRouteEnabled() bool { return uploadroute.RouteEnabled() }
 
 // newUploader 按存储驱动构造文件存储实现（local / minio / oss / s3），统一返回 storage.Uploader
 func newUploader(cfg config.Config) (storage.Uploader, error) {

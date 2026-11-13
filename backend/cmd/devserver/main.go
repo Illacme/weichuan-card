@@ -38,6 +38,7 @@ import (
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
+	"weichuan/internal/uploadroute"
 )
 
 // devModels devserver 的建表清单，直接取 model 包的权威清单（新增模型只改那里一处）。
@@ -205,14 +206,26 @@ func main() {
 		c.Next()
 	})
 	r.Static("/uploads", cfg.UploadDir)
-	handler.RegisterUpload(r, db, cfg, up, refresher)
-	handler.RegisterMediaCheck(r, db, cfg, up, refresher)
-	handler.RegisterStorage(r, db, up, refresher, cfg)
-	handler.RegisterAssets(r, db, up, refresher)      // 常用素材库（内嵌图标/封面/LOGO）
-	handler.RegisterWechat(r, db, cfg, up, refresher) // 小程序码
-	handler.RegisterSettings(r, db, cfg)              // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
-	handler.RegisterClientError(r)                    // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
-	handler.RegisterPoster(r, db)                     // 海报个性化设置：GET/PUT /api/employee/poster-prefs
+	// 与生产完全同一套判定（含同一个环境变量、同样默认 off）：
+	// 联调即验证契约，不能因为「dev 就固定走平台」让租户路由在生产才第一次跑。
+	// devserver 的库是 SQLite 且 model.All() 已建好 tenant_storage_configs，
+	// Verify 在这里恒通过，不会挡住开发。
+	var res storage.Resolver = storage.NewStaticResolver(up, cfg.StorageDriver)
+	if uploadroute.RouteEnabled() {
+		if err := uploadroute.Verify(db); err != nil {
+			log.Fatalf("TENANT_STORAGE_ROUTE 已启用，但无法启用租户存储路由：%v", err)
+		}
+		res = uploadroute.New(up, cfg.StorageDriver, uploadroute.DBLoader(db, cfg.UploadBaseURL))
+		log.Print("[STORAGE] 租户存储路由已启用（devserver）")
+	}
+	handler.RegisterUpload(r, db, cfg, res, refresher)
+	handler.RegisterMediaCheck(r, db, cfg, res, refresher)
+	handler.RegisterStorage(r, db, res, refresher, cfg)
+	handler.RegisterAssets(r, db, res, refresher)      // 常用素材库（内嵌图标/封面/LOGO）
+	handler.RegisterWechat(r, db, cfg, res, refresher) // 小程序码
+	handler.RegisterSettings(r, db, cfg)               // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                     // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                      // 海报个性化设置：GET/PUT /api/employee/poster-prefs
 	// 安装状态查询与 /setup 别名：必须与生产（cmd/server）一致。
 	// 缺了前者会让前端启动探针 GET /api/setup/status 每次都吃 404——
 	// 功能上无碍（前端把查不到按「已配置」处理，见 api/setup.ts 的注释），

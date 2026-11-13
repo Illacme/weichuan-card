@@ -406,30 +406,91 @@ SDK 原文——AccessDenied 响应会回显 AccessKeyId 片段，而 `last_erro
 
 ### 3.3 `UploaderResolver`（P2）
 
+> **落地时接口收敛了（第六十一轮）。** 原草案的四个方法收缩为三个，理由记在下面；
+> 同时订正两处**已经过期**的要点（presign 前缀与 signHandler 入参）。
+> 改之前请以本节为准，`§3.3` 的旧代码块只作历史留档。
+
 ```go
+// 原草案
 type Resolver interface {
     For(cid int64) (Uploader, error)              // cid <= 0 → 平台默认实例
     PresignerFor(cid int64) (Presigner, bool)
     SignerFor(cid int64) (Signer, bool)
     RefresherFor(cid int64) CDNRefresher
 }
+
+// 实际落地（internal/storage/resolver.go）
+type Resolver interface {
+    For(cid int64) (Uploader, error)
+    Platform() Uploader        // 平台自身那一份，不受租户路由影响
+    DriverFor(cid int64) string
+}
 ```
 
 要点：
 
-- **实例缓存**：按 `company_id + updated_at` 版本号失效，别每次上传都重建 S3 客户端；
-- **去掉租户级静默降级**：租户配置解析失败必须显式 `code=1` + 审计 + 后台标红。
+- **实例缓存**：按 `company_id + updated_at` 版本号失效，别每次上传都重建 S3 客户端。
+  落地时保留了「每次读一行库」：单行唯一索引查询，比缓存 stale 的代价小得多；
+  只把**构造实例**这一半缓存起来（缓存命中的指针相等有单测钉着）；
+- **去掉租户级静默降级**：租户配置解析失败必须显式 `code=1`，**绝不回退平台实例**。
   现在 `newUploaderWithFallback`（`main.go:528`）的降级是为了「改错还能进后台改回来」，
   在平台级保留合理；但**绝不能当租户的兜底**——客户以为文件在自己桶里、实际躺在
   平台本地盘，是「没人报错时用户无从察觉」的典型静默失败，比直接报错严重得多；
-- **注入点**：`main.go:387-394` 的 `RegisterUpload` / `RegisterStorage` /
-  `RegisterMediaCheck` / `RegisterAssets` / `RegisterWechat`，
-  以及 `cmd/devserver/main.go:207-211` 与 `handler/handler_test.go:135` 的 `buildEngine`。
-  按项目纪律：新增 `handler.RegisterX` 必须同时改这三处，漏 devserver = 静默 404；
-- `capabilityHandler`（`storage.go:93`）改为按当前租户实例判 `videoUpload`，不再看全局
+- **注入点**：`RegisterUpload` / `RegisterStorage` / `RegisterMediaCheck` /
+  `RegisterAssets` / `RegisterWechat` 的参数由 `storage.Uploader` 换成 `storage.Resolver`，
+  以及 `cmd/server/main.go`、`cmd/devserver/main.go` 与 `handler/handler_test.go` 的 `buildEngine`
+  三处装配。按项目纪律：新增 `handler.RegisterX` 必须同时改这三处，漏 devserver = 静默 404；
+- `capabilityHandler` 改为按当前租户实例判 `videoUpload`，不再看全局
   `cfg.StorageDriver`——否则 A 配了 S3、B 仍是 local，后台会给 B 也显示「可直传」；
-- `presignHandler`（`storage.go:65`）的 `storage.RandName(ext)` 生成裸 key，必须带上
-  `t/<cid>/` 前缀；`signHandler` 改为直接按 `objectKey` 签名。
+- ~~`presignHandler` 的 `storage.RandName(ext)` 生成裸 key，必须带上 `t/<cid>/` 前缀~~
+  ——**已在第五十四轮 W5 落地**（走 `storage.ObjectKeyFor(scope, cid, name)`），本轮核实为过期；
+- ~~`signHandler` 改为直接按 `objectKey` 签名~~ ——**不需要改入参契约**：
+  `storage.legacyRel` 在基址对不上时会退到「只认 `/uploads/` 段」的兜底，而租户对象存库形态是
+  `<平台入口>/uploads/t/<cid>/x.jpg`，反推 `t/<cid>/x.jpg` 是确定性的。本轮只换成
+  「用该租户的 Signer」，前端不必改。
+
+#### ✅ 第六十一轮已落地：形状接上，开关默认 off
+
+| 项 | 落地内容 |
+| --- | --- |
+| `storage.Resolver` | 上述三方法接口 + `StaticResolver`（`TENANT_STORAGE_ROUTE=off` 时的**正式实现**，不是临时脚手架） |
+| `internal/uploadroute` | `Resolver`（按 cid 取实例、按 `updated_at` 缓存）、`DBLoader`（单行查询 + 解密）、`Verify`（启动自检表在不在）、`RouteEnabled` |
+| 装配 | `main.go` / `cmd/devserver/main.go` / `buildEngine` 三处；`TENANT_STORAGE_ROUTE` 默认 off，只有 `on/1/true/yes` 才开 |
+| 行为变更 | 只有两处**判定**：`capabilityHandler` 按租户实例判、`signHandler` 按租户实例签。off 下两者等价于旧实现 |
+| 生效状态回报 | 出参 `trafficEnabled` 改为 `uploadroute.RouteEnabled()`，对话框顶部提示随之切换；写死 `false` 会在开关打开后继续骗人 |
+
+**键前缀 ⇔ 实例必须同源**（本轮新增的一条硬约束）：
+
+| 写路径 | 键前缀 | 实例 | 为什么不能换 |
+| --- | --- | --- | --- |
+| 普通上传 / 直传预签名 / 违规图下架覆盖 | `t/<cid>/` | `For(cid)` | 文件属于该租户，nginx 按租户回源 |
+| 素材采用（`assets.go`） | `p/library/` | `Platform()` | `p/` 由平台 `/uploads/` 回退段托管；写进客户桶 = 键在平台前缀下、内容在客户桶里 → 404，且是幂等覆盖写，第一次错没人会发现 |
+| 小程序码（`wechat.go`） | `p/wxacode/` | `Platform()` | 同上。注意这与「按 staffId 取**凭据**」不冲突：用的是客户 AppID，产出的图仍是平台资源 |
+
+覆盖边界（本轮**不**做，留给下一轮）：
+
+- 翻开关的端到端验收（真桶、真 nginx、真回源）；
+- 存量对象回填（P3）：开关打开后**只影响新上传**，老对象仍在平台侧，URL 形态不变所以不会裂图；
+- `public_base_url` 的消费方（第一阶段恒空 = 走平台统一入口，由 §3.4 的回源段承接）；
+- CDN 刷新按租户分桶（`refreshCDN` 目前按精确 URL 清，统一入口下 URL 已带 `t/<cid>/`，够用）。
+
+> 注：`trafficEnabled` 的显式回报本轮已做（不再硬编码 false），但它回报的是**进程级开关**
+> （本进程会不会按租户路由），不是「这家企业此刻正在用自有桶」。两者不是一回事：
+> 开关打开而某企业 `enabled=false` 时，它仍走平台存储。所以界面文案写的是
+> 「启用后即刻生效」而不是「已在生效」——这个区分必须留着。下一轮若要做按企业的
+> 「正在生效」徽标，另出一个字段（例如 `activeForTenant`），**不要复用这一个**。
+
+守门与验证（第六十一轮实跑）：
+
+- 源码级：`TestUploadWritesRouteByObjectKeyPrefix`（逐文件钉死 `For` / `Platform` 的用法）、
+  `TestRegisterFuncsTakeResolver`（五个 Register 签名不得退回 `storage.Uploader`）、
+  `TestAssemblyPassesResolverNotUploader`（三处装配都得有两条分支）；
+- 单测：`storage/resolver_test.go` 3 条、`uploadroute/resolver_test.go` 9 条（含「读配置失败不回退」
+  「禁用行当平台」「按 updated_at 失效」「开关默认侧别」「DBLoader 三态」「Verify 缺表」）；
+- 接线：`TestPresignUsesTenantInstanceAndTenantKey`（cid 透传 + `t/7/` 前缀）、
+  `TestCapabilityJudgesTenantInstanceNotGlobalConfig`（全局 local + 租户 minio → 可直传）；
+- 端到端冒烟（devserver，`TENANT_STORAGE_ROUTE=on`）：无配置行 → `code:0` 落 `t/1/…`；
+  有行但凭据空 → `code:1` 且回「已按要求不回退平台存储」；删掉行 → 回到 `code:0`。
 
 ### 3.4 平台域名统一入口 + 按租户回源（P2 的接入层）
 

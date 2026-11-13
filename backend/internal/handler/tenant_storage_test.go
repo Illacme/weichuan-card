@@ -132,7 +132,8 @@ func TestTenantStorageSuperAdminLifecycle(t *testing.T) {
 	require.Equal(t, "local", data["driver"])
 	require.Equal(t, false, data["enabled"])
 	require.Equal(t, storageStatusUnknown, data["status"])
-	// 这一轮配置不承载流量，界面要显示这句话，否则超管填完会以为已生效。
+	// 默认（未设 TENANT_STORAGE_ROUTE）配置不承载流量，界面必须显示这句话，
+	// 否则超管填完会以为已生效。开关两态由 TestTrafficEnabledFollowsRouteSwitch 覆盖。
 	require.Equal(t, false, data["trafficEnabled"])
 
 	// 2) 新建：启用 + 凭据齐全
@@ -371,3 +372,20 @@ func TestTenantStorageCheckFailure(t *testing.T) {
 type probeTestError struct{ msg string }
 
 func (e *probeTestError) Error() string { return e.msg }
+
+// TestTrafficEnabledFollowsRouteSwitch 钉住「出参如实回报开关」。
+//
+// 这个字段是给超管看的唯一一句「到底生不生效」。写死 false 会在开关打开后继续
+// 显示「尚未承载流量」（填对了也以为没生效）；写死 true 是更坏的方向（以为生效、
+// 实际文件全在平台盘上）。所以它必须读同一个判定源：uploadroute.RouteEnabled()。
+func TestTrafficEnabledFollowsRouteSwitch(t *testing.T) {
+	row := &model.TenantStorageConfig{CompanyID: 1, Driver: "minio", Enabled: true}
+
+	t.Setenv("TENANT_STORAGE_ROUTE", "")
+	require.Equal(t, false, tenantStorageView(row)["trafficEnabled"], "默认 off")
+	require.Equal(t, false, emptyTenantStorageView(1)["trafficEnabled"], "没配过的企业也要同一个口径")
+
+	t.Setenv("TENANT_STORAGE_ROUTE", "on")
+	require.Equal(t, true, tenantStorageView(row)["trafficEnabled"], "开关打开后必须如实回报")
+	require.Equal(t, true, emptyTenantStorageView(1)["trafficEnabled"], "没配过的企业也要同一个口径")
+}
