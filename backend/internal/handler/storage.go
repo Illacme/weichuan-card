@@ -132,16 +132,13 @@ func signHandler(up storage.Uploader, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		base := strings.TrimRight(cfg.UploadBaseURL, "/") + "/"
 		out := make(map[string]string, len(req.Urls))
 		for _, u := range req.Urls {
-			// 优先按绝对基址反推 key（云存储绝对 CDN URL）；
-			// 兼容本地存储返回的相对路径 /uploads/<name>：key 退化成去掉 /uploads/ 前缀。
-			key := strings.TrimPrefix(u, base)
-			if key == u {
-				key = strings.TrimPrefix(u, "/uploads/")
-			}
-			if key == "" || key == u {
+			// 从存库的资源引用反推对象键（云驱动绝对基址 / 本地 /uploads/ 相对路径 /
+			// 裸键都覆盖）。先判 /uploads/ 再判基址，修复了旧实现在 UploadBaseURL
+			// 为空时把 /uploads/x.jpg 错截成 uploads/x.jpg 的旧 bug（多一层目录）。
+			key, err := storage.ObjectKeyFromURL(u, cfg.UploadBaseURL)
+			if err != nil || key == "" {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "无法解析对象 key: " + u})
 				return
 			}

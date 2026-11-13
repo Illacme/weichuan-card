@@ -3496,7 +3496,8 @@ listen :8080 (storage driver=s3)
 
 - P0a 两组：① 改坏 `ResolveRef` 的绝对 URL 原样返回分支 →
   `TestResolveRefKeepsLegacyAbsoluteURL` 必红；② 在 `handler` 包插一行真实
-  `storage.ResolveRef("", "")` 调用 → `TestP0aRefIsNotWiredIntoProduction` 必红。
+  `storage.ResolveRef("", "")` 调用 → `TestRefWiringGate`（原 `TestP0aRefIsNotWiredIntoProduction`，
+  第五十三轮升级为三集合对账守门）必红。
 - P0b 三组：同时注入「新增上传写入点」「新增公开 GET 路由」「新增资源 json 字段」→
   `TestP0bUploaderWriteSitesMatchBoundaryList` /
   `TestP0bPublicGetRoutesMatchBoundaryList` /
@@ -3507,3 +3508,78 @@ listen :8080 (storage driver=s3)
 **边界**：只有新增的 4 个 Go 文件 + 3 份文档；`handler.go` 仅在反向验证期间被临时
 插过一行并已还原（哈希校验通过）。没有改任何生产代码路径、没有写迁移、
 没有动 `deploy/baota/nginx-site.live.conf`、没有回填存量数据、没有跑 `./server migrate`。
+
+---
+
+## 第五十三轮：出参侧实际接入（2026-11-13）
+
+> 承接第五十二轮补记二「边界已钉死、只待实现轮拍板」。用户在确认「出参侧应在统一出口做」
+> 之后给 go-ahead「现在就进入真正接线」。**接线前发现一个关键事实推翻了边界清单初版的
+> 接入顺序**，必须先订正再动手。
+
+### 推翻旧顺序：必须先出参侧、再写入侧
+
+边界清单 §1 初版写的是「先 W1–W9 全部收敛成 `NormalizeRef` 裸键，再动出参侧」。
+实读线上配置后发现这是**错的**：
+
+- 线上是**双轨**：存量老图走本地盘 `/uploads/`（nginx 反代）、新上传走对象存储绝对 URL
+  （`MinioUploader.Save` 返回 `<BaseURL>/<key>`）；
+- 若先写键，会有一段窗口期——库里同时存在裸键与旧绝对 URL，而出参侧还没兼容完 →
+  **页面直接裂图**，且全 200 无报错（又是「没人报错时用户无从察觉」）。
+
+正确顺序：先接出参侧，用 `ResolveRef` 兼容三形态（云绝对 URL 原样 / 本地 `/uploads/` 原样 /
+将来裸键自动补 `/uploads/` 前缀），对**现行数据零行为变更**，因此先接出参侧是安全的；
+写入侧（W1–W9 / `NormalizeRef`）留到下一阶段。边界清单 §1、§3.1、§5 已同步订正。
+
+### 出参侧实际改动（生产代码路径）
+
+| 文件 | 改动 |
+| --- | --- |
+| `backend/internal/model/refs.go`（新增） | `ResolveResourceRef(raw)`（空值空串、解析失败返回原值不降级、经 `storage.ResolveRef(raw, "")`）；六个模型 `ResolveRefs()`：`Employee.Avatar` / `CompanyInfo.Logo` / `CompanyProfile.Cover,VideoURL,VideoBackupURL` / `AchievementCategory.Icon` / `ProjectCase.Cover` / `BizService.Icon`。字段集合严格对齐边界清单 §2 |
+| `backend/internal/model/refs_test.go`（新增） | 模型解析单测：现行数据零行为变更、未来键补前缀、不安全引用返回原值、六模型 `ResolveRefs` |
+| `backend/internal/handler/handler.go` | 9 条公开 GET 接入：整模型路由（`/api/card`、`/api/achievements`、`/api/projects`、`/api/services`、`/api/services/:id`）在 `cdnCache(c, 60)` **之前**调 `ResolveRefs()`；内联 `gin.H` 路由（`/api/company`、`/api/team`、`/api/projects/:id`、`/api/home-layout`）直接调 `model.ResolveResourceRef(...)` |
+| `backend/internal/handler/storage.go` | `signHandler` 修正：用 `storage.ObjectKeyFromURL` 复用 `legacyRel`（先判 `/uploads/` 再判基址），修复 `UploadBaseURL` 为空时把 `/uploads/x.jpg` 错截成 `uploads/x.jpg` 的旧 bug |
+| `backend/internal/storage/ref.go` | 新增 `ObjectKeyFromURL(raw, baseURL)`（写入侧反推 key 用，与旧 signHandler 语义一致但修空 base bug） |
+
+`model` 反向依赖 `storage` 合法：`storage` 包不 import `model`（已核实）。
+
+### 守门升级（出参侧接线后由它兜底）
+
+`ref_p0a_guard_test.go` 的 `TestRefWiringGate`（原 `TestP0aRefIsNotWiredIntoProduction`）升级为
+**三集合对账**：
+
+1. 写入侧 API（`NormalizeRef` / `ObjectKeyFor` / `ParseRef` / `IsNormalizedRef`）一律不得出 `storage` 包；
+2. `storage.ResolveRef` 只允许在 `backend/internal/model/refs.go`；
+3. `model.ResolveResourceRef` / `ResolveRefs()` 只允许在 sanctioned 出参侧文件
+   （`model/refs.go`、`model/refs_test.go`、`handler/handler.go`、`handler/storage.go`、
+   `handler/ref_wiring_test.go`）。
+
+新增 `ref_objectkey_test.go`（`TestObjectKeyFromURL` 覆盖空 base 修复）、
+`ref_wiring_test.go`（`TestSignHandlerEmptyBaseFix` 用 `stubSigner` 钉空 base 场景）、
+`model/refs_test.go`。
+
+### 行为保证与反向验证
+
+- **零行为变更**：对现行生产数据（云绝对 URL 原样、本地 `/uploads/` 原样、空值空串、
+  不安全引用返回原值）哈希零漂移；
+- 反向验证注入 `storage.NormalizeRef` **真实调用** → 守门正确报红，定位到
+  `handler/storage.go`（`../handler/storage.go:122`）；还原后三个文件 `sha256` 零漂移、全包复绿
+  （早期用 `_, _ = storage.NormalizeRef("x", "", storage.ScopeTenant, 1)` 值引用未触发，
+  改真实调用才命中——守门正则只匹配真实调用）。
+
+### 门禁
+
+串行全绿：`gofmt`（改动文件 0 处）、`golangci-lint v2.15.0` = 0 issues、
+`GOTELEMETRY=off go test ./... -count=1` 全包 EXIT=0。本轮前端零改动，未跑
+`vue-tsc` / 全量 Vitest / eslint / `vite build`（`bash` 里 `$VAR` 路径含中文用 `${VAR}`；
+SQL 运行期读盘、改动 `.sql` 只需换文件 + `./server migrate` 不必换二进制）。
+
+### 边界
+
+- **已做**：出参侧（9 条 GET + signHandler）接入、守门升级、反向验证、文档同步；
+- **未做**（下一阶段）：写入侧 W1–W9 / `NormalizeRef` 收敛成裸键、存量回填、迁移 0044、
+  动线上 nginx、碰线上二进制。
+
+### 待用户侧动作
+
+`git push origin main`（沙箱拦截 push，本地 commit 已完成）；写入侧接线待拍板后实施。

@@ -163,6 +163,14 @@ type Ref struct {
 `Resolve` 必须覆盖 **P1 刚加了 60 秒边缘缓存的五条公开只读接口**，否则会出现
 「列表页是绝对旧 URL、名片页是新解析 URL」的双轨。
 
+> ✅ **出参侧范围订正（2026-11-13 实装）**：上面「五条缓存接口」是**不够的**。
+> 边界清单 §0 实读发现：下发资源 URL 的公开 GET 共有 **9 条**，带 60s 边缘缓存的只有 5 条，
+> 漏掉 `/api/company`(logo)、`/api/team`(avatar)、`/api/projects/:id`(cover+album)、
+> `/api/services/:id`(内嵌 `BizService`)。照「五条」接会漏一半出参。
+> **正确口径：所有出参序列化点都要过，缓存只是其中一层的时序约束。**
+> 该出参侧已在第五十三轮实际接好（9 条 GET + `signHandler` 全部过 `model/refs.go`），
+> 对现行数据零行为变更；写入侧（W1–W9 / `NormalizeRef` 收敛裸键）是下一阶段。
+
 > ✅ **P0a 落地订正（2026-11-13）**：上面草稿里写的 `storage.Resolve(ref) (string, error)`
 > 只是骨架示意，实际落地的 `backend/internal/storage/ref.go` 是一组**吃库里原始字符串**
 > 的纯函数，签名如下（P0a 阶段不接任何 handler，线上行为零变化）：
@@ -188,10 +196,13 @@ type Ref struct {
 > **守门名对账**：§4 表里草稿写的 `TestResolveKeepsLegacyAbsoluteURL` /
 > `TestLegacyUploadsRelativeURL`，实际落地为 `TestResolveRefKeepsLegacyAbsoluteURL` /
 > `TestResolveRefLegacyUploadsRelativeURL`（`backend/internal/storage/ref_test.go`）。
-> 另有 `TestP0aRefIsNotWiredIntoProduction` 钉住「P0a 不许接进生产包」——
-> **P0b 开始接线时它必然变红，那是有意信号**：先交付边界清单、把它替换成逐点接入守门，
-> 不许直接删掉。反向验证已做两组：改坏绝对 URL 分支必红、在 handler 包插一行真实调用必红；
-> 还原后三个文件 sha256 零漂移、全包复绿。
+> 另有 `TestRefWiringGate`（在 `ref_p0a_guard_test.go`，原 `TestP0aRefIsNotWiredIntoProduction`）
+> 钉住「写入侧 API 不许出 `storage` 包、出参侧解析只允许在 sanctioned 文件」——
+> **P0b 开始接线时它必然变红，那是有意信号**：先交付边界清单、把它升级成三集合对账守门，
+> 不许直接删掉。第五十三轮实装出参侧时已把它升级为 `TestRefWiringGate`（三集合：
+> 写入侧 API 越界 / `storage.ResolveRef` 仅限 `model/refs.go` / `model.ResolveResourceRef` 仅限
+> sanctioned 出参侧文件）。反向验证已做两组：改坏绝对 URL 分支必红、在 handler 包插一行真实
+> `storage.NormalizeRef` 调用必红（守门定位到 `handler/storage.go`）；还原后文件 sha256 零漂移、全包复绿。
 
 ### 3.2 `tenant_storage_configs`（迁移 0044）
 

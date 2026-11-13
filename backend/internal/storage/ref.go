@@ -321,3 +321,14 @@ func cleanOrigin(origin string) (string, error) {
 	}
 	return u.Scheme + "://" + u.Host, nil
 }
+
+// ObjectKeyFromURL 从存库的资源引用反推对象存储键（签名 / 回填等写入侧场景用）。
+// baseURL 传当前 UploadBaseURL（云驱动绝对基址；本地驱动传空串）。
+//
+// 与 signHandler 旧实现（先 strings.TrimPrefix(u, base+"/")、失败再 TrimPrefix(u, "/uploads/")）
+// 语义一致，但**先判 /uploads/ 再判基址**——修复了 baseURL 为空时把
+// "/uploads/x.jpg" 错截成 "uploads/x.jpg"（多一层目录）的旧 bug。
+// 底层复用 legacyRel，保证与 NormalizeRef 反推键的口径完全一致。
+func ObjectKeyFromURL(raw, baseURL string) (string, error) {
+	return legacyRel(raw, baseURL)
+}

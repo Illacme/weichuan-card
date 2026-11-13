@@ -123,6 +123,12 @@ func New(db *gorm.DB) *gin.Engine {
 		// 所以可以交给边缘短缓存：访客打开名片要 4 个接口并发，每次回源都要付一次
 		// 跨境往返；缓存 60 秒能把「同一个员工的名片被反复打开」这部分回源全挡掉。
 		// 停用 / 不存在两支（code=1/2）**不设头**——错误响应不能被缓存。
+		// 出参侧资源引用解析（多租户自有存储 P0b）：现行数据（云绝对 URL / 本地
+		// /uploads/ 相对路径）经 ResolveRefs 零行为变更；将来裸键 / 前缀键会自动
+		// 补回 /uploads/。必须在发 60s 缓存头之前完成，否则边缘会缓存旧形态。
+		e.ResolveRefs()
+		ci.ResolveRefs()
+		cp.ResolveRefs()
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "employee": e, "company": ci, "profile": cp})
 	})
@@ -143,7 +149,7 @@ func New(db *gorm.DB) *gin.Engine {
 		db.First(&ci, "company_id = ?", cid)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"id": comp.ID, "name": comp.Name, "status": comp.Status,
-			"shortName": ci.ShortName, "logo": ci.Logo,
+			"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo),
 		}})
 	})
 
@@ -189,7 +195,7 @@ func New(db *gorm.DB) *gin.Engine {
 				"staffId": e.StaffID,
 				"name":    e.Name,
 				"title":   e.Title,
-				"avatar":  e.Avatar,
+				"avatar":  model.ResolveResourceRef(e.Avatar),
 			})
 		}
 		// 企业名 / LOGO 一起下发：名片墙顶部要画公司抬头，分两次请求会让首屏
@@ -211,7 +217,7 @@ func New(db *gorm.DB) *gin.Engine {
 			"code": 0,
 			"company": gin.H{
 				"id": cid, "fullName": ci.FullName,
-				"shortName": ci.ShortName, "logo": ci.Logo,
+				"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo),
 			},
 			"entry": gin.H{"mode": entryMode, "staffId": entryStaffID},
 			"data":  data, "total": total,
@@ -235,8 +241,14 @@ func New(db *gorm.DB) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
 		}
-		// 公开只读接口：短缓存给 CDN / 反代用（端上不受益，详见 cdnCache 注释）。
-		// 只在成功分支设置——错误响应不该被缓存。
+		// 出参侧资源引用解析（多租户自有存储 P0b）：category.icon / projectCase.cover
+		// 经 ResolveRefs 零行为变更；必须在发 60s 缓存头之前完成。
+		for i := range cats {
+			cats[i].ResolveRefs()
+		}
+		for i := range featured {
+			featured[i].ResolveRefs()
+		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "categories": cats, "featured": featured})
 	})
@@ -254,6 +266,11 @@ func New(db *gorm.DB) *gin.Engine {
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
+		}
+		// 出参侧资源引用解析（多租户自有存储 P0b）：projectCase.cover 零行为变更；
+		// 必须在发 60s 缓存头之前完成。
+		for i := range ps {
+			ps[i].ResolveRefs()
 		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ps})
@@ -275,11 +292,16 @@ func New(db *gorm.DB) *gin.Engine {
 		if p.Album != "" {
 			_ = json.Unmarshal([]byte(p.Album), &album)
 		}
+		// 出参侧资源引用解析（多租户自有存储 P0b）：cover 与 album 各元素零行为变更。
+		// 此接口刻意不设 Cache-Control（见上方注释），故无需考虑缓存时序。
+		for i := range album {
+			album[i] = model.ResolveResourceRef(album[i])
+		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"id":           p.ID,
 			"name":         p.Name,
 			"summary":      p.Summary,
-			"cover":        p.Cover,
+			"cover":        model.ResolveResourceRef(p.Cover),
 			"detail":       p.Detail,
 			"album":        album,
 			"categoryId":   p.CategoryID,
@@ -305,6 +327,11 @@ func New(db *gorm.DB) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
 		}
+		// 出参侧资源引用解析（多租户自有存储 P0b）：bizService.icon 零行为变更；
+		// 必须在发 60s 缓存头之前完成。
+		for i := range s {
+			s[i].ResolveRefs()
+		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
 	})
@@ -321,6 +348,9 @@ func New(db *gorm.DB) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "服务不存在"})
 			return
 		}
+		// 出参侧资源引用解析（多租户自有存储 P0b）：bizService.icon 零行为变更；
+		// 此接口刻意不设 Cache-Control，故无需考虑缓存时序。
+		s.ResolveRefs()
 		// 内嵌保留 BizService 的全部字段与 json 名，只额外补一个 timeMode；
 		// 改成显式 gin.H 会漏字段（富文本、图标、排序都可能被写丢）。
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": struct {
@@ -360,7 +390,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 可以交给边缘短缓存。这条是名片页 4 个并发请求之一，且每次切风格都会重新取。
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{
-			"code": 0, "order": order, "bgImage": bgImage, "bgMask": bgMask,
+			"code": 0, "order": order, "bgImage": model.ResolveResourceRef(bgImage), "bgMask": bgMask,
 			"styleId": styleID, "brandColorId": brandColorID,
 		})
 	})

@@ -18,8 +18,8 @@ import (
 // B 页面旧绝对 URL」或后台表单把绝对 URL 写回库，页面全 200 无人报错。
 // 所以清单必须是可执行的：新增写入点 / 公开接口 / 资源字段 / 端上消费点，一律先红。
 //
-// 与 TestP0aRefIsNotWiredIntoProduction 一样，真正开始接线时这些断言会变红，
-// 那是要「按清单逐点接入并把断言改成已接入」的信号，不是让人删断言。
+// 与 TestRefWiringGate 一样，真正开始接线时这些断言会提示「按清单逐点接入并把断言改成已接入」，
+// 不是让人删断言。
 
 const (
 	handlerDir = "../handler"
@@ -47,10 +47,12 @@ var boundaryTokens = []boundaryToken{
 	{handlerDir + "/media_check.go", "ObjectKey: d.Key", "W6 落库对象键"},
 	{handlerDir + "/storage.go", `"url": finalURL`, "W5 直传 finalURL 回端上"},
 	{handlerDir + "/content.go", "func projectToMap(", `R12 album 展开（模型是 json:"-" 的隐藏边界）`},
-	{handlerDir + "/handler.go", `"album":`, "R5 案例详情 album 数组出参"},
-	{handlerDir + "/handler.go", `"logo": ci.Logo`, "R2 企业 logo 出参"},
-	{handlerDir + "/handler.go", `"avatar":`, "R3 名片墙 avatar 白名单出参"},
-	{handlerDir + "/handler.go", "model.BizService", "R8 服务详情内嵌整个模型（含 icon）"},
+	{handlerDir + "/handler.go", `"album":`, "R5/R6 案例详情 album 数组出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(ci.Logo)", "R2/R3 企业 logo 出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(e.Avatar)", "R3 名片墙 avatar 白名单出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(p.Cover)", "R6 案例详情 cover 出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(bgImage)", "R9 首页背景出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "model.BizService", "R8 服务详情内嵌整个模型（含 icon，已接 ResolveRefs）"},
 	{modelDir + "/models.go", "column:album;type:json", "§2 Album 隐藏列：存的是 URL 数组"},
 	{modelDir + "/media_check.go", `json:"objectKey"`, "§2 MediaCheck.ObjectKey：从 URL 反推的裸键"},
 	{frontSrc + "/api/uploadFile.ts", "return p.data.url", "W7 直传 URL 回流业务表单"},

@@ -1,11 +1,11 @@
 # 多租户自有存储 · P0b 业务 URL 边界清单
 
-> **状态：清单 + 源码级守门已落地；仍未接入任何 `NormalizeRef` / `ResolveRef`。**
-> 本轮没有改任何生产代码路径、没有写迁移、没有动线上 nginx、没有回填存量数据。
+> **状态：清单 + 源码级守门已落地；出参侧（9 条公开 GET + signHandler）已接入，
+> 写入侧（W1–W9 / NormalizeRef）仍未接。**
 > 所有行号来自 2026-11-13 对仓库的实读。守门在
 > `backend/internal/storage/ref_boundaries_test.go`。
 >
-> 关联：`docs/tenant-storage-design.md` §3.1 / §4、`docs/commercial-readiness.md` 第五十二轮补记。
+> 关联：`docs/tenant-storage-design.md` §3.1 / §4、`docs/commercial-readiness.md` 第五十三轮。
 
 ---
 
@@ -59,9 +59,15 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | W8 | `frontend/src/components/UploadField.vue:249` | `(res.data.urls \|\| [])[0]`（multipart 回退） |
 | W9 | `frontend/src/components/AssetPicker.vue:239-258` | `emit('picked', resp.data.url)` / `urls.push(resp.data.url)`（素材采用） |
 
-> **接入顺序建议**：先 W1–W9 全部收敛成 `NormalizeRef` 产出的裸键，
-> 再动出参侧。反过来做会有一段窗口期，库里同时存在键与旧 URL，
-> 而出参侧还没兼容完 → 页面上直接裂图。
+> **接入顺序（已订正，2026-11-13 实装）**：必须先让出参侧兼容三形态，再切写入侧收敛成 `NormalizeRef` 产出的裸键。
+> 旧版「先写入侧再出参侧」顺序是**错的**——线上双轨（存量老图走本地盘 `/uploads/`、新上传走对象存储绝对 URL），
+> 先写键会有一段窗口期，库里同时存在裸键与旧 URL，而出参侧还没兼容完 → 页面直接裂图。
+> 正确顺序的依据：出参侧用 `ResolveRef` 兼容三形态（云端绝对 URL 原样、本地 `/uploads/` 原样、
+> 将来裸键/`p/`/`t/` 前缀自动补回 `/uploads/`）对**现行数据零行为变更**，因此先接出参侧是安全的。
+>
+> **现状（2026-11-13）**：出参侧已在本轮接好（见 §5）；写入侧（W1–W9 / `NormalizeRef`）是下一阶段，尚未接。
+> 出参侧口径集中在 `backend/internal/model/refs.go`（`ResolveResourceRef` + 六个模型的 `ResolveRefs()`），
+> 经 `storage.ResolveRef(raw, "")` 走通，对现行数据零行为变更。
 
 ---
 
@@ -121,6 +127,10 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 响应里是统一入口 URL；错误分支仍不许带缓存头（`public_list_test.go` 已钉）。
 将来开放客户自有域名时 cache key 必须含 `Host`（设计稿 §3.8）。
 
+> **接入状态（2026-11-13 实装）**：上表 9 条路由**已全部接入** `model/refs.go` 的出参侧解析
+> （整模型路由调 `ResolveRefs()`、内联 `gin.H` 路由调 `model.ResolveResourceRef`），
+> 对现行生产数据零行为变更。下一阶段写键后，这里无需再动——`ResolveRef` 会自动补前缀。
+
 ### 3.2 其它出参出口
 
 | # | 位置 | 标识符 | 说明 |
@@ -166,15 +176,53 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `TestP0bMiniProgramAssetUrlConsumersMatchBoundaryList` | 小程序里含 `assetUrl(` 的 `.ts` 文件集合必须等于 13 个；端上新增消费点必红 |
 
 这些断言**不依赖运行时行为**，纯源码对账，因此和 P0a 的
-`TestP0aRefIsNotWiredIntoProduction` 一样，在真正接线时会变红——
+`TestRefWiringGate`（在 `ref_p0a_guard_test.go`，原 `TestP0aRefIsNotWiredIntoProduction`）一样，在真正接线时会变红——
 那是要求「按清单逐点接入、逐点把断言改成已接入」的信号，不是让人删断言。
+实装轮已把该守门升级为三集合对账（见 §5.2），出参侧接入后由它兜底「写入侧 API 不出 storage 包」。
 
 ---
 
 ## 5. 本轮边界
 
-- 只新增清单文档 + 守门测试 + P0a 纯函数；**生产代码路径零改动**；
+本清单横跨两轮，边界口径要分开记：
+
+### 5.1 清单轮（初始，P0a 纯函数 + P0b 边界清单，零行为变更）
+
+- 只新增清单文档 + 守门测试 + P0a 纯函数（`storage/ref.go`）；**生产代码路径零改动**；
 - 没有写迁移、没有动 `deploy/baota/nginx-site.live.conf`、没有回填存量数据；
 - 没有跑 `./server migrate`、没有碰线上二进制；
 - 反向验证：分别注入「新增上传写入点」「新增公开路由」「新增资源 json 字段」，
   三组守门必红；还原后哈希零漂移、全绿（见决策记录补记）。
+
+### 5.2 实装轮（2026-11-13 / 第五十三轮，只接出参侧）
+
+**核心订正**：原清单「先写入侧再出参侧」顺序是错的——线上双轨（存量老图走本地盘 `/uploads/`、
+新上传走对象存储绝对 URL），先写键会裂图。本轮先接出参侧、写入侧（W1–W9 / `NormalizeRef`）留到下一阶段。
+
+本轮实际改动的生产代码路径：
+
+- **新增 `backend/internal/model/refs.go`**（出参侧解析口径集中地，`storage` 反向依赖 `model` 合法，
+  因 `storage` 不依赖 `model`）：
+  - `ResolveResourceRef(raw)`：空值返回空、解析失败返回原值（不静默降级）、经 `storage.ResolveRef(raw, "")` 走通；
+  - 六个模型的 `ResolveRefs()`：`Employee.Avatar` / `CompanyInfo.Logo` /
+    `CompanyProfile.Cover,VideoURL,VideoBackupURL` / `AchievementCategory.Icon` /
+    `ProjectCase.Cover` / `BizService.Icon`；字段集合严格对齐 §2。
+- **`handler/handler.go` 接入 9 条公开 GET**：
+  - 整模型序列化路由（`/api/card`、`/api/achievements`、`/api/projects`、`/api/services`、
+    `/api/services/:id`）在 `cdnCache(c, 60)` **之前**调 `ResolveRefs()`；
+  - 内联 `gin.H` 路由（`/api/company`、`/api/team`、`/api/projects/:id`、`/api/home-layout`）
+    直接调 `model.ResolveResourceRef(...)`（见 `handler.go:152,198,220,298,304,393`）。
+- **`handler/storage.go` 的 `signHandler` 修正**：用 `storage.ObjectKeyFromURL` 复用 `legacyRel`
+  （先判 `/uploads/` 再判基址），修复 `UploadBaseURL` 为空时把 `/uploads/x.jpg` 错截成
+  `uploads/x.jpg` 的旧 bug（`ref_wiring_test.go` 已钉空 base 场景）。
+- **守门升级**（`ref_p0a_guard_test.go` 的 `TestRefWiringGate`，原 `TestP0aRefIsNotWiredIntoProduction`）：
+  三集合对账——写入侧 API（`NormalizeRef`/`ObjectKeyFor`/`ParseRef`/`IsNormalizedRef`）一律不得出 `storage` 包；
+  `storage.ResolveRef` 只允许在 `model/refs.go`；`model.ResolveResourceRef`/`ResolveRefs()` 只允许在
+  sanctioned 出参侧文件（`model/refs.go`、`model/refs_test.go`、`handler/handler.go`、`handler/storage.go`、
+  `handler/ref_wiring_test.go` 各自）。新增 `ref_objectkey_test.go`、`ref_wiring_test.go`、`model/refs_test.go`。
+
+**行为保证**：对现行生产数据**零行为变更**（云绝对 URL 原样、本地 `/uploads/` 原样、空值空串、
+不安全引用返回原值）；哈希零漂移、全绿；反向验证注入 `storage.NormalizeRef` 真实调用 → 守门正确报红、
+定位到 `handler/storage.go`，还原后复绿。
+
+**仍未做**：写入侧（W1–W9 / `NormalizeRef` 收敛成裸键）、存量回填、迁移、碰线上二进制——下一阶段。
