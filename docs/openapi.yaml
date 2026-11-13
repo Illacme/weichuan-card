@@ -3984,6 +3984,113 @@ paths:
         "200":
           description: code=0；code=1 参数错误 / AppID 格式不对 / 保存失败
 
+  # ── 租户自有对象桶（P1 后半段，迁移 0044）───────────────────────────────
+  # 权限：**只有平台超级管理员**（PlatformAdminMiddleware）。企业管理员 role 也是 admin，
+  # 用 AuthMiddleware 会直接放行，因此四个接口都不能照抄 /api/admin/storage 那批的写法。
+  # 原因：这条配置里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶。
+  # 边界：本期只保存配置，**尚未承载流量**（上传与出参仍走平台实例，按租户分桶属 P2）。
+  /api/admin/companies/{id}/storage:
+    get:
+      summary: 某企业的自有对象桶配置（平台超管，凭据只回掩码）
+      description: |
+        未配置时返回 `configured=false` 的完整空视图（不是 404、也不是错误），
+        界面据此进入「新建」态——「没配过」与「读失败」必须能分开。
+
+        **AccessKey 只回掩码**（前4****后4），用于核对「现在生效的是不是新那把」；
+        `SecretKey 连掩码都不给`，只回 `secretKeyConfigured`。
+        库里密文解不开时（`PII_ENC_KEY` 换过）回 `credentialError`，界面据此要求重填。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0（data 见 TenantStorageConfig）；企业管理员调用为 code=403
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { $ref: "#/components/schemas/TenantStorageConfig" }
+    put:
+      summary: 新建 / 覆盖某企业的自有对象桶配置（平台超管）
+      description: |
+        布尔与凭据**用「有没有这个字段」区分意图**：省略 = 保持原值，传值 = 覆盖。
+        凭据三态：省略 = 保留、空串 = 清空、有值 = 覆盖（服务端 `pii.Encrypt` 加密后落库，
+        不接受客户端提交密文）。
+
+        校验复用 `nginxsnippet.Target.Validate` 单点（endpoint 不许带 scheme、bucket 不许含
+        路径或 `..`、hostHeader 不许含引号）；另加两条**产品边界**：
+        第一阶段只支持公开读桶；启用时必须同时具备 AccessKey 与 SecretKey。
+
+        保存成功会把上一次自检结论重置为 `unknown`——否则后台会一直显示一个过期的绿点。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantStorageSave" }
+      responses:
+        "200":
+          description: code=0（data 为保存后的视图）；code=1 参数错误 / 企业不存在 / 校验不通过 / 保存失败；code=403 非平台超管
+    delete:
+      summary: 切回平台存储（平台超管）
+      description: |
+        删掉该企业的配置行 = 新上传回到平台盘。**已传进客户桶的对象不会被搬回来**
+        （那属于存量搬迁 P3），审计里会显式记 `objectsLeftInBucket=true`。
+        没配过时幂等返回 code=0。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0；code=1 删除失败；code=403 非平台超管
+  /api/admin/companies/{id}/storage/check:
+    post:
+      summary: 自有桶连通性自检（平台超管）
+      description: |
+        **带凭据**去探桶（S3 语义下 HEAD bucket）：不带签名时「不存在」与「存在但无权访问」
+        都回 403，探不出任何东西。结果回写 `status` / `last_checked_at` / `last_error`，
+        并留审计（成功失败都记）。
+
+        覆盖范围仅有「凭据有效 + 桶可达」：`checkedScope` 字段会明说**不含** nginx 侧
+        Host/SNI（漏 SNI 会被桶以 421 拒绝）、CDN 与证书链。
+      tags: [租户]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0（data.ok / data.detail / data.error / data.status / data.checkedScope）；未配置时 code=1
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: object
+                    properties:
+                      ok: { type: boolean }
+                      detail: { type: string, description: 成功时的一句话说明 }
+                      error: { type: string, description: 失败原因（已脱敏，不含凭据与桶方响应原文） }
+                      status: { type: string, enum: [unknown, ok, error] }
+                      lastCheckedAt: { type: string, format: date-time }
+                      checkedScope: { type: string, description: 本次自检的覆盖范围与不覆盖项 }
+
   # ── 租户授权（B4）与存储配额（B3）──────────────────────────────────────
   # 这两个能力默认都是「不限制」：授权只在**开通企业时**落一条试用行，存量企业无行 = 不限；
   # 存储配额全局缺省 0 = 不限。升级不得让存量部署突然开始拦人，因此默认值都是放行。
@@ -4924,6 +5031,77 @@ components:
       type: integer
       description: 0=成功；1=业务失败；2=特殊状态；401=未登录/失效；403=无权限；429=限流
       enum: [0, 1, 2, 401, 403, 429]
+
+    TenantStorageConfig:
+      type: object
+      description: |
+        某企业的自有对象桶配置视图（迁移 0044）。**凭据永不出参**：AccessKey 只回掩码，
+        SecretKey 只回「是否已配置」。
+      properties:
+        companyId: { type: integer, format: int64 }
+        configured:
+          type: boolean
+          description: 是否已配置。false 不是错误，只表示该企业走平台存储
+        driver:
+          type: string
+          enum: [local, minio, oss, s3]
+          description: local = 不生成接入层 snippet，对象留在平台盘
+        endpoint:
+          type: string
+          description: host[:port]，**不带 scheme**（同时喂给 nginx snippet）
+        bucket: { type: string }
+        region: { type: string, description: 仅 OSS / S3 需要；MinIO 可空 }
+        useSsl:
+          type: boolean
+          description: 为 true 时接入层必须给 proxy_ssl_server_name + proxy_ssl_name，否则被桶 421 拒绝
+        hostHeader:
+          type: string
+          description: virtual-hosted-style 的桶名所在 Host，也是 TLS SNI 取值；空则退回 endpoint
+        publicRead:
+          type: boolean
+          description: 第一阶段必须为 true（私有桶需要预签名链路，尚未实现）
+        enabled: { type: boolean, description: 关掉即回平台存储；driver=local 时同样不生成 snippet }
+        status:
+          type: string
+          enum: [unknown, ok, error]
+          description: unknown = 配了但没验过（不要渲染成「正常」）
+        lastError:
+          type: string
+          description: 最近一次自检的脱敏摘要；不含凭据、不含桶方响应原文
+        lastCheckedAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        accessKeyConfigured: { type: boolean }
+        secretKeyConfigured: { type: boolean }
+        accessKeyMasked: { type: string, description: 前4****后4；为让运维核对生效的是哪一把 }
+        credentialError:
+          type: string
+          description: 非空说明库里密文解不开（PII_ENC_KEY 与写入时不一致），需重新填一次密钥
+        trafficEnabled:
+          type: boolean
+          description: 本期恒为 false —— 配置尚未参与上传路由（按租户分桶属 P2）
+
+    TenantStorageSave:
+      type: object
+      description: |
+        布尔与凭据用「有没有这个字段」区分意图：**省略 = 保持原值**，传值 = 覆盖。
+        这与企业小程序凭据的 releaseEnabled 同一条纪律——界面只改一项时，
+        不带其他字段不能等于把它们重置掉。
+      required: [driver, endpoint, bucket]
+      properties:
+        driver: { type: string, enum: [local, minio, oss, s3] }
+        endpoint: { type: string, description: "host[:port]，不要带 scheme" }
+        bucket: { type: string }
+        region: { type: string }
+        useSsl: { type: boolean }
+        hostHeader: { type: string }
+        publicRead: { type: boolean }
+        enabled: { type: boolean }
+        accessKey:
+          type: string
+          description: 省略 = 保留原值；空串 = 清空；有值 = 覆盖（服务端加密后落库，不接受密文）
+        secretKey:
+          type: string
+          description: 同 accessKey 三态
 
     MediaCheck:
       type: object

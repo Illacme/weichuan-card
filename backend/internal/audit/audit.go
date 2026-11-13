@@ -68,6 +68,25 @@ const (
 	// 等于把公司的门面从「全员」换成「一个人」，客户发现时通常已经很晚了。
 	ActionMPEntry = "mp_entry.update"
 
+	// ActionTenantStorageUpdate 平台超管代某企业填/改「自有对象桶」配置（含凭据）。
+	//
+	// 单独一个动作而不是复用 company.update：这条配置里装的是**客户的云凭据**，
+	// 改它等于把该企业的文件流向改到另一个桶。出事时要能回答「谁在什么时候
+	// 把哪家企业的文件指到了哪里」，混在「编辑企业」里就查不出来了。
+	// Detail 只记 driver / endpoint / bucket / enabled 与「凭据是否被改」，
+	// 绝不记 AccessKey / SecretKey（连掩码都不记，理由见 audit 包头部约定）。
+	ActionTenantStorageUpdate = "storage.config.update"
+	// ActionTenantStorageCheck 对某企业的桶做连通性自检。
+	// 只读动作（不发对象、不写库业务数据），但它是**唯一的出向请求入口之一**，
+	// 且要回写 status / last_error，沿用 url_probe 的破例留痕口径。
+	// 成功失败都记：失败记录本身就是「这家企业配错了、什么时候发现的」的证据。
+	ActionTenantStorageCheck = "storage.config.check"
+	// ActionTenantStorageReset 删除某企业的自有存储配置 = 切回平台存储。
+	// 后果是「该企业已有对象仍留在自己的桶里，但新上传回到平台盘」——
+	// 这个切换点必须留痕，否则将来对账时无法解释「为什么这家企业的对象
+	// 一半在一个桶、一半在平台盘」。
+	ActionTenantStorageReset = "storage.config.reset"
+
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"
 	ActionEmployeeReset  = "employee.reset_password"

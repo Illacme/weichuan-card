@@ -181,6 +181,7 @@ func main() {
 	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额
 	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
+	handler.RegisterTenantStorage(r, db)  // 租户自有对象桶配置：GET/PUT/DELETE .../storage + POST .../check
 	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）

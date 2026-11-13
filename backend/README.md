@@ -294,6 +294,37 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - 前置要求：bucket 需设为**公开读**（或经 CDN 回源公开），这样返回的 URL 才能被小程序/H5 直接访问。
 - 依赖：`github.com/minio/minio-go/v7`、`github.com/aliyun/aliyun-oss-go-sdk`。因 SDK 要求，**项目 Go 版本需 ≥ 1.26**（见 `go.mod` 与 `Dockerfile` 的 `golang:1.26-alpine`）。
 
+### 租户自有对象桶（迁移 0044，平台超管代填）
+
+上面这些 `STORAGE_*` / `MINIO_*` / `OSS_*` 是**全局单值**，全平台只可能有一套。客户说
+「文件存进我自己公司的桶」时，全局单值装不下第二个租户——所以有 `tenant_storage_configs`
+（按 `company_id` 唯一）。配置入口：后台「企业管理」→ 某企业 → **存储**。
+
+- **只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连读接口都是 403：
+  这条配置里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶，而平台从业务侧察觉不到。
+  **不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
+  登录 + `role=admin`，而企业管理员的 role 也是 admin，会直接放行。有一条源码级守门盯着这个。
+- 凭据用 `pii.Encrypt` 落**密文**，因此**必须先把 `PII_ENC_KEY` 定下来**（与员工 PII 同一把钥匙）。
+  出参只回 AccessKey 掩码（`AKIA****MPLE`），SecretKey 连掩码都不给。
+- 提交语义：凭据字段**省略 = 保持原值**、`""` = 清空、有值 = 覆盖。界面回显掩码时点保存走「省略」，
+  所以不会把凭据误清空。
+- 「自检」带凭据去探桶（S3 语义下匿名请求对「不存在」与「无权访问」回同一个 403，
+  不带签名探不出东西）。它只验证**凭据有效 + 桶可达**，不验证 nginx 侧 Host/SNI、CDN 与证书链。
+- **本期配置不承载流量**：上传与出参仍走上面那一个全局实例，`trafficEnabled` 恒 false。
+  真正按租户分桶要等 `UploaderResolver`（P2）。
+
+```bash
+# 平台超管令牌下（示例：给企业 5 配自己的 MinIO）
+curl -X PUT "$BASE/api/admin/companies/5/storage" -H "Authorization: Bearer $PLAT_TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "driver":"minio","endpoint":"minio.customer.com","bucket":"weichuan",
+    "useSsl":true,"hostHeader":"weichuan.minio.customer.com",
+    "publicRead":true,"enabled":true,
+    "accessKey":"AKIA...","secretKey":"..."
+  }'
+curl -X POST "$BASE/api/admin/companies/5/storage/check" -H "Authorization: Bearer $PLAT_TOKEN"
+```
+
 ## 存储增强（直传预签名 / 私有桶签名 / CDN 刷新）
 三项增强均基于 `storage.Uploader` 之上的可选能力接口，业务代码不变：
 - `Presigner`：`PresignPut(key, contentType, ttl)` → 预签名 PUT URL（MinIO/OSS 实现；本地磁盘无此能力，返回 code=1 由前端回退普通上传）。
@@ -848,6 +879,10 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/companies/:id/admins | 新增企业管理员（username + password） |
 | GET  | /api/admin/companies/:id/wechat | 该企业小程序凭据（只回 `appId` 明文 + `configured`；**appSecret 永不回传**；另含订阅模板 `subscribeTmplId` / `subscribeTmplConfigured` / `subscribeTmplFields`，均非密钥，回明文） |
 | PUT  | /api/admin/companies/:id/wechat | 保存租户小程序凭据（`appId` 须 wx 开头；**`appSecret` 空串 = 清空并回落全局凭据**；`releaseEnabled` 省略则保持原值；`subscribeTmplId` / `subscribeTmplFields` 同理「空串=清空」；不受 independent_lock 限制，见下） |
+| GET  | /api/admin/companies/:id/storage | 该企业自有对象桶配置（**平台超管专属**；凭据只回 `accessKeyMasked` 掩码 + `secretKeyConfigured`；没配过回 `configured=false` 的完整视图，不是错误） |
+| PUT  | /api/admin/companies/:id/storage | 新建 / 覆盖自有桶配置（凭据 `pii.Encrypt` 落密文；**凭据字段省略=保持原值 / 空串=清空 / 有值=覆盖**；校验复用 `nginxsnippet.Target.Validate`；保存后自检状态回 `unknown`） |
+| DELETE | /api/admin/companies/:id/storage | 切回平台存储（删行，幂等；**已有对象不会被搬回来**，审计里记 `objectsLeftInBucket`） |
+| POST | /api/admin/companies/:id/storage/check | 自有桶连通性自检（**带凭据** HEAD bucket；回写 `status` / `last_checked_at` / `last_error`；只验凭据与可达，不验 nginx 侧 Host/SNI） |
 
 > 企业简称（`company.short_name`）与公司信息里的简称（`company_info.short_name`，0009）相互独立：
 > 前者是 PC 后台侧边栏「简称 · 管理后台」品牌名（未设置时缺省「微传名片」，企业管理员登录/me 时随身份下发），

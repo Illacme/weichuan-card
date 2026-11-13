@@ -4156,3 +4156,105 @@ album 单独注一次是必要的：cover 与 album 在同一个出参里，只�
 - **顺序不变**：配置写接口 + 后台界面 → `UploaderResolver` 5 处注入（P2）→ P3 回填。
   这一轮做完后，表里的配置离「真正承载流量」只差 P2，但**仍差 P2**——别看到写入侧收敛了
   就以为多租户存储能用了。
+
+---
+
+## 第六十轮：租户存储配置写接口与后台界面（2026-11-13，P1 收口）
+
+第五十八轮建了 `tenant_storage_configs`，但那张表**能读不能写**——`access_key_enc`
+没有任何代码在写，生产上只能手工 SQL。这一轮把它变成可用功能，同时堵住 R9。
+
+### R9 不是「权限收敛」，是「能不能改客户的云凭据」
+
+这条配置里装的是客户的 AccessKey/SecretKey。企业管理员一旦能改，就能把自己企业的对象
+写到任意桶、把别人的桶指到自己账号下，而平台从业务侧察觉不到——与 R2「静默失败」同源。
+
+具体漏法极难在 review 里看出来：新接口照抄旁边的 `RegisterStorage`，写
+`middleware.AuthMiddleware(db, "admin")`。那行校验的是**登录 + role=admin**，
+而企业管理员的 role 就是 admin，所以直接过。两行中间件长得几乎一样。
+
+所以落了两道：
+
+1. **运行时**：`TestTenantStorageTenantAdminForbidden` 造一个真企业管理员（`companyId=1`，
+   `role=admin`）去调四个接口，断言全 403 **且配置行零变更**（endpoint/bucket/密文/enabled/status
+   逐字段比对）。用员工令牌测不算数——员工在 authenticate 阶段就被挡了，证明不了这条风险。
+2. **源码级**：`TestTenantStorageRoutesUsePlatformAdminGuard` 扫出文件里每条 `r.VERB(...)`
+   调用（括号配对 + 跳过字符串字面量，因为 check 那条路由跨三行写），要求 `plat` 出现在
+   第一个 `func(` 之前。**写在 handler body 里等于没挂**，`contains` 判整个调用会让它蒙混过关。
+   再加一条：本文件不许出现 `AuthMiddleware`。
+
+守门第一次跑就抓到了自己：文件头部注释里写着「不要照抄 RegisterStorage 的 AuthMiddleware」，
+裸 `contains` 把说明书本身当违规。修法是先 `stripGoComments` 再判——**注释里带 `"//"` 的
+URL 也要跳过字符串字面量，否则守门会变成永远通过**。
+
+### 自检：不带凭据去探等于没探
+
+S3 语义下，匿名请求对「不存在的桶」和「存在但无权访问」回同一个 403（防桶名枚举）。
+所以「探出 200」只说明域名解析通了，**没法验证客户给的凭据是否有效**。
+
+两条路：做一个只探域名的假自检，或者带凭据真探。选后者，理由是——
+**一个「看起来验过了、其实没验凭据」的自检比不做更坏**，它把「没验」伪装成「验过了」，
+而这个功能的全部价值就是「填完当场知道对不对」。
+
+实现用 SDK 的 `BucketExists` / `IsBucketExist`（HEAD bucket，最小权限面）。不用列举对象：
+那会让「只给了写权限、没给列举权限」的正常桶被误判成不可用。
+
+错误一律不透出 SDK 原文：AccessDenied 响应会回显 AccessKeyId 片段，而 `last_error`
+是**常驻后台展示**的字段——一次写入、长期暴露。
+
+同时把边界写进接口返回（`checkedScope`）和界面 alert：自检只验「凭据有效 + 桶可达」，
+**不含** nginx 侧 Host/SNI（漏 SNI 会被桶 421，R1 实测过）、CDN 缓存、证书链。
+自检通过 ≠ 可以切量。
+
+### 凭据三态：省略 / 空串 / 有值
+
+| 提交 | 含义 |
+| --- | --- |
+| 不带 `accessKey` 字段 | 保留原值（界面回显掩码时「只看不改点保存」走这条） |
+| `"accessKey": ""` | 清空（换账号 / 切回平台账号时用） |
+| 有值 | 覆盖，服务端 `pii.Encrypt` 后落库 |
+
+三态不是洁癖：若把「不传」当成「清空」，一次改 bucket 的操作会把客户凭据抹掉，
+**而接口照样回 `code:0`**——配置看上去保存成功，等切量那天才全线签名失败。
+这与第五十九轮 `*bool` 那条纪律是同一类问题：**「没表态」必须能与「明确不要」分开**。
+
+AccessKey 回掩码（前4****后4）是刻意的：这张表最常见的失败模式是「改了但没生效 / 改错了行」，
+只回「已配置」回答不了「现在生效的是不是新那把」。SecretKey 连掩码都不给——它没有核对价值。
+
+### 校验不重写
+
+endpoint 不许带 scheme、bucket 不许含路径与 `..`、hostHeader 不许含引号——
+全部复用 `nginxsnippet.Target.Validate` 单点。写入侧复制一份必然与生成侧漂移，
+而漂移的表现是「接口说存成功了，生成器却报错」，比直接拒绝难查得多。
+
+只在写入侧加两条**产品边界**（生成器没资格判，因为私有桶的 snippet 也是对的）：
+第一阶段只支持公开读桶；启用时必须凭据齐全。
+
+### 反向验证五处
+
+| 反向动作 | 谁红了 |
+| --- | --- |
+| 摘掉 GET 路由的 `plat` | `TestTenantStorageRoutesUsePlatformAdminGuard`（「路由缺 PlatformAdminMiddleware」） |
+| 把 DELETE 换成 `AuthMiddleware(db,"admin")` | 同一条（head 里出现 AuthMiddleware） |
+| `accessKeyMasked` 直接回明文 | `TestTenantStorageSuperAdminLifecycle`（「响应体绝不能出现 AccessKey 明文」） |
+| 保存后不重置自检状态 | 同上（「改了配置，上一次自检的结论就不再代表当前配置」） |
+| 放行私有桶 | `TestTenantStorageValidation` |
+
+每次改回后文件 sha256 零漂移（`faa689bc53ff1179`）、全包复绿。
+
+### 门禁
+
+- `go vet ./...` 0；`go test ./... -count=1` 31 个包全绿（handler 约 55s）；
+- `TEST_MYSQL_DSN`：`TestAPIFlowMySQL` 20 条 PASS（新增「租户存储配置」flow）+ `TestMySQLMigrations`；
+- 前端：`vue-tsc --noEmit`（4G 堆，单独跑）0、全量 Vitest **97 文件 / 1632 用例**通过、
+  `eslint` 0、`vite build --outDir dist-check-storage` 0；
+- `gofmt -l` 本轮文件干净。
+
+### 边界与下一步
+
+- **配置仍不承载流量**。上传与出参走平台那一个实例，`trafficEnabled` 恒 false，
+  界面顶部有 alert 明说（少这句话，超管填完会以为客户的图已经进自己的桶了）；
+- `public_base_url` / `key_id` 仍不进出参也不进表单——**填了不生效比不填更坏**；
+- 私有桶、密钥轮换属 P2/P4；
+- **下一步只剩 P2**：`UploaderResolver` 5 处注入 + 去掉租户级静默降级。做完那一轮，
+  这张表才第一次真正决定文件落在哪个桶。

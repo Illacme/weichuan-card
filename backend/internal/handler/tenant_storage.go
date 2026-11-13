@@ -1,0 +1,519 @@
+package handler
+
+import (
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"weichuan/internal/audit"
+	"weichuan/internal/middleware"
+	"weichuan/internal/model"
+	"weichuan/internal/nginxsnippet"
+	"weichuan/internal/pii"
+	"weichuan/internal/storage"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+// 租户自有对象桶的后台配置接口（平台超管专属，设计稿 §1.1 / §3.2）。
+//
+// 权限模型是用户 2026-11-13 拍板的：「平台超管代填，这种权限肯定不能放给企业管理员的」。
+// 理由不只是权限收敛——这条配置里装的是**客户的云凭据**。企业管理员一旦能改，
+// 就能把自己企业的对象写到任意桶、把别人的桶指到自己账号下，而平台从业务侧察觉不到。
+// 所以四个接口全部挂 PlatformAdminMiddleware，企业管理员连读都不给。
+//
+// **不要照抄 RegisterStorage**（handler/storage.go:20）：那批预签名/签名/CDN 路由挂的是
+// AuthMiddleware(db,"admin")，企业管理员可以过。那批是平台级既有能力，本轮不动；
+// 但本文件任何一个接口若挂成 AuthMiddleware，权限模型从第一天就是漏的。
+// 这条由 TestTenantStorageRoutesUsePlatformAdminGuard 做源码级守门。
+//
+// 这一轮只做「配置能写进去、能自检、能切回默认」。**配置还不承载流量**：
+// 上传 / 出参仍走平台那一个实例，要等 P2 的 UploaderResolver 才真正按租户分桶。
+// 界面上必须写清这一点，否则超管填完会以为已经生效。
+
+// tenantStorageCheckLimitPerMin 自检接口每分钟每管理员的上限。
+//
+// 这是本项目第二个「按管理员输入发起出向请求」的接口（第一个是 url_probe）。
+// 与 url_probe 的差别：这里**不套 urlprobe 的私网黑名单**——自建 MinIO 常在内网，
+// 套上就等于把主要落地场景禁掉了。风险靠「只有平台超管能调」这一层控制，
+// 限流只用来防止误点/脚本放大。
+const tenantStorageCheckLimitPerMin = 30
+
+// storageProbeFn 抽成包级变量，测试才能在不联网的前提下覆盖成功/失败分支
+// （与 urlProbeFn 同一套路）。生产代码不覆盖它。
+var storageProbeFn = storage.ProbeBucket
+
+// tenantStorageCheckLimitFn 同 urlProbeLimitFn：测试里连续多打几次不该撞 429。
+var tenantStorageCheckLimitFn = func() int { return tenantStorageCheckLimitPerMin }
+
+// RegisterTenantStorage 挂载租户自有存储配置的读写接口。
+//
+//	GET    /api/admin/companies/:id/storage       读（凭据只回掩码）
+//	PUT    /api/admin/companies/:id/storage       新建 / 覆盖（凭据加密落库）
+//	DELETE /api/admin/companies/:id/storage       切回平台存储（删行）
+//	POST   /api/admin/companies/:id/storage/check 连通性自检（回写 status）
+func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
+	plat := middleware.PlatformAdminMiddleware(db)
+
+	r.GET("/api/admin/companies/:id/storage", plat, func(c *gin.Context) {
+		cid, ok := storageTargetCompanyID(c)
+		if !ok {
+			return
+		}
+		row, err := loadTenantStorage(db, cid)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储配置失败"})
+			return
+		}
+		if row == nil {
+			// 没配过不是错误：这家企业走平台存储。回空视图让界面直接进入「新建」态，
+			// 前端不必靠 404 或 error 来区分「没配」和「读失败」。
+			c.JSON(http.StatusOK, gin.H{"code": 0, "data": emptyTenantStorageView(cid)})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": tenantStorageView(row)})
+	})
+
+	r.PUT("/api/admin/companies/:id/storage", plat, func(c *gin.Context) {
+		if writeLocked(c) {
+			return
+		}
+		cid, ok := storageTargetCompanyID(c)
+		if !ok {
+			return
+		}
+		var req tenantStorageReq
+		if c.ShouldBindJSON(&req) != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
+			return
+		}
+		// 企业必须真实存在：配置行以 company_id 为唯一键，配给一个不存在的 id
+		// 只会让生成器产出一段永远匹配不到请求的 location。
+		var company model.Company
+		if err := db.Select("id").Where("id = ?", cid).First(&company).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
+			return
+		}
+
+		row, err := loadTenantStorage(db, cid)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储配置失败"})
+			return
+		}
+		if row == nil {
+			row = &model.TenantStorageConfig{
+				CompanyID: cid,
+				// 新建时的缺省：公开读（第一阶段试点口径）、未启用（填完先自检再开）、
+				// 走 HTTPS（云端桶几乎都只开 443；填错的代价是多一次自检失败，
+				// 而缺省成 http 会让「明明配对了却报 SSL 错」这种反向困惑出现）。
+				PublicRead: true,
+				Enabled:    false,
+				UseSSL:     true,
+				Status:     storageStatusUnknown,
+			}
+		}
+
+		// 逐字段应用。布尔与凭据用指针区分「没传」与「传了零值」——
+		// 与 company_wx.go 的 ReleaseEnabled 同一个理由：界面只改一项时，
+		// 不带其他字段不能等于把它们重置掉。
+		row.Driver = strings.TrimSpace(req.Driver)
+		row.Endpoint = strings.TrimSpace(req.Endpoint)
+		row.Bucket = strings.TrimSpace(req.Bucket)
+		row.Region = strings.TrimSpace(req.Region)
+		row.HostHeader = strings.TrimSpace(req.HostHeader)
+		if req.UseSSL != nil {
+			row.UseSSL = *req.UseSSL
+		}
+		if req.PublicRead != nil {
+			row.PublicRead = *req.PublicRead
+		}
+		if req.Enabled != nil {
+			row.Enabled = *req.Enabled
+		}
+
+		// 凭据三态：nil=保留、空串=清空、有值=覆盖（pii.Encrypt 落密文）。
+		credentialsChanged := false
+		if req.AccessKey != nil {
+			enc, err := pii.Encrypt(strings.TrimSpace(*req.AccessKey))
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "AccessKey 加密失败：PII_ENC_KEY 未正确配置"})
+				return
+			}
+			row.AccessKeyEnc = enc
+			credentialsChanged = true
+		}
+		if req.SecretKey != nil {
+			enc, err := pii.Encrypt(strings.TrimSpace(*req.SecretKey))
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "SecretKey 加密失败：PII_ENC_KEY 未正确配置"})
+				return
+			}
+			row.SecretKeyEnc = enc
+			credentialsChanged = true
+		}
+
+		if msg := validateTenantStorageRow(row); msg != "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
+			return
+		}
+
+		if err := db.Save(row).Error; err != nil {
+			// 这里不能用 dbWriteFailed：它只打日志不回话，而本接口要告诉界面「没存上」。
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败"})
+			return
+		}
+		// 配置改了，之前那次自检的结论就不再代表当前配置。
+		// 若不改回 unknown，「改完地址但没重新自检」的后台会一直显示上一次的绿点，
+		// 读的人会以为新配置已经验过了。
+		if err := db.Model(&model.TenantStorageConfig{}).
+			Where("company_id = ?", cid).
+			Updates(map[string]any{"status": storageStatusUnknown, "last_error": ""}).Error; err != nil {
+			// 回写自检状态失败不阻断保存：配置本身已经落库，最坏是显示一个过期的状态点。
+			// 但必须打日志——「状态点不可信」这件事没人会自己发现。
+			log.Printf("[STORAGE][WARN] 企业 %d 的存储配置已保存，但自检状态重置失败：%v", cid, err)
+		}
+
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionTenantStorageUpdate,
+			TargetType: "company_storage",
+			TargetID:   strconv.FormatInt(cid, 10),
+			Detail: map[string]any{
+				"driver":     row.Driver,
+				"endpoint":   row.Endpoint,
+				"bucket":     row.Bucket,
+				"enabled":    row.Enabled,
+				"publicRead": row.PublicRead,
+				// 只记「凭据有没有被改」，不记值也不记掩码：掩码仍是可关联的碎片。
+				"credentialsChanged": credentialsChanged,
+				"credentialsPresent": row.AccessKeyEnc != "" && row.SecretKeyEnc != "",
+			},
+		})
+
+		saved, err := loadTenantStorage(db, cid)
+		if err != nil || saved == nil {
+			// 落库成功了但回读失败：回一个最小视图而不是报错，避免「其实存上了却提示失败」
+			// 导致管理员重复提交。
+			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": emptyTenantStorageView(cid)})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": tenantStorageView(saved)})
+	})
+
+	r.DELETE("/api/admin/companies/:id/storage", plat, func(c *gin.Context) {
+		if writeLocked(c) {
+			return
+		}
+		cid, ok := storageTargetCompanyID(c)
+		if !ok {
+			return
+		}
+		row, err := loadTenantStorage(db, cid)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储配置失败"})
+			return
+		}
+		if row == nil {
+			// 幂等：没配过就是「已经是平台存储」，不报错。
+			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
+			return
+		}
+		if err := db.Where("company_id = ?", cid).Delete(&model.TenantStorageConfig{}).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "删除失败"})
+			return
+		}
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionTenantStorageReset,
+			TargetType: "company_storage",
+			TargetID:   strconv.FormatInt(cid, 10),
+			Detail: map[string]any{
+				"driver":   row.Driver,
+				"endpoint": row.Endpoint,
+				"bucket":   row.Bucket,
+				"enabled":  row.Enabled,
+				// 明确记下「有对象留在原桶」：切回平台盘只改新上传的去向，
+				// 存量对象不会被搬走，对账时要能解释这个裂缝。
+				"objectsLeftInBucket": true,
+			},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
+	})
+
+	limiter := middleware.NewRateLimiter(
+		func() int { return tenantStorageCheckLimitFn() }, tenantStorageCheckLimitPerMin, time.Minute,
+	).
+		WithKey(func(c *gin.Context) string {
+			return "tenantstorage:" + strconv.FormatInt(c.GetInt64("staffId"), 10)
+		}).
+		WithMessage("自检过于频繁，请稍后再试").
+		WithCounter(dbRateCounter{db: db})
+
+	// 顺序：plat 先把 staffId 写进上下文，限流分桶才拿得到它（同 url_probe）。
+	r.POST("/api/admin/companies/:id/storage/check", plat, limiter.Handler(), func(c *gin.Context) {
+		cid, ok := storageTargetCompanyID(c)
+		if !ok {
+			return
+		}
+		row, err := loadTenantStorage(db, cid)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储配置失败"})
+			return
+		}
+		if row == nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该企业尚未配置自有存储，先保存配置再自检"})
+			return
+		}
+
+		detail, probeErr := probeTenantStorage(row)
+		status, lastErr := storageStatusOK, ""
+		if probeErr != "" {
+			status, lastErr = storageStatusError, probeErr
+		}
+		now := time.Now()
+		if err := db.Model(&model.TenantStorageConfig{}).
+			Where("company_id = ?", cid).
+			Updates(map[string]any{
+				"status":          status,
+				"last_checked_at": now,
+				"last_error":      lastErr,
+			}).Error; err != nil {
+			// 回写失败要明确告诉界面：本次探测结果是真的，但它没被记住。
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "自检完成，但结果写入失败，请重试"})
+			return
+		}
+
+		entry := audit.Entry{
+			Action: audit.ActionTenantStorageCheck, TargetType: "company_storage",
+			TargetID: strconv.FormatInt(cid, 10),
+			Detail: map[string]any{
+				"ok":       probeErr == "",
+				"driver":   row.Driver,
+				"endpoint": row.Endpoint,
+				"bucket":   row.Bucket,
+			},
+		}
+		if probeErr != "" {
+			entry.Result = audit.ResultFail
+			entry.Detail["error"] = probeErr
+		}
+		audit.Record(db, c, entry)
+
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+			"ok":            probeErr == "",
+			"detail":        detail,
+			"error":         lastErr,
+			"status":        status,
+			"lastCheckedAt": now,
+			// 说清这次自检验了什么、没验什么。自检过了不等于接入层配好了：
+			// nginx 的 Host/SNI（R1 的 421）、CDN 缓存、证书链都不在覆盖范围。
+			"checkedScope": "凭据有效性与桶可达性；不含 nginx 侧 Host/SNI、CDN 与证书链",
+		}})
+	})
+}
+
+// 存储配置的三种自检状态。
+//
+// 用「unknown」而不是空串作为初始值：后台列表要靠它区分「配好了没验」与
+// 「验过了、是好的」。空串在这套 UI 里长得和「没有这个概念」一样，
+// 读的人无法判断是该点自检还是该改配置。
+const (
+	storageStatusUnknown = "unknown"
+	storageStatusOK      = "ok"
+	storageStatusError   = "error"
+)
+
+// tenantStorageReq 是 PUT 的入参。
+//
+// 布尔与凭据一律用指针：nil = 本次请求没提这一项（保留原值）。这与
+// company_wx.go 的 ReleaseEnabled 同一条纪律——界面只改 bucket 时不带
+// enabled，不能等于把企业悄悄停用。
+type tenantStorageReq struct {
+	Driver     string `json:"driver"`
+	Endpoint   string `json:"endpoint"`
+	Bucket     string `json:"bucket"`
+	Region     string `json:"region"`
+	UseSSL     *bool  `json:"useSsl"`
+	HostHeader string `json:"hostHeader"`
+	PublicRead *bool  `json:"publicRead"`
+	Enabled    *bool  `json:"enabled"`
+	// AccessKey / SecretKey：nil = 保留原值（界面显示掩码时点保存走这条），
+	// "" = 清空，其他 = 覆盖。**不接受**已加密的值——加密只发生在服务端，
+	// 允许客户端提交密文等于允许它把别的行密文复制过来。
+	AccessKey *string `json:"accessKey"`
+	SecretKey *string `json:"secretKey"`
+}
+
+// storageTargetCompanyID 解析并校验路径里的企业 id。
+//
+// 0 不是合法值：0 在系统里表示「平台自身」，平台那份存储走 sys_setting 的全局配置，
+// 不该在这张表里出现一行。放行 0 会让生成器跳过它（NeedsSnippet 里 driver 不是
+// local 就生成），于是拼出一段 cid=0 的 location——匹配不到任何 t/0/ 请求，
+// 但 nginx -t 是通过的，属于「配了但没用」的静默失败。
+func storageTargetCompanyID(c *gin.Context) (int64, bool) {
+	cid, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || cid <= 0 {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业 id 不合法"})
+		return 0, false
+	}
+	return cid, true
+}
+
+// loadTenantStorage 读一行配置；没配过返回 (nil, nil)。
+//
+// 「没配过」与「读失败」必须分开：前者是正常状态（走平台存储），后者要报错。
+// 合成一个 nil 会让「库挂了」被当成「这家企业没配」，界面显示一切正常而配置其实读不到。
+func loadTenantStorage(db *gorm.DB, cid int64) (*model.TenantStorageConfig, error) {
+	var row model.TenantStorageConfig
+	err := db.Where("company_id = ?", cid).First(&row).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &row, nil
+}
+
+// validateTenantStorageRow 校验即将落库的配置，返回给运营看的一句话（空串=通过）。
+//
+// 校验规则**不在这里重写**：endpoint 不许带 scheme、bucket 不许含路径与 ..、
+// hostHeader 不许含引号，全部复用 nginxsnippet.Target.Validate 单点。
+// 那份规则每一条都对应一种「配置看起来合法、实际会出事」，在写入侧复制一遍
+// 必然与生成侧漂移——而漂移的表现是「接口说存成功了，生成器却报错」。
+//
+// 唯一在这里加的一条是「第一阶段不支持私有桶」：那是**产品边界**不是语法规则，
+// 生成器没有资格判它（私有桶的 snippet 也是对的），只有写入侧知道本期没做签名链路。
+func validateTenantStorageRow(row *model.TenantStorageConfig) string {
+	target := nginxsnippet.Target{
+		CompanyID:  row.CompanyID,
+		Driver:     row.Driver,
+		Endpoint:   row.Endpoint,
+		Bucket:     row.Bucket,
+		UseSSL:     row.UseSSL,
+		HostHeader: row.HostHeader,
+		Enabled:    row.Enabled,
+	}
+	// Target.Validate 对 NeedsSnippet()=false 的行直接放行——这是对的：
+	// 未启用或 driver=local 的草稿配置不该被桶地址的格式卡住。
+	if err := target.Validate(); err != nil {
+		return "配置不合法：" + err.Error()
+	}
+	if !target.NeedsSnippet() {
+		return ""
+	}
+	if !row.PublicRead {
+		// 私有桶要走预签名，而出参契约（存裸键还是存 URL）会跟着变，
+		// 本期没有这条链路。放行会得到一个「配置成功、上线图全裂」的结果。
+		return "第一阶段只支持公开读桶（publicRead=true）：私有桶需要预签名链路，尚未实现"
+	}
+	if row.AccessKeyEnc == "" || row.SecretKeyEnc == "" {
+		// 启用一个没有凭据的桶，后果是上传时签名失败——而 P2 之前上传根本不看这份配置，
+		// 所以这个错误会一直躺到切量那天。在写入侧就拦住。
+		return "启用自有存储必须填写 AccessKey 与 SecretKey"
+	}
+	return ""
+}
+
+// probeTenantStorage 执行一次自检，返回 (成功时的说明, 失败原因)。
+//
+// 显式一进一出两个字符串而不是 error：调用方要的是「写进 last_error 的那句话」，
+// 而 error 的包装链对运营没有意义，反而容易把内部类型名带进界面。
+func probeTenantStorage(row *model.TenantStorageConfig) (detail, failure string) {
+	ak, err := pii.Decrypt(row.AccessKeyEnc)
+	if err != nil {
+		// 解密失败几乎只有一种成因：PII_ENC_KEY 与写入时不是同一把。
+		// 这条必须单独说，否则运维会去查桶地址——配置本身没问题，是钥匙换了。
+		return "", "凭据无法解密（PII_ENC_KEY 与写入时不一致），需重新填一次密钥"
+	}
+	sk, err := pii.Decrypt(row.SecretKeyEnc)
+	if err != nil {
+		return "", "凭据无法解密（PII_ENC_KEY 与写入时不一致），需重新填一次密钥"
+	}
+	detail, err = storageProbeFn(row.Driver, row.Endpoint, ak, sk, row.Bucket, row.Region, row.UseSSL)
+	if err != nil {
+		return detail, err.Error()
+	}
+	return detail, ""
+}
+
+// tenantStorageView 出参视图。
+//
+// 硬要求：**AccessKey / SecretKey 永不出参**。AccessKey 回掩码是为了让运维核对
+// 「现在生效的是不是新那把」——这是这张表最常见的失败模式（改了但没生效 / 改错了行），
+// 只回「已配置」无法回答它。SecretKey 连掩码都不给：它没有任何核对价值，
+// 一旦泄漏等于把桶交出去。
+func tenantStorageView(row *model.TenantStorageConfig) gin.H {
+	view := emptyTenantStorageView(row.CompanyID)
+	view["configured"] = true
+	view["driver"] = row.Driver
+	view["endpoint"] = row.Endpoint
+	view["bucket"] = row.Bucket
+	view["region"] = row.Region
+	view["useSsl"] = row.UseSSL
+	view["hostHeader"] = row.HostHeader
+	view["publicRead"] = row.PublicRead
+	view["enabled"] = row.Enabled
+	view["status"] = row.Status
+	view["lastError"] = row.LastError
+	view["lastCheckedAt"] = row.LastCheckedAt
+	view["updatedAt"] = row.UpdatedAt
+	view["accessKeyConfigured"] = row.AccessKeyEnc != ""
+	view["secretKeyConfigured"] = row.SecretKeyEnc != ""
+	if row.AccessKeyEnc != "" {
+		if ak, err := pii.Decrypt(row.AccessKeyEnc); err == nil {
+			view["accessKeyMasked"] = maskCredential(ak)
+		} else {
+			// 解密不出来也要如实说：否则界面会显示一个空掩码，看起来像「没配」。
+			view["credentialError"] = "凭据无法解密（PII_ENC_KEY 与写入时不一致），需重新填一次密钥"
+		}
+	}
+	// 这一轮明确告诉界面「配置尚未承载流量」，由它显示在对话框顶部。
+	// 少这句话，超管填完会以为已经生效——而真正生效要等 P2。
+	view["trafficEnabled"] = false
+	return view
+}
+
+// emptyTenantStorageView 是「没配过」时的视图：字段齐全但值全是空的。
+//
+// 不返回 null：前端拿到 null 要在每个字段上判空，而「没配」与「配了空值」
+// 在界面上应该是同一套渲染（都是空表单）。
+func emptyTenantStorageView(cid int64) gin.H {
+	return gin.H{
+		"companyId":           cid,
+		"configured":          false,
+		"driver":              nginxsnippet.DriverLocal,
+		"endpoint":            "",
+		"bucket":              "",
+		"region":              "",
+		"useSsl":              true,
+		"hostHeader":          "",
+		"publicRead":          true,
+		"enabled":             false,
+		"status":              storageStatusUnknown,
+		"lastError":           "",
+		"lastCheckedAt":       nil,
+		"updatedAt":           nil,
+		"accessKeyConfigured": false,
+		"secretKeyConfigured": false,
+		"accessKeyMasked":     "",
+		"credentialError":     "",
+		"trafficEnabled":      false,
+	}
+}
+
+// maskCredential 把 AccessKey 打码成「前4****后4」。
+//
+// 对长度不足的极短值整串打码：AccessKey 至少 16 位，短到 8 位以内的一定是填错了，
+// 这时候露前 4 后 4 等于把整个值露出来。
+func maskCredential(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) == 0 {
+		return ""
+	}
+	if len(r) <= 8 {
+		return "******"
+	}
+	return string(r[:4]) + "****" + string(r[len(r)-4:])
+}

@@ -77,6 +77,11 @@ export const ACTION_LABELS: Record<string, string> = {
   'company.storage_quota': '设置企业存储配额',
   // 小程序默认入口决定所有访客第一眼看到谁（全员 / 某个员工）
   'mp_entry.update': '修改小程序入口',
+  // 租户自有对象桶：装的是客户的云凭据，改它等于把该企业的文件流向改到另一个桶。
+  // 三个动作分开记，因为「改了配置」「验了一下」「切回平台盘」后果完全不同
+  'storage.config.update': '修改企业自有存储配置',
+  'storage.config.check': '企业存储连通性自检',
+  'storage.config.reset': '切回平台存储',
   'mp_release.create': '登记小程序版本',
   'mp_release.upload': '后台上传小程序代码',
   'mp_release.submit_audit': '提交小程序审核',

@@ -73,10 +73,11 @@
         <el-table-column label="创建时间" width="180" show-overflow-tooltip v-if="!isPhone">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="460" fixed="right" align="center">
+        <el-table-column label="操作" width="520" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openAdmins(row)">管理员</el-button>
             <el-button type="primary" link @click="openWX(row)">凭据</el-button>
+            <el-button type="primary" link @click="openStorage(row)">存储</el-button>
             <el-button type="primary" link @click="openReleases(row)">版本</el-button>
             <el-button type="primary" link @click="openLicense(row)">授权</el-button>
             <el-button type="primary" link :disabled="locked" @click="openEdit(row)">编辑</el-button>
@@ -421,6 +422,11 @@
         <el-button type="primary" :loading="licSaving" @click="submitLicense">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 租户自有对象桶：客户的云凭据只在这里填（平台超管代填）。
+         单独抽成组件是因为这段表单有「凭据只写不读 / 三态 / 自检」三块独立逻辑，
+         塞进本文件会把已经 1100 多行的企业管理页推到无法阅读。 -->
+    <TenantStorageDialog v-model="storageVisible" :company="storageCompany" />
   </div>
 </template>
 
@@ -447,6 +453,7 @@ import {
   type CompanyLicense,
 } from '@/api/tenants'
 import MPReleaseDialog from '@/components/MPReleaseDialog.vue'
+import TenantStorageDialog from '@/components/TenantStorageDialog.vue'
 import WechatBindingCell from '@/components/WechatBindingCell.vue'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/store/auth'
@@ -740,6 +747,17 @@ function wxTip(row: any) {
   return row.wxConfigured
     ? '该企业员工登录与海报小程序码，均使用此独立小程序'
     : '未配置独立小程序，当前回落到平台全局小程序；点「凭据」可代填'
+}
+
+// 自有存储配置（平台超管代填客户的桶地址与凭据）。
+// 与「凭据」那一栏（小程序 AppID/Secret）分开：那是代发小程序的凭证，
+// 这一个是「客户的图存在自己的桶里」的数据主权配置，泄漏面与后果都不同。
+const storageVisible = ref(false)
+const storageCompany = ref<{ id: number; name: string } | null>(null)
+
+function openStorage(row: any) {
+  storageCompany.value = { id: row.id, name: row.name }
+  storageVisible.value = true
 }
 
 async function openWX(row: any) {

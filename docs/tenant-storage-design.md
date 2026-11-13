@@ -348,6 +348,62 @@ MySQL 实跑记录（2026-11-13，本地 `mysql:8.0.46` 容器）：
 合法）」，被 `TestMigrationsTableNamesMatchModels` 扫成一张**叫 `IF` 的幽灵表**并报红——
 那个正则不剥注释。注释改写成「建表语句自带 `IF NOT EXISTS`」才过。
 
+#### ✅ P1 后半段已落地（2026-11-13 / 第六十轮，表终于能写了）
+
+第五十八轮之后这张表的状态是「能读不能写」——`access_key_enc` 没有任何代码在写，
+生产上只能手工 SQL 写入。本轮补齐写接口与后台界面：
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/admin/companies/:id/storage` | 读（凭据只回掩码；没配过回 `configured=false` 的完整视图，不是错误） |
+| `PUT /api/admin/companies/:id/storage` | 新建 / 覆盖（凭据 `pii.Encrypt` 落密文） |
+| `DELETE /api/admin/companies/:id/storage` | 切回平台存储（删行，幂等） |
+| `POST /api/admin/companies/:id/storage/check` | 连通性自检（回写 `status` / `last_checked_at` / `last_error`） |
+
+四条落地口径：
+
+1. **权限**：四个接口全部挂 `PlatformAdminMiddleware`，不是 `AuthMiddleware`。
+   源码级守门 `TestTenantStorageRoutesUsePlatformAdminGuard` 用括号配对扫出每条
+   `r.VERB(...)` 调用，要求 `plat` 出现在第一个 `func(` 之前——写在 handler body 里
+   等于没挂。另加一条：本文件不许出现 `AuthMiddleware`（判之前先剥注释，
+   否则文档注释里「不要用 AuthMiddleware」这句会被当成违规，守门误伤自己）。
+2. **凭据三态**：省略字段 = 保留原值、空串 = 清空、有值 = 覆盖。三态不是洁癖——
+   界面回显的是掩码，「只看不改点保存」提交的是不带 `accessKey` 的请求；
+   若把「不传」当成「清空」，一次改 bucket 的操作会把客户凭据抹掉，而接口照样回 `code:0`。
+3. **校验不重写**：endpoint 不许带 scheme、bucket 不许含路径与 `..`、hostHeader 不许含引号，
+   全部复用 `nginxsnippet.Target.Validate` 单点（写入侧复制一份必然与生成侧漂移，
+   漂移的表现是「接口说存成功了，生成器却报错」）。只在写入侧加两条**产品边界**：
+   第一阶段只支持公开读桶（私有桶要预签名链路）、启用时必须凭据齐全。
+4. **改了配置就作废上一次自检结论**（`status` 回 `unknown`）。否则「改完地址但没重新自检」
+   的后台会一直显示上一次的绿点，读的人会以为新配置已经验过了。
+
+**自检为什么必须带凭据**：S3 语义下匿名请求对「不存在的桶」和「存在但无权访问」回同一个
+403（防桶名枚举），**不带签名的探测对 S3 没有判别力**——探出 200 只说明域名解析通了。
+做一个「看起来验过了、其实没验凭据」的自检比不做更坏。实现用 SDK 的
+`BucketExists` / `IsBucketExist`（HEAD bucket，最小权限面；换成列举对象会让
+「只给写权限、没给列举权限」的正常桶被误判）。错误只回我们自己的文案，**不透出**
+SDK 原文——AccessDenied 响应会回显 AccessKeyId 片段，而 `last_error` 是常驻后台展示的字段。
+
+**自检的覆盖边界必须对运营明说**（接口回 `checkedScope`）：只验「凭据有效 + 桶可达」，
+**不含** nginx 侧 Host/SNI（漏 SNI 会被桶 421，见 R1）、CDN 缓存、证书链。
+这一点和「自检通过 ≠ 可以切量」是同一件事，写在界面 alert 里比写在文档里有用。
+
+**仍不做**：配置不承载流量（上传与出参仍走平台那一个实例，要等 P2 的
+`UploaderResolver`）；`public_base_url` / `key_id` 仍不进出参也不进表单（填了不生效比不填更坏）；
+私有桶；密钥轮换。**别看到「表能写、能自检」就以为多租户存储能用了。**
+
+守门清单（本轮新增，全部做过反向验证）：
+
+| 守门 | 位置 | 盯什么 |
+| --- | --- | --- |
+| `TestTenantStorageRoutesUsePlatformAdminGuard` | `handler/tenant_storage_guard_test.go` | 每条路由都挂 `plat` 且在第一个 `func(` 之前；文件里无 `AuthMiddleware`；路由数量变化必须回来确认 |
+| `TestTenantStorageViewNeverExposesCredentials` | 同上 | SecretKey 无掩码出参；AccessKey 掩码必须经 `maskCredential` |
+| `TestTenantStorageTenantAdminForbidden` | `handler/tenant_storage_test.go` | 企业管理员（role=admin）四个接口全 403，且配置行零变更 |
+| `TestTenantStorageCredentialTriState` | 同上 | 不传=保留 / 空串=清空 / 有值=覆盖（密文重新生成） |
+| `TestTenantStorageValidation` | 同上 | scheme / 驱动枚举 / 私有桶 / bucket 路径 / 企业不存在 / cid=0 六种拒绝 |
+| `TestTenantStorageCheckFailure` | 同上 | 失败原因写进 `last_error`，且不含凭据 |
+| `runAPIFlow` 的「租户存储配置」 | `handler/handler_test.go` | 四个接口在 SQLite 与 MySQL 下行为一致（parity 覆盖，非本轮的 SQL 分支） |
+
 ### 3.3 `UploaderResolver`（P2）
 
 ```go
@@ -490,6 +546,15 @@ type Resolver interface {
 > **P1 进度（2026-11-13 第五十八轮）**：前两项已落地（迁移 0044 + 模型进 `model.All()`，
 > 生成器可读），**配置界面与写接口未做**。已落地的守门见 §3.2「守门清单」；
 > 后半段（掩码回显 / 自检按钮 / `PlatformAdminMiddleware` / 越权集成测试）仍是待办。
+>
+> **P1 完成（2026-11-13 第六十轮）**：P1 五项交付**全部落地**——迁移 0044、模型、
+> 配置写接口（四个）、后台配置界面（`TenantStorageDialog.vue`，入口在「企业管理 → 存储」）、
+> 掩码回显 + 自检 + `PlatformAdminMiddleware` + 越权集成测试。验收判据逐条对齐：
+> 装完零业务数据 ✅（迁移只建表）；配置写库为密文 ✅（`pii.Encrypt`，测试断言 `v1:` 前缀）；
+> 改错能改回来 ✅（PUT 覆盖 / DELETE 切回默认）；企业管理员 403 且零变更 ✅
+> （`TestTenantStorageTenantAdminForbidden`）。
+> 仍未做的是 P1 里的**非交付项**：`public_base_url` 与 `key_id` 的消费方（自有域名 / 密钥轮换），
+> 以及私有桶。这三项都不是「漏了」，是明确排到 P2/P4。
 >
 > **P0 进度（2026-11-13 第五十九轮）**：P0 的验收判据「新上传库里是 objectKey」**已达成**。
 > 出参侧 9 条公开 GET + 后台五组出口（第五十三 / 五十七轮）、写入侧 12 个业务表单写入点

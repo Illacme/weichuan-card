@@ -160,6 +160,10 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterCompanyLicense(r, db) // 按企业查看/设置授权（B4：试用转正 / 延期 / 改席位）
 	RegisterStorageQuota(r, db)   // 按租户存储用量与配额（B3）
 	RegisterCompanyWXApp(r, db)
+	// 租户自有对象桶配置（平台超管）：GET/PUT/DELETE /api/admin/companies/:id/storage
+	// + POST .../check。这里不注册的话，「企业管理员越权应 403」那条断言会变成
+	// gin 的 404 纯文本，测试红在一个看不出是路由缺失的地方。
+	RegisterTenantStorage(r, db)
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
@@ -1322,6 +1326,45 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("POST", "/api/admin/wechat/unbind",
 			map[string]interface{}{"kind": "employee", "id": 999999}, adminToken)
 		require.EqualValues(t, 1, body["code"])
+	})
+
+	// 租户自有对象桶配置（P1 后半段）：四个接口进 runAPIFlow，才会被
+	// TestAPIFlowMySQL 的 parity 一并覆盖。这里只跑一遍超管闭环——
+	// 企业管理员 403 那条在 tenant_storage_test.go 里单独测（那里要造企业管理员账号）。
+	// 收尾把配置删掉：后面的 flow 不该受「这家企业有自有桶」影响。
+	t.Run("租户存储配置", func(t *testing.T) {
+		old := storageProbeFn
+		storageProbeFn = func(_, _, _, _, bucket, _ string, _ bool) (string, error) {
+			return "凭据有效，桶 " + bucket + " 可达（parity 桩）", nil
+		}
+		t.Cleanup(func() { storageProbeFn = old })
+
+		const p = "/api/admin/companies/1/storage"
+		_, body := c.do("GET", p, nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		require.EqualValues(t, false, body["data"].(map[string]interface{})["configured"])
+
+		_, body = c.do("PUT", p, map[string]interface{}{
+			"driver": "minio", "endpoint": "play.min.io", "bucket": "wc-parity",
+			"useSsl": true, "hostHeader": "wc-parity.play.min.io",
+			"enabled": true, "publicRead": true,
+			"accessKey": "AKIAPARITYEXAMPLE0000", "secretKey": "parity-secret",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"], "%v", body["msg"])
+
+		// 回显只有掩码：这是 MySQL 侧也要成立的契约（密文列是 TEXT，落库/读回不改变语义）
+		_, body = c.do("GET", p, nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		data := body["data"].(map[string]interface{})
+		require.Equal(t, "AKIA****0000", data["accessKeyMasked"])
+		require.NotContains(t, fmt.Sprint(body), "parity-secret")
+
+		_, body = c.do("POST", p+"/check", nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["ok"])
+
+		_, body = c.do("DELETE", p, nil, adminToken)
+		require.EqualValues(t, 0, body["code"])
 	})
 
 	// 移动端管理员身份通路：放最后，因为它会往 sys_setting 写 wx_appid，
