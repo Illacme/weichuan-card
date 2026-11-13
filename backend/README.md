@@ -100,7 +100,9 @@ backend/
 | 想自己掌控 | `AUTO_MIGRATE=0` 关闭自动迁移，改跑 `./server migrate`（不启服务，退出码可进流水线） |
 
 - 幂等性：语句重复执行报的 `1060 Duplicate column` / `1050 already exists` /
-  `1062 Duplicate entry` 一律忽略，因此存量库首次被接管时重放全部迁移也安全。
+  `1062 Duplicate entry` / `1091 Can't DROP`（删一个已不存在的列）一律忽略，
+  因此存量库首次被接管时重放全部迁移也安全。MySQL 8.0 不认 `DROP COLUMN IF EXISTS`
+  等 MariaDB 方言，迁移一律写裸 DDL，靠记账 + 忽略错误保证幂等。
 - 失败不记账：某个迁移失败时**不会**把它记成已应用，下次启动会重试；启动日志打
   `[MIGRATE][FATAL]` 且不终止服务（保留「进后台查日志、修完重启自愈」的入口），
   代价是这条日志必须被看见——请把它纳入日志告警匹配词。

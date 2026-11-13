@@ -1,12 +1,14 @@
 package migrate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
 	"weichuan/internal/dbopen"
@@ -212,4 +214,76 @@ func TestApplyRejectsDirMissingManifestFile(t *testing.T) {
 	require.Contains(t, err.Error(), "部署包不完整")
 	require.Contains(t, err.Error(), "9999_ghost.sql", "错误里要点名缺失的文件")
 	require.Contains(t, err.Error(), "migrations/ 目录", "错误里要给出处置办法")
+}
+
+// TestIsIgnoredToleratesMySQLMissingDropTarget 钉住 0043 的幂等前提：
+// MySQL 8.0 只能用裸 DROP COLUMN，列已不存在时报 1091，必须被当成
+// 「已经删过了」跳过，否则「列被手工删掉但版本没记账」的库会永远 FATAL。
+//
+// 同时守住反面：忽略表不能宽到把语法错误 / 未知列 / 外键占用 / 权限不足
+// 一并吞掉——那会把真故障变成静默跳过（与 P0「不报错的失败更贵」同源）。
+func TestIsIgnoredToleratesMySQLMissingDropTarget(t *testing.T) {
+	// 真实 MySQL 8.0.46 的错误文本（docker wc-mysql-ci 上复现过）
+	missing := errors.New("Error 1091 (42000): Can't DROP 'template_id'; check that column/key exists")
+	require.True(t, isIgnored(missing), "1091 必须被忽略，否则 0043 无法幂等重放")
+	require.Contains(t, ignoredErrs, "Can't DROP",
+		"忽略规则必须显式写在 ignoredErrs 里，不能靠某个驱动恰好不报错")
+
+	for _, tc := range []struct{ name, msg string }{
+		{"1064 语法错误（0043 事故本体）", "Error 1064 (42000): You have an error in your SQL syntax; near 'IF EXISTS template_id'"},
+		{"1054 查询未知列", "Error 1054 (42S22): Unknown column 'template_id' in 'field list'"},
+		{"1553 外键占用", "Error 1553 (HY000): Cannot drop index 'idx_x': needed in a foreign key constraint"},
+		{"1142 权限不足", "Error 1142 (42000): ALTER command denied to user 'x'@'localhost'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.False(t, isIgnored(errors.New(tc.msg)),
+				"真故障不能被当成幂等跳过：%s", tc.name)
+		})
+	}
+}
+
+// TestMySQLApplyFileDropMissingColumnIsIdempotent 用真实 MySQL 8.0 验证
+// 「同一份裸 DROP 连跑两次不报错」，而不是只靠字符串匹配自证。
+// 未设 TEST_MYSQL_DSN 时跳过；CI 的 MySQL service 与本地 parity 都会跑。
+func TestMySQLApplyFileDropMissingColumnIsIdempotent(t *testing.T) {
+	dsn := os.Getenv("TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("set TEST_MYSQL_DSN to run MySQL DROP idempotency check")
+	}
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+
+	const table = "t_migrate_drop_probe"
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS "+table).Error)
+	require.NoError(t, db.Exec("CREATE TABLE "+table+
+		" (id INT PRIMARY KEY, gone VARCHAR(8))").Error)
+	t.Cleanup(func() {
+		// 清理失败不影响断言结果（parity 库每次会 TRUNCATE 全库），只留痕不判错
+		if err := db.Exec("DROP TABLE IF EXISTS " + table).Error; err != nil {
+			t.Logf("[WARN] 清理探针表失败（不影响本用例）：%v", err)
+		}
+	})
+
+	dir := t.TempDir()
+	name := "0001_drop.sql"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name),
+		[]byte("ALTER TABLE "+table+" DROP COLUMN gone;"), 0o600))
+
+	require.NoError(t, applyFile(db, dir, name), "第一次：列还在，应正常删除")
+	assertProbeColumnGone(t, db, table)
+
+	require.NoError(t, applyFile(db, dir, name),
+		"第二次：列已不存在，MySQL 报 1091 必须被忽略，否则 0043 应急会一直 FATAL")
+	assertProbeColumnGone(t, db, table)
+}
+
+func assertProbeColumnGone(t *testing.T, db *gorm.DB, table string) {
+	t.Helper()
+	var cnt int64
+	require.NoError(t, db.Raw(
+		"SELECT COUNT(*) FROM information_schema.columns "+
+			"WHERE table_schema = DATABASE() AND table_name = ? AND column_name = 'gone'",
+		table,
+	).Scan(&cnt).Error)
+	require.Zero(t, cnt, "探针列应已被 DROP")
 }

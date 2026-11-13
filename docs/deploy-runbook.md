@@ -640,8 +640,8 @@ CI 的「发版脚本自检」job 每次都跑；目前 50 条断言，含缺文
 从本版起，**MySQL 部署在启动时自动应用「尚未应用」的迁移**，无需人工干预：
 
 - 已应用过的迁移记在 `schema_migrations` 表（version + applied_at），重复启动不会重放；
-- 只做增量，且每条语句幂等（已存在的列/表报 `1060 / 1050 / 1062` 一律忽略），
-  存量库首次被接管时重放全部迁移也安全（随后补记版本）；
+- 只做增量，且每条语句幂等（已存在的列/表报 `1060 / 1050 / 1062`、删一个已不存在的列报
+  `1091 Can't DROP` 一律忽略），存量库首次被接管时重放全部迁移也安全（随后补记版本）；
 - 多副本同时启动用 MySQL `GET_LOCK` 串行化，抢不到锁的副本跳过（另一个正在做）；
 - SQLite 部署不适用本节：表由服务启动时按模型 `AutoMigrate` 维护。
 
@@ -695,6 +695,98 @@ migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_ap
 > 手工跑一次即可让列立即生效；完整自查与修复命令见 `backend/README.md`
 > 「自托管 MP4 的兜底地址 → 升级必做」。
 
+#### ⚠️ 迁移 SQL 本身写错：`[MIGRATE][FATAL]` 报 1064 的现场应急
+
+2026-11-13 线上事故：`0043_drop_template_id.sql` 写成了 MariaDB 方言：
+
+```sql
+ALTER TABLE home_layouts DROP COLUMN IF EXISTS template_id;   -- 错：MySQL 8.0 不认
+```
+
+**MySQL 8.0 不支持 `DROP COLUMN IF EXISTS`**（`ADD COLUMN IF NOT EXISTS` /
+`DROP INDEX IF EXISTS` / `CREATE INDEX IF NOT EXISTS` 同样不支持；但 `DROP TABLE IF EXISTS`
+与 `CREATE TABLE IF NOT EXISTS` 是支持的，别一刀切）。它在**解析阶段**就报：
+
+```text
+Error 1064 (42000): ... near 'IF EXISTS template_id' at line 19
+[MIGRATE][FATAL] 应用数据库迁移失败：应用 0043_drop_template_id.sql 失败
+[MIGRATE][FATAL] 服务继续启动，但表结构可能与本版本不一致
+listen :8080 (storage driver=s3)
+```
+
+服务照常 listen、页面照常打开，只有日志里一条 FATAL —— 这正是最贵的静默失败形态，
+**不能因为页面能打开就当没事**。`applyFile` 是成功后才记账，所以 0043 没进
+`schema_migrations`，修好会重放；它又是当时最后一个迁移，没有后续迁移被连带跳过。
+日志里若出现 `/Users/xxx/...` 之类的编译期源码路径，那是交叉编译进二进制的信息，
+不代表服务器上真有这个目录。
+
+**修法**：迁移一律写裸 DDL，幂等靠「版本记账 + 忽略幂等错误」，不靠 `IF EXISTS`：
+
+```sql
+ALTER TABLE home_layouts DROP COLUMN template_id;
+```
+
+`internal/migrate/apply.go` 的 `ignoredErrs` 已包含 `1091 Can't DROP`（列已不存在）。
+三层守门：`TestMigrationsUseMySQL8DDL` 禁止迁移目录再出现 MariaDB 专属写法、
+`TestIsIgnoredToleratesMySQLMissingDropTarget` 钉住忽略规则且不让 1064/1054/1553/1142
+被误吞、`TestMySQLApplyFileDropMissingColumnIsIdempotent` 在真实 MySQL 8.0 上连跑两次裸 DROP。
+
+> **别用 `information_schema` + `PREPARE` 动态 SQL 绕**：`applyFile` 逐句 `db.Exec`，
+> 而 `PREPARE` 是会话级的，连接池换一条连接后 `EXECUTE` 就找不到句柄。
+
+**现场应急（通常不用重新编译、也不用重启服务）**：迁移 SQL 是**运行期从磁盘
+`migrations/` 读的**，二进制里只有文件名清单。文件名没变，所以只替换那一个 `.sql` 即可：
+
+```bash
+cd /www/wwwroot/weichuan.ziyuanxingqiu.cn/backend     # 换成你的部署目录
+
+# 1) 只读判状态（-p 会提示输入口令；把 <库名> 换成实际库名）
+mysql -u<用户> -p <库名> -e "
+  SELECT COUNT(*) AS col_exists FROM information_schema.columns
+   WHERE table_schema='<库名>' AND table_name='home_layouts' AND column_name='template_id';
+  SELECT COUNT(*) AS recorded FROM schema_migrations
+   WHERE version='0043_drop_template_id.sql';"
+
+# 2) 把 migrations/0043_drop_template_id.sql 换成修复版（裸 DROP）
+# 3) 立即应用，不用停服务
+./server-linux-amd64 migrate
+```
+
+按第 1 步的两个数分支：
+
+| `col_exists` | `recorded` | 处置 |
+| --- | --- | --- |
+| 1 | 0 | **本次线上就是这一格**：列还在、0043 没记账。只换 `.sql` + 跑 `migrate` 即可，旧二进制也够（用不到 1091 忽略）。 |
+| 0 | 0 | 列已被手工删、但没记账：新 SQL 会报 1091，**必须同时升级含 `Can't DROP` 忽略的新二进制**；或在确认列确已删除后手工补记账（见下）。只换 `.sql` 不够。 |
+| 0 | 1 | 已修复，无需操作。 |
+| 1 | 1 | 记账与表结构不一致，先查是不是有人手工把列加回来了，别直接重放。 |
+
+第 2 种情形若暂时不想换二进制，且**已用 `SHOW COLUMNS` 确认列确实不存在**：
+
+```sql
+INSERT INTO schema_migrations (version, applied_at)
+VALUES ('0043_drop_template_id.sql', NOW());
+```
+
+> 这条只在「列确实已删」时才正确；列还在却补记账，等于把删列这事永久跳过去。
+> 另外 GORM 的默认 logger 会把被忽略的 `Error 1091 ... Can't DROP` 打到日志里，
+> **看到这行不等于迁移失败**——判据是 `[MIGRATE]` 那几行有没有 `FATAL`、
+> 以及 `schema_migrations` 有没有补上版本。
+
+**验收**：
+
+```bash
+./server-linux-amd64 migrate
+# 期望：[MIGRATE] 已应用 1 个迁移：0043_drop_template_id.sql
+#   或：[MIGRATE] 数据库已是最新（无待应用迁移），且全程无 FATAL
+
+mysql -u<用户> -p <库名> -e "
+  SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema='<库名>' AND table_name='home_layouts' AND column_name='template_id';
+  SELECT version FROM schema_migrations WHERE version='0043_drop_template_id.sql';"
+# 第一个查询应为 0，第二个应返回 1 行
+```
+
 ### 想自己掌控：拆成流水线里的一步
 
 ```bash
@@ -724,7 +816,8 @@ for f in backend/migrations/000*.sql; do
 done
 ```
 
-迁移向后兼容、只增不改；若报 `1060 Duplicate column` / `1050 table already exists`，说明该变更已应用过，可忽略。**执行前先 `mysqldump` 备份**。
+迁移向后兼容、只增不改；若报 `1060 Duplicate column` / `1050 table already exists` /
+`1091 Can't DROP`（删一个已不存在的列），说明该变更已应用过，可忽略。**执行前先 `mysqldump` 备份**。
 手工执行后记得把对应版本写进 `schema_migrations`，否则启动时还会再跑一遍（幂等，但会重复产生可忽略的报错）。
 
 ## 4.5 升级后必做：存量图片缩略图回填（只限本地磁盘存储）

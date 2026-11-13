@@ -13,7 +13,16 @@
 --
 -- 升级零突变：只删列、不搬迁任何业务数据。存量行在 0042 已回填两轴，
 -- 删列对其展示无影响；SQLite（测试 / devserver）由 GORM AutoMigrate 管表结构，
--- 本迁移仅在 MySQL（生产 / parity）执行。重复执行安全：DROP COLUMN IF EXISTS
--- 在 MySQL 8.0 幂等（列已不存在时静默跳过，不报错）。
+-- 本迁移仅在 MySQL（生产 / parity）执行。
+--
+-- 方言钉子（2026-11-13 线上事故订正）：MySQL 8.0 **不支持**
+-- ALTER TABLE ... DROP COLUMN IF EXISTS —— 那是 MariaDB 方言，MySQL 会在
+-- 解析阶段直接报 1064 near 'IF EXISTS'，整份迁移失败且不会记账。
+-- 因此这里必须用裸 DROP，幂等由两层保证：
+--   1. schema_migrations 记账，已应用过的文件不会重放；
+--   2. migrate.apply.go 的 ignoredErrs 忽略 1091「Can't DROP ... check that
+--      column/key exists」，覆盖「列已被手工删除但版本未记账」的应急场景。
+-- 别改回 IF EXISTS，也别用 information_schema + PREPARE 动态 SQL 绕：
+-- applyFile 逐句 db.Exec，PREPARE 是会话级的，连接池换连接后 EXECUTE 会失效。
 
-ALTER TABLE home_layouts DROP COLUMN IF EXISTS template_id;
+ALTER TABLE home_layouts DROP COLUMN template_id;

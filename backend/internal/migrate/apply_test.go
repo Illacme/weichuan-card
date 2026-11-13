@@ -159,9 +159,72 @@ func TestMigrationsCarryNoBusinessData(t *testing.T) {
 	}
 }
 
+// TestMigrationsUseMySQL8DDL 守门：迁移里不许出现 MariaDB 专属的 DDL 方言。
+//
+// 2026-11-13 线上事故：0043 写成 ALTER TABLE ... DROP COLUMN IF EXISTS，
+// MySQL 8.0 在**解析阶段**就报 1064（这写法只有 MariaDB 认），迁移失败且
+// 版本不记账；服务 fail-open 继续 listen，于是「日志一条 FATAL、页面看着正常、
+// 表结构落后一个版本」——典型的静默失败。本地 SQLite 测试全绿也发现不了，
+// 因为 migrations/*.sql 根本不跑在 SQLite 上。
+//
+// 剥注释后再匹配：0043 的注释里正当解释过这个被禁的写法，不能被自己命中。
+// 只禁 MySQL 不支持的那几种；DROP TABLE IF EXISTS / CREATE TABLE IF NOT EXISTS
+// 在 MySQL 8.0 是合法的，不能一刀切。
+func TestMigrationsUseMySQL8DDL(t *testing.T) {
+	dir, err := migrationsDir()
+	if err != nil {
+		t.Fatalf("定位 migrations 目录失败：%v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("读取 %s 失败：%v", dir, err)
+	}
+	banned := []string{
+		"DROP COLUMN IF EXISTS",
+		"ADD COLUMN IF NOT EXISTS",
+		"DROP INDEX IF EXISTS",
+		"CREATE INDEX IF NOT EXISTS",
+	}
+	scanned := 0
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".sql" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("读取 %s 失败：%v", e.Name(), err)
+		}
+		scanned++
+		code := strings.ToUpper(stripSQLComments(string(raw)))
+		for _, b := range banned {
+			if strings.Contains(code, b) {
+				t.Errorf("%s 含 %q：MySQL 8.0 不支持该写法（MariaDB 方言），"+
+					"会在解析阶段直接 1064 让整份迁移失败；改写裸 DDL + 忽略幂等错误",
+					e.Name(), b)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("没有扫描到任何 .sql 迁移文件——目录解析失效？")
+	}
+
+	// 0043 必须真的删列：把文件改成 SELECT 1 或清空，只让启动日志变绿是假修复。
+	raw, err := os.ReadFile(filepath.Join(dir, "0043_drop_template_id.sql"))
+	if err != nil {
+		t.Fatalf("读取 0043 失败：%v", err)
+	}
+	code := strings.ToUpper(stripSQLComments(string(raw)))
+	if !strings.Contains(code, "DROP COLUMN TEMPLATE_ID") {
+		t.Fatal("0043 必须真的 DROP COLUMN template_id，不能靠空语句假装修复")
+	}
+	if strings.Contains(code, "IF EXISTS") {
+		t.Fatal("0043 不许出现 IF EXISTS（MySQL 8.0 解析阶段会报 1064）")
+	}
+}
+
 // stripSQLComments 去掉 SQL 里的 -- 行注释，返回可安全做关键字匹配的文本。
 // 只处理行注释：migrations 里没有 /* */ 块注释与含分号的字符串字面量
-//（与 apply.go 的切分约定一致）。
+// （与 apply.go 的切分约定一致）。
 func stripSQLComments(sql string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(sql, "\n") {

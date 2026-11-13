@@ -12,9 +12,13 @@
 //
 // 幂等性：建表用 IF NOT EXISTS；对已存在的对象，ALTER/INSERT 会报
 // "Duplicate column" / "already exists" / "Duplicate entry"（1060/1050/1062），
-// 这些错误一律忽略——与 docs/deploy-runbook.md「存量数据库应用迁移」
-// 的容错说明一致。因此首次接管的存量库（记账表为空、业务表已存在）重放
-// 全部迁移也安全：命中 Duplicate 即跳过，随后补记版本。
+// 删一个已不存在的列会报 "Can't DROP"（1091）——这些错误一律忽略——与
+// docs/deploy-runbook.md「存量数据库应用迁移」的容错说明一致。因此首次接管的
+// 存量库（记账表为空、业务表已存在）重放全部迁移也安全：命中即跳过，随后补记版本。
+//
+// 注意 MySQL 8.0 与 MariaDB 的 DDL 方言差异：DROP COLUMN IF EXISTS /
+// ADD COLUMN IF NOT EXISTS 只有 MariaDB 认，MySQL 8.0 在解析阶段就报 1064。
+// 迁移 SQL 一律写裸 DDL，幂等靠上面的错误忽略 + 版本记账，不靠 IF EXISTS。
 //
 // 为什么切分语句只按 ";"：migrations 里只有 DDL/DML，无存储过程 / 触发器 /
 // 含分号的字符串字面量（企业名等中文数据不含分号）。若将来加入这类语句，
@@ -57,7 +61,15 @@ const (
 //	1050 Table already exists   —— CREATE TABLE（有 IF NOT EXISTS，双保险）
 //	1061 Duplicate key name     —— ALTER ADD INDEX 索引已存在
 //	1062 Duplicate entry        —— 固定主键的种子 INSERT 重复执行
-var ignoredErrs = []string{"Duplicate column", "already exists", "Duplicate key name", "Duplicate entry"}
+//	1091 Can't DROP 'x'         —— DROP COLUMN 目标已不存在
+//
+// 1091 是 2026-11-13 迁移 0043 事故后补的：MySQL 8.0 不支持
+// DROP COLUMN IF EXISTS，只能用裸 DROP + 忽略 1091，才能同时覆盖
+// 「列还在」与「列已被手工删但版本没记账」两种库状态。
+var ignoredErrs = []string{
+	"Duplicate column", "already exists", "Duplicate key name", "Duplicate entry",
+	"Can't DROP",
+}
 
 // migrationsDir 定位 migrations 目录：按优先级逐个候选，第一个「存在且有 .sql」的胜出。
 //  1. 环境变量 WEICHUAN_MIGRATIONS_DIR（运维显式覆盖的逃生门）；

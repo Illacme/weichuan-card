@@ -2565,6 +2565,14 @@ P2/P3 之前的统一版式，不体现四风格模块布局，只固定预览�
 > 旧行无 `template_id` 不影响任何读路径（读路径早已以两轴列为准），SQLite 走 GORM AutoMigrate、
 > MySQL 走迁移 0043。
 
+> ⚠️ **订正（第五十一轮，2026-11-13）**：下表这一行的「MySQL 8.0 幂等 DROP、
+> 列已不存在静默跳过」是**错误结论**，并已在线上造成一次迁移失败。MySQL 8.0 根本
+> 不支持 `DROP COLUMN IF EXISTS`（MariaDB 方言），会在 SQL 解析阶段直接报 1064，
+> 语句根本没执行到「判断列在不在」那一步。已改为裸 `DROP COLUMN template_id` +
+> `migrate.apply.go` 的 `ignoredErrs` 忽略 1091，并补三层守门与真实 MySQL 8.0 实测。
+> 详见本文件第五十一轮与 `docs/deploy-runbook.md` §4「迁移 SQL 本身写错」。
+> 下方表格原文保留，作为当时判断的记录，不作为操作依据。
+
 | 项 | 说明 |
 | --- | --- |
 | 迁移 `0043` | 新建 `backend/migrations/0043_drop_template_id.sql`：`ALTER TABLE home_layouts DROP COLUMN IF EXISTS template_id;`（MySQL 8.0 幂等 DROP，列已不存在静默跳过）；`backend/internal/migrate/manifest_gen.go` 的 `expectedMigrations` 追加 `"0043_drop_template_id.sql"`（`TestManifestMatchesMigrationsDir` 守门） |
@@ -3247,3 +3255,94 @@ nginx-check **113/113**、`git diff --check` 干净。
 **用户侧待办**（沿用前两轮，本轮无新增运维动作）：① `git push origin main`；
 ② 线上按 §4.5.1 跑 `thumbbackfill -force` 回填 + **CF Purge `/uploads/*`**；
 ③ P1 的第 5 条 CF Cache Rule（runbook §5.2.7）。
+
+## 第五十一轮：线上迁移 0043 报 1064 的修复（MySQL 8.0 方言事故，2026-11-13）
+
+### 一、现象与根因
+
+用户贴出线上主程序启动日志：
+
+```text
+Error 1064 (42000): ... near 'IF EXISTS template_id' at line 19
+[MIGRATE][FATAL] 应用数据库迁移失败：应用 0043_drop_template_id.sql 失败
+[MIGRATE][FATAL] 服务继续启动，但表结构可能与本版本不一致
+listen :8080 (storage driver=s3)
+```
+
+根因是 `0043` 写了 `ALTER TABLE ... DROP COLUMN IF EXISTS`，注释还宣称「在 MySQL 8.0
+幂等」。**这是 MariaDB 方言**：MySQL 8.0 在 SQL 解析阶段就报 1064，语句根本没执行到
+「判断列在不在」那一步。用本地 Docker `wc-mysql-ci`（MySQL 8.0.46）实跑复现三条：
+
+| 语句 | 结果 |
+| --- | --- |
+| `DROP COLUMN IF EXISTS template_id` | `ERROR 1064 ... near 'IF EXISTS template_id'` |
+| 裸 `DROP COLUMN template_id` | 成功 |
+| 再裸 `DROP COLUMN template_id` | `ERROR 1091: Can't DROP 'template_id'; check that column/key exists` |
+
+`applyFile` 成功后才 `recordVersion`，所以 0043 没进 `schema_migrations`，修好会重放；
+它是当时最后一个迁移，没有后续迁移被连带跳过；P5 之后代码已不读写 `template_id`，
+多留一列不影响运行 —— 加上启动迁移失败是刻意的 fail-open，于是「页面一切正常、
+日志一条 FATAL、表结构落后一版」，典型的静默失败。
+
+**为什么之前全绿**：`migrations/*.sql` 只跑在 MySQL 上，本地默认 SQLite 走
+`AutoMigrate`；不设 `TEST_MYSQL_DSN` 时 parity 用例直接 skip。第四十九 / 五十轮的
+全量门禁再绿，也碰不到这条 SQL。
+
+### 二、修复（3 处生产改动 + 3 层守门）
+
+| 文件 | 改动 |
+| --- | --- |
+| `backend/migrations/0043_drop_template_id.sql` | 改为裸 `ALTER TABLE home_layouts DROP COLUMN template_id;`；注释订正方言结论，写明幂等靠「记账 + 忽略 1091」。注意注释里不能出现半角 `;`（`applyFile` 按 `;` 切句） |
+| `backend/internal/migrate/apply.go` | 包注释补 MySQL / MariaDB DDL 差异；`ignoredErrs` 增加 `"Can't DROP"`（1091） |
+| `backend/internal/migrate/apply_test.go` | 新增 `TestMigrationsUseMySQL8DDL`：扫全目录、剥注释后禁止 4 种 MariaDB 专属写法；另断言 0043 必须真的删列（防止改成 `SELECT 1` 假修复） |
+| `backend/internal/migrate/apply_bookkeeping_test.go` | 新增 `TestIsIgnoredToleratesMySQLMissingDropTarget`（1091 必须忽略，1064 / 1054 / 1553 / 1142 不许被吞）+ `TestMySQLApplyFileDropMissingColumnIsIdempotent`（真实 MySQL 连跑两次裸 DROP） |
+| `docs/deploy-runbook.md` / `backend/README.md` | 幂等错误清单补 1091；runbook §4 新增现场应急章节（状态判定表、只换 `.sql` 的最小动作、验收命令） |
+
+**刻意没做**：没有改 `manifest_gen.go`（文件名未变，清单不受影响）；没有把 0043
+改成 `information_schema` + `PREPARE` 动态 SQL（`PREPARE` 是会话级的，`applyFile`
+逐句 `db.Exec` 会跨连接池连接，`EXECUTE` 找不到句柄）；没有动业务代码。
+
+### 三、真实 MySQL 8.0.46 实测
+
+新建空库 `weichuan_mig43`，设 `TEST_MYSQL_DSN` 后：
+
+- 全量 43 个迁移应用成功；`home_layouts.template_id` 列数 = 0；`schema_migrations`
+  含 `0043_drop_template_id.sql`，总数 43。
+- 精确模拟两种线上应急状态，均通过：
+  - **列还在 + 0043 未记账**（用户线上当前态）→ 重放后列数 0、记账 1；
+  - **列已删 + 0043 未记账**（运维手工删过列）→ 1091 被忽略、记账补上、总记账仍 43。
+- GORM 默认 logger 仍会打印被忽略的 `Error 1091 ... Can't DROP`，**这行不代表失败**；
+  判据是 `[MIGRATE]` 有没有 FATAL、版本有没有补记。已写进 runbook。
+
+### 四、反向验证（改回旧实现必红，还原后零漂移）
+
+| 注入的坏改动 | 结果 |
+| --- | --- |
+| 0043 改回 `DROP COLUMN IF EXISTS` | `TestMigrationsUseMySQL8DDL` 红两条；真实 MySQL parity 精确复现 `1064 near 'IF EXISTS template_id'` |
+| `ignoredErrs` 去掉 `"Can't DROP"` | `TestIsIgnoredToleratesMySQLMissingDropTarget` 红；真实 MySQL 幂等用例红；应急场景 A 的 parity 红 |
+| 0043 改成 `SELECT 1;`（假修复） | `TestMigrationsUseMySQL8DDL` 红「必须真的 DROP COLUMN」 |
+
+三次还原后复绿，`0043` 与 `apply.go` 的 sha256 与修复态备份逐字一致。
+
+### 五、门禁
+
+串行跑齐：`gofmt`（改动文件 0 处未格式化）、`golangci-lint` v2.15.0 `0 issues`、
+`go test ./...`（带 `TEST_MYSQL_DSN`，28 个包全绿，含 `TestAPIFlowMySQL` /
+`TestMySQLMigrations` / 新增 MySQL 幂等用例）、`gen_theme_previews.py --check`、
+`eslint .`、`vue-tsc --noEmit`（4G 堆）、全量 Vitest **96 文件 / 1627 例**、
+`vite build --outDir dist-check-mig43`、nginx-check **113/113**、`git diff --check`。
+本轮前端零改动，仍按纪律跑齐。
+
+### 六、最关键的运维结论
+
+迁移 SQL 是**运行期从磁盘 `migrations/` 读的**，二进制里只有文件名清单。因此用户线上
+当前态（列还在 + 0043 未记账）**只需替换 `migrations/0043_drop_template_id.sql`
+这一个文件 + 跑 `./server-linux-amd64 migrate`**，旧二进制也能成功，不必重新编译、
+不必重启服务。只有「列已被手工删但没记账」才需要含 1091 忽略的新二进制（或确认列
+已删后手工补一行记账）。完整判定表与命令见 runbook §4。
+
+**用户侧待办**（沿用并新增 ④）：① `git push origin main`；② 线上 `thumbbackfill -force`
+回填 + CF Purge 前缀 `weichuan.ziyuanxingqiu.cn/uploads/`，按原始 URL 验 MISS→HIT；
+③ P1 第 5 条 CF Cache Rule（runbook §5.2.7）；④ **按 runbook §4 替换线上 0043 `.sql`
+并跑 `migrate`，确认启动日志无 `[MIGRATE][FATAL]`**；⑤ 确认 `server` 主程序与
+`thumbbackfill` 同 revision 且含 `quantizePNG`；⑥ P4「接入路径」仍开放。
