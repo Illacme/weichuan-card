@@ -330,6 +330,11 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   `activeForTenant` 是**这家企业**此刻是否真的在用自有桶。开关开着但这家的
   `enabled=false` 时前者 true、后者 false。未生效时 `inactiveReason` 给出具体成因
   （未配置 / 未启用 / 驱动是 local / 进程未开路由 / 凭据不完整），五种处置方式不同。
+- `hostHeader` **不只影响 Host/SNI，它决定路径风格**（第六十三轮真桶实测）：
+  留空或等于 `endpoint` = 路径风格，生成器把桶名写进 path（`/<bucket>/<key>`）；
+  以 `<bucket>.` 开头 = 虚拟主机风格，path 只留对象键。两种都不是的取值会被**拒绝**——
+  猜错不会报错，只会让这家企业的图全部 400（`InvalidBucketName`）。
+  同理，**改桶名必须同时改 hostHeader**，否则旧桶名进 Host、新桶名进 path。
 
 ```bash
 # 平台超管令牌下（示例：给企业 5 配自己的 MinIO）

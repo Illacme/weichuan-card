@@ -55,7 +55,7 @@ nginx 手上没有 `root`，也就没有静态文件路径。
 
 | # | 结论 | 关键证据 |
 | --- | --- | --- |
-| Q1 | ✅ 成立 | `rewrite ^/uploads/(.*)$ /$1 break;` + `proxy_pass http://桶;`（不带 URI 部分）→ 桶收到 `/t/5/only-a.jpg`。A1/A2/A3 |
+| Q1 | ✅ 成立（第六十三轮修正路径风格） | `rewrite ^/uploads/(.*)$ /<bucket>/$1 break;` + `proxy_pass http://桶;`（不带 URI 部分）→ 桶收到 `/<bucket>/t/5/only-a.jpg`。A1/A2/A3。**注**：本节表格里的「桶收到 `/t/5/only-a.jpg`」是第五十五轮桩桶（nginx 静态目录当桶根）下的形态；真桶要的是 `/<bucket>/<key>`，见 §R1-a 的订正 |
 | Q2 | ✅ 成立 | 交叉取对象 404（A4/A7）；`t/50/` 走平台（B1）。**依赖 location 尾斜杠**：写成 `location ^~ /uploads/t/5` 就会吞掉 `t/50/`，反向验证 3 已复现 |
 | Q3 | ✅ 成立 | 未启用租户 `t/9/`、平台对象 `p/library/`、存量老图 `<rand>.jpg` 全部回落 Go（B2/B4/B6） |
 | Q4 | ✅ 成立，但**必须显式藏** | 加 `proxy_hide_header Cache-Control; proxy_hide_header Expires;` 后该头恰好 1 条（C1/C3）。不写这两行 → 出现**两条** `Cache-Control`（E2 实测，取值 `max-age=3600` 与 `immutable` 并存） |
@@ -123,8 +123,32 @@ nginx 手上没有 `root`，也就没有静态文件路径。
 
 **为什么不把 `t/<cid>/` 写进 `proxy_pass`**：`proxy_pass http://桶/t/5/;` 也能通（E1 实测 200），
 但那样 nginx 也要知道键布局，将来 `ObjectKeyFor` 一改就要同步改 Go + 每一条 snippet，
-漏一条 = 那家租户全站裂图且没有报错。所以产品形态一律用
-`rewrite ^/uploads/(.*)$ /$1 break;`——**nginx 只知道「剥前缀」，键长什么样它不管**。
+漏一条 = 那家租户全站裂图且没有报错。所以产品形态一律用 `rewrite` 剥前缀——**nginx 只知道「剥前缀」，键长什么样它不管**。
+
+### R1-a 订正（第六十三轮，真桶实测）：桶名必须出现在 path 或 Host 里，且只出现一次
+
+上面那段在桩桶下完全成立，但桩桶有一个隐藏假设：**桶根就是目录根**（虚拟主机风格）。
+第五十五轮的桩用 nginx 静态目录扮演桶，`root /cfg/www/bucket-a` + 路径 `/t/5/x.jpg` 正好读得到
+`bucket-a/t/5/x.jpg`——于是「只剥 `/uploads/`」看起来是对的。
+
+换成真 S3 服务端（versitygw，`tools/s3-e2e/`）之后，同一个请求得到的是：
+
+```
+GET /t/7/e2e-xxx.png
+400 InvalidBucketName  <BucketName>t</BucketName>
+```
+
+S3 把路径第一段当成了桶名。所以生成器现在按 `host_header` 判定风格：
+
+| host_header | 风格 | rewrite |
+| --- | --- | --- |
+| 留空 / 等于 endpoint | 路径风格（自建 MinIO、单 IP 最常见） | `/uploads/(.*)$ → /<bucket>/$1` |
+| 以 `<bucket>.` 开头 | 虚拟主机风格（AWS S3 / COS 控制台给的域名） | `/uploads/(.*)$ → /$1` |
+| 其他 | **拒绝**（判断不出风格，猜错 = 全站裂图且无报错） | — |
+
+桶名进 path **不违反**「键布局只在 Go 侧」：桶名是这行配置自己的属性（同一条 location 的
+`proxy_pass` 就指向它），而 `t/<cid>/` 仍然只由 `ObjectKeyFor` 定义。桩装置相应改成
+在桶根下放一个以桶名命名的自指目录，把「桶根 + 对象键」这件事如实表达出来。
 
 ### R1-b（阻断项，条件成立）下架覆盖 × immutable × 租户自有 CDN
 

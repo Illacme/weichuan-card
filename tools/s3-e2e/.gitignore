@@ -1,0 +1,3 @@
+# 装置运行时产物（与 tools/nginx-r1-check/.gitignore 同一套做法）
+/logs/
+/snippets/

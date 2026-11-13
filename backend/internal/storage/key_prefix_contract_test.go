@@ -48,11 +48,15 @@ func TestLocationPrefixMatchesGoObjectKey(t *testing.T) {
 	}
 }
 
-// TestRewriteKeepsObjectKeyIntact 钉住另一半：location 里的 rewrite 只剥 /uploads/，
-// 剩下的必须原样是对象键。
+// TestRewriteKeepsObjectKeyIntact 钉住另一半：location 里的 rewrite 只剥 /uploads/
+// （路径风格下再补一段桶名），剩下的必须原样是对象键。
 //
 // 多剥一段（顺手把 t/<cid>/ 也剥掉）会让桶里的对象路径少一层，取图 404；
 // 少剥一段则会在桶里多出一层 uploads/，同样 404。两个方向都不会报错。
+//
+// 第六十三轮补上桶名这一段：只剥 /uploads/ 时，请求打到桶的根上，真 S3 把
+// 键的第一段（t）当成桶名 → 400 InvalidBucketName。而桶名写两遍（path 里一次、
+// Host 里再带一次）同样 404，只是错法更隐蔽。
 func TestRewriteKeepsObjectKeyIntact(t *testing.T) {
 	out, err := nginxsnippet.Render([]nginxsnippet.Target{{
 		CompanyID: 7,
@@ -64,8 +68,13 @@ func TestRewriteKeepsObjectKeyIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("渲染失败：%v", err)
 	}
-	const want = "rewrite ^/uploads/(.*)$ /$1 break;"
+	// 路径风格（host_header 留空）：把 /uploads/<key> 映射成 /<bucket>/<key>。
+	const want = "rewrite ^/uploads/(.*)$ /wc-t7/$1 break;"
 	if !strings.Contains(out, want) {
-		t.Fatalf("rewrite 必须把 /uploads/<key> 映射成 /<key>（键布局只在 Go 侧定义）\n期望包含：%s\n实际输出：\n%s", want, out)
+		t.Fatalf("rewrite 必须把 /uploads/<key> 映射成 /<bucket>/<key>\n期望包含：%s\n实际输出：\n%s", want, out)
+	}
+	// 键本身不许被改写：$1 后面不能再追任何东西。
+	if strings.Contains(out, "/wc-t7/$1/") {
+		t.Fatalf("rewrite 在对象键后面又追了一段：\n%s", out)
 	}
 }

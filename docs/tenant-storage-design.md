@@ -320,6 +320,29 @@ OSS/S3 走 virtual-hosted-style，桶名拼在 endpoint 前面还是后面不是
    这点必须写明：否则看到「表存在、生成器能读」会以为功能可用。
    `access_key_enc` 这一列现在**没有任何代码在写**，`pii.Encrypt` 的调用点落地时才补。
 
+#### ✅ 第六十三轮订正：`host_header` 不只是 SNI，它还决定路径风格
+
+真桶实测（`tools/s3-e2e/`，versitygw 1.11 + POSIX 后端）推翻了第五十五轮桩装置留下的一个假设：
+桩用「nginx 静态目录当桶」时，桶根就是目录根，于是「只剥 `/uploads/`」看起来是通的；
+换成真 S3 服务端后，`GET /t/7/x.png` 回来的是一句
+
+```
+400 InvalidBucketName   <BucketName>t</BucketName>
+```
+
+S3 把路径第一段当成了桶名。现在的判定（`nginxsnippet.Target.PathStyle`）：
+
+| `host_header` | 形态 | 生成的 rewrite |
+| --- | --- | --- |
+| 留空 / 等于 endpoint | 路径风格（自建 MinIO 单 IP 最常见） | `/uploads/(.*)$ → /<bucket>/$1` |
+| 以 `<bucket>.` 开头 | 虚拟主机风格（AWS S3 / COS 控制台给的域名） | `/uploads/(.*)$ → /$1` |
+| 其它取值 | **生成失败**（判断不出风格；猜错=该企业全站裂图且无任何报错） | — |
+
+桶名进 path 不违反「键布局只在 Go 侧」：桶名是这条配置自己的属性（同段 `proxy_pass`
+就指向它），`t/<cid>/` 仍然只由 `ObjectKeyFor` 定义。守门：
+`TestRenderBucketAppearsExactlyOnce`（两种形态）+ `TestRewriteKeepsObjectKeyIntact`（跨包契约）
++ `tools/s3-e2e`（真桶取字节）。
+
 守门清单（全部已做反向验证：改坏必红、还原后 sha256 零漂移）：
 
 | 守门 | 位置 | 盯什么 |

@@ -174,6 +174,9 @@ func TestTenantStorageSuperAdminLifecycle(t *testing.T) {
 	// 5) 改配置 → 自检结论作废（否则后台会一直显示上一次的绿点）
 	payload := storagePayload()
 	payload["bucket"] = "wc-demo-2"
+	// 桶名与 hostHeader 必须一起改：hostHeader 以 "<bucket>." 开头就是虚拟主机风格，
+	// 只改桶名会让 hostHeader 变成"上一版的桶"，校验会拒（见下面的 stale 用例）。
+	payload["hostHeader"] = "wc-demo-2.play.min.io"
 	doStorage(t, c, "PUT", path, payload, plat)
 	row = loadStorageRow(t, db, 1)
 	require.Equal(t, storageStatusUnknown, row.Status, "改了配置，上一次自检的结论就不再代表当前配置")
@@ -438,4 +441,33 @@ func TestActiveForTenantReasons(t *testing.T) {
 		require.False(t, ok)
 		require.Contains(t, why, "TENANT_STORAGE_ROUTE")
 	})
+}
+
+// TestTenantStorageRejectsStaleHostHeader 钉住「改桶名忘了改 host_header」。
+//
+// 这两列是绑在一起的：host_header 以 "<bucket>." 开头 = 虚拟主机风格，桶名在 Host 里；
+// 只改 bucket 不改 host_header，生成出来的 snippet 会把**旧桶名**写进 Host、
+// 把**新桶名**写进 path——S3 侧于是按旧桶寻址、按新桶拼键，取图 404，
+// 而后台这行配置看起来改成功了。所以校验必须在写入侧就拒。
+func TestTenantStorageRejectsStaleHostHeader(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	plat := loginAdmin(t, c)
+	stubStorageProbeOK(t)
+
+	const path = "/api/admin/companies/1/storage"
+	doStorage(t, c, "PUT", path, storagePayload(), plat)
+	before := loadStorageRow(t, db, 1)
+
+	// 只改桶名，host_header 还是上一个桶的
+	payload := storagePayload()
+	payload["bucket"] = "wc-demo-2"
+	_, env := c.do("PUT", path, payload, plat)
+	require.EqualValues(t, 1, env["code"], "桶名与 hostHeader 不一致时必须拒绝")
+	require.Contains(t, env["msg"], "判断不出路径风格", "报错要说清是 hostHeader 的问题：%v", env["msg"])
+
+	after := loadStorageRow(t, db, 1)
+	require.Equal(t, before.Bucket, after.Bucket, "被拒绝的请求不能改动任何一列")
+	require.Equal(t, before.HostHeader, after.HostHeader)
+	require.Equal(t, before.AccessKeyEnc, after.AccessKeyEnc)
 }

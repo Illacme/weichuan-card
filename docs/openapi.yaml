@@ -4025,7 +4025,8 @@ paths:
         不接受客户端提交密文）。
 
         校验复用 `nginxsnippet.Target.Validate` 单点（endpoint 不许带 scheme、bucket 不许含
-        路径或 `..`、hostHeader 不许含引号）；另加两条**产品边界**：
+        路径或 `..`、hostHeader 不许含引号，且必须能判断出路径风格——见 `hostHeader` 字段说明）；
+        另加两条**产品边界**：
         第一阶段只支持公开读桶；启用时必须同时具备 AccessKey 与 SecretKey。
 
         保存成功会把上一次自检结论重置为 `unknown`——否则后台会一直显示一个过期的绿点。
@@ -5058,7 +5059,12 @@ components:
           description: 为 true 时接入层必须给 proxy_ssl_server_name + proxy_ssl_name，否则被桶 421 拒绝
         hostHeader:
           type: string
-          description: virtual-hosted-style 的桶名所在 Host，也是 TLS SNI 取值；空则退回 endpoint
+          description: >-
+            Host 头（也是 TLS SNI 取值）。**它同时决定路径风格**：留空或等于 endpoint =
+            路径风格（生成器把桶名写进 path，即 `/<bucket>/<key>`）；以 `<bucket>.` 开头 =
+            虚拟主机风格（Host 已带桶名，path 只留对象键）。两者都不是的取值会被拒绝——
+            猜错的那一侧不会报错，只会让该企业的图全部裂开。
+            客户自有访问域名（public_base_url）属于下一阶段，本期不生成。
         publicRead:
           type: boolean
           description: 第一阶段必须为 true（私有桶需要预签名链路，尚未实现）

@@ -7,10 +7,12 @@
 //  1. `location` 必须以 `/uploads/t/<cid>/` **带尾斜杠**结束。去掉斜杠，
 //     `/uploads/t/50/...` 会被 `t/5` 前缀吃掉——用户的图从别人的桶里取，
 //     而页面照常 200、没有一条报错。
-//  2. `proxy_pass` **不带 URI 部分**（不写 `http://桶/t/5/`），靠
-//     `rewrite ^/uploads/(.*)$ /$1 break;` 剥前缀。对象键布局的唯一真相在
-//     `storage.ObjectKeyFor`；在这里再写一遍 `t/<cid>/`，将来键布局一改就要同时改
-//     Go 和每一条 snippet，漏一条 = 那家租户全站裂图且无从察觉。
+//  2. `proxy_pass` **不带 URI 部分**（不写 `http://桶/t/5/`），靠 `rewrite` 剥前缀。
+//     对象键布局的唯一真相在 `storage.ObjectKeyFor`；在这里再写一遍 `t/<cid>/`，
+//     将来键布局一改就要同时改 Go 和每一条 snippet，漏一条 = 那家租户全站裂图且无从察觉。
+//     **但桶名必须出现且只出现一次**：路径风格时进 path（`/<bucket>/$1`），
+//     虚拟主机风格时由 Host 携带（`/$1`）。缺了它，请求打到桶的根上，键变成
+//     `<bucket>/key`——第六十三轮真桶实测就是 400 InvalidBucketName，全站裂图。
 //  3. `proxy_hide_header Cache-Control; proxy_hide_header Expires;` 必须在
 //     `add_header Cache-Control ...` 之前出现。桶会把对象元数据里的 Cache-Control
 //     一起回传，不藏掉就叠成两条，CDN 取哪条不确定（RFC 9111 不规定），
@@ -67,6 +69,23 @@ func (t Target) hostHeader() string {
 	return t.Endpoint
 }
 
+// PathStyle 决定桶名进 path（/<bucket>/<key>）还是进 Host（<bucket>.<域名>/<key>）。
+//
+// 这条判定**不能按 driver 猜**：同为 "minio"，自建单机（一个 IP、没有通配 DNS）
+// 只能是路径风格，而托管服务控制台上给你的多半是虚拟主机风格。所以由 host_header
+// 这一列表达（列语义见 model/tenant_storage.go）：
+//
+//	留空 / 等于 endpoint          → 路径风格：rewrite 成 /<bucket>/$1
+//	以 "<bucket>." 开头           → 虚拟主机风格：Host 已带桶名，path 只留对象键
+//
+// 为什么必须显式区分：两种风格拼出的**访问路径不同**，猜错的那一侧不会报错，
+// 只会全站裂图。第六十三轮真桶实测（tools/s3-e2e）：按虚拟主机风格发给真 S3 端点，
+// S3 把路径第一段当成桶名 → 400 InvalidBucketName（BucketName=t），
+// 而后台那行配置看起来完全正常。
+func (t Target) PathStyle() bool {
+	return !strings.HasPrefix(t.hostHeader(), t.Bucket+".")
+}
+
 func (t Target) scheme() string {
 	if t.UseSSL {
 		return "https"
@@ -100,6 +119,16 @@ func (t Target) Validate() error {
 	if t.HostHeader != "" {
 		if err := validHost(t.CompanyID, "hostHeader", t.HostHeader); err != nil {
 			return err
+		}
+		hh := strings.TrimSpace(t.HostHeader)
+		// 既不是 endpoint、又不带 "<bucket>." 前缀的 Host，等于没说清是哪种风格。
+		// 不在这里拦住，生成器只能猜；猜错的结果是那家租户全站裂图。
+		if hh != strings.TrimSpace(t.Endpoint) && !strings.HasPrefix(hh, t.Bucket+".") {
+			return fmt.Errorf("company_id=%d 的 hostHeader=%q 判断不出路径风格："+
+				"它既不是 endpoint（%q），也不以 %q 开头。"+
+				"留空表示路径风格（桶名进 path）；虚拟主机风格必须写成 <桶名>.<域名>；"+
+				"客户自有访问域名属于下一阶段（public_base_url），本期不生成",
+				t.CompanyID, hh, strings.TrimSpace(t.Endpoint), t.Bucket+".")
 		}
 	}
 	return nil
@@ -182,8 +211,15 @@ func writeLocation(b *strings.Builder, t Target) {
 	// 尾斜杠是隔离边界，别删：没有它，/uploads/t/50/... 会被 t/5 吞掉。
 	fmt.Fprintf(b, "    location ^~ /uploads/t/%d/ {\n", t.CompanyID)
 	fmt.Fprintf(b, "        proxy_pass %s://%s;\n", t.scheme(), t.Endpoint)
-	b.WriteString("        # 只剥 /uploads/：剩下的就是桶里的对象键，键布局只在 Go 侧定义\n")
-	b.WriteString("        rewrite ^/uploads/(.*)$ /$1 break;\n")
+	if t.PathStyle() {
+		// 桶名必须进 path：只剥 /uploads/ 的话，请求会打到桶的根上，
+		// 键的第一段（t）被 S3 当成桶名 → 400 InvalidBucketName。
+		b.WriteString("        # 路径风格（host_header 未带桶名）：桶名进 path，否则 S3 会把键的第一段当桶名\n")
+		fmt.Fprintf(b, "        rewrite ^/uploads/(.*)$ /%s/$1 break;\n", t.Bucket)
+	} else {
+		b.WriteString("        # 虚拟主机风格：桶名在 Host 里，path 只留对象键；键布局只在 Go 侧定义\n")
+		b.WriteString("        rewrite ^/uploads/(.*)$ /$1 break;\n")
+	}
 	fmt.Fprintf(b, "        proxy_set_header Host \"%s\";\n", t.hostHeader())
 	b.WriteString("        proxy_http_version 1.1;\n")
 	b.WriteString("        proxy_read_timeout 60s;\n")

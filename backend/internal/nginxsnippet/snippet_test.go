@@ -37,7 +37,7 @@ func TestRenderEnforcesInvariants(t *testing.T) {
 		t.Fatalf("location 未按 company_id 升序：\n%s", out)
 	}
 
-	// 不变量 2：proxy_pass 不带 URI 部分；前缀靠 rewrite 剥。
+	// 不变量 2：proxy_pass 不带 URI 部分；前缀靠 rewrite 剥，桶名必须出现且只出现一次。
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, "proxy_pass ") {
 			continue
@@ -49,8 +49,19 @@ func TestRenderEnforcesInvariants(t *testing.T) {
 			t.Fatalf("proxy_pass 形态不对：%q", got)
 		}
 	}
-	if n := strings.Count(out, "rewrite ^/uploads/(.*)$ /$1 break;"); n != 2 {
-		t.Fatalf("rewrite 剥前缀应每段一条，实际 %d 条", n)
+	// 这两个 target 的 hostHeader 都留空 ⇒ 路径风格 ⇒ 各自把桶名带进 path。
+	// 少了桶名那一段，真 S3 会把键的第一段当成桶名（第六十三轮真桶实测）。
+	for _, want := range []string{
+		"rewrite ^/uploads/(.*)$ /b5/$1 break;",
+		"rewrite ^/uploads/(.*)$ /b6/$1 break;",
+	} {
+		if n := strings.Count(out, want); n != 1 {
+			t.Fatalf("路径风格应各出现一次 %q，实际 %d 次：\n%s", want, n, out)
+		}
+	}
+	// 桶名不许出现两次（路径里一次 + 别处又一次 = 键变成 <bucket>/<bucket>/...）。
+	if n := strings.Count(out, "/b5/b5/"); n != 0 {
+		t.Fatalf("桶名被拼了两遍：\n%s", out)
 	}
 
 	// 不变量 3：先藏桶的缓存头，再发自己的。
@@ -91,6 +102,40 @@ func TestRenderSSLAddsSNI(t *testing.T) {
 	}
 	if !strings.Contains(out, `proxy_ssl_name "bucket.example.com";`) {
 		t.Fatalf("缺少 proxy_ssl_name：\n%s", out)
+	}
+}
+
+// 路径风格与虚拟主机风格的差别不是写法偏好，而是**对象在桶里的访问路径不同**。
+// 这条用例把两种形态钉死，避免有人「统一一下」把它们合成一种。
+func TestRenderBucketAppearsExactlyOnce(t *testing.T) {
+	// 路径风格：host_header 留空，桶名只能靠 path 携带。
+	path := cloud(5, "minio.internal:9000", "wc-t5")
+	out, err := Render([]Target{path})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(out, "rewrite ^/uploads/(.*)$ /wc-t5/$1 break;") {
+		t.Fatalf("路径风格缺桶名段（真 S3 会 400 InvalidBucketName）：\n%s", out)
+	}
+	if !strings.Contains(out, `proxy_set_header Host "minio.internal:9000";`) {
+		t.Fatalf("路径风格的 Host 必须是 endpoint 本身：\n%s", out)
+	}
+
+	// 虚拟主机风格：Host 已带桶名，path 里再带一次 = 键变成 wc-t5/wc-t5/...
+	vh := cloud(6, "s3.ap-guangzhou.amazonaws.com", "wc-t6")
+	vh.HostHeader = "wc-t6.s3.ap-guangzhou.amazonaws.com"
+	out, err = Render([]Target{vh})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(out, "rewrite ^/uploads/(.*)$ /$1 break;") {
+		t.Fatalf("虚拟主机风格不该把桶名拼进 path：\n%s", out)
+	}
+	if strings.Contains(out, "/uploads/(.*)$ /wc-t6/") {
+		t.Fatalf("虚拟主机风格的 rewrite 里出现了桶名（键会变成 wc-t6/wc-t6/...）：\n%s", out)
+	}
+	if !strings.Contains(out, `proxy_set_header Host "wc-t6.s3.ap-guangzhou.amazonaws.com";`) {
+		t.Fatalf("虚拟主机风格的 Host 应原样使用 host_header：\n%s", out)
 	}
 }
 
@@ -147,6 +192,9 @@ func TestValidateRejects(t *testing.T) {
 		{"bucket 含斜杠", Target{CompanyID: 1, Driver: DriverOSS, Endpoint: "h:9000", Bucket: "a/b", Enabled: true}, "含路径分隔符"},
 		{"bucket 为空", Target{CompanyID: 1, Driver: DriverOSS, Endpoint: "h:9000", Bucket: "", Enabled: true}, "bucket 为空"},
 		{"注入引号", Target{CompanyID: 1, Driver: DriverMinio, Endpoint: `h:9000`, Bucket: "b", HostHeader: `a";}`, Enabled: true}, "含引号"},
+		// host_header 既不是 endpoint、也不带 "<bucket>." 前缀 ⇒ 判断不出路径风格。
+		// 猜错的后果是整家租户裂图，而配置看起来完全正常，所以必须当场拒绝。
+		{"hostHeader 判断不出风格", Target{CompanyID: 1, Driver: DriverMinio, Endpoint: "h:9000", Bucket: "wc-t1", HostHeader: "cdn.example.com", Enabled: true}, "判断不出路径风格"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

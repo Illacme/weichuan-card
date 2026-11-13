@@ -4446,3 +4446,104 @@ P2 的前半。目标只有一个：把「哪份配置决定文件落在哪个�
 - 开关仍默认 off，本轮不翻默认值；
 - 真桶验收仍是唯一未完成的 P2 事项（见上）；
 - 之后：存量回填（P3）、`public_base_url` 与密钥轮换（P4）。
+
+## 第六十三轮：真桶端到端验收（2026-11-13，P2 后半补完）
+
+第六十二轮把真桶验收如实记为「没做成」。这一轮做成了，并且**它立刻推翻了生成器的一个假设**——
+这正是上一轮拒绝用桩服务器冒充真桶的理由：桩不会告诉你它错在哪。
+
+### 一、真桶是怎么拿到的
+
+三条路依次断掉，最后走的是第四条：
+
+| 尝试 | 结果 |
+| --- | --- |
+| `docker pull minio/minio` | Docker Hub `registry-1.docker.io` 8s 超时（上一轮 15m38s 无进展的真因） |
+| `dl.min.io` 直接下二进制 | **410 Gone**（MinIO 已撤掉二进制分发，只剩源码） |
+| `quay.io` / `daocloud` / `1ms` / `rat.dev` 镜像站 | 要么没有 `minio/minio`，要么 403 不在白名单 |
+| `goproxy.cn` 源码编译 `versitygw v1.11.0` | ✅ 85MB 单二进制，POSIX 后端，会验 SigV4 |
+
+踩到一个非显然的坑：本机 Go 是 `darwin/amd64`（Rosetta），`go install` 报
+`cannot install cross-compiled binaries when GOBIN is set`——**必须显式 `GOARCH=arm64`**，
+否则看起来像"环境不让装"。
+
+`versitygw` 是真实的 S3 协议实现（用 aws-sdk-go-v2 解析请求），不是桩：
+凭据错时客户端拿到的是 `SignatureDoesNotMatch`。但它也不是云厂商桶——这条边界写在
+`tools/s3-e2e/README.md` 的「这个装置不证明什么」里，不在这里重复宣称。
+
+### 二、装置：`tools/s3-e2e/`
+
+分两半，职责严格切开，否则红了说不清是谁的错：
+
+- `backend/cmd/s3-e2e`（Go）：配置行（凭据 `pii.Encrypt`）→ `DBLoader` 解密 →
+  `Resolver.For(cid)` → `Save` 真 `PutObject` → 从桶里读回来比对 → 预签名直传 → 两个负例。
+  它**不碰 nginx**，只把 `KEY / URL / GETURL` 吐给下一半。
+- `tools/s3-e2e/run.sh`：同一份租户表喂 `cmd/nginx-snippets render` → 起 nginx 容器 →
+  `curl` 走 nginx 取同一个对象，与签名 URL 取回的字节 `cmp` 比对。
+
+20 项断言。三个零成本但关键的细节：
+
+1. **自检要带语义**：匿名 `GET /` 必须是 403。拿到 200 说明端点不验签名，
+   那它什么都证明不了，脚本第一步就停。
+2. **基准取"桶里的字节"**，不是本地文件——本地文件在这条链里从没输出过。
+3. **`emit` 的值必须加引号**：签名 URL 带 `&`，shell 读走会当成命令分隔符
+   （实测报 `X-Amz-Signature=...: command not found`，看起来像签名失败）。
+
+### 三、真桶立刻抓到的 bug：生成器只对虚拟主机风格成立
+
+```
+GET /t/7/e2e-xxx.png          → 400 InvalidBucketName  <BucketName>t</BucketName>
+GET /wc-t7/t/7/e2e-xxx.png    → 200，74 字节
+```
+
+第五十五轮的桩用「nginx 静态目录当桶」，`root /cfg/www/bucket-a` + `/t/5/x.jpg`
+正好读到 `bucket-a/t/5/x.jpg`——**桶根就是目录根**，于是"只剥 `/uploads/`"看起来是对的。
+真 S3 是路径风格时，路径第一段就是桶名，于是 `t` 被当成桶。
+
+后果的量级：`/uploads/t/<cid>/...` 全部 400，**该企业全部图片裂开，而后台那行配置显示完全正常**，
+nginx access log 里只有一串 400。这正是本项目反复在防的那类静默失败。
+
+修法（`nginxsnippet`）：
+
+| `host_header` | 形态 | rewrite |
+| --- | --- | --- |
+| 留空 / 等于 endpoint | 路径风格（自建 MinIO 单 IP 最常见） | `/uploads/(.*)$ → /<bucket>/$1` |
+| 以 `<bucket>.` 开头 | 虚拟主机风格（AWS S3 / COS 控制台给的域名） | `/uploads/(.*)$ → /$1` |
+| 其它取值 | **写入侧拒绝** | — |
+
+第三条是这次新增的：`host_header` 既不是 endpoint、又不带桶名前缀时，无法判断风格，
+猜错的那一侧不会报错、只会裂图。所以宁可拒。这条同时把一个真实改错场景挡住了——
+**改了桶名忘了改 host_header**：旧桶名进 Host、新桶名进 path，S3 按旧桶寻址，
+取图 404 而后台显示"改成功了"（守门：`TestTenantStorageRejectsStaleHostHeader`）。
+
+桶名进 path 不违反"键布局只在 Go 侧"：桶名是这条配置自己的属性（同段 `proxy_pass` 就指向它），
+`t/<cid>/` 仍只由 `ObjectKeyFor` 定义。R1 装置的桩相应改成「桶根下放一个以桶名命名的自指目录」，
+把"桶根 + 对象键"如实表达出来——39 项断言一条没改，全绿。
+
+### 四、反向验证（3 处，全红后还原、零漂移）
+
+| 改坏什么 | 谁变红 |
+| --- | --- |
+| `PathStyle()` 恒 false（退回"只用虚拟主机风格"） | 真桶装置 `H1`/`H7` + `TestRenderBucketAppearsExactlyOnce` |
+| 放行"判断不出风格"的 hostHeader | `TestValidateRejects/hostHeader 判断不出风格` |
+| `TestRewriteKeepsObjectKeyIntact` 的 rewrite 期望 | 跨包契约（`storage` 侧） |
+
+第一条是本轮最有价值的一条：**只有在真桶上才变红**。桩装置在改坏前后都绿。
+
+### 五、门禁
+
+- `go vet ./...` 0；`go test ./... -count=1` **32 个包 + 3 个 cmd** 全绿（handler 53s）；
+- `tools/s3-e2e`：20 项全绿（Go 侧 11 + nginx 侧 9）；
+- `tools/nginx-r1-check`：39 项全绿（生成器改动后重跑）；
+- `gofmt -l` 本轮文件干净；`openapi.yaml` 经 `yaml.safe_load` 校验（106 paths）；
+- **本轮零 SQL / 零迁移改动**，故未跑 `TEST_MYSQL_DSN` 的 parity；前端零改动，
+  未跑 vue-tsc / Vitest / eslint / build。
+
+### 六、边界与下一步
+
+- 真桶验收**补上了**（versitygw），但云厂商桶的 TLS/SNI、CDN、CORS 仍无真桶证据，
+  只有 R1 桩的 421 证据；
+- 只覆盖公开读桶 + 平台统一入口；`public_base_url`、私有桶、密钥轮换仍是 P4；
+- `TENANT_STORAGE_ROUTE` 仍默认 off。翻默认值的前置条件（真桶验收）已满足，
+  但还缺一次「真桶 + 存量对象」的灰度，与 P3 一起做更稳；
+- 下一步：P3 存量回填（老对象搬迁 + 改库，dry-run/force/rollback）。

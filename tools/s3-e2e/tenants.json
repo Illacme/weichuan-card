@@ -1,0 +1,14 @@
+{
+  "comment": "真桶端到端装置的租户表（喂 cmd/nginx-snippets render）。endpoint 用 host.docker.internal：nginx 在容器里、S3 服务端在宿主上。与 Go 侧那份配置行指向同一个桶（wc-t7），只有 endpoint 的写法不同——这是装置的必然（容器内外域名不同），不是被测物。",
+  "tenants": [
+    {
+      "companyId": 7,
+      "driver": "minio",
+      "endpoint": "host.docker.internal:19000",
+      "bucket": "wc-t7",
+      "useSsl": false,
+      "hostHeader": "",
+      "enabled": true
+    }
+  ]
+}
