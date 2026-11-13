@@ -284,6 +284,24 @@ type Resolver interface {
 **第一阶段试点口径**：租户桶公开读 + 单租户试点。私有桶签名、跨地域 CDN、
 客户自有域名都留到后续阶段再评估。
 
+> ✅ **R1 已实测（2026-11-13 / 第五十五轮）**：结论「**有条件成立**」，
+> 装置与证据在 `tools/nginx-r1-check/`，完整记录见 `docs/tenant-storage-r1-feasibility.md`。
+> 要点：
+>
+> 1. **本节开头那句「`/uploads/` 现在是本地静态托管」是过时的** ——
+>    `nginx-site.live.conf:447-459` 实读为 `proxy_pass http://127.0.0.1:8080`（Go 侧 `r.Static` 出盘）。
+>    所以 R1 不是「静态改反代」，而是「在已有反代上按前缀多分几路」，风险面小于本节假设。
+> 2. 语义全部通过（36 项断言）：路径映射、租户隔离、`t/50/` 不被 `t/5/` 吞、未配置前缀回落平台盘、
+>    状态码分流（404/5xx→`no-store`）、Range/206/HEAD/304、ETag 透传。
+> 3. **四个本节没预见的坑**：① location 尾斜杠是隔离边界，去掉就串桶；
+>    ② 桶自带 `Cache-Control` 必须 `proxy_hide_header` 藏掉，否则两条并存、CDN 取哪条不确定（已实测复现）；
+>    ③ 桶域名在 **reload 时**解析，解析失败 `nginx -t` emerg → 整份配置更新被卡住 ⇒ 生成器必须先做 DNS 预检；
+>    ④ HTTPS 桶缺 `proxy_ssl_server_name` 会被拒（实测 421）。
+> 4. **阻断项 R1-b**：`takedownMediaCheck` 覆盖写 + `/uploads/` immutable 一年 ⇒ 下架能否生效**完全依赖 Purge**。
+>    平台 refresher 打不到客户自有 CDN，所以「开客户自有域名」之前必须先回答「谁负责 Purge 租户自有边缘」。
+>    第一阶段口径（公开读桶 + `public_base_url` 留空）下这条不触发，可继续推进。
+
+
 ### 3.5 归属与 scope 判定（四个必须钉住的坑）
 
 1. **平台级资源不归租户**：素材采用（`assets.go:155`）、小程序码（`wechat.go:254`）、
@@ -377,7 +395,7 @@ type Resolver interface {
 
 | # | 风险 | 处置 |
 | --- | --- | --- |
-| **R1** | **nginx 按租户反代尚未验证**：现有 `/uploads/` 是本地静态 + immutable 一年，改反代要动线上接入层，且私有桶要签名 | 第一阶段单租户 + 公开读桶试点，先在测试环境 `nginx -t` + 行为验收跑通再铺开；不通则退回「客户自有域名开关」路线重新评审，**不硬上** |
+| **R1** | **nginx 按租户反代尚未验证**：现有 `/uploads/` 是本地静态 + immutable 一年，改反代要动线上接入层，且私有桶要签名 | 第一阶段单租户 + 公开读桶试点，先在测试环境 `nginx -t` + 行为验收跑通再铺开；不通则退回「客户自有域名开关」路线重新评审，**不硬上**。**2026-11-13 已实测：有条件成立**（`tools/nginx-r1-check/` 36 项断言全绿；断言里同时钉住尾斜杠隔离、头叠加、DNS 与 reload、SNI 四条），遗留阻断项 R1-b（下架覆盖 × 租户自有 CDN 的 Purge 归属）见 §3.4 与 `docs/tenant-storage-r1-feasibility.md` |
 | R2 | 静默降级被沿用为租户兜底 → 数据主权叙事失效且无人察觉 | 租户解析失败必须显式失败 + 审计；平台级降级仅服务 `company_id=0` |
 | R3 | URL 契约双轨：小程序 `assetUrl` 绝对原样返回、管理端 `thumbnailURL` 按 URL 末位插 `_thumb` | `Resolve` 统一出参；`_thumb` 派生规则前后端对账守门 |
 | R4 | 平台级资源被 JWT `companyId` 带跑 | scope 显式枚举，四类平台资源单测逐个钉住 |

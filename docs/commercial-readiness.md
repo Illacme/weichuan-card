@@ -3645,3 +3645,91 @@ SQL 运行期读盘、改动 `.sql` 只需换文件 + `./server migrate` 不必�
 ### 待用户侧动作
 
 `git push origin main`（沙箱拦截 push，本地 commit 待做）。
+
+---
+
+## 第五十五轮：R1 可行性验证（2026-11-13，只加验证装置）
+
+> 承接第五十四轮末尾「严格裸键 + nginx R1 属云驱动阶段」。用户选定的下一步是
+> **先做 R1 可行性验证**：只写方案与验证脚本，不改生产 nginx，确认 R1 成立后再动
+> `ResolveRef` 与库中数据形态。
+
+### 为什么先验 R1 而不是先切裸键
+
+顺序反过来会有一个**没有任何报错**的失败窗口：库里已经写成 `t/<cid>/x`，而 nginx 还没有
+对应的 location → 请求全部落回平台 Go → 文件不在平台盘 → 404，页面全裂。
+平台侧日志干净（求到了 Go，Go 只是找不到文件），没有人会想到是接入层没跟上。
+所以先证明「接入层这条路通」，再改数据形态。
+
+### 本轮最重要的发现：设计稿那句是过时的
+
+设计稿 §3.4 写「`/uploads/` 现在是本地静态托管」。**实读 `nginx-site.live.conf:447-459`，
+它一直是 `proxy_pass http://127.0.0.1:8080`**（Go 侧 `r.Static("/uploads", cfg.UploadDir)` 出盘）。
+
+这条订正改变了 R1 的性质：不是「静态托管改反代」（动地基），而是「在已有反代上按前缀多分几路」。
+风险面小于设计稿假设，但因此冒出四个设计稿没写到的新坑（下面四条都是实测的）。
+
+### 装置：`tools/nginx-r1-check/`
+
+`bash run.sh` 一键跑：生成桩对象 → 生成产品形态 snippet → 起 `nginx:alpine` → 断言 → 关容器。
+
+桩上游用 nginx 自己扮演桶（静态文件天然支持 Range、`ETag`、`Accept-Ranges`），
+并打 `X-Amz-Request-Id` 区分是哪家桶——**「有没有串桶」靠响应头断言，不靠看日志**。
+另有一个 TLS 桩桶（SAN=`bucket-a.test`），在 `$ssl_server_name` 为空时返回 421，
+复刻真桶的 Host/SNI 校验。
+
+**实测结果：36 项行为断言全绿 + 1 项失败预期成立。**
+
+| 组 | 验的是什么 | 结论 |
+| --- | --- | --- |
+| A | 路径映射与租户隔离（`/uploads/t/5/x.jpg` → 桶里 `t/5/x.jpg`） | ✅ 且两桶互不串 |
+| B | 前缀边界与回退（`t/50/` 不被 `t/5/` 吞；未配置租户回落平台盘） | ✅「关配置=回默认」成立 |
+| C | 缓存头（不与桶的头叠加、404/5xx→`no-store`、安全头继承、`Accept-Ranges`） | ✅ 必须显式 `proxy_hide_header` |
+| D | Range/206、HEAD 的 `Content-Length`、ETag、304 | ✅ 视频拖动可用 |
+| E | 对照探针（Option A 写法、不 hide、不带 SNI、带 SNI） | ✅ 证明三条指令是「必需」不是「可选优化」 |
+| F | 配置表 ↔ snippet 对账（少一段必报红，且点明是哪家租户） | ✅ |
+| G | 桶域名解析不出来时 `nginx -t` 的行为 | ⚠️ 直接 emerg，整份配置更新被卡住 |
+
+### 四个新坑（都写进了断言）
+
+1. **location 尾斜杠是隔离边界**：`location ^~ /uploads/t/5/` 去掉尾斜杠就会吞掉 `/uploads/t/50/`，
+   打到错误的桶。反向验证 3 复现了后果（B1 报红）。
+2. **桶自带 `Cache-Control` 会与 `add_header` 叠加成两条**：实测不写 `proxy_hide_header` 时
+   响应里 `max-age=3600` 与 `immutable` 并存。RFC 9111 不规定 CDN 取哪条 ⇒ 同一对象在不同
+   边缘可能有两种缓存时长，且没有任何报错。也不能靠「把桶配成不带 Cache-Control」解决——
+   那是桶侧行为，换厂商/有人点了控制台就变。
+3. **桶域名在 reload 时解析**：解析失败 `nginx -t` emerg → 宝塔不 reload → **整份配置的更新
+   全部被卡住**，连带本该生效的其它改动。现象是「保存了但没生效」，没有一条报错指向打错的域名。
+   ⇒ snippet 生成器必须先做 DNS 预检，不能把这个发现权交给 nginx。
+4. **HTTPS 桶缺 `proxy_ssl_server_name` 会被拒**：`proxy_ssl_verify` + 可信 CA + `proxy_ssl_name`
+   全齐也不行（实测 421），必须显式 `proxy_ssl_server_name on`。
+
+### 一条阻断项 R1-b（有条件成立的原因）
+
+`takedownMediaCheck`（`media_check.go:460`）是**覆盖写同一对象键** + `refreshCDN(row.URL)`，
+而 `/uploads/` 除 `wxacode/` 外全是 `immutable` 一年 ⇒ **违规下架能否生效完全依赖 Purge**，
+且 `refreshCDN` 的设计是「失败只记日志不报错」，这条链上没有任何一处会拦它。
+
+现状本来就如此（2026-10-23 补接线后才真正触发刷新），R1 不改恶化现状，只是把它带进多租户语境：
+Purge 用的是**平台**那把 refresher。第一阶段试点（公开读桶 + `public_base_url` 留空，一律走
+平台统一入口）下，桶前面的边缘就是平台这把 CF，Purge 按 URL 打得到 → **成立**。
+但一旦开「客户自有域名 / 客户自有 CDN」，平台 Purge 打不到客户边缘 ⇒
+**违规图会在客户 CDN 上留一年且平台无从察觉**。
+
+> 所以结论写成「**有条件成立**」：第一阶段口径不变则 R1 成立；
+> 开客户自有域名之前必须先回答「谁负责 Purge 租户自有边缘」。
+
+### 边界
+
+- **已做**：`tools/nginx-r1-check/`（装置）+ `docs/tenant-storage-r1-feasibility.md`（结论）+
+  设计稿 §3.4 / §6-R1 订正；三组反向验证（4 / 5 / 3 项报红，还原后 36 项复绿、`gen_site.py` 字节零漂移）；
+- **未做**：生产代码零改动；未改 `deploy/baota/nginx-site.live.conf`、未 reload 线上 nginx、
+  未写迁移、未改库、未碰线上二进制；未跑全量门禁（没有 Go/前端代码改动）；
+- 装置产物（`conf.d/`、`cert/`、`logs/`、`www/`）全部 gitignore，不进仓库。
+
+### 下一步（顺序不可反）
+
+1. 落 snippet 生成器（含 DNS 预检 + 配置表↔snippet 对账）；
+2. 切出参侧：`ResolveRef` 对裸键补 `<origin>/uploads/` 前缀，两种历史形态保持原样；
+3. 切写入侧：`NormalizeRef` 收敛成裸键，**开关必须能一个 env 回滚**；
+4. 之后才是存量回填（P3）与迁移 0044。
