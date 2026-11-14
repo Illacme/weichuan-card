@@ -203,6 +203,8 @@ export interface StorageUsageInfo {
   humanQuota: string
   unlimited: boolean
   quotaGlobal: number
+  /** 平台配额是否适用于该企业；false = 该企业使用自有存储，平台配额不限制其上传（仅计量展示） */
+  platformQuotaApplies: boolean
 }
 
 // 查某企业的用量与配额。不传 companyId 时后端按当前登录身份取（企业管理员即本企业）。

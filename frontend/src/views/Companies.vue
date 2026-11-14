@@ -409,10 +409,15 @@
             <span class="lic-hint">存储配额</span>
           </el-divider>
           <el-form-item label="存储上限">
-            <el-input-number v-model="licForm.quotaMb" :min="0" :max="1048576" :step="100" />
+            <el-input-number v-model="licForm.quotaMb" :min="0" :max="1048576" :step="100" :disabled="!storage.platformQuotaApplies" />
             <span class="lic-hint">
-              MB；0 = 跟随全局（{{ storage.quotaGlobal > 0 ? `${storage.quotaGlobal} MB` : '当前不限' }}）。
-              本企业已用 {{ fmtBytes(storage.bytes) }}，统计自本功能启用起累计，不含历史文件。
+              <template v-if="storage.platformQuotaApplies">
+                MB；0 = 跟随全局（{{ storage.quotaGlobal > 0 ? `${storage.quotaGlobal} MB` : '当前不限' }}）。
+                本企业已用 {{ fmtBytes(storage.bytes) }}，统计自本功能启用起累计，不含历史文件。
+              </template>
+              <template v-else>
+                该企业使用自有存储，平台配额不限制其上传（仅计量展示，已用 {{ fmtBytes(storage.bytes) }}）；此项不可设置。
+              </template>
             </span>
           </el-form-item>
         </el-form>
@@ -883,6 +888,9 @@ const storage = reactive({
   quotaGlobal: 0,
   humanBytes: '0 B',
   percent: 0,
+  // 平台配额是否适用于该企业：false = 该企业已切到自有存储，平台配额不限制其上传
+  // （仅计量展示）。后端缺省按 true 处理，旧后端不回这个字段时前端也保持原行为。
+  platformQuotaApplies: true,
   // 用量接口是否成功拿到过值。**这决定保存时敢不敢提交配额**：
   // 拉取失败时 licForm.quotaMb 还是 0，若照旧提交就等于把客户已设的上限
   // 悄悄改回「跟随全局」——一次接口抖动导致的行为变更，事后无从解释。
@@ -904,6 +912,7 @@ function resetLicense() {
   storage.quotaGlobal = 0
   storage.humanBytes = '0 B'
   storage.percent = 0
+  storage.platformQuotaApplies = true
   storage.loaded = false
 }
 
@@ -923,6 +932,7 @@ async function openLicense(row: any) {
   storage.quotaGlobal = 0
   storage.humanBytes = fmtBytes(row.storageBytes)
   storage.percent = 0
+  storage.platformQuotaApplies = true
   storage.loaded = false
   licVisible.value = true
   await reloadLicense(row.id)
@@ -951,6 +961,7 @@ async function reloadLicense(id: number) {
       storage.quotaGlobal = s.quotaGlobal || 0
       storage.humanBytes = s.humanBytes || fmtBytes(s.bytes)
       storage.percent = s.percent || 0
+      storage.platformQuotaApplies = s.platformQuotaApplies !== false
       storage.loaded = true
       // 覆盖值（0 = 跟随全局）才是这一栏该显示的东西：显示生效上限会让运营
       // 误以为该企业已经单独设过配额，改全局时以为没生效。

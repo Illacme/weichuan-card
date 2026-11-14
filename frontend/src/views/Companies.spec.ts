@@ -763,6 +763,33 @@ describe('企业管理 · 授权与存储配额', () => {
     expect(dlg.text()).toContain('0.6 MB')
   })
 
+  it('已切到自有桶的企业：平台配额不适用，存储上限禁用并提示使用自有存储', async () => {
+    mocks.getStorageUsage.mockImplementation(async () => ({
+      code: 0,
+      data: {
+        companyId: 2, bytes: 629145, files: 3, quotaBytes: 0, quotaMb: 0,
+        percent: 0, humanBytes: '0.6 MB', humanQuota: '0.0 MB', unlimited: true, quotaGlobal: 0,
+        platformQuotaApplies: false,
+      },
+    }))
+    const w = await setup()
+    const dlg = await openLic(w, 2)
+    // 后端明确说平台配额不适用：界面必须说出来，不能把"已用 X"当成"快满了"
+    expect(dlg.text()).toContain('该企业使用自有存储')
+    const nums = dlg.findAll('input.el-input-number')
+    // 第二个 el-input-number 是「存储上限」，不适用时禁用（设了也不会拦这家）
+    expect((nums[1].element as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('平台配额适用的企业：不显示自有存储提示，存储上限可编辑（反向）', async () => {
+    // getStorageUsage 不回 platformQuotaApplies（旧后端 / 缺省）→ 视为适用
+    const w = await setup()
+    const dlg = await openLic(w, 3)
+    expect(dlg.text()).not.toContain('该企业使用自有存储')
+    const nums = dlg.findAll('input.el-input-number')
+    expect((nums[1].element as HTMLInputElement).disabled).toBe(false)
+  })
+
   it('未配置授权的企业顶部提示「不受限制」，而不是红着脸说已过期', async () => {
     const w = await setup()
     const dlg = await openLic(w, 3)
