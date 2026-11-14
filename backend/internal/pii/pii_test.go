@@ -1,6 +1,7 @@
 package pii
 
 import (
+	"bytes"
 	"encoding/base64"
 	"os"
 	"strings"
@@ -65,6 +66,47 @@ func TestBlindIndexDeterministicAndNormalized(t *testing.T) {
 	require.Equal(t, a, b, "首尾空白不应影响盲索引")
 	require.Equal(t, a, c, "内部空白应被归一化")
 	require.NotEqual(t, a, BlindIndex("李四"), "不同值盲索引必须不同")
+}
+
+func TestCurrentKeyIDAndWithKey(t *testing.T) {
+	keyA := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x11}, 32))
+	keyB := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x22}, 32))
+	require.NotEqual(t, keyA, keyB)
+
+	// 恢复内置 dev 密钥，避免改动包级状态殃及其它测试。
+	defer SetKey("")
+
+	require.NoError(t, SetKey(keyA))
+	idA := CurrentKeyID()
+	require.NotEmpty(t, idA, "有效密钥必须产生非空指纹")
+	require.Equal(t, idA, CurrentKeyID(), "同一密钥指纹必须稳定（进程内不漂移）")
+
+	require.NoError(t, SetKey(keyB))
+	idB := CurrentKeyID()
+	require.NotEqual(t, idA, idB, "不同密钥必须产生不同指纹")
+
+	require.NoError(t, SetKey(keyA))
+	require.Equal(t, idA, CurrentKeyID(), "切回同一密钥指纹必须还原")
+
+	// EncryptWithKey/DecryptWithKey 不依赖包级当前密钥：
+	// keyA 加密的密文只能被 keyA 解，被 keyB 解必须失败。
+	enc, err := EncryptWithKey(keyA, "topsecret")
+	require.NoError(t, err)
+	require.True(t, IsEncrypted(enc))
+	got, err := DecryptWithKey(keyA, enc)
+	require.NoError(t, err)
+	require.Equal(t, "topsecret", got)
+	_, err = DecryptWithKey(keyB, enc)
+	require.Error(t, err, "非对应密钥必须解不开 WithKey 密文")
+
+	// Decrypt（当前=keyA）能解 keyA 的密文；切到 keyB 后解不开 —— 印证「换钥匙后旧密文解不开」。
+	require.NoError(t, SetKey(keyA))
+	got2, err := Decrypt(enc)
+	require.NoError(t, err)
+	require.Equal(t, "topsecret", got2)
+	require.NoError(t, SetKey(keyB))
+	_, err = Decrypt(enc)
+	require.Error(t, err, "当前密钥与密文密钥不符必须解密失败")
 }
 
 func TestBlindIndexEmailCaseInsensitive(t *testing.T) {

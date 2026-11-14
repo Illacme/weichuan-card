@@ -33,6 +33,7 @@ const usage = `用法：
   server migrate    应用待执行的数据库迁移后退出（不启服务）
   server backup     对 SQLite 库做在线一致性快照（--out <文件>）
   server dbcheck    只读体检一个 SQLite 备份文件（--file <文件>）
+  server tenant-storage-rekey  换 PII_ENC_KEY 后重加密租户存储凭据（需停机窗口；旧密钥经 PII_ENC_KEY_OLD 提供）
   server help       显示本说明
 
 迁移默认在启动时自动补齐（仅 MySQL；AUTO_MIGRATE=0 关闭），
@@ -57,6 +58,9 @@ func main() {
 			return
 		case "dbcheck":
 			runDBCheck()
+			return
+		case "tenant-storage-rekey":
+			runTenantStorageRekey(cfg)
 			return
 		case "help", "-h", "--help":
 			log.Print(usage)
@@ -585,4 +589,51 @@ func newUploader(cfg config.Config) (storage.Uploader, error) {
 			AllowExt: storage.DefaultAllowExt,
 		}, nil
 	}
+}
+
+// runTenantStorageRekey `server tenant-storage-rekey`：换 PII_ENC_KEY 后，对
+// tenant_storage_configs 的凭据做「旧密钥解密 → 新密钥重加密」回填。
+//
+// 运维前置（停机式 re-key，务必在**停写窗口**内执行）：
+//  1. 把新密钥写进配置 / 环境变量 PII_ENC_KEY；
+//  2. 把被替换掉的旧密钥放进 PII_ENC_KEY_OLD（base64 32 字节）；
+//  3. 停止所有写入租户存储配置的服务实例，仅保留本命令运行；
+//  4. 跑本命令；完成后用新密钥正常启动服务。
+//
+// 为什么必须先装载新密钥且拒绝占位密钥：本命令会把所有凭据重加密成「当前进程密钥」加密，
+// 若当前是 dev 占位密钥（未设 PII_ENC_KEY 被放行），重加密后就只有 dev 密钥能解——
+// 等于把生产凭据锁进公开密钥，后果比不轮换更糟，故直接 Fatal 拒绝。
+func runTenantStorageRekey(cfg config.Config) {
+	if config.Resolved("DB_DSN") == "" {
+		log.Fatal("[REKEY] DB_DSN 未配置：请用 DB_DSN=... server tenant-storage-rekey 显式指定")
+	}
+	// 必须先装载密钥，且必须是有效的新密钥（不能是坏密钥，也不能是 dev 占位密钥误用）。
+	syncPIIKeyFromConfig()
+	if err := pii.KeyError(); err != nil {
+		log.Fatalf("[REKEY][FATAL] PII_ENC_KEY 无效：%v", err)
+	}
+	if pii.UsingPlaceholderKey() && os.Getenv("ALLOW_INSECURE") != "1" {
+		log.Fatalf("[REKEY][FATAL] 当前 PII_ENC_KEY 是内置 dev 占位密钥：用它重加密会把所有租户凭据改成 dev 密钥加密，" +
+			"任何拿到二进制的人都能解密，生产绝不可接受。请设置真实的 PII_ENC_KEY 后重试（本地联调确需放行请加 ALLOW_INSECURE=1）")
+	}
+	target := pii.CurrentKeyID()
+	if target == "" {
+		log.Fatal("[REKEY][FATAL] 无法确定当前密钥指纹（PII_ENC_KEY 未正确装载），停止重加密")
+	}
+	oldB64 := os.Getenv("PII_ENC_KEY_OLD")
+	if oldB64 == "" {
+		log.Printf("[REKEY][WARN] 未提供 PII_ENC_KEY_OLD：凡是当前密钥解不开的存量凭据将无法重加密并导致命令中止。" +
+			"若这是首次启用 KeyID（存量行 key_id 为空）且全程只用当前这一把密钥写入过，可安全忽略本警告。")
+	}
+	db, driver, err := dbopen.Open(cfg.DBDSN)
+	if err != nil {
+		// 不打印 DSN 原文（含数据库口令）
+		log.Printf("[REKEY] 连接数据库失败（driver=%s）：%v", driver, err)
+		log.Fatal("[REKEY] 排查顺序：库是否已启动 / 地址端口是否可达 / 账号口令与库名是否正确（日志不打印 DSN）")
+	}
+	processed, rerr := handler.RekeyTenantStorage(db, oldB64)
+	if rerr != nil {
+		log.Fatalf("[REKEY][FATAL] 重加密中止（已重加密 %d 行）：%v", processed, rerr)
+	}
+	log.Printf("[REKEY] 完成：共重加密 %d 行租户存储凭据，key_id 已刷新为 %s", processed, target)
 }

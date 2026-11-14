@@ -168,6 +168,19 @@ func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
 			credentialsChanged = true
 		}
 
+		// key_id 标识本行凭据是用哪一把密钥加密的：换钥匙做 re-key 时据此定位
+		// 「哪些行还是旧密钥、需要重加密」（见 RekeyTenantStorage）。
+		// 只在凭据被改（覆盖填新值 / 清空）时更新——不传凭据沿用旧值时，key_id
+		// 必须保持原样，否则会谎报「这行已是当前密钥」，re-key 就漏掉它了。
+		if credentialsChanged {
+			if row.AccessKeyEnc != "" && row.SecretKeyEnc != "" {
+				row.KeyID = pii.CurrentKeyID()
+			} else {
+				// 凭据被清空：没有密文了，key_id 失去意义，一并清空避免误导。
+				row.KeyID = ""
+			}
+		}
+
 		if msg := validateTenantStorageRow(row); msg != "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
 			return

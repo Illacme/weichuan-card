@@ -86,6 +86,10 @@ const (
 	// 这个切换点必须留痕，否则将来对账时无法解释「为什么这家企业的对象
 	// 一半在一个桶、一半在平台盘」。
 	ActionTenantStorageReset = "storage.config.reset"
+	// ActionTenantStorageRekey 换 PII_ENC_KEY 后，对租户存储凭据做「旧密钥解密 → 新密钥重加密」回填。
+	// 属高危运维动作（批量改写客户的云凭据密文），必须留痕：记录处理了多少行、是否提供了旧密钥，
+	// 但绝不记录任何凭据明文 / 掩码。谁来执行由调用方决定（CLI 子命令记为 ActorSystem）。
+	ActionTenantStorageRekey = "storage.config.rekey"
 
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"

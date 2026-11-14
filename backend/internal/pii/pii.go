@@ -36,10 +36,11 @@ const KeyEnvVar = "PII_ENC_KEY"
 const cipherPrefix = "v1:"
 
 var (
-	encKey      [32]byte
-	idxKey      [32]byte
-	keyErr      error
-	placeholder bool
+	encKey         [32]byte
+	idxKey         [32]byte
+	keyErr         error
+	placeholder    bool
+	keyFingerprint string // 当前密钥的稳定指纹（hex），供 KeyID 列标识加密版本
 )
 
 func init() { loadKeys() }
@@ -55,6 +56,7 @@ func loadKeys() {
 func applyKey(v string) error {
 	keyErr = nil
 	placeholder = false
+	keyFingerprint = "" // 仅在成功装载后于末尾重新赋值；坏密钥下保持空，CurrentKeyID 返回空
 	if v != "" {
 		b, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
@@ -76,6 +78,12 @@ func applyKey(v string) error {
 	h.Write(encKey[:])
 	h.Write([]byte("|blind-index"))
 	copy(idxKey[:], h.Sum(nil))
+	// 密钥指纹：当前密钥的稳定标识，写进凭据行的 key_id 列，
+	// 换钥匙后用它区分「哪些行还是旧密钥加密的、需要重加密」。
+	// 取 SHA-256 的前 16 个 hex 字符（8 字节），足以区分轮换的少数几个版本，
+	// 且不会泄露密钥本身（只是哈希前缀，不可逆）。
+	sum := sha256.Sum256(encKey[:])
+	keyFingerprint = hex.EncodeToString(sum[:])[:16]
 	return nil
 }
 
@@ -108,7 +116,16 @@ func KeyError() error { return keyErr }
 // IsEncrypted 判断某个库值是否已是本包产出的密文（用于回填时跳过已加密行）。
 func IsEncrypted(v string) bool { return strings.HasPrefix(v, cipherPrefix) }
 
+// CurrentKeyID 返回当前密钥的稳定指纹（hex 前缀）。
+//
+// 它标识「此刻用来加解密凭据的是哪一把密钥」，写进 tenant_storage_configs.key_id，
+// 将来换钥匙时据此定位「哪些行还是旧密钥加密的、需要重加密」（见 handler.RekeyTenantStorage）。
+// 密钥装载失败（坏 base64 / 长度不对）时返回空串——此时无法安全加密，调用方应拒绝写入。
+func CurrentKeyID() string { return keyFingerprint }
+
 // Encrypt 加密明文。空串视为「无此信息」，直接返回空串（不产生密文）。
+//
+// 依赖包级当前密钥（encKey）。非当前密钥场景下（如 re-key）用 EncryptWithKey。
 func Encrypt(plain string) (string, error) {
 	if plain == "" {
 		return "", nil
@@ -116,7 +133,73 @@ func Encrypt(plain string) (string, error) {
 	if keyErr != nil {
 		return "", keyErr
 	}
-	block, err := aes.NewCipher(encKey[:])
+	return seal(encKey, plain)
+}
+
+// Decrypt 解密密文（用包级当前密钥）。
+//
+// 兼容语义：不带 "v1:" 前缀的值按「历史明文」原样返回——这样回填前的老数据
+// 也能正常读出来（回填见 storage 层/启动自检 Backfill）。真正的密文解密失败
+// （密钥不对 / 数据被篡改）返回错误，绝不把密文或错误明文交给上层。
+func Decrypt(enc string) (string, error) {
+	if enc == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(enc, cipherPrefix) {
+		return enc, nil // 历史明文（尚未回填）
+	}
+	if keyErr != nil {
+		return "", keyErr
+	}
+	return open(encKey, enc)
+}
+
+// EncryptWithKey 用给定的 base64 32 字节密钥加密（与 Encrypt 同 v1: 协议前缀）。
+//
+// 专供 re-key 等运维场景：在「非当前密钥」下加解密，不改动包级当前密钥状态，
+// 因此也不会污染 UsingPlaceholderKey / KeyError 这两个全局门槛。
+func EncryptWithKey(b64Key, plain string) (string, error) {
+	if plain == "" {
+		return "", nil
+	}
+	var k [32]byte
+	if err := loadKeyInto(b64Key, &k); err != nil {
+		return "", err
+	}
+	return seal(k, plain)
+}
+
+// DecryptWithKey 用给定的 base64 32 字节密钥解密（与 Decrypt 同 v1: 协议前缀）。
+func DecryptWithKey(b64Key, enc string) (string, error) {
+	if enc == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(enc, cipherPrefix) {
+		return enc, nil // 历史明文（尚未回填）
+	}
+	var k [32]byte
+	if err := loadKeyInto(b64Key, &k); err != nil {
+		return "", err
+	}
+	return open(k, enc)
+}
+
+// loadKeyInto 把 base64 32 字节密钥解析进 k（与 applyKey 相同的校验语义）。
+func loadKeyInto(b64 string, k *[32]byte) error {
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil {
+		return fmt.Errorf("%s 不是合法 base64：%w", KeyEnvVar, err)
+	}
+	if len(b) != 32 {
+		return fmt.Errorf("%s 必须解码为 32 字节（AES-256），当前 %d 字节", KeyEnvVar, len(b))
+	}
+	copy(k[:], b)
+	return nil
+}
+
+// seal 用给定密钥加密明文，产出 "v1:" 前缀密文（随机 nonce，AES-256-GCM）。
+func seal(key [32]byte, plain string) (string, error) {
+	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return "", err
 	}
@@ -133,26 +216,13 @@ func Encrypt(plain string) (string, error) {
 	return cipherPrefix + base64.StdEncoding.EncodeToString(out), nil
 }
 
-// Decrypt 解密密文。
-//
-// 兼容语义：不带 "v1:" 前缀的值按「历史明文」原样返回——这样回填前的老数据
-// 也能正常读出来（回填见 storage 层/启动自检 Backfill）。真正的密文解密失败
-// （密钥不对 / 数据被篡改）返回错误，绝不把密文或错误明文交给上层。
-func Decrypt(enc string) (string, error) {
-	if enc == "" {
-		return "", nil
-	}
-	if !strings.HasPrefix(enc, cipherPrefix) {
-		return enc, nil // 历史明文（尚未回填）
-	}
-	if keyErr != nil {
-		return "", keyErr
-	}
+// open 用给定密钥解密 "v1:" 前缀密文。空密文 / 非前缀明文由调用方（Decrypt/DecryptWithKey）先处理。
+func open(key [32]byte, enc string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(enc[len(cipherPrefix):])
 	if err != nil {
 		return "", fmt.Errorf("密文不是合法 base64：%w", err)
 	}
-	block, err := aes.NewCipher(encKey[:])
+	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return "", err
 	}
