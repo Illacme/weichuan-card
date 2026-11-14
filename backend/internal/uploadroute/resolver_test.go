@@ -30,7 +30,10 @@ func minioCfg(version int64) *Config {
 		AccessKey: "AK",
 		SecretKey: "SK",
 		BaseURL:   "https://card.example.com/uploads",
-		Version:   version,
+		// 第一阶段口径就是公开读桶。夹具若留 false，build 会按「私有桶」显式拒绝，
+		// 后面所有「正常配置」用例都会红——那不是回归，是夹具没跟上契约。
+		PublicRead: true,
+		Version:    version,
 	}
 }
 
@@ -209,8 +212,9 @@ func TestDBLoaderSkipsRowsThatDontNeedSnippet(t *testing.T) {
 }
 
 // TestDBLoaderDecryptsAndDefaultsBaseURL 覆盖正常路径：
-// 凭据必须解密成明文（S3 签名要真凭据），BaseURL 在 public_base_url 为空时
-// 退到平台统一入口——第一阶段所有租户都走这条路（设计稿 §3.4）。
+// 凭据必须解密成明文（S3 签名要真凭据）。第六十八轮订正：BaseURL **恒**为平台
+// 统一入口，不再「在 public_base_url 为空时退到」它——自有域名是访客侧 origin，
+// 只登记进 Config.PublicOrigin，不能覆盖上传返回基址（设计稿 §3.4）。
 func TestDBLoaderDecryptsAndDefaultsBaseURL(t *testing.T) {
 	db := newRouteDB(t)
 	load := DBLoader(db, "https://plat.example.com")
@@ -231,11 +235,16 @@ func TestDBLoaderDecryptsAndDefaultsBaseURL(t *testing.T) {
 	require.NotZero(t, cfg.Version, "缓存版本号必须有值，否则每次都会重建实例")
 }
 
-// TestDBLoaderPublicBaseURLWins 客户自有域名一旦配上就不再回落平台入口：
-// 出参 URL 会跟着变，这是「客户自己的域名」这件事的全部意义。
-func TestDBLoaderPublicBaseURLWins(t *testing.T) {
+// TestDBLoaderPublicBaseURLIsOriginNotUploadBase 是第六十八轮修正的架构错接：
+// 客户自有域名是**访客侧 origin**，不是「上传接口返回的 URL 基址」。
+//
+// 旧实现把它覆盖到 Config.BaseURL，上传于是返回 `https://img.cust.com/t/9/x.jpg`；
+// 写入侧 normalizeResourceRef 用平台 cfg.UploadBaseURL 剥不掉、URL 里也没有
+// /uploads/ 段，NormalizeOrKeep 会把整条当外链**原样写库**——库里从裸键退回
+// 绝对 URL，media_check 反推键失败。这条用例同时钉住「登记到了」与「没串位」。
+func TestDBLoaderPublicBaseURLIsOriginNotUploadBase(t *testing.T) {
 	db := newRouteDB(t)
-	load := DBLoader(db, "https://plat.example.com")
+	load := DBLoader(db, "https://plat.example.com/uploads")
 
 	seedRouteRow(t, db, model.TenantStorageConfig{
 		CompanyID: 9, Driver: "oss", Endpoint: "oss-cn-hangzhou.aliyuncs.com", Bucket: "cust",
@@ -244,7 +253,46 @@ func TestDBLoaderPublicBaseURLWins(t *testing.T) {
 
 	cfg, err := load(9)
 	require.NoError(t, err)
-	require.Equal(t, "https://img.cust.com", cfg.BaseURL)
+	require.Equal(t, "https://img.cust.com", cfg.PublicOrigin, "自有域名必须被登记")
+	require.Equal(t, "https://plat.example.com/uploads", cfg.BaseURL,
+		"自有域名绝不能覆盖上传返回基址：写入侧靠这个基址把 URL 剥回裸键")
+	require.Equal(t, "oss-cn-hangzhou.aliyuncs.com", cfg.Endpoint,
+		"回源侧不受自有域名影响，两者正交")
+}
+
+// TestBuildRejectsPrivateBucket 钉住 public_read 的运行时消费。
+//
+// 在此之前这一列只有写入侧 validateTenantStorageRow 会看，库里若被人手工改成 0，
+// 上传链路照样按公开读拼 URL、零报错。现在 build 必须显式拒绝，
+// 且 Resolver.For 要带上「不回退平台存储」的载荷。
+func TestBuildRejectsPrivateBucket(t *testing.T) {
+	cfg := minioCfg(1)
+	cfg.PublicRead = false
+	res := New(testPlatform(t), "local", func(int64) (*Config, error) { return cfg, nil })
+
+	up, err := res.For(7)
+	require.Error(t, err)
+	require.Nil(t, up)
+	require.Contains(t, err.Error(), "公开读")
+	require.Contains(t, err.Error(), "不回退平台存储")
+}
+
+// TestBuildRejectsUnvalidatedPublicOrigin 兜住「第六十八轮之前手工写进库的坏域名」：
+// 写入侧已经校验过新值，但存量行没被洗过，翻开关那天必须在构造实例时报错。
+func TestBuildRejectsUnvalidatedPublicOrigin(t *testing.T) {
+	cfg := minioCfg(1)
+	cfg.PublicOrigin = "https://img.cust.com/prefix"
+	res := New(testPlatform(t), "local", func(int64) (*Config, error) { return cfg, nil })
+
+	up, err := res.For(7)
+	require.Error(t, err)
+	require.Nil(t, up)
+	require.Contains(t, err.Error(), "自有访问域名不合法")
+	// 合法值必须能过，否则这个守门可能只是「一律报错」的假绿。
+	cfg.PublicOrigin = "https://img.cust.com"
+	up2, err2 := build(cfg)
+	require.NoError(t, err2)
+	require.NotNil(t, up2)
 }
 
 // TestDBLoaderDecryptErrorIsNotSwallowed 是「无静默降级」在数据层的落点：

@@ -4970,5 +4970,117 @@ Open 一起改）、删掉桶探测、忽略 `sys_setting`、s3 分支回退本�
 - 非云厂商桶：TLS/SNI、CDN、CORS、跨区一致性仍只有有限证据。
 - **`TENANT_STORAGE_ROUTE` 默认值仍是 off**；翻它属于运营动作，需单独决策。
 - P4 仍待：`key_id` 轮换、`public_base_url` / `public_read` 消费方、审计前端标签、
-  配额口径、解约后清理策略。
+  配额口径、解约后清理策略。**（以上是第六十七轮当时口径，以第六十八轮章节为准。）**
 - `gofmt -l` 的 12 个既有文件仍未动，需单独一次纯格式提交。
+
+---
+
+## 第六十八轮 · P4 自有域名与公开读：配置面收敛 + 架构错接修正（2026-11-14）
+
+### 一、侦察先推翻两条旧口径
+
+本轮方向给的三项里有两项与代码事实不符，先按证据订正再动手：
+
+| 文档 / 方向描述 | 代码事实 |
+| --- | --- |
+| 设计稿 §3.2「`public_base_url` / `public_read` / `key_id` 三列建了但当前**无人消费**」 | `uploadroute.DBLoader:271-274` 从第六十轮起就在读 `PublicBaseURL`，且用它**覆盖** `Config.BaseURL`；`resolver_test.go` 还有 `TestDBLoaderPublicBaseURLWins` 钉住这个行为 |
+| P4 剩余项「审计前端标签」 | 早已闭环：`ACTION_LABELS` 三个 `storage.config.*` 齐全，`audit.spec.ts` 有 missing / extra 双向跨端对账，本轮复核后从待办划掉 |
+
+写入 / 出参 / 表单 / 契约对 `public_base_url` **全缺**，所以真实状态不是「无人消费」，
+而是「读侧悄悄生效、写侧根本不通」——比两边都不通更危险：库里一旦被手工 SQL 填了值，
+`DBLoader` 会真的用它，而后台看不见、也没人校验过。
+
+`public_read` 是另一种半接线：写入侧 `validateTenantStorageRow` 拦私有桶，出参与表单
+都有，但 `uploadroute.Config` / `DBLoader` / `build` / `S3StoreConfig` 全都不读它。
+库里被手工改成 0 时，运行时照样按公开读拼 URL、零报错。
+
+### 二、修掉的那处架构错接（本轮最要紧的一件事）
+
+`Config.BaseURL` 是**上传接口返回的 URL 基址**，写入侧 `normalizeResourceRef` 要用平台
+`cfg.UploadBaseURL` 把它剥回裸键（`storage.legacyRel`）。旧实现让 `public_base_url`
+覆盖它之后：
+
+```
+上传返回  https://img.cust.com/t/5/x.jpg
+        → legacyRel 剥不掉平台基址、URL 里也没有 /uploads/ 段
+        → NormalizeOrKeep 判成 RefForeignURL，整条 URL 原样写库
+        → 库里从裸键退回绝对 URL，media_check 反推键失败
+```
+
+`TENANT_STORAGE_ROUTE=off` 时 `DBLoader` 根本不被调用，所以这个雷**现在不响、
+翻开关那天才响**。修正：`BaseURL` 恒为平台统一入口，`public_base_url` 只登记进
+`Config.PublicOrigin`（访客侧 origin），两者正交。
+
+顺带把 `public_base_url` 与 `host_header` 的概念混淆拆开：前者是访客侧 origin，
+后者是回源侧 Host / TLS SNI。`snippet.go` / `s3store.go` 的拒绝规则**保留**
+（回填不经 nginx 改不了 Host/SNI，放宽会静默写错域名而后台显示成功），只把
+「客户自有域名属于下一阶段」这句误导文案换成现阶段可照做的路径：自有域名填
+`public_base_url`，回源改路径风格（hostHeader 留空或等于 endpoint）。
+
+### 三、四个不能退的决定
+
+1. **origin 规则单点**：`storage.ValidatePublicOrigin`（`public_origin.go`）同时是后台写入
+   校验与 `ResolveRef(raw, origin)` 出参 origin 的裁判；`ref.go` 里那份私有 `cleanOrigin`
+   已删除。两套规则漂移的表现是「后台说存成功、端上拼出带路径的怪地址」，且不报错。
+2. **`public_read` 变成运行时消费**：`Config.PublicRead` + `uploadroute.build` 显式拒绝
+   私有桶。回填侧 `TenantTargetFor` 不调 `build`，不受影响（凭据在手就能写对象），
+   由 `TestTenantTargetForIgnoresPublicReadAndOrigin` 钉住「两条链路解释不同」。
+3. **库里的存量坏值也要兜住**：`validateTenantStorageRow` 在落库前再验一次
+   `row.PublicBaseURL`，`build` 再验一次 `cfg.PublicOrigin`。第六十八轮之前这列只能
+   手工 SQL 填，没被洗过；翻开关那天必须显式报错，而不是安静地躺着。
+4. **不假装自有域名已经承载流量**：出参侧按租户选 origin 尚未接入，动它会改端上契约、
+   牵动 9 条公开 GET 与 `/api/public/settings`。因此 `publicBaseUrlActive` **恒 false**、
+   `publicBaseUrlNote` 给出未生效原因与启用前要做的接入层配置，表单填了值当场显示
+   warning。填了以为生效比不填更坏。
+
+### 四、交付物
+
+| 层 | 文件 |
+| --- | --- |
+| 纯函数单点 | `backend/internal/storage/public_origin.go`（+ `_test.go`）、`ref.go` 删 `cleanOrigin` |
+| 配置接口 | `handler/tenant_storage.go`：`tenantStorageReq.PublicBaseURL *string` 三态、PUT 校验、出参三字段、审计 Detail 记 `publicBaseUrl` |
+| 上传 / 回填 | `uploadroute/resolver.go`：`Config.PublicOrigin` / `PublicRead`、`BaseURL` 恒平台、`build` 两处拒绝；`refmigrate/s3store.go` 注释与文案 |
+| 边界文案 | `nginxsnippet/snippet.go` 报错文案；`docs/openapi.yaml` hostHeader 描述 |
+| 守门修根因 | `storage/ref_p0a_guard_test.go` 先剥整行注释 + 「至少抓到 20 处」读数兜底 |
+| 前端 | `api/tenantStorage.ts` 两个 interface、`components/TenantStorageDialog.vue` 表单 + 未生效提示、`api/tenantStorage.spec.ts` 跨端字段契约（12 条）、`api/audit.ts` 注释复核 |
+| 契约 / 文档 | `docs/openapi.yaml` 两个 schema、`backend/README.md`、设计稿 §4 末尾、URL 边界文档 |
+
+### 五、反向验证（10 组，全过）
+
+每组「注入整套坏实现 → 指定用例必红 → 还原 → 复绿 → sha256 零漂移」：
+① 把 `BaseURL` 改回被 `PublicBaseURL` 覆盖；② 绕过 `!cfg.PublicRead` 拒绝；
+③ `ResolveRef` 另写一份 origin 校验；④ 守门不再剥注释；⑤ 报错文案改回「下一阶段」；
+⑥ 摘掉 `validateTenantStorageRow` 的存量坏值兜底；⑦ 放宽回填侧 Host/SNI 边界；
+⑧ 把 `publicBaseURLActive` 写成 true；⑨ 同一注入让前端跨端契约守门也必红；
+⑩ `ValidatePublicOrigin` 放行带路径 origin。**10/10 必红、10/10 还原复绿、零漂移。**
+
+### 六、两条「坑」留档
+
+1. **接线守门「扫代码别扫注释」**：本轮在 `resolver.go` 注释里写了一句
+   `storage.ResolveRef(raw, origin) 按租户选 origin`，被 `TestRefWiringGate` 的朴素
+   逐行正则判成真实调用（报在 `../uploadroute/resolver.go:67`）。修法是让守门
+   **先剥整行注释**，并补「至少抓到 20 处」读数兜底——抓取型守门最坏的坏法是
+   一条也抓不到、于是「全部通过」。删掉剥注释三行，这行注释立刻让守门变红，
+   是现成的反向验证。
+2. **前端单测 137**：直接 `npx vitest run 单文件` 被 OOM 杀；补 `--maxWorkers=1`
+   又会与 `--pool=threads` 报 `minThreads / maxThreads must not conflict`。
+   可用组合是 `NODE_OPTIONS=--max-old-space-size=4096 ... --pool=threads
+   --minWorkers=1 --maxWorkers=1`；全量按既定 `--pool=threads` + 4G 堆即可。
+
+### 七、门禁（串行，不并行）
+
+`gofmt -l`（18 个改动文件）0 输出 · `golangci-lint v2.15.0` **0 issues** ·
+`go test ./...` 全绿 · `vue-tsc --noEmit` 0 ·
+全量 Vitest **97 文件 / 1639 测试全绿** · `eslint .` 0 ·
+`vite build --outDir dist-check-r68` 成功 · `bash tools/nginx-check/run.sh`
+**113 项通过 0 失败** · `git diff --check` 干净。
+
+### 八、边界与下一步
+
+- **客户自有域名仍未承载流量**：只做到「可登记、可校验、可如实回报、运行时不撒谎」。
+  真正生效要接「出参侧按租户选 origin」（`ResolveRef` 的 origin 参数 + 9 条公开 GET +
+  `/api/public/settings`），会动端上契约，是独立一轮。本轮**没有假装做完**。
+- `TENANT_STORAGE_ROUTE` 默认值**仍是 off**，本轮没翻；翻它属于运营动作。
+- P4 剩余：`key_id` 轮换、出参侧按租户选 origin、配额口径、解约后清理策略。
+- `driver=oss` 源、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名仍显式拒绝。
+- `gofmt -l` 的 12 个既有格式债文件未动，仍需单独一次纯格式提交。

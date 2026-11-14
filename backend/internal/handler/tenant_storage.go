@@ -135,6 +135,17 @@ func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
 		if req.Enabled != nil {
 			row.Enabled = *req.Enabled
 		}
+		// 自有访问域名同样走三态。格式裁判只在 storage.ValidatePublicOrigin 一处：
+		// 它与 ResolveRef(raw, origin) 的 origin 校验是同一个函数，避免「后台存成功、
+		// 端上拼出带路径的怪地址」这种不报错的漂移。
+		if req.PublicBaseURL != nil {
+			base, err := storage.ValidatePublicOrigin(*req.PublicBaseURL)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "自有访问域名不合法：" + err.Error()})
+				return
+			}
+			row.PublicBaseURL = base
+		}
 
 		// 凭据三态：nil=保留、空串=清空、有值=覆盖（pii.Encrypt 落密文）。
 		credentialsChanged := false
@@ -188,6 +199,9 @@ func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
 				"bucket":     row.Bucket,
 				"enabled":    row.Enabled,
 				"publicRead": row.PublicRead,
+				// 自有访问域名不是秘密（它本来就是要公开的），且它决定「出参 URL
+				// 打算指到哪」。审计里要能回答「谁把哪家企业的访问域名改成了什么」。
+				"publicBaseUrl": row.PublicBaseURL,
 				// 只记「凭据有没有被改」，不记值也不记掩码：掩码仍是可关联的碎片。
 				"credentialsChanged": credentialsChanged,
 				"credentialsPresent": row.AccessKeyEnc != "" && row.SecretKeyEnc != "",
@@ -340,6 +354,15 @@ type tenantStorageReq struct {
 	HostHeader string `json:"hostHeader"`
 	PublicRead *bool  `json:"publicRead"`
 	Enabled    *bool  `json:"enabled"`
+	// PublicBaseURL 客户自有访问域名。三态与凭据一致：nil = 保留原值、
+	// "" = 清空、有值 = 按 storage.ValidatePublicOrigin 归一化后覆盖。
+	//
+	// 目前这一步只是**登记**：出参侧按租户选 origin 的回调（ResolveRef 的
+	// origin 参数）还没接，填了不会改变对象 URL。出参里的 publicBaseUrlActive
+	// 恒为 false、publicBaseUrlNote 会如实说明，界面不许显示成「已生效」。
+	// 让它可登记而不是只能手工 SQL 填，是为了把「库里已经有值但没人知道」
+	// 这种最坏状态收进可校验、可审计的通道。
+	PublicBaseURL *string `json:"publicBaseUrl"`
 	// AccessKey / SecretKey：nil = 保留原值（界面显示掩码时点保存走这条），
 	// "" = 清空，其他 = 覆盖。**不接受**已加密的值——加密只发生在服务端，
 	// 允许客户端提交密文等于允许它把别的行密文复制过来。
@@ -385,9 +408,15 @@ func loadTenantStorage(db *gorm.DB, cid int64) (*model.TenantStorageConfig, erro
 // 那份规则每一条都对应一种「配置看起来合法、实际会出事」，在写入侧复制一遍
 // 必然与生成侧漂移——而漂移的表现是「接口说存成功了，生成器却报错」。
 //
-// 唯一在这里加的一条是「第一阶段不支持私有桶」：那是**产品边界**不是语法规则，
-// 生成器没有资格判它（私有桶的 snippet 也是对的），只有写入侧知道本期没做签名链路。
+// 这里另外加两条，都是生成器没资格判的**产品/出参边界**：
+//   - 第一阶段不支持私有桶（私有桶的 snippet 也是对的，但本期没做预签名链路）；
+//   - 客户自有访问域名若已有值，必须由 storage.ValidatePublicOrigin 认过。
+//     后者同时也兜住「早先手工 SQL 写进来的坏值」：一次只改 bucket 的保存
+//     会把它一并挡住，而不是让坏域名继续躺在库里等翻开关那天炸。
 func validateTenantStorageRow(row *model.TenantStorageConfig) string {
+	if _, err := storage.ValidatePublicOrigin(row.PublicBaseURL); err != nil {
+		return "自有访问域名不合法：" + err.Error()
+	}
 	target := nginxsnippet.Target{
 		CompanyID:  row.CompanyID,
 		Driver:     row.Driver,
@@ -457,6 +486,11 @@ func tenantStorageView(row *model.TenantStorageConfig) gin.H {
 	view["hostHeader"] = row.HostHeader
 	view["publicRead"] = row.PublicRead
 	view["enabled"] = row.Enabled
+	// 自有访问域名如实回报三件事：登记了什么、到底生效没有、没生效时下一步做什么。
+	// 只回一个字符串会让超管以为「填了就切过去了」——那是本轮最想避免的误读。
+	view["publicBaseUrl"] = row.PublicBaseURL
+	view["publicBaseUrlActive"] = publicBaseURLActive
+	view["publicBaseUrlNote"] = publicBaseURLNote(row.PublicBaseURL)
 	view["status"] = row.Status
 	view["lastError"] = row.LastError
 	view["lastCheckedAt"] = row.LastCheckedAt
@@ -511,6 +545,30 @@ func tenantStorageActive(row *model.TenantStorageConfig) (bool, string) {
 	return true, ""
 }
 
+// publicBaseURLActive 目前**恒为 false**，且必须写死。
+//
+// 客户自有访问域名真正生效的落点是「出参侧按租户选 origin」：storage.ResolveRef
+// 的 origin 参数已经留好了，但 model.ResolveResourceRef 现在传空串（返回相对
+// /uploads/...），端上自己拼平台 baseUrl。要按租户换，得让 9 条公开 GET、
+// 后台出口与 /api/public/settings 一起带上该企业的 origin——那是独立一轮，
+// 还会动端上契约。在此之前把它写成 true，等于告诉超管「客户域名已切过去」，
+// 而实际对象 URL 仍走平台统一入口。「填了以为生效」比「不填」更坏，
+// 所以宁可显式恒 false，再给一句能照做的话。
+const publicBaseURLActive = false
+
+// publicBaseURLNote 给超管看的「为什么没生效 / 生效前还要做什么」。
+//
+// 空值返回空串：没登记时不该在界面上挂一段警告，否则每家没配的企业都显示
+// 一条看似故障的提示，反而把真正需要注意的那家淹掉。
+func publicBaseURLNote(base string) string {
+	if strings.TrimSpace(base) == "" {
+		return ""
+	}
+	return "已登记自有访问域名 " + base + "，但出参侧按租户选 origin 尚未接入：" +
+		"对象 URL 仍走平台统一入口，这项目前不会生效（不要以为保存就切换了）。" +
+		"启用前还须在该域名上配好 /uploads/t/<企业id>/ 的回源规则与证书。"
+}
+
 // emptyTenantStorageView 是「没配过」时的视图：字段齐全但值全是空的。
 //
 // 不返回 null：前端拿到 null 要在每个字段上判空，而「没配」与「配了空值」
@@ -527,6 +585,9 @@ func emptyTenantStorageView(cid int64) gin.H {
 		"hostHeader":          "",
 		"publicRead":          true,
 		"enabled":             false,
+		"publicBaseUrl":       "",
+		"publicBaseUrlActive": publicBaseURLActive,
+		"publicBaseUrlNote":   "",
 		"status":              storageStatusUnknown,
 		"lastError":           "",
 		"lastCheckedAt":       nil,

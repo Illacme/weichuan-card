@@ -60,6 +60,10 @@ func TestRefWiringGate(t *testing.T) {
 	resolveResourceRefAPI := regexp.MustCompile(`model\.ResolveResourceRef\s*\(|\.ResolveRefs\(\)`)
 
 	var writeOffenders, resolveRefOffenders, resolveOffenders []string
+	// 「抓取型守门」必须自带「至少抓到 N 个」兜底：正则一旦写错、或剥注释剥过了头，
+	// 最坏的结果不是报错，而是「一条也抓不到 → 全部通过」。这里统计三种 API 的
+	// 真实命中数（含 sanctioned 文件），先证明量尺自己有读数。
+	totalMatches := 0
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -78,19 +82,41 @@ func TestRefWiringGate(t *testing.T) {
 			return err
 		}
 		for i, line := range strings.Split(string(b), "\n") {
-			if writeAPI.MatchString(line) && !sanctioned[p] {
-				writeOffenders = append(writeOffenders, fmt.Sprintf("%s:%d", p, i+1))
+			// 先剥整行注释：注释里解释「为什么不能用某写法」并不是一次调用。
+			// 第六十八轮就踩过：uploadroute/resolver.go 的注释写了
+			// 「storage.ResolveRef(raw, origin) 按租户选 origin」，被判成真实调用。
+			// 删掉这三行，那条注释立刻让本守门变红——这是现成的反向验证。
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
 			}
-			if resolveRefAPI.MatchString(line) && !sanctioned[p] {
-				resolveRefOffenders = append(resolveRefOffenders, fmt.Sprintf("%s:%d", p, i+1))
+			matched := false
+			if writeAPI.MatchString(line) {
+				matched = true
+				if !sanctioned[p] {
+					writeOffenders = append(writeOffenders, fmt.Sprintf("%s:%d", p, i+1))
+				}
 			}
-			if resolveResourceRefAPI.MatchString(line) && !sanctioned[p] {
-				resolveOffenders = append(resolveOffenders, fmt.Sprintf("%s:%d", p, i+1))
+			if resolveRefAPI.MatchString(line) {
+				matched = true
+				if !sanctioned[p] {
+					resolveRefOffenders = append(resolveRefOffenders, fmt.Sprintf("%s:%d", p, i+1))
+				}
+			}
+			if resolveResourceRefAPI.MatchString(line) {
+				matched = true
+				if !sanctioned[p] {
+					resolveOffenders = append(resolveOffenders, fmt.Sprintf("%s:%d", p, i+1))
+				}
+			}
+			if matched {
+				totalMatches++
 			}
 		}
 		return nil
 	})
 	require.NoError(t, err, "扫描 internal/ 失败（工作目录不是 backend/internal/storage？）")
+	require.GreaterOrEqual(t, totalMatches, 20,
+		"守门自己要有读数：三种 ref API 只匹配到 %d 处，检查正则或剥注释是否剥过了头", totalMatches)
 	require.Empty(t, writeOffenders,
 		"写入侧 API 只允许在 sanctioned 写侧 / 出参侧文件内调用；违规：%v", writeOffenders)
 	require.Empty(t, resolveRefOffenders,

@@ -51,10 +51,29 @@ type Config struct {
 	HostHeader string
 	AccessKey  string
 	SecretKey  string
-	// BaseURL 是该租户对象的**公开访问基址**。第一阶段恒为平台统一入口
-	// （public_base_url 列为空），由平台 nginx 按 t/<cid>/ 前缀回源到客户桶——
-	// 见设计稿 §3.4。客户自有域名牵扯备案与证书，下一阶段再开。
+	// BaseURL 是该租户对象的**上传返回基址**，恒为平台统一入口
+	// （cfg.UploadBaseURL），由平台 nginx 按 t/<cid>/ 前缀回源到客户桶，见设计稿 §3.4。
+	//
+	// 绝不能拿 public_base_url 覆盖它：写入侧 normalizeResourceRef 用平台
+	// cfg.UploadBaseURL 把上传返回的 URL 剥回裸键（storage.legacyRel）。一旦换成
+	// 客户域名，剥不掉基址、URL 里也没有 /uploads/ 段，NormalizeOrKeep 会把它
+	// 判成外链**原样写库**——库里从裸键退回绝对 URL，media_check 反推键失败。
+	// 这个雷在 TENANT_STORAGE_ROUTE=off 时不响，翻开关那天才响。
 	BaseURL string
+	// PublicOrigin 是客户自有访问域名（public_base_url）的归一化值。
+	//
+	// 它属于**访客侧 / 出参侧**，回答「端上 URL 以哪个域名开头」；与回源侧的
+	// endpoint / host_header 正交。目前只登记、不参与实例构造：真正生效的落点是
+	// storage.ResolveRef(raw, origin) 按租户选 origin，尚未接入
+	//（见 handler.publicBaseURLActive，出参里恒回报 false）。
+	PublicOrigin string
+	// PublicRead 桶是否公开读。第一阶段只支持公开读桶：私有桶需要预签名链路，
+	// 出参契约（存裸键还是存 URL）会跟着变，本期没做。
+	//
+	// 把它读进来并在 build 里显式拒绝，是为了堵住「库里被人手工改成 0」：
+	// 在此之前这一列只有写入侧校验会看，运行时完全不读，于是配置位与实际
+	// 行为脱钩却没有任何报错。回填侧不调 build，不受影响（私有桶照样能写对象）。
+	PublicRead bool
 	// Version 用于缓存失效，取行的 updated_at 纳秒值。
 	Version int64
 }
@@ -166,6 +185,18 @@ const maxBytes = 10 * 1024 * 1024
 // scheme、bucket 不含路径）已经在写入接口用 nginxsnippet.Target.Validate 单点验过；
 // 在读取侧再验一遍等于把同一套规则写两份，迟早漂移成「接口说存成功、这里报错」。
 func build(cfg *Config) (storage.Uploader, error) {
+	// 库里的自有域名可能来自第六十八轮之前的手工 SQL，未必过了写入侧校验。
+	// 开关翻开后让它安静地躺着等于「配置看着正常、将来拼出怪 URL」，故在此显式报错。
+	if _, err := storage.ValidatePublicOrigin(cfg.PublicOrigin); err != nil {
+		return nil, fmt.Errorf("企业 %d 的自有访问域名不合法：%w", cfg.CompanyID, err)
+	}
+	// 私有桶没有预签名链路，继续按公开读拼 URL 会得到一个「上传成功、端上全 403」
+	// 的结果。这里必须拒，而不是忽略这一列——忽略正是本轮要修的脱钩。
+	if !cfg.PublicRead {
+		return nil, errors.New(
+			"桶未开启公开读（public_read=false）：第一阶段只支持公开读桶，" +
+				"私有桶需要预签名链路、出参契约会跟着变，本期未实现；不按公开读拼 URL")
+	}
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, errors.New(
 			"对象公开访问基址为空：云存储必须能拼出可访问 URL，否则存进库的引用是坏的（图会全裂）")
@@ -225,8 +256,10 @@ func build(cfg *Config) (storage.Uploader, error) {
 
 // DBLoader 从 tenant_storage_configs 读一家企业的配置。
 //
-// platformBase 是平台统一入口基址（cfg.UploadBaseURL），在 public_base_url 为空时
-// 作为该租户对象的公开基址——第一阶段所有租户都走这条路（设计稿 §3.4）。
+// platformBase 是平台统一入口基址（cfg.UploadBaseURL），**恒**作为 Config.BaseURL。
+// 第六十八轮之前这里会被 public_base_url 覆盖，那是把「访客侧 origin」错当成
+// 「上传返回基址」——写入侧剥不回裸键，详见 Config.BaseURL 的注释。
+// public_base_url 现在只登记进 Config.PublicOrigin，不参与实例构造。
 //
 // 只查单行且走 company_id 唯一索引；凭据列在此处解密，明文不出本函数之外
 // （Config 只在本包 build 里被消费）。
@@ -268,22 +301,20 @@ func DBLoader(db *gorm.DB, platformBase string) Loader {
 		if err != nil {
 			return nil, fmt.Errorf("SecretKey 解密失败（PII_ENC_KEY 与写入时不一致？）：%w", err)
 		}
-		base := strings.TrimSpace(row.PublicBaseURL)
-		if base == "" {
-			base = strings.TrimSpace(platformBase)
-		}
 		return &Config{
-			CompanyID:  row.CompanyID,
-			Driver:     row.Driver,
-			Endpoint:   row.Endpoint,
-			Bucket:     row.Bucket,
-			Region:     row.Region,
-			UseSSL:     row.UseSSL,
-			HostHeader: row.HostHeader,
-			AccessKey:  ak,
-			SecretKey:  sk,
-			BaseURL:    base,
-			Version:    row.UpdatedAt.UnixNano(),
+			CompanyID:    row.CompanyID,
+			Driver:       row.Driver,
+			Endpoint:     row.Endpoint,
+			Bucket:       row.Bucket,
+			Region:       row.Region,
+			UseSSL:       row.UseSSL,
+			HostHeader:   row.HostHeader,
+			AccessKey:    ak,
+			SecretKey:    sk,
+			BaseURL:      strings.TrimSpace(platformBase),
+			PublicOrigin: strings.TrimSpace(row.PublicBaseURL),
+			PublicRead:   row.PublicRead,
+			Version:      row.UpdatedAt.UnixNano(),
 		}, nil
 	}
 }

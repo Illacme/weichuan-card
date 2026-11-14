@@ -430,3 +430,63 @@ func TestTenantTargetForBuildsS3StoreNotLocalStore(t *testing.T) {
 	_, err = TenantTargetFor(db, "")(0)
 	require.Error(t, err)
 }
+
+// TestTenantTargetForIgnoresPublicReadAndOrigin 钉住「两条链路对同一份配置解释不同」：
+//
+// 上传侧 build 会因 public_read=false 显式拒绝（私有桶要预签名）；回填侧不调
+// build，只按 company_id 拿凭据把对象写进桶里，公开读与否、访客侧域名是什么
+// 都与「能不能写对象」无关。若有人图省事把那条拒绝搬进 DBLoader，这条必红——
+// 那会让「私有桶租户的历史对象搬不了」，而报错看起来像配置问题。
+func TestTenantTargetForIgnoresPublicReadAndOrigin(t *testing.T) {
+	db := newTenantDB(t)
+	seedTenant(t, db, 7, "minio", true, false)
+	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
+		Where("company_id = ?", 7).
+		Updates(map[string]any{
+			"public_read":     false,
+			"public_base_url": "https://img.cust.com",
+		}).Error)
+
+	// 先证明这两列确实写进去了，否则「没被拦」可能只是夹具没生效的假绿。
+	var row model.TenantStorageConfig
+	require.NoError(t, db.Where("company_id = ?", 7).First(&row).Error)
+	require.False(t, row.PublicRead)
+	require.Equal(t, "https://img.cust.com", row.PublicBaseURL)
+
+	st, err := TenantTargetFor(db, "")(7)
+	require.NoError(t, err, "私有桶 / 已登记自有域名都不该拦住回填")
+	require.IsType(t, &S3Store{}, st)
+}
+
+// TestPublicBaseURLDoesNotRelaxUpstreamHostBoundary 是「两者正交」的运行时证据。
+//
+// 回填命令不经 nginx，虚拟主机风格下 minio-go 只会把 <bucket> 拼到 endpoint 前，
+// 改不了 Host / TLS SNI。所以 hostHeader 去掉 "<bucket>." 后必须等于 endpoint。
+// 这条拒绝**不能**因为客户配了自有域名就放宽——自有域名是访客侧 origin，
+// 放宽的结果是对象静默写向另一个域名，而后台显示搬迁成功。
+func TestPublicBaseURLDoesNotRelaxUpstreamHostBoundary(t *testing.T) {
+	db := newTenantDB(t)
+	seedTenant(t, db, 7, "minio", true, false)
+	// 虚拟主机风格、但与 endpoint 不是同一域名（s3store.go 明确拒绝的形态）。
+	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
+		Where("company_id = ?", 7).
+		Updates(map[string]any{
+			"host_header":     "wc-t7.cdn.example.com",
+			"public_base_url": "https://img.cust.com",
+			"public_read":     true,
+		}).Error)
+
+	_, err := TenantTargetFor(db, "")(7)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "不是同一个域名")
+	require.Contains(t, err.Error(), "public_base_url",
+		"报错要指出自有域名该填哪里，而不是让人去改 hostHeader")
+
+	// 换成路径风格（hostHeader 留空）后，同一个自有域名不再拦回填——
+	// 证明被拒的确实是回源 Host，不是自有域名本身。
+	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
+		Where("company_id = ?", 7).Update("host_header", "").Error)
+	st, err := TenantTargetFor(db, "")(7)
+	require.NoError(t, err)
+	require.IsType(t, &S3Store{}, st)
+}

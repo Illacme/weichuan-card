@@ -471,3 +471,91 @@ func TestTenantStorageRejectsStaleHostHeader(t *testing.T) {
 	require.Equal(t, before.HostHeader, after.HostHeader)
 	require.Equal(t, before.AccessKeyEnc, after.AccessKeyEnc)
 }
+
+// TestTenantStoragePublicBaseURLTriState 钉住自有访问域名的三态与「如实回报」。
+//
+// 这一列此前只能靠手工 SQL 写，DBLoader 却已经在读它——最坏的状态不是「不生效」，
+// 而是「库里有值、后台看不见、上传链路悄悄用了」。把它接进配置面后，三态语义
+// 必须与凭据一致，且 publicBaseUrlActive 恒 false：出参侧按租户选 origin 还没接，
+// 写成 true 就等于告诉超管「客户域名已经切过去了」。
+func TestTenantStoragePublicBaseURLTriState(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	plat := loginAdmin(t, c)
+	stubStorageProbeOK(t)
+
+	const path = "/api/admin/companies/1/storage"
+
+	// ① 有值 = 归一化后覆盖。带首尾空白与尾斜杠是「从控制台粘过来」的常态。
+	payload := storagePayload()
+	payload["publicBaseUrl"] = "  https://img.cust.com/  "
+	data := doStorage(t, c, "PUT", path, payload, plat)
+	require.Equal(t, "https://img.cust.com", data["publicBaseUrl"])
+	require.Equal(t, false, data["publicBaseUrlActive"])
+	note, _ := data["publicBaseUrlNote"].(string)
+	require.Contains(t, note, "https://img.cust.com")
+	require.Contains(t, note, "尚未接入", "必须说清为什么没生效：%q", note)
+	require.Equal(t, "https://img.cust.com", loadStorageRow(t, db, 1).PublicBaseURL)
+
+	// ② 不传 = 保留。界面只改 bucket 时不能把已登记的域名清空。
+	data = doStorage(t, c, "PUT", path, map[string]interface{}{
+		"driver": "minio", "endpoint": "play.min.io", "bucket": "wc-demo",
+		"hostHeader": "wc-demo.play.min.io", "enabled": true, "publicRead": true,
+	}, plat)
+	require.Equal(t, "https://img.cust.com", data["publicBaseUrl"])
+
+	// ③ 空串 = 清空。清空后不该再挂一条看似故障的提示。
+	payload = storagePayload()
+	payload["publicBaseUrl"] = ""
+	data = doStorage(t, c, "PUT", path, payload, plat)
+	require.Equal(t, "", data["publicBaseUrl"])
+	require.Equal(t, "", data["publicBaseUrlNote"])
+	require.Empty(t, loadStorageRow(t, db, 1).PublicBaseURL)
+}
+
+// TestTenantStorageRejectsBadPublicBaseURL 每条负例都对应一种「存进去了、
+// 端上拼出怪地址却没人报错」的形态。还要兜住早先手工 SQL 写进来的坏值。
+func TestTenantStorageRejectsBadPublicBaseURL(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	plat := loginAdmin(t, c)
+	stubStorageProbeOK(t)
+
+	const path = "/api/admin/companies/1/storage"
+	doStorage(t, c, "PUT", path, storagePayload(), plat)
+	before := loadStorageRow(t, db, 1)
+
+	bad := []struct{ v, why string }{
+		{"img.cust.com", "没有 scheme"},
+		{"ftp://img.cust.com", "非 http(s)"},
+		{"https://img.cust.com/prefix", "带路径"},
+		{"https://img.cust.com?a=1", "带 query"},
+		{"https://user:pw@img.cust.com", "带 userinfo"},
+		{`https://img.cust.com"`, "带引号"},
+	}
+	require.GreaterOrEqual(t, len(bad), 6, "负例集合本身要有读数，别让守门空跑")
+	for _, tc := range bad {
+		payload := storagePayload()
+		payload["publicBaseUrl"] = tc.v
+		_, env := c.do("PUT", path, payload, plat)
+		require.EqualValues(t, 1, env["code"], "%s（%q）应被拒：%v", tc.why, tc.v, env)
+		require.Contains(t, env["msg"], "自有访问域名")
+	}
+
+	// 兜底：库里已有一个坏值（第六十八轮之前只能手工 SQL 填），此时一次完全不带
+	// publicBaseUrl 的保存也必须被 validateTenantStorageRow 挡住，而不是让它继续躺着。
+	// 测的是「兜底校验」本身，不是「入口校验」——删掉那一行兜底，这条必红。
+	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
+		Where("company_id = ?", 1).Update("public_base_url", "https://img.cust.com/prefix").Error)
+	payload := storagePayload()
+	delete(payload, "publicBaseUrl")
+	_, env := c.do("PUT", path, payload, plat)
+	require.EqualValues(t, 1, env["code"], "库里已有的坏域名不能因为本次没传这个字段就放过")
+	require.Contains(t, env["msg"], "自有访问域名")
+
+	after := loadStorageRow(t, db, 1)
+	require.Equal(t, before.Bucket, after.Bucket)
+	require.Equal(t, before.AccessKeyEnc, after.AccessKeyEnc)
+	require.Equal(t, "https://img.cust.com/prefix", after.PublicBaseURL,
+		"被拒的请求不能顺手把坏值改掉（那是另一件事），也不能写入新值")
+}

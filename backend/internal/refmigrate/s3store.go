@@ -87,12 +87,17 @@ func NewS3Store(cfg S3StoreConfig) (*S3Store, error) {
 	// **不会按 host_header 改写 Host / TLS SNI**。回填命令不经过 nginx（nginx
 	// 才负责 proxy_set_header Host），所以 host_header 去掉 "<bucket>." 之后
 	// 必须正好等于 endpoint；否则我们连的是另一个域名，而没有任何人报错。
-	// 客户自有域名（public_base_url）属于下一阶段，这里显式拒绝而不是猜。
+	// 这条拒绝与 public_base_url **无关**，别混为一谈：public_base_url 是访客侧
+	// origin，host_header 是回源侧 Host / TLS SNI。配了自有域名也不能放宽这里——
+	// 回填命令不经 nginx，改不了 Host/SNI；放宽的结果是把对象静默写向另一个域名
+	//（或干脆连不上），而后台显示搬迁成功。自有域名有它自己的字段，不需要动回源。
+	// 现阶段可照做的替代路径：改用路径风格（hostHeader 留空或等于 endpoint）。
 	if !t.PathStyle() {
 		host := strings.TrimPrefix(strings.TrimSpace(cfg.HostHeader), cfg.Bucket+".")
 		if host != strings.TrimSpace(cfg.Endpoint) {
 			return nil, fmt.Errorf("企业 %d 的 hostHeader=%q 与 endpoint=%q 不是同一个域名："+
-				"回填命令不经 nginx，无法改写 Host/SNI；请用路径风格（hostHeader 留空或等于 endpoint）",
+				"回填命令不经 nginx，无法改写 Host/SNI；请用路径风格（hostHeader 留空或等于 endpoint）。"+
+				"客户自有访问域名请填 public_base_url，不要改 hostHeader",
 				cfg.CompanyID, cfg.HostHeader, cfg.Endpoint)
 		}
 	}
@@ -212,8 +217,11 @@ var _ ObjectStore = (*S3Store)(nil)
 
 // TenantTargetFor 返回「按 company_id 组装真桶」的 TargetFor。
 //
-// platformBase 恒传空串即可：DBLoader 用它兜 public_base_url，而回填不生成
-// 任何公开 URL，BaseURL 在这个适配器里不参与构造。
+// platformBase 恒传空串即可：回填不生成任何公开 URL，Config.BaseURL /
+// PublicOrigin 都不参与 S3Store 构造。私有桶（public_read=false）也不拦回填：
+// 凭据在手就能写对象，「公开读与否」只影响端上能不能直接取，那是上传侧
+// uploadroute.build 的边界，不是搬迁的边界。两条链路对同一份配置解释不同，
+// 与 (nil, nil) 在这里必须转成错误是同一条纪律。
 //
 // 与 uploadroute.Resolver.For 的区别必须记住：那里 (nil, nil) 是「走平台实例」，
 // 这里必须变成错误。两者共享同一个 DBLoader（查表 + 解密 + NeedsSnippet 判定），

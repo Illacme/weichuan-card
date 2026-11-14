@@ -55,11 +55,17 @@ type TenantStorageConfig struct {
 	// 现在不填（空串 = 当前密钥），留口子而已。
 	KeyID string `gorm:"column:key_id;size:32" json:"keyId"`
 
-	// PublicBaseURL 客户自有访问域名（含 scheme）。第一阶段恒为空 =
-	// 走平台统一入口（客户自有域名还牵扯备案与证书）。列先建好，省得下轮动表。
+	// PublicBaseURL 客户自有访问域名，纯 origin（http(s)://host[:port]）。
+	// 第六十八轮订正：不再是「恒为空」。它现在可由超管登记、经
+	// storage.ValidatePublicOrigin 归一化，并原样回显到配置界面；
+	// 但**仍不参与实例构造**：uploadroute.DBLoader 把它放进 Config.PublicOrigin，
+	// 绝不是 Config.BaseURL（那个是上传返回基址，写入侧要靠它剥回裸键）。
+	// 出参侧按租户选 origin 尚未接入，故 publicBaseUrlActive 恒为 false。
 	PublicBaseURL string `gorm:"column:public_base_url;size:255" json:"publicBaseUrl"`
 	// PublicRead 桶是否公开读。第一阶段试点要求为 true：私有桶要走预签名，
 	// 而出参契约（存裸键 / 存 URL）会跟着变，不在本轮范围。
+	// 第六十八轮起它是**运行时消费项**：写入侧 validateTenantStorageRow 与上传侧
+	// uploadroute.build 都会显式拒绝 false（回填侧 TenantTargetFor 不拦）。
 	PublicRead bool `gorm:"column:public_read" json:"publicRead"`
 	// Enabled 开关。关掉即回平台存储。注意 driver=local 时同样不生成 snippet，
 	// 两者的判定**只允许在 Target.NeedsSnippet 一处**（见该函数注释：

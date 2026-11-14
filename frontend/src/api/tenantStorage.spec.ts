@@ -11,6 +11,8 @@ vi.mock('./request', () => {
   return { default: { get, put, post, delete: del } }
 })
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import http from './request'
 import {
@@ -77,5 +79,54 @@ describe('凭据三态不进请求体里的空字段', () => {
     const clearing: TenantStorageSavePayload = { driver: 'minio', endpoint: 'a', bucket: 'b', accessKey: '', secretKey: '' }
     expect(clearing.accessKey).toBe('')
     expect(clearing.accessKey === undefined).toBe(false)
+  })
+})
+
+// 第六十八轮：客户自有访问域名的三态与「如实回报」字段。
+// 端上类型只写真正消费的字段，所以这里直接对账后端 gin.H 的键，
+// 少一个字段界面就会拿到 undefined，却仍按「已生效 / 未生效」去渲染。
+describe('自有访问域名的跨端字段契约', () => {
+  // cwd 是 frontend（vitest 项目根），跨到 backend 读 Go 源码。
+  const goSrc = readFileSync(
+    resolve(process.cwd(), '../backend/internal/handler/tenant_storage.go'),
+    'utf8'
+  )
+  const tsSrc = readFileSync(resolve(process.cwd(), 'src/api/tenantStorage.ts'), 'utf8')
+
+  it('量尺自己有读数（避免源码路径写错后空跑通过）', () => {
+    expect(goSrc).toContain('func tenantStorageView(')
+    expect(goSrc.length).toBeGreaterThan(1000)
+    expect(tsSrc).toContain('export interface TenantStorageConfig')
+  })
+
+  for (const key of ['publicBaseUrl', 'publicBaseUrlActive', 'publicBaseUrlNote'] as const) {
+    it(`后端出参与前端类型都有 ${key}`, () => {
+      expect(goSrc).toContain(`"${key}"`)
+      expect(tsSrc).toContain(`${key}:`)
+    })
+  }
+
+  it('后端明确写死 publicBaseUrlActive = false（不许假装已接入）', () => {
+    expect(goSrc).toContain('const publicBaseURLActive = false')
+  })
+})
+
+describe('自有访问域名三态不进请求体里的空字段', () => {
+  it('不传时 payload 里没有该键，空串则必须真的出现', () => {
+    const keep: TenantStorageSavePayload = { driver: 'minio', endpoint: 'a', bucket: 'b' }
+    expect(Object.prototype.hasOwnProperty.call(keep, 'publicBaseUrl')).toBe(false)
+    const clearing: TenantStorageSavePayload = { ...keep, publicBaseUrl: '' }
+    expect(clearing.publicBaseUrl).toBe('')
+    expect(Object.prototype.hasOwnProperty.call(clearing, 'publicBaseUrl')).toBe(true)
+  })
+
+  it('保存时 publicBaseUrl 会原样随 payload 发出', async () => {
+    await saveTenantStorage(7, {
+      driver: 'minio', endpoint: 'a.b', bucket: 'b', publicBaseUrl: 'https://img.cust.com',
+    })
+    expect(m.put).toHaveBeenCalledWith(
+      '/admin/companies/7/storage',
+      expect.objectContaining({ publicBaseUrl: 'https://img.cust.com' })
+    )
   })
 })

@@ -297,32 +297,14 @@ func ResolveRef(raw, origin string) (string, error) {
 		return "", err
 	}
 
-	base, err := cleanOrigin(origin)
+	// origin 的格式裁判与「客户自有访问域名（public_base_url）」的写入校验是
+	// 同一个函数：ValidatePublicOrigin（见 public_origin.go）。两套规则必然漂移，
+	// 漂移的表现是「后台说存成功了，端上拼出来的却是带路径的怪地址」而不报错。
+	base, err := ValidatePublicOrigin(origin)
 	if err != nil {
 		return "", err
 	}
 	return base + UploadsPathPrefix + rel, nil
-}
-
-// cleanOrigin 只接受纯 origin（scheme://host[:port]），拒绝带路径 / 查询 / userinfo。
-// 若允许 base 带路径，ResolveRef 会拼出 .../prefix/uploads/... 这种与统一入口
-// 不一致的地址，且不会有任何报错——又是一个「没人报错时用户无从察觉」的坑。
-func cleanOrigin(origin string) (string, error) {
-	o := strings.TrimRight(strings.TrimSpace(origin), "/")
-	if o == "" {
-		return "", nil
-	}
-	u, err := url.Parse(o)
-	if err != nil {
-		return "", fmt.Errorf("%w: origin 解析失败 %v", ErrInvalidRef, err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("%w: origin 必须是 http(s)://host %q", ErrInvalidRef, origin)
-	}
-	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return "", fmt.Errorf("%w: origin 不得带路径 / 查询 / 片段 / userinfo %q", ErrInvalidRef, origin)
-	}
-	return u.Scheme + "://" + u.Host, nil
 }
 
 // ObjectKeyFromURL 从存库的资源引用反推对象存储键（签名 / 回填等写入侧场景用）。

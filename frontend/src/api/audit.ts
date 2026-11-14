@@ -78,7 +78,9 @@ export const ACTION_LABELS: Record<string, string> = {
   // 小程序默认入口决定所有访客第一眼看到谁（全员 / 某个员工）
   'mp_entry.update': '修改小程序入口',
   // 租户自有对象桶：装的是客户的云凭据，改它等于把该企业的文件流向改到另一个桶。
-  // 三个动作分开记，因为「改了配置」「验了一下」「切回平台盘」后果完全不同
+  // 三个动作分开记，因为「改了配置」「验了一下」「切回平台盘」后果完全不同。
+  // 第六十八轮复核：三个动作与后端常量已一一对应，P4 不需要再补中文名标签；
+  // 新增埋点时 audit.spec.ts 的跨端对账会直接报红（missing / extra 双向断言）
   'storage.config.update': '修改企业自有存储配置',
   'storage.config.check': '企业存储连通性自检',
   'storage.config.reset': '切回平台存储',

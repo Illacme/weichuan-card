@@ -271,3 +271,34 @@ func TestReconcileAcceptsOwnOutput(t *testing.T) {
 		t.Fatalf("local 驱动的租户被误算成缺失：%v", d)
 	}
 }
+
+// TestValidateHostHeaderErrorSeparatesOriginFromUpstream 钉住第六十八轮的文案订正。
+//
+// 旧文案写「客户自有访问域名属于下一阶段（public_base_url），本期不生成」，
+// 把**回源侧** host_header 与**访客侧** public_base_url 混成了一件事。运维看到
+// 这句话会以为「桶要等自有域名上线才能配」，其实这里当场就有两种可照做的填法。
+// 把文案改回旧版，下面三条断言必红——这就是本守门的反向验证。
+func TestValidateHostHeaderErrorSeparatesOriginFromUpstream(t *testing.T) {
+	tg := Target{CompanyID: 1, Driver: DriverMinio, Endpoint: "h:9000",
+		Bucket: "wc-t1", HostHeader: "cdn.example.com", Enabled: true}
+	_, err := Render([]Target{tg})
+	if err == nil {
+		t.Fatal("判断不出路径风格的 hostHeader 必须被拒绝")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "public_base_url") {
+		t.Fatalf("报错必须指出客户自有域名该填哪个字段：%q", msg)
+	}
+	if strings.Contains(msg, "下一阶段") {
+		t.Fatalf("别再说「下一阶段」：这会让运维以为桶现在配不了：%q", msg)
+	}
+	if !strings.Contains(msg, "回源侧") {
+		t.Fatalf("报错必须说清 hostHeader 是回源侧而非访客侧：%q", msg)
+	}
+	// 拒绝的是 hostHeader 本身，不是「配了自有域名」这件事：把 hostHeader 改合法，
+	// 同一个桶立刻能生成，不需要等任何功能上线。
+	tg.HostHeader = ""
+	if _, err := Render([]Target{tg}); err != nil {
+		t.Fatalf("路径风格（hostHeader 留空）必须当场可用：%v", err)
+	}
+}

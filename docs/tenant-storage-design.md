@@ -310,9 +310,13 @@ OSS/S3 走 virtual-hosted-style，桶名拼在 endpoint 前面还是后面不是
 
 实际执行的三条口径：
 
-1. `public_base_url` / `public_read` / `key_id` 三列**建了但当前无人消费**。
-   它们是为「客户自有域名」与「密钥轮换」留的位置，写进表比下一轮再动表便宜；
+1. `public_base_url` / `public_read` / `key_id` 三列**建了但当前无人消费**（第五十八轮
+   的当时口径）。它们是为「客户自有域名」与「密钥轮换」留的位置，写进表比下一轮再动表便宜；
    但也意味着后台若有界面，这三项现在不该出现在表单上（填了不生效比不填更坏）。
+   > ⚠️ **订正（第六十八轮）**：「无人消费」后来被证伪了一半——`uploadroute.DBLoader`
+   > 从第六十轮起就在读 `PublicBaseURL` 并拿它覆盖 `Config.BaseURL`（一处架构错接，
+   > 会让写入侧归一失败、库里退回绝对 URL，已修）。`public_base_url` / `public_read`
+   > 现已接入配置面与运行时硬消费；`key_id` 仍未消费。详见 §4 末尾第六十八轮章节。
 2. 凭据列 `access_key_enc` / `secret_key_enc` 走 `pii.Encrypt` 密文（与 0024 的
    `company_wx_app.app_secret` 明文策略**不同**：那次靠「读取只回掩码」就够了，
    本表的凭据要参与真实 S3 签名，漏一次明文就随报错带出去）。
@@ -479,6 +483,7 @@ SDK 原文——AccessDenied 响应会回显 AccessKeyId 片段，而 `last_erro
 **仍不做**：配置不承载流量（上传与出参仍走平台那一个实例，要等 P2 的
 `UploaderResolver`）；`public_base_url` / `key_id` 仍不进出参也不进表单（填了不生效比不填更坏）；
 私有桶；密钥轮换。**别看到「表能写、能自检」就以为多租户存储能用了。**
+（以上是第五十九轮当时口径；`public_base_url` 部分已在第六十八轮订正，见 §4 末尾。）
 
 守门清单（本轮新增，全部做过反向验证）：
 
@@ -768,11 +773,60 @@ type Resolver interface {
 > **仍未做**：`driver=oss` 源显式拒绝；虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名时
 > 显式拒绝（回填不经 nginx，改不了 Host/SNI）；非云厂商桶，TLS/SNI、CDN、CORS
 > 仍只有有限证据；平台桶走 `BucketLookupAuto`，只在 IP 端点上实测过。
-> P4 剩余：`key_id` 轮换、`public_base_url` / `public_read` 消费方、审计前端标签、
-> 配额口径、解约后清理策略。
+> P4 剩余（**以本节末尾第六十八轮的订正为准**）：`key_id` 轮换、出参侧按租户选 origin、
+> 配额口径、解约后清理策略。`public_base_url` / `public_read` 的配置面与运行时硬消费
+> 已在第六十八轮闭环；「审计前端标签」经复核早在第六十轮就闭环，从待办里划掉。
 > `TENANT_STORAGE_ROUTE` 默认值**仍是 off**：代码侧前置已齐，
 > 但翻它属于运营动作（多租户并发 / 配额 / CDN Purge 归属 / 灰度批次），需单独决策，
 > 不在本轮自动发生。
+
+> ✅ **第六十八轮（2026-11-14）：P4 自有域名与公开读——配置面收敛 + 修掉一处架构错接**
+>
+> 侦察先推翻了两条旧口径：① §3.2 写的「`public_base_url` / `public_read` / `key_id`
+> 三列建了但当前无人消费」只对了一半——`uploadroute.DBLoader` 从第六十轮起就在读
+> `PublicBaseURL`，且用它覆盖 `Config.BaseURL`；② P4 剩余项里的「审计前端标签」其实
+> 早已闭环（`ACTION_LABELS` 三个 `storage.config.*` + `audit.spec.ts` 跨端对账）。
+>
+> **四个不能退的决定**：
+> 1. **修掉 `public_base_url` 的错接**。它是**访客侧 origin**，不是「上传接口返回的
+>    URL 基址」。旧实现覆盖 `Config.BaseURL` 后，上传返回 `https://img.cust.com/t/5/x.jpg`；
+>    写入侧 `normalizeResourceRef` 用平台 `cfg.UploadBaseURL` 剥不掉、URL 里也没有
+>    `/uploads/` 段 → `NormalizeOrKeep` 判成外链**原样写库**，库里从裸键退回绝对 URL，
+>    `media_check` 反推键失败。这个雷在 `TENANT_STORAGE_ROUTE=off` 时不响，翻开关那天才响。
+>    现在 `BaseURL` **恒**为平台统一入口，`public_base_url` 只登记进 `Config.PublicOrigin`。
+> 2. **origin 规则单点**。`storage.ValidatePublicOrigin`（`public_origin.go`）同时是后台
+>    写入校验与 `ResolveRef(raw, origin)` 出参 origin 的裁判；`ref.go` 里那份私有
+>    `cleanOrigin` 已删除。两套规则漂移的表现是「后台说存成功、端上拼出带路径的怪地址」，
+>    且没有任何报错。
+> 3. **`public_read` 变成运行时消费**。`Config.PublicRead` + `uploadroute.build` 显式拒绝
+>    私有桶；此前只有写入侧 `validateTenantStorageRow` 会看，库里被手工改成 0 时运行时
+>    照样按公开读拼 URL、零报错。回填侧 `TenantTargetFor` 不调 `build`，不受影响
+>    （凭据在手就能写对象），由 `TestTenantTargetForIgnoresPublicReadAndOrigin` 钉住。
+> 4. **不假装自有域名已经承载流量**。出参侧按租户选 origin（`ResolveRef` 的 origin
+>    参数）尚未接入，动它会改端上契约、牵动 9 条公开 GET 与 `/api/public/settings`。
+>    因此出参 `publicBaseUrlActive` **恒 false**、`publicBaseUrlNote` 给出未生效原因与
+>    启用前要做的接入层配置；表单填了值当场显示 warning。填了以为生效比不填更坏。
+>
+> **边界订正**：`hostHeader` 是回源侧 Host / TLS SNI，`public_base_url` 是访客侧 origin，
+> 两者正交。`snippet.go` / `s3store.go` 的拒绝规则**保留**（回填不经 nginx 改不了 Host/SNI，
+> 放宽会静默写错域名），只把「客户自有域名属于下一阶段」这句误导文案换成现阶段可照做的
+> 替代路径：自有域名填 `public_base_url`，回源改路径风格（hostHeader 留空或等于 endpoint）。
+>
+> **交付物**：`storage/public_origin.go` + 单测；`handler/tenant_storage.go` 写入 / 出参 /
+> 审计 Detail；`uploadroute/resolver.go` 的 `Config` 与 `build`；`nginxsnippet/snippet.go`、
+> `refmigrate/s3store.go` 文案；前端 `tenantStorage.ts` / `TenantStorageDialog.vue`；
+> `docs/openapi.yaml` 两处 schema；`backend/README.md`。另把 `ref_p0a_guard_test.go`
+> 的接线守门改成**先剥整行注释**并加「至少抓到 20 处」读数兜底——本轮注释里写了
+> 一句 `storage.ResolveRef(` 就被旧守门误判成真实调用，正是「扫代码别扫注释」那条坑。
+>
+> **10 组反向验证**全部「注入坏实现必红 → 还原复绿 → sha256 零漂移」：错接 BaseURL /
+> 绕过 `public_read` / 另写 origin 校验 / 守门不剥注释 / 文案改回「下一阶段」/ 摘掉库里
+> 坏值兜底 / 放宽 Host 边界 / 把恒 false 改 true / 前端跨端契约 / 放行带路径 origin。
+> 取证细节见 `docs/commercial-readiness.md` 第六十八轮。
+>
+> **仍未做**：`key_id` 轮换、**出参侧按租户选 origin（自有域名真正承载流量）**、配额口径、
+> 解约后清理策略。`driver=oss` 源与「虚拟主机风格且 hostHeader 与 endpoint 不同域名」
+> 仍显式拒绝。`TENANT_STORAGE_ROUTE` 默认值**仍是 off**，本轮没有翻。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→

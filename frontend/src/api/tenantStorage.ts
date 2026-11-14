@@ -28,6 +28,16 @@ export interface TenantStorageConfig {
   hostHeader: string
   publicRead: boolean
   enabled: boolean
+  /** 客户自有访问域名（纯 origin，如 https://img.cust.com）；空串 = 走平台统一入口 */
+  publicBaseUrl: string
+  /**
+   * 自有域名此刻是否真的改变了出参 URL。第六十八轮**恒为 false**：
+   * 出参侧按租户选 origin（storage.ResolveRef 的 origin 参数）尚未接入，
+   * 这一列目前只做登记 + 校验 + 如实回报。界面绝不许按 true 渲染成「已切换」。
+   */
+  publicBaseUrlActive: boolean
+  /** 非空时是可直接展示给超管的「为什么没生效 / 生效前还要做什么」 */
+  publicBaseUrlNote: string
   /** 连通性自检结果。unknown=配了但没验过，不要渲染成「正常」 */
   status: StorageStatus
   lastError: string
@@ -59,6 +69,14 @@ export interface TenantStorageSavePayload {
   hostHeader?: string
   publicRead?: boolean
   enabled?: boolean
+  /**
+   * 客户自有访问域名，纯 origin（http(s)://host[:port]），不要带路径 / 查询。
+   * **不传** = 保留原值、空串 = 清空、有值 = 覆盖（服务端归一化后落库）。
+   * 与凭据一样是三态：界面「只看不改点保存」时提交的是表单里回显的原值，
+   * 不是空串——否则一次改 bucket 的操作会悄悄清掉已登记的域名。
+   * 目前只登记，不会改变出参 URL，见 TenantStorageConfig.publicBaseUrlActive。
+   */
+  publicBaseUrl?: string
   /**
    * 凭据三态：**不传** = 保留原值、空串 = 清空、有值 = 覆盖。
    * 界面回显的是掩码，所以「只看不改点保存」必须走「不传」这一态——

@@ -5064,11 +5064,30 @@ components:
             路径风格（生成器把桶名写进 path，即 `/<bucket>/<key>`）；以 `<bucket>.` 开头 =
             虚拟主机风格（Host 已带桶名，path 只留对象键）。两者都不是的取值会被拒绝——
             猜错的那一侧不会报错，只会让该企业的图全部裂开。
-            客户自有访问域名（public_base_url）属于下一阶段，本期不生成。
+            hostHeader 是回源侧发给桶的 Host / TLS SNI；客户自有访问域名填 publicBaseUrl，
+            两者正交，不要拿自有域名来解释这条拒绝（旧版文案的「下一阶段」是误导）。
         publicRead:
           type: boolean
-          description: 第一阶段必须为 true（私有桶需要预签名链路，尚未实现）
+          description: >-
+            第一阶段必须为 true：私有桶需要预签名链路，尚未实现。
+            写入侧 validateTenantStorageRow 与上传侧 uploadroute.build 都会显式拒绝 false
+            （回填侧不受影响：凭据在手就能写对象，公开读与否只影响端上能否直接取）。
         enabled: { type: boolean, description: 关掉即回平台存储；driver=local 时同样不生成 snippet }
+        publicBaseUrl:
+          type: string
+          description: >-
+            客户自有访问域名，纯 origin（http(s)://host[:port]）；空串 = 走平台统一入口。
+            写入时由 storage.ValidatePublicOrigin 归一化，与出参 ResolveRef 的 origin 校验同源。
+            它是访客侧 origin，与 hostHeader（回源侧 Host / TLS SNI）正交。
+        publicBaseUrlActive:
+          type: boolean
+          description: >-
+            该域名此刻是否真的改变了出参 URL。第六十八轮**恒为 false**：
+            出参侧按租户选 origin（ResolveRef 的 origin 参数）尚未接入，
+            本字段目前只做登记 + 校验 + 如实回报。界面不许把它渲染成「已切换」。
+        publicBaseUrlNote:
+          type: string
+          description: publicBaseUrl 非空时给超管看的「为什么没生效 / 生效前还要做什么」；空值时为空串
         status:
           type: string
           enum: [unknown, ok, error]
@@ -5116,6 +5135,12 @@ components:
         hostHeader: { type: string }
         publicRead: { type: boolean }
         enabled: { type: boolean }
+        publicBaseUrl:
+          type: string
+          description: >-
+            客户自有访问域名，纯 origin（http(s)://host[:port]）。省略 = 保留原值；
+            空串 = 清空；有值 = 服务端归一化后覆盖。目前只登记，不会改变出参 URL
+            （见 TenantStorageConfig.publicBaseUrlActive）。
         accessKey:
           type: string
           description: 省略 = 保留原值；空串 = 清空；有值 = 覆盖（服务端加密后落库，不接受密文）

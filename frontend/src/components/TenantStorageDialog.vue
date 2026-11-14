@@ -59,10 +59,31 @@
         <el-switch v-model="form.useSsl" active-text="走 443" inactive-text="走 80" />
       </el-form-item>
 
+      <el-form-item label="自有访问域名">
+        <el-input v-model="form.publicBaseUrl" placeholder="如 https://img.cust.com，留空 = 走平台统一入口" />
+        <div class="hint">
+          只填 <b>纯域名</b>（http(s)://host[:port]），不带路径 / 查询。
+          它是<b>访客侧 origin</b>，与上面的「Host 头」（回源侧 Host / TLS SNI）是两件事，互不影响；
+          客户自有域名不要填进 Host 头，那里只照桶方控制台抄。
+        </div>
+        <!-- 「填了以为生效」比「不填」更坏：只要表单里有值而后端回报未生效，
+             当场把这句话摆出来，不等保存后才发现。 -->
+        <el-alert
+          v-if="publicBaseUrlPending"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="已登记，但当前不会改变出参 URL"
+          :description="cfg?.publicBaseUrlNote || '出参侧按租户选 origin 尚未接入：对象 URL 仍走平台统一入口。'"
+          style="margin-top: 8px"
+        />
+      </el-form-item>
+
       <el-form-item label="公开读">
         <el-switch v-model="form.publicRead" />
         <div class="hint">
-          第一阶段只支持公开读桶。私有桶要走预签名，出参契约会跟着变（存裸键还是存 URL），本期没做。
+          第一阶段只支持公开读桶。私有桶要走预签名，出参契约会跟着变（存裸键还是存 URL），
+          本期没做；写入侧与上传侧都会显式拒绝关闭它。
         </div>
       </el-form-item>
 
@@ -194,7 +215,7 @@ const alertView = computed(() => {
     return {
       type: 'success' as const,
       title: '该企业正在使用自有桶',
-      desc: '新上传写入客户桶，出参 URL 形态不变；存量对象仍在平台侧。若这里填错，该企业的上传会直接失败，不会退回平台存储。',
+      desc: '新上传写入客户桶，出参 URL 形态不变（已登记的自有访问域名当前也不会改变它）；存量对象仍在平台侧。若这里填错，该企业的上传会直接失败，不会退回平台存储。',
     }
   }
   if (cfg.value?.trafficEnabled) {
@@ -218,11 +239,19 @@ const form = reactive({
   region: '',
   useSsl: true,
   hostHeader: '',
+  publicBaseUrl: '',
   publicRead: true,
   enabled: false,
   accessKey: '',
   secretKey: '',
 })
+
+// 表单里有值、但后端如实回报「尚未接入」时，当场显示未生效提示。
+// 用 form 而不是 cfg.publicBaseUrl：超管刚敲进去、还没点保存的新值也要被提醒，
+// 否则提示只在「保存完再打开一次对话框」才出现。
+const publicBaseUrlPending = computed(
+  () => form.publicBaseUrl.trim() !== '' && cfg.value?.publicBaseUrlActive === false
+)
 
 const akPlaceholder = computed(() => {
   if (!cfg.value?.accessKeyConfigured) return '未配置，填写 AccessKey'
@@ -269,6 +298,7 @@ async function load() {
     form.region = c.region
     form.useSsl = c.useSsl
     form.hostHeader = c.hostHeader
+    form.publicBaseUrl = c.publicBaseUrl ?? ''
     form.publicRead = c.publicRead
     form.enabled = c.enabled
     // 凭据永远留空：留空 = 保持原值。这是「只写不读」在前端的落点。
@@ -292,6 +322,13 @@ function validate(): string {
   if (!form.endpoint.trim()) return '请填写访问域名'
   if (form.endpoint.includes('://')) return '访问域名不要带 https://，只填 host[:port]'
   if (!form.bucket.trim()) return '请填写 Bucket'
+  // 自有访问域名：前端只挡一眼能看出的写错，最终裁判是后端
+  // storage.ValidatePublicOrigin（它与出参 ResolveRef 的 origin 校验同源）。
+  // 这里若另写一套严规则，会出现「前端不让存、后端其实能存」的口径漂移。
+  const base = form.publicBaseUrl.trim().replace(/\/+$/, '')
+  if (base && !/^https?:\/\/[^/?#\s"']+$/i.test(base)) {
+    return '自有访问域名必须是 http(s)://host[:port]，不要带路径、查询或用户名密码'
+  }
   if (form.enabled && !form.accessKey.trim() && !cfg.value?.accessKeyConfigured) {
     return '启用前必须填写 AccessKey'
   }
@@ -317,6 +354,9 @@ async function onSave() {
       region: form.region.trim(),
       useSsl: form.useSsl,
       hostHeader: form.hostHeader.trim(),
+      // 表单回显的就是库里的原值，所以这里总是带上：不改时是「有值=覆盖同一个值」，
+      // 清空时是空串=清空。不要改成「留空就不传」——那会让清空永远无法生效。
+      publicBaseUrl: form.publicBaseUrl.trim(),
       publicRead: form.publicRead,
       enabled: form.enabled,
     }

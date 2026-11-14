@@ -117,7 +117,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `bgMask` | `int` 蒙层浓度（`models.go:270`） |
 | `bgId` | 内置背景 id（`models.go:446`），值是 `poster-*` / `c-*` 标识 |
 | `files` | 存储用量累计文件数（`model/storage_usage.go:26`），`int64` |
-| `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第一阶段该字段恒为空（客户自有域名未启用），所以连回显都还没有 |
+| `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第六十八轮订正：此前「第一阶段恒为空、连回显都还没有」已不成立——现在它会回显 `publicBaseUrl`，并附 `publicBaseUrlActive=false` / `publicBaseUrlNote` 如实说明尚未承载流量；但**仍没有**作为 origin 传进 `ResolveRef`，所以「解析器的输入、不是输出」这一定位与白名单理由都不变 |
 
 > `publicBaseUrl` 是这五条里唯一「长得像资源字段、语义却是解析器输入」的一条。
 > 将来若真有人把它接进 `ResolveRefs`，症状不是裂图，而是**配置页显示的基址被悄悄改形**，

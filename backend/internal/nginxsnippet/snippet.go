@@ -124,10 +124,15 @@ func (t Target) Validate() error {
 		// 既不是 endpoint、又不带 "<bucket>." 前缀的 Host，等于没说清是哪种风格。
 		// 不在这里拦住，生成器只能猜；猜错的结果是那家租户全站裂图。
 		if hh != strings.TrimSpace(t.Endpoint) && !strings.HasPrefix(hh, t.Bucket+".") {
+			// 这段文案曾把 public_base_url 写成「属于下一阶段」，是把两件事混了：
+			// host_header 是**回源侧**发给桶的 Host / TLS SNI，public_base_url 是
+			// **访客侧** origin，两者正交。写「下一阶段」会让人以为要等自有域名
+			// 功能上线才能配桶，其实这里此刻就有可照做的填法（见下面两句）。
 			return fmt.Errorf("company_id=%d 的 hostHeader=%q 判断不出路径风格："+
 				"它既不是 endpoint（%q），也不以 %q 开头。"+
-				"留空表示路径风格（桶名进 path）；虚拟主机风格必须写成 <桶名>.<域名>；"+
-				"客户自有访问域名属于下一阶段（public_base_url），本期不生成",
+				"留空表示路径风格（桶名进 path）；虚拟主机风格必须写成 <桶名>.<域名>。"+
+				"hostHeader 是回源侧发给桶的 Host / TLS SNI，不是客户自有访问域名："+
+				"后者填 public_base_url，两者互不影响",
 				t.CompanyID, hh, strings.TrimSpace(t.Endpoint), t.Bucket+".")
 		}
 	}

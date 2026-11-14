@@ -449,6 +449,15 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   以 `<bucket>.` 开头 = 虚拟主机风格，path 只留对象键。两种都不是的取值会被**拒绝**——
   猜错不会报错，只会让这家企业的图全部 400（`InvalidBucketName`）。
   同理，**改桶名必须同时改 hostHeader**，否则旧桶名进 Host、新桶名进 path。
+  hostHeader 是回源侧 Host / TLS SNI，**不是**客户自有访问域名：后者填 `publicBaseUrl`，两者互不影响。
+- `publicRead` 第一阶段必须为 true。私有桶需要预签名链路、出参契约会跟着变，本期没做：
+  写入侧 `validateTenantStorageRow` 与上传侧 `uploadroute.build` 都会显式拒绝 false。
+  回填侧不拦——凭据在手就能写对象，公开读与否只影响端上能否直接取。
+- `publicBaseUrl` 是客户自有访问域名，只收**纯 origin**（`http(s)://host[:port]`，不带路径 / 查询）。
+  三态与凭据一致：不传 = 保留、空串 = 清空、有值 = 归一化后覆盖。
+  **目前只登记，不会改变出参 URL**：出参 `publicBaseUrlActive` 恒为 false，
+  `publicBaseUrlNote` 给出未生效原因与启用前要做的接入层配置。
+  真正生效要等出参侧按 `storage.ResolveRef(raw, origin)` 按租户选 origin，那是下一轮。
 
 ```bash
 # 平台超管令牌下（示例：给企业 5 配自己的 MinIO）
