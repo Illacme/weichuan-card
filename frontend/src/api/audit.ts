@@ -84,6 +84,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'storage.config.update': '修改企业自有存储配置',
   'storage.config.check': '企业存储连通性自检',
   'storage.config.reset': '切回平台存储',
+  'storage.config.rekey': '租户存储凭据轮换',
   'mp_release.create': '登记小程序版本',
   'mp_release.upload': '后台上传小程序代码',
   'mp_release.submit_audit': '提交小程序审核',
