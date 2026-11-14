@@ -80,7 +80,7 @@ func TestInventoryCoversEveryResolveRefsField(t *testing.T) {
 	byType := map[string]*entry{}
 	for _, col := range Inventory() {
 		typ := reflect.TypeOf(col.Model)
-		if typ == nil || typ.Kind() != reflect.Ptr {
+		if typ == nil || typ.Kind() != reflect.Pointer {
 			t.Fatalf("Inventory 里 %q 的 Model 必须是模型指针，实际 %T", col.Label, col.Model)
 		}
 		name := typ.Elem().Name()

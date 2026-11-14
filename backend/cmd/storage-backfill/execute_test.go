@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"weichuan/internal/pii"
 	"weichuan/internal/refmigrate"
+
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestExitForMapsNeedsHumanToTwo(t *testing.T) {
@@ -71,4 +79,87 @@ func TestLocalStoresUsesTheGivenRoots(t *testing.T) {
 	if ls.Dir != absDst {
 		t.Errorf("目标根目录应是 %q，实际 %q", absDst, ls.Dir)
 	}
+}
+
+// testPiiKey 显式装一把真密钥。tenant 模式拒绝内置 dev 密钥，
+// 且 pii 是包级全局状态，必须在用例结束后还原，否则会污染同包其它测试。
+func testPiiKey(t *testing.T) {
+	t.Helper()
+	t.Setenv(pii.KeyEnvVar, base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'k'}, 32)))
+	require.NoError(t, pii.KeyError())
+	pii.Reload()
+	t.Cleanup(pii.Reload)
+	require.False(t, pii.UsingPlaceholderKey())
+}
+
+func testEmptyDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "cli.db")),
+		&gorm.Config{Logger: logger.Discard})
+	require.NoError(t, err)
+	return db
+}
+
+func TestBuildStoresDefaultsToLocal(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	stores, err := buildStores("local", src, filepath.Join(root, "dst"), nil)
+	require.NoError(t, err)
+	target, err := stores.TargetFor(7)
+	require.NoError(t, err)
+	require.IsType(t, &refmigrate.LocalStore{}, target,
+		"默认必须还是第六十五轮的本地盘行为，一句话不改也能跑")
+}
+
+func TestBuildStoresRejectsUnknownTargetStore(t *testing.T) {
+	_, err := buildStores("s3", t.TempDir(), t.TempDir(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "未知 --target-store")
+}
+
+func TestBuildStoresTenantRejectsTargetDir(t *testing.T) {
+	testPiiKey(t)
+	_, err := buildStores("tenant", t.TempDir(), t.TempDir(), testEmptyDB(t))
+	require.Error(t, err, "两个目标同时出现时无法判断哪个生效，必须拒绝")
+	require.Contains(t, err.Error(), "--target-dir")
+}
+
+func TestBuildStoresTenantRequiresSourceDir(t *testing.T) {
+	testPiiKey(t)
+	_, err := buildStores("tenant", "", "", testEmptyDB(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--source-dir")
+}
+
+func TestBuildStoresTenantRefusesPlaceholderKey(t *testing.T) {
+	t.Setenv(pii.KeyEnvVar, "")
+	pii.Reload()
+	t.Cleanup(pii.Reload)
+	require.True(t, pii.UsingPlaceholderKey())
+	_, err := buildStores("tenant", t.TempDir(), "", testEmptyDB(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), pii.KeyEnvVar)
+	require.Contains(t, err.Error(), "dev 密钥")
+}
+
+func TestBuildStoresTenantNeverFallsBackToLocalDisk(t *testing.T) {
+	testPiiKey(t)
+	db := testEmptyDB(t) // 故意不建 tenant_storage_configs 表
+	stores, err := buildStores("tenant", t.TempDir(), "", db)
+	require.NoError(t, err)
+	target, err := stores.TargetFor(7)
+	require.Error(t, err, "读不到配置时必须整批停下")
+	require.Contains(t, err.Error(), "不回退平台盘")
+	require.Nil(t, target, "绝不返回本地盘实例顶上")
+}
+
+// runApply 必须走 buildStores 这个唯一分派口。绕过去直接调 localStores，
+// 就等于把 --target-store=tenant 变成一个「参数收下了但不生效」的开关。
+func TestRunApplyDispatchesThroughBuildStores(t *testing.T) {
+	b, err := os.ReadFile("execute.go")
+	require.NoError(t, err)
+	s := string(b)
+	require.Contains(t, s, "stores, err := buildStores(targetStore, srcDir, dstDir, db)")
+	require.NotContains(t, s, "stores, err := localStores(", "runApply 不该直接调 localStores")
 }

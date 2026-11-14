@@ -29,11 +29,21 @@ type MinioUploader struct {
 // NewMinioUploader 构造 MinIO 客户端（endpoint 不含协议头，如 "play.min.io" / "s3.amazonaws.com"）
 // region 为 S3 区域（如 ap-guangzhou）：留空时 minio-go 先按 endpoint URL 猜（AWS /
 // Google 可猜中），猜不到再向服务端发 GetBucketLocation 探测并缓存，主流 S3 云无需手填。
-func NewMinioUploader(endpoint, accessKey, secretKey, bucket, baseURL, region string, useSSL bool, maxBytes int64, allow map[string]bool) (*MinioUploader, error) {
+//
+// lookup 是可选的路径风格覆盖。平台自身那份存储（sys_setting，没有 host_header 列）
+// 不传，沿用 SDK 的 Auto；**租户自有桶必须显式传 S3BucketLookup 的结果**——
+// 见该函数注释里第六十三轮的 400 InvalidBucketName。用变参而不是加必填参数，
+// 是为了不动已有的平台存储调用点（它们的默认行为不该被本轮改变）。
+func NewMinioUploader(endpoint, accessKey, secretKey, bucket, baseURL, region string, useSSL bool, maxBytes int64, allow map[string]bool, lookup ...minio.BucketLookupType) (*MinioUploader, error) {
+	bl := minio.BucketLookupAuto
+	if len(lookup) > 0 {
+		bl = lookup[0]
+	}
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: useSSL,
-		Region: region,
+		Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure:       useSSL,
+		Region:       region,
+		BucketLookup: bl,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("minio new client: %w", err)

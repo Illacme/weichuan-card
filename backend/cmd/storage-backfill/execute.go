@@ -8,25 +8,35 @@ import (
 	"strings"
 
 	"weichuan/internal/dbopen"
+	"weichuan/internal/pii"
 	"weichuan/internal/refmigrate"
+
+	"gorm.io/gorm"
 )
 
 // 本文件是 P3 执行器的命令行层。所有「判断」都在 internal/refmigrate 里，
 // 这里只做参数、打印与退出码——否则状态机的单测覆盖不到命令行为。
 
-// localStores 是本轮唯一的存储适配器：本地盘 → 本地盘。
-//
-// 刻意不提供「目标没配就回退到平台盘」这种便利：那会复制出一堆看似成功的对象，
-// 库也改成 t/<cid>/...，但真正的客户桶里一个都没有。配置缺失必须显式报错。
-func localStores(srcDir, dstDir string) (*refmigrate.Stores, error) {
-	if strings.TrimSpace(srcDir) == "" || strings.TrimSpace(dstDir) == "" {
-		return nil, fmt.Errorf("apply 必须给 --source-dir 与 --target-dir")
+// localSource 是「平台侧现有对象」的本地盘源。本地盘与真桶两种目标共用它。
+// 目录必须存在且是目录：不存在时 NewLocalStore 仍会返回实例，直到 preflight
+// 才报「源对象不存在」——那时错误看上去像数据问题，其实是参数写错了。
+func localSource(srcDir string) (*refmigrate.LocalStore, error) {
+	if strings.TrimSpace(srcDir) == "" {
+		return nil, fmt.Errorf("apply 必须给 --source-dir（平台侧现有对象所在的本地目录）")
 	}
 	fi, err := os.Stat(srcDir)
 	if err != nil || !fi.IsDir() {
 		return nil, fmt.Errorf("源目录 %q 不存在或不是目录：%v", srcDir, err)
 	}
-	src, err := refmigrate.NewLocalStore(srcDir)
+	return refmigrate.NewLocalStore(srcDir)
+}
+
+// localStores 是离线演练用的本地盘 → 本地盘适配器。
+func localStores(srcDir, dstDir string) (*refmigrate.Stores, error) {
+	if strings.TrimSpace(dstDir) == "" {
+		return nil, fmt.Errorf("--target-store=local 必须给 --target-dir")
+	}
+	src, err := localSource(srcDir)
 	if err != nil {
 		return nil, err
 	}
@@ -37,22 +47,61 @@ func localStores(srcDir, dstDir string) (*refmigrate.Stores, error) {
 	return &refmigrate.Stores{
 		Source: src,
 		TargetFor: func(cid int64) (refmigrate.ObjectStore, error) {
-			// 本轮本地适配器：各租户共用同一根目录，键自带 t/<cid>/ 前缀故不串号。
-			// 真桶按租户回源需要按 cid 解密 tenant_storage_configs，见 README 的边界说明。
+			// 本地适配器：各租户共用同一根目录，键自带 t/<cid>/ 前缀故不串号。
 			_ = cid
 			return dst, nil
 		},
 	}, nil
 }
 
+// tenantStores 是真桶适配器：平台本地盘 → 按 company_id 解密配置得到的客户桶。
+//
+// 刻意不提供「目标没配就回退到平台盘」这种便利：那会复制出一堆看似成功的对象，
+// 库也改成 t/<cid>/...，但真正的客户桶里一个都没有。配置缺失必须显式报错。
+func tenantStores(db *gorm.DB, srcDir, dstDir string) (*refmigrate.Stores, error) {
+	if strings.TrimSpace(dstDir) != "" {
+		return nil, fmt.Errorf("--target-store=tenant 时不要给 --target-dir：" +
+			"两者同时出现无法判断哪个生效，真桶模式绝不读本地目标目录")
+	}
+	src, err := localSource(srcDir)
+	if err != nil {
+		return nil, err
+	}
+	// 凭据解密依赖与写配置行时同一把钥匙。用内置 dev 密钥去解生产库里的密文
+	// 会以 GCM 认证失败告终，但报错像「数据被篡改」；这里先把真正的原因说清楚。
+	if pii.UsingPlaceholderKey() {
+		return nil, fmt.Errorf("--target-store=tenant 必须显式设置 %s（与写 tenant_storage_configs 时同一把钥匙），"+
+			"当前在用内置 dev 密钥", pii.KeyEnvVar)
+	}
+	return &refmigrate.Stores{
+		Source:    src,
+		TargetFor: refmigrate.TenantTargetFor(db, ""),
+	}, nil
+}
+
+// buildStores 是唯一的参数 → 适配器分派口。默认值保持 local，
+// 让第六十五轮的既有命令一字不改也照常跑。
+func buildStores(targetStore, srcDir, dstDir string, db *gorm.DB) (*refmigrate.Stores, error) {
+	switch targetStore {
+	case "local":
+		return localStores(srcDir, dstDir)
+	case "tenant":
+		return tenantStores(db, srcDir, dstDir)
+	default:
+		return nil, fmt.Errorf("未知 --target-store=%q（可用：local / tenant）", targetStore)
+	}
+}
+
 func runApply(args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ExitOnError)
-	var planPath, dsn, srcDir, dstDir string
+	var planPath, dsn, srcDir, dstDir, targetStore string
 	var dryRun, yes, force bool
 	fs.StringVar(&planPath, "plan", "", "计划 JSON（必填）")
 	fs.StringVar(&dsn, "dsn", "", "数据库 DSN（必填）")
 	fs.StringVar(&srcDir, "source-dir", "", "平台侧现有对象的本地目录")
-	fs.StringVar(&dstDir, "target-dir", "", "目标对象根目录")
+	fs.StringVar(&dstDir, "target-dir", "", "target-store=local 时的目标对象根目录")
+	fs.StringVar(&targetStore, "target-store", "local",
+		"目标存储：local（本地盘，需 --target-dir）/ tenant（按 company_id 解密配置走客户真桶）")
 	fs.BoolVar(&dryRun, "dry-run", false, "只预检")
 	fs.BoolVar(&yes, "yes", false, "确认真的执行")
 	fs.BoolVar(&force, "force", false, "目标对象大小不符时用源覆盖")
@@ -70,7 +119,7 @@ func runApply(args []string) error {
 	if err != nil {
 		return fmt.Errorf("连接数据库失败：%w", err)
 	}
-	stores, err := localStores(srcDir, dstDir)
+	stores, err := buildStores(targetStore, srcDir, dstDir, db)
 	if err != nil {
 		return err
 	}

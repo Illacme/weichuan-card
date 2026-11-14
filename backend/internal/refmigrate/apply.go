@@ -278,6 +278,23 @@ func (s *Stores) Copy(srcKey, dstKey string, companyID int64) error {
 	return dst.Put(dstKey, rc, info.Size, ct)
 }
 
+// validateObjectKey 是所有 ObjectStore 实现共用的对象键守卫。
+//
+// 键来自计划文件：ValidatePlan 已用 ObjectKeyFor 重算过**目标键**，但源键仍是
+// 文件里的字符串，而且 S3 侧一旦把 ".." 当对象键发出去，有些网关会做路径归一。
+// 本地盘与 S3 两个实现都必须过这一关，只在一个里挡等于给另一条路留洞。
+func validateObjectKey(key string) error {
+	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "\\") || strings.Contains(key, "\x00") {
+		return fmt.Errorf("非法对象键 %q", key)
+	}
+	for _, seg := range strings.Split(key, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("对象键含空段或路径穿越 %q", key)
+		}
+	}
+	return nil
+}
+
 // LocalStore 是本地盘实现（平台 local 驱动 / 单测 / 离线演练）。
 //
 // 键到路径这一步必须自己挡穿越：对象键来自计划文件，虽然 ValidatePlan 已经用
@@ -294,16 +311,10 @@ func NewLocalStore(dir string) (*LocalStore, error) {
 }
 
 func (s *LocalStore) path(key string) (string, error) {
-	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "\\") || strings.Contains(key, "\x00") {
-		return "", fmt.Errorf("非法对象键 %q", key)
+	if err := validateObjectKey(key); err != nil {
+		return "", err
 	}
-	clean := filepath.ToSlash(key)
-	for _, seg := range strings.Split(clean, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return "", fmt.Errorf("对象键含空段或路径穿越 %q", key)
-		}
-	}
-	p := filepath.Join(s.Dir, filepath.FromSlash(clean))
+	p := filepath.Join(s.Dir, filepath.FromSlash(key))
 	rel, err := filepath.Rel(s.Dir, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("对象键逃出了根目录 %q", key)

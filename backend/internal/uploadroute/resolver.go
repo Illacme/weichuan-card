@@ -46,8 +46,11 @@ type Config struct {
 	Bucket    string
 	Region    string
 	UseSSL    bool
-	AccessKey string
-	SecretKey string
+	// HostHeader 决定 S3 客户端按路径风格还是虚拟主机风格发请求（第六十三轮真桶实测）。
+	// 上传侧与回填侧共用 storage.S3BucketLookup 这一个判定，不许任一侧自己猜。
+	HostHeader string
+	AccessKey  string
+	SecretKey  string
 	// BaseURL 是该租户对象的**公开访问基址**。第一阶段恒为平台统一入口
 	// （public_base_url 列为空），由平台 nginx 按 t/<cid>/ 前缀回源到客户桶——
 	// 见设计稿 §3.4。客户自有域名牵扯备案与证书，下一阶段再开。
@@ -177,8 +180,24 @@ func build(cfg *Config) (storage.Uploader, error) {
 		if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" {
 			return nil, fmt.Errorf("driver=%s 要求 endpoint 与 bucket 都非空", cfg.Driver)
 		}
+		// Enabled 置 true 不是替配置做决定：DBLoader 只在 Target.NeedsSnippet()
+		// 为真时才返回 cfg。这里必须让它为真，否则 Target.Validate 会走
+		// 「不需要 snippet」的早退分支，把 host_header / endpoint / bucket 的
+		// 校验全跳过——那就等于把路径风格判定又交回给 SDK 猜。
+		bl, err := storage.S3BucketLookup(nginxsnippet.Target{
+			CompanyID:  cfg.CompanyID,
+			Driver:     cfg.Driver,
+			Endpoint:   cfg.Endpoint,
+			Bucket:     cfg.Bucket,
+			UseSSL:     cfg.UseSSL,
+			HostHeader: cfg.HostHeader,
+			Enabled:    true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("企业 %d 的桶地址不合法：%w", cfg.CompanyID, err)
+		}
 		return storage.NewMinioUploader(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey,
-			cfg.Bucket, cfg.BaseURL, cfg.Region, cfg.UseSSL, maxBytes, storage.DefaultAllowExt)
+			cfg.Bucket, cfg.BaseURL, cfg.Region, cfg.UseSSL, maxBytes, storage.DefaultAllowExt, bl)
 	case nginxsnippet.DriverOSS:
 		if strings.TrimSpace(cfg.Endpoint) == "" || strings.TrimSpace(cfg.Bucket) == "" {
 			return nil, fmt.Errorf("driver=%s 要求 endpoint 与 bucket 都非空", cfg.Driver)
@@ -214,14 +233,19 @@ func build(cfg *Config) (storage.Uploader, error) {
 func DBLoader(db *gorm.DB, platformBase string) Loader {
 	return func(cid int64) (*Config, error) {
 		var row model.TenantStorageConfig
-		err := db.Where("company_id = ?", cid).First(&row).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		if err != nil {
+		// 刻意用 Limit(1).Find 而不是 First：First 在「没有这行」时会让 gorm
+		// 默认 logger 打一条 `record not found`，而「这家没配自有桶」是 Loader
+		// 三态里**完全正常**的一态（每个走平台盘的租户每次上传都会命中）。
+		// 把正常路径打成错误日志，运维会以为配置读挂了；第六十六轮真桶灰度
+		// 取证日志里就出现了这条噪音。
+		tx := db.Where("company_id = ?", cid).Limit(1).Find(&row)
+		if tx.Error != nil {
 			// 表不存在（迁移 0044 未应用）也会落到这里。不吞、不返回 nil：
 			// 吞掉的后果是所有上传安静地写进平台盘，而租户以为在自己桶里。
-			return nil, fmt.Errorf("读取 tenant_storage_configs 失败：%w", err)
+			return nil, fmt.Errorf("读取 tenant_storage_configs 失败：%w", tx.Error)
+		}
+		if tx.RowsAffected == 0 {
+			return nil, nil
 		}
 		target := nginxsnippet.Target{
 			CompanyID:  row.CompanyID,
@@ -249,16 +273,17 @@ func DBLoader(db *gorm.DB, platformBase string) Loader {
 			base = strings.TrimSpace(platformBase)
 		}
 		return &Config{
-			CompanyID: row.CompanyID,
-			Driver:    row.Driver,
-			Endpoint:  row.Endpoint,
-			Bucket:    row.Bucket,
-			Region:    row.Region,
-			UseSSL:    row.UseSSL,
-			AccessKey: ak,
-			SecretKey: sk,
-			BaseURL:   base,
-			Version:   row.UpdatedAt.UnixNano(),
+			CompanyID:  row.CompanyID,
+			Driver:     row.Driver,
+			Endpoint:   row.Endpoint,
+			Bucket:     row.Bucket,
+			Region:     row.Region,
+			UseSSL:     row.UseSSL,
+			HostHeader: row.HostHeader,
+			AccessKey:  ak,
+			SecretKey:  sk,
+			BaseURL:    base,
+			Version:    row.UpdatedAt.UnixNano(),
 		}, nil
 	}
 }

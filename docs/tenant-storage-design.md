@@ -738,8 +738,24 @@ type Resolver interface {
 > 真实 MySQL 8.0 取证：dry-run 零写入 → apply 3 条引用 / 1 个对象 → 重跑零改动 →
 > rollback 后九张业务表 `CHECKSUM` 与搬迁前逐字节一致、对象仍在；
 > 四种拒绝场景（含异常条目的全量计划 / 过期计划 / 篡改目标键 / 目标半截对象）均退出码 2。
-> **仍未做**：按 `company_id` 回源真桶的 S3 适配器与「真桶 + 存量对象」灰度，
-> 这也是 `TENANT_STORAGE_ROUTE` 翻默认值剩下的前置条件。
+> **P3 真桶适配器与存量对象灰度（2026-11-14 第六十六轮）**：`apply --target-store tenant`
+> 已交付。目标端按 `company_id` 读 `tenant_storage_configs`、解密凭据、组装 minio-go
+> 客户端（`StatObject`/`GetObject`/`PutObject`）；源端仍是平台本地盘。
+> 上传侧与回填侧**共用 `storage.S3BucketLookup` 单点判定路径风格**（host_header →
+> `BucketLookupPath`/`BucketLookupDNS`），不许任一侧用 SDK 默认的 Auto 猜——
+> 第六十三轮真桶实测的 `400 InvalidBucketName` 就是猜错的代价，有源码级守门钉住。
+> `DBLoader` 的 `(nil, nil)` 在上传链路意为「走平台」，在回填链路被转成**显式错误**：
+> 缺配置 / 未启用 / driver=local / 解密失败一律整批停下，绝不回退平台盘。
+> `tools/backfill-e2e/`（versitygw + 真 MySQL 8.0）37 条断言全绿：dry-run 零写入 →
+> 真 `PutObject`（签名 GET 取回的 sha256 与源逐字节一致）→ 重跑 0/0 →
+> rollback 后九张业务表 `CHECKSUM` 与搬迁前逐字节一致、对象仍在（R5）→ 三个负例。
+>
+> **仍未做**：源端只支持平台本地盘（平台自有 S3 桶当源待接 `ObjectStore.Open`）；
+> `driver=oss` 显式拒绝；虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名时
+> 显式拒绝（回填不经 nginx，改不了 Host/SNI）；非云厂商桶，TLS/SNI、CDN、CORS
+> 仍只有有限证据。`TENANT_STORAGE_ROUTE` 默认值**仍是 off**：代码侧前置已齐，
+> 但翻它属于运营动作（多租户并发 / 配额 / CDN Purge 归属 / 灰度批次），需单独决策，
+> 不在本轮自动发生。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→

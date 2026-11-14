@@ -18,8 +18,7 @@ import (
 // fakePresigner 记录被签的对象键：用它就能在不连真桶的前提下断言
 // 「签的是谁的键」——这正是租户路由最容易错的那一半。
 type fakePresigner struct {
-	key  string
-	urls []string
+	key string
 }
 
 func (f *fakePresigner) Save(*multipart.FileHeader, string) (string, error) { return "", nil }

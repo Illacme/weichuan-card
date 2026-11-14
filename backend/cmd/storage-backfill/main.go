@@ -3,7 +3,8 @@
 // 用法：
 //
 //	storage-backfill plan --dsn DSN --out plan.json
-//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-dir DIR [--dry-run] [--yes]
+//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-store local --target-dir DIR [--dry-run] [--yes]
+//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-store tenant [--dry-run] [--yes]
 //	storage-backfill rollback --plan plan.json --dsn DSN --yes
 //	storage-backfill status --plan plan.json --dsn DSN
 //
@@ -87,7 +88,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `storage-backfill —— P3 存量资源引用的盘点 / 搬迁 / 回滚
 
   plan     --dsn DSN [--base-url URL] [--company N] [--out FILE] [--json] [--fail-on-problem]
-  apply    --plan FILE --dsn DSN --source-dir DIR --target-dir DIR [--dry-run] [--yes] [--force]
+  apply    --plan FILE --dsn DSN --source-dir DIR [--target-store local|tenant]
+           [--target-dir DIR] [--dry-run] [--yes] [--force]
   rollback --plan FILE --dsn DSN [--dry-run] [--yes]
   status   --plan FILE --dsn DSN
 
@@ -102,9 +104,12 @@ plan（只读）:
 apply / rollback（会改数据）:
   --plan            必填，plan --out 产出的那份 JSON；执行器不重扫库
   --dsn             必填，无默认值（避免误连生产）
-  --source-dir      平台侧现有对象所在的本地目录
-  --target-dir      目标对象根目录。本轮本地适配器把各租户映射到同一根目录，
-                    对象键自带 t/<cid>/ 前缀，不会串号；真桶按租户回源见 README
+  --source-dir      平台侧现有对象所在的本地目录（两种目标都必填）
+  --target-store    local（默认，离线演练）/ tenant（按 company_id 解密
+                    tenant_storage_configs，对象真的写进客户自己的桶）
+  --target-dir      仅 target-store=local 时的目标对象根目录。本地适配器把各租户
+                    映射到同一根目录，键自带 t/<cid>/ 前缀不会串号；
+                    tenant 模式给了这个参数会直接报错（避免误以为两边都生效）
   --dry-run         只做预检，零写入
   --yes             确认真的执行。不加时自动按 dry-run 处理
   --force           仅允许「目标对象已存在但大小与源不一致」时用源覆盖；
@@ -224,7 +229,8 @@ func printReport(plan *refmigrate.Plan, driver string, company int64) {
 		}
 	}
 
-	fmt.Printf("\n下一步：apply --plan <这份 JSON> --dsn … --source-dir … --target-dir … --dry-run（先预检）。\n")
+	fmt.Printf("\n下一步：apply --plan <这份 JSON> --dsn … --source-dir … " +
+		"[--target-store local --target-dir DIR | --target-store tenant] --dry-run（先预检）。\n")
 }
 
 // renderTable 按**显示宽度**对齐，第一列左对齐、其余右对齐。

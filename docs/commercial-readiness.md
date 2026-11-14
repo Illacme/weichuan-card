@@ -4770,3 +4770,95 @@ MySQL 事务**里：要么都成，要么都不成。于是三步的失败面被
 - P4 仍待：密钥轮换 `key_id`、`public_base_url` / `public_read` 消费方、审计前端标签、
   配额口径、解约后清理策略。
 - `gofmt -l` 的 12 个既有文件仍未动（上一轮记的那条，需单独一次纯格式提交）。
+
+---
+
+## 第六十六轮 · 真桶 S3 适配器 + 「真桶 + 存量对象」灰度（2026-11-14）
+
+上一轮留的边界是「对象复制只有本地盘适配器」，并写明真桶适配器是
+`TENANT_STORAGE_ROUTE` 翻默认值剩下的前置条件。本轮把它补上，**但开关仍保持 off**。
+
+### 一、三个不能退的决定
+
+1. **复用 `uploadroute.DBLoader`，但重新解释它的三态**。那个函数已经封装了
+   「按 `company_id` 查 `tenant_storage_configs` → `pii.Decrypt` 解两列凭据 →
+   `Target.NeedsSnippet` 判定」，再写一份解密迟早漂移。但 `(nil, nil)` 在上传链路
+   意为「这家没配，走平台实例」，在**回填链路**却是最坏结果：对象被复制到平台本地
+   目录、库也改成 `t/<cid>/...`、后台显示搬迁成功，等把流量切到客户桶才发现一个
+   对象都没有。所以 `refmigrate.TenantTargetFor` 把 `(nil, nil)` 转成显式错误。
+   顺带把 `DBLoader` 的 `First` 改成 `Limit(1).Find`：缺配置是正常三态，
+   `First` 会让 gorm 打一条 `record not found` 的**错误日志**，运维会以为读挂了。
+2. **路径风格判定收敛到单点**。minio-go 默认 `BucketLookupAuto` 只看 endpoint
+   是不是 IP，看不到 `host_header` 列；第六十三轮真桶实测猜错的代价是
+   `400 InvalidBucketName(BucketName=t)`，且 nginx 侧与 Go 侧各自的日志都是绿的。
+   新增 `storage.S3BucketLookup(nginxsnippet.Target)`，上传侧
+   （`uploadroute.build`）与回填侧（`refmigrate.NewS3Store`）都调它，
+   有源码级守门钉住「两处都必须调用、算出结果必须真的传进客户端」。
+   平台自身那份存储（没有 host_header）不传变参，仍走 SDK 默认，行为不变。
+3. **错误文本不带桶方 Message**。`ErrorResponse.Message` 可能回显 AccessKey 片段，
+   而回填命令的输出会进工单长期留存；所有错误只压成「错误码 + HTTP 状态码」。
+   `Stat` 把 404 当「对象不存在」，但 `AccessDenied` / 网络错绝不吞；
+   HEAD 响应按规范不带 body，桶不存在在 Stat 层分不出来，兜底是 `Put` 的显式
+   错误码 + **写后回读 size**（挡住「端点回 200 却没真存」的假成功）。
+
+### 二、交付物
+
+| 文件 | 作用 |
+| --- | --- |
+| `internal/storage/bucket_lookup.go` | `S3BucketLookup` 单点路径风格判定 |
+| `internal/storage/minio.go` | `NewMinioUploader` 加可选 `lookup` 变参（省略仍是 Auto） |
+| `internal/uploadroute/resolver.go` | `Config` 加 `HostHeader`；`build` 显式传判定结果；`DBLoader` 改用 `Find` 去掉错误日志噪音 |
+| `internal/refmigrate/s3store.go` | `S3Store`（`Stat`/`Open`/`Put`）、`S3StoreConfig`、`TenantTargetFor` |
+| `cmd/storage-backfill/execute.go` | `--target-store=local\|tenant` 分派、`localSource`/`tenantStores`/`buildStores` |
+| `cmd/backfill-e2e-prep/main.go` | 取证准备工具（建桶 / 写加密配置行 / 签名 GET 读回） |
+| `tools/backfill-e2e/` | 真桶 + 存量对象灰度装置（`run.sh` + README） |
+
+`apply` 默认值仍是 `local`，第六十五轮的既有命令一字不改也照常跑。
+`tenant` 模式要求显式 `PII_ENC_KEY`（拒绝内置 dev 密钥）、要求 `--source-dir`、
+禁止同时给 `--target-dir`。
+
+### 三、真实 versitygw + MySQL 8.0 取证（37 条断言全绿）
+
+端点匿名 GET = 403（真的验 SigV4，不是桩）。`tools/backfill-fixture/seed.sql`
+的 company 7 子集：3 条 `/uploads/shared-logo.png` 引用，去重成 1 个 20 字节对象。
+
+| # | 动作 | 结果 |
+| --- | --- | --- |
+| ① | `plan --company 7` | 3 条待搬 / 1 个对象；九张业务表 `CHECKSUM` 不变 |
+| ② | `apply --target-store tenant --dry-run` | 零写入：库值不变、校验和不变、桶里无对象 |
+| ③ | `apply --target-store tenant --yes` | 对象真进桶；**签名 GET 取回的 sha256 与源文件一致**；三处库值变 `t/7/shared-logo.png`；平台本地盘无 `t/7/` 文件 |
+| ④ | 重跑 | 复制 0 / 改写 0 / 跳过 1 个对象 3 条引用 |
+| ⑤ | `status` | 台账 3 行 `applied` |
+| ⑥ | `rollback --yes` | 三处库值回 `/uploads/...`；**九张业务表校验和与搬迁前逐字节一致**；对象仍在桶里（R5） |
+| ⑦ | 三个负例 | `tenant` + `--target-dir` 同给拒绝；删配置行后显式失败且写明「不回退平台盘」；改坏 `access_key_enc` 后报解密失败。三次负例后业务表校验和仍等于基线、对象仍在 |
+
+### 四、反向验证（9 处 + 1 处，全红后还原、零漂移）
+
+路径风格判定换成 Auto / 上传侧算了对却没传 / 回填侧绕过单点判定 / 缺配置静默回退
+本地盘 / 403 当成对象不存在 / 去掉写后回读 / tenant 分派回本地盘 / 去掉
+`--target-dir` 互斥 / 去掉 dev 密钥硬门槛 —— 9 处逐一改坏，指定用例必红。
+另把 `DBLoader` 的 `Find` 改回 `First`，新增的日志守门必红。
+
+### 五、一条「假绿」留档
+
+取证脚本第一版 `mysqlq` 忘了带库名，MySQL 报 `No database selected` 且 stderr 被吞，
+于是 `checksum()` 与 `vals()` **都返回空串**：「九张业务表校验和一致」「回滚后回到
+基线」全部恒绿，只有「库值等于 `/uploads/...`」那几条暴露异常。补库名之外，
+额外加了「基线校验和非空」「库值查询有效」两条兜底断言。判据仍是那条：
+**对比双方可能一起失效时，先证明量尺自己有读数。**
+
+同理，假 S3 端点第一版没解 `aws-chunked` 流式签名载荷（实测 PUT 的
+`Content-Length=193` / `X-Amz-Decoded-Content-Length=20`），写后回读 size 就红——
+红的是装置不是被测代码。补了 chunk 解码才让单测真的在测适配器。
+
+### 六、边界与下一步
+
+- **源端只有平台本地盘**；平台自有 S3 桶当源待接 `ObjectStore.Open`。
+- `driver=oss`、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名（回填不经 nginx，
+  改不了 Host/SNI）都**显式拒绝**，不猜、不降级。
+- **不是云厂商桶**：TLS/SNI、CDN、CORS、跨区一致性仍只有有限证据。
+- **`TENANT_STORAGE_ROUTE` 默认值仍是 off**。代码侧前置已齐，但翻它属于运营动作
+  （多租户并发 / 配额 / CDN Purge 归属 / 灰度批次），需单独决策，本轮不自动发生。
+- P4 仍待：密钥轮换 `key_id`、`public_base_url` / `public_read` 消费方、审计前端标签、
+  配额口径、解约后清理策略。
+- `gofmt -l` 的 12 个既有文件仍未动，需单独一次纯格式提交。

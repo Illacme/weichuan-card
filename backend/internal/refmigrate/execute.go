@@ -204,14 +204,17 @@ func preflight(db *gorm.DB, pf *PlanFile, stores *Stores, opt ApplyOptions) (*Pr
 		if hasLedger {
 			step.LedgerID = row.ID
 		}
-		switch {
-		case cur == r.Item.TargetKey:
+		// 用 tagged switch 而不是 switch{case cur == ...}：两处比较对象恒为 cur，
+		// 写成后者会被 staticcheck QF1002 点名。目标键在前、原值在后，
+		// 顺序与原实现一致（二者万一相等，仍按「已搬完」处理）。
+		switch cur {
+		case r.Item.TargetKey:
 			if !hasLedger || row.Status != StatusApplied {
 				return nil, fmt.Errorf("%w：%s.%s#%d 库里已是目标键 %q，但台账没有 applied 记录（谁改的？）",
 					ErrStalePlan, r.Table, r.Col.Col, r.Item.PKValue, cur)
 			}
 			step.Action = RefSkip
-		case cur == r.Item.Raw:
+		case r.Item.Raw:
 			step.Action = RefUpdate
 		default:
 			return nil, fmt.Errorf("%w：%s.%s#%d 现在的值是 %q，计划生成时是 %q（也不是目标键 %q）",

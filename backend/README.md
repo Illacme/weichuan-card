@@ -199,6 +199,13 @@ go build -o storage-backfill ./cmd/storage-backfill
 ./storage-backfill apply --plan /tmp/plan.json --dsn "$DSN" \
   --source-dir /var/lib/weichuan/uploads --target-dir /tmp/tenant-root
 ./storage-backfill apply    --plan /tmp/plan.json --dsn "$DSN" --source-dir … --target-dir … --yes
+
+# 真桶：目标端按 company_id 解密 tenant_storage_configs，对象真的写进客户自己的桶。
+# 必须显式给 PII_ENC_KEY（与写配置行时同一把钥匙）；不许给 --target-dir。
+PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
+  --plan /tmp/plan.json --dsn "$DSN" --source-dir /var/lib/weichuan/uploads \
+  --target-store tenant --yes
+
 ./storage-backfill status   --plan /tmp/plan.json --dsn "$DSN"
 ./storage-backfill rollback --plan /tmp/plan.json --dsn "$DSN" --yes
 ```
@@ -221,10 +228,26 @@ go build -o storage-backfill ./cmd/storage-backfill
   验证退出码要用 `go build` 的产物。
 - 7 种归类的处置各不相同（`platform` 永不搬、`foreign-url` 原样保留、`foreign-tenant` /
   `invalid` 必须人工），理由写在 `internal/refmigrate/plan.go` 的 `Class` 注释里。
-- **本轮对象复制只有本地盘适配器**（`--source-dir` → `--target-dir`，各租户共用根目录，
-  键自带 `t/<cid>/` 不会串号）。按 `company_id` 解密 `tenant_storage_configs`、走 S3
-  `GetObject`/`PutObject` 的真桶适配器与「真桶 + 存量对象」灰度是下一轮，
-  也是 `TENANT_STORAGE_ROUTE` 翻默认值的前置条件。
+- `--target-store` 决定目标端：`local`（默认，离线演练，需 `--target-dir`）/
+  `tenant`（按 `company_id` 查 `tenant_storage_configs` 并用 `PII_ENC_KEY` 解密凭据，
+  走 S3 `StatObject`/`GetObject`/`PutObject`）。**两者不可混给**：tenant 模式下传
+  `--target-dir` 会直接报错，避免运维以为两边都生效。
+- **tenant 模式绝不回退平台盘**：没配 / 未启用 / `driver=local` / 凭据解密失败 /
+  `driver=oss` / 域名与 `hostHeader` 不一致，一律整批停下。静默回退的症状是
+  「对象复制到平台本地目录、库也改成 `t/<cid>/...`、后台显示成功，客户桶里一个都没有」。
+- 上传侧与回填侧共用 `storage.S3BucketLookup` 判定路径风格（由 `host_header` 决定
+  桶名进 path 还是 Host），不让 minio-go 的 `BucketLookupAuto` 自己猜——
+  第六十三轮真桶实测猜错的代价是 `400 InvalidBucketName`，且两端日志都不报错。
+- **源端本轮只有平台本地盘**：`--source-dir` 是必填的现有对象目录，两种目标共用。
+  平台自己的 S3 桶当源 / `driver=oss` 目标 / 虚拟主机风格且 `hostHeader` 与
+  `endpoint` 不是同一域名（回填不经 nginx，改不了 Host/SNI）都还没接，会显式报错。
+- S3 侧的原子性由协议本身保证：单次 PUT 完整可见；大对象分块上传在
+  `CompleteMultipartUpload` 之前不会被 `StatObject` 看见。写完适配器仍立即回读一次
+  size，挡住「端点会回 200 但没真存」这种没人报错的假成功。桶方错误只压成
+  「错误码 + HTTP 状态码」，`Message`（可能回显 AccessKey 片段）绝不进日志。
+- 真桶 + 存量对象灰度装置：`tools/backfill-e2e/`（versitygw + 真 MySQL，37 条断言，
+  含签名 GET 字节比对、回滚后校验和一致、三个负例）。它补齐了 `tools/s3-e2e`
+  README 里原本写着「不覆盖存量对象」的那条空白。
 - 取证数据：`tools/backfill-fixture/seed.sql`（只能灌进一次性库，文件头部先清九张表）。
 
 ```bash
