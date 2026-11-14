@@ -475,9 +475,10 @@ func TestTenantStorageRejectsStaleHostHeader(t *testing.T) {
 // TestTenantStoragePublicBaseURLTriState 钉住自有访问域名的三态与「如实回报」。
 //
 // 这一列此前只能靠手工 SQL 写，DBLoader 却已经在读它——最坏的状态不是「不生效」，
-// 而是「库里有值、后台看不见、上传链路悄悄用了」。把它接进配置面后，三态语义
-// 必须与凭据一致，且 publicBaseUrlActive 恒 false：出参侧按租户选 origin 还没接，
-// 写成 true 就等于告诉超管「客户域名已经切过去了」。
+// 而是「库里有值、后台看不见、上传链路悄悄用了」。接进配置面后，三态语义必须与
+// 凭据一致。第六十九轮起 publicBaseUrlActive 由 publicOriginState 实况计算：
+// 默认 TENANT_STORAGE_ROUTE 未开，故这里仍是 false，但 note 必须说清**为什么**
+// 没生效；开关打开且条件齐全后的 true 分支由 TestPublicOriginState 覆盖。
 func TestTenantStoragePublicBaseURLTriState(t *testing.T) {
 	r, db := bindingEngine(t)
 	c := newTestClient(r, t)
@@ -494,7 +495,8 @@ func TestTenantStoragePublicBaseURLTriState(t *testing.T) {
 	require.Equal(t, false, data["publicBaseUrlActive"])
 	note, _ := data["publicBaseUrlNote"].(string)
 	require.Contains(t, note, "https://img.cust.com")
-	require.Contains(t, note, "尚未接入", "必须说清为什么没生效：%q", note)
+	require.Contains(t, note, "未生效", "必须说清为什么没生效：%q", note)
+	require.Contains(t, note, "TENANT_STORAGE_ROUTE", "原因要能照着做，而不是一句『尚未接入』：%q", note)
 	require.Equal(t, "https://img.cust.com", loadStorageRow(t, db, 1).PublicBaseURL)
 
 	// ② 不传 = 保留。界面只改 bucket 时不能把已登记的域名清空。

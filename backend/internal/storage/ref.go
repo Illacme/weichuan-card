@@ -254,10 +254,14 @@ func NormalizeRef(raw, baseURL string, scope Scope, companyID int64) (Ref, error
 
 // ResolveRef 读取侧：把库里的任一形态还原成端上可访问的 URL。
 //
-// origin 是**平台统一入口的 origin**（如 https://weichuan.ziyuanxingqiu.cn），
-// 不含路径；传空串则返回相对 /uploads/...（小程序 assetUrl 会拼 baseUrl()，
-// 管理端 vite/nginx 直接同源可达）。第一阶段只有一个入口，所以是单一参数；
-// 将来开放客户自有域名时，按租户选 origin 的回调接在这里，端上契约不变。
+// origin 是**访客侧 origin**（平台统一入口或客户自有域名），不含路径；
+// 传空串则返回相对 /uploads/...（小程序 assetUrl 会拼 baseUrl()，
+// 管理端 vite/nginx 直接同源可达）。
+//
+// 第六十九轮起「按租户选 origin」的裁判是 ResolveRefForTenant：它决定
+// 「这一个引用该不该用客户域名」，本函数只负责拼接与格式校验。
+// 两层分开是为了让「格式合法性」与「对象归属」各自只有一处判定，
+// 端上契约不变（assetUrl 对绝对 URL 原样返回）。
 //
 // 三条硬规则：
 //  1. 存量绝对 URL **原样返回**，绝不改写——改了老数据立刻裂图；
@@ -265,19 +269,13 @@ func NormalizeRef(raw, baseURL string, scope Scope, companyID int64) (Ref, error
 //     出参侧不该因为一个空值就整条记录报错；
 //  3. 不吞非法输入——data: / javascript: / 路径穿越一律显式报错，
 //     不静默降级成某个猜测 URL。
-func ResolveRef(raw, origin string) (string, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return "", nil
-	}
-	if u, err := url.Parse(s); err == nil &&
-		(u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
-		return s, nil
-	}
-	if strings.Contains(s, ":") || strings.HasPrefix(s, "//") {
-		return "", fmt.Errorf("%w: 不安全的引用 %q", ErrInvalidRef, raw)
-	}
-
+//
+// refRel 从库里的资源引用形态提取「不含 /uploads/ 前缀」的相对对象键。
+//
+// ResolveRef 与 ResolveRefForTenant 共用这一段：前者要拿它拼 URL，后者要拿它判归属。
+// 分成两套解析规则必然漂移，而漂移的表现是「同一张图在 A 接口走客户域名、
+// 在 B 接口走平台入口」或者反过来，两端都不报错。
+func refRel(s string) (string, error) {
 	var rel string
 	switch {
 	case strings.HasPrefix(s, UploadsPathPrefix):
@@ -296,6 +294,25 @@ func ResolveRef(raw, origin string) (string, error) {
 	if _, err := cleanRel(rel); err != nil {
 		return "", err
 	}
+	return rel, nil
+}
+
+func ResolveRef(raw, origin string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", nil
+	}
+	if u, err := url.Parse(s); err == nil &&
+		(u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return s, nil
+	}
+	if strings.Contains(s, ":") || strings.HasPrefix(s, "//") {
+		return "", fmt.Errorf("%w: 不安全的引用 %q", ErrInvalidRef, raw)
+	}
+	rel, err := refRel(s)
+	if err != nil {
+		return "", err
+	}
 
 	// origin 的格式裁判与「客户自有访问域名（public_base_url）」的写入校验是
 	// 同一个函数：ValidatePublicOrigin（见 public_origin.go）。两套规则必然漂移，
@@ -305,6 +322,42 @@ func ResolveRef(raw, origin string) (string, error) {
 		return "", err
 	}
 	return base + UploadsPathPrefix + rel, nil
+}
+
+// ResolveRefForTenant 是「按租户选 origin」的出参解析：只把**归属该企业的新形态
+// 对象键**指向客户自有域名，其余形态继续走平台统一入口。
+//
+// 为什么不能无条件把 origin 传进 ResolveRef：客户域名的回源规则只覆盖
+// /uploads/t/<企业id>/（见 publicBaseURLNote 与设计稿 §3.4）。而一个租户的字段里
+// 真实混着三类平台对象，它们并不在客户桶里：
+//   - p/...     素材库采用、小程序码、下架占位图、访客未登录时上传的头像；
+//   - 无前缀裸键 第五十四轮之前上传的老对象，物理上就在平台盘 /uploads/x.jpg；
+//   - /uploads/ 老相对路径（可能指向 p/ 或无前缀）。
+//
+// 无差别拼客户域名会让这些图在切量当天全部 404，而且后台预览因为走平台入口
+// 看起来完全正常——正是「没人报错时用户无从察觉」那一类静默失败。
+//
+// 绝对 URL（云驱动存量 / 用户填的外链）由 ResolveRef 原样返回，不受 origin 影响；
+// 归属别家租户的键（t/9/... 出现在 t/5 的字段里）也刻意回平台入口，
+// 不把别家的对象指到这家的域名下。
+func ResolveRefForTenant(raw, origin string, companyID int64) (string, error) {
+	effective := origin
+	if origin != "" && companyID > 0 {
+		s := strings.TrimSpace(raw)
+		if isHTTPURL(s) {
+			// 存量绝对 URL / 合法外链：ResolveRef 第一条就原样返回，origin 用不上。
+			effective = ""
+		} else {
+			rel, err := refRel(s)
+			if err != nil {
+				effective = ""
+			} else if ref, perr := ParseRef(rel); perr != nil ||
+				ref.Scope != ScopeTenant || ref.CompanyID != companyID {
+				effective = ""
+			}
+		}
+	}
+	return ResolveRef(raw, effective)
 }
 
 // ObjectKeyFromURL 从存库的资源引用反推对象存储键（签名 / 回填等写入侧场景用）。

@@ -52,10 +52,10 @@ var boundaryTokens = []boundaryToken{
 	{handlerDir + "/storage.go", "storage.ObjectKeyFor(scope, cid, name)", "W5 预签名落带前缀键（写入侧接线，第五十四轮）"},
 	{handlerDir + "/content.go", "func projectToMap(", `R12 album 展开（模型是 json:"-" 的隐藏边界）`},
 	{handlerDir + "/handler.go", `"album":`, "R5/R6 案例详情 album 数组出参（已接 ResolveResourceRef）"},
-	{handlerDir + "/handler.go", "ResolveResourceRef(ci.Logo)", "R2/R3 企业 logo 出参（已接 ResolveResourceRef）"},
-	{handlerDir + "/handler.go", "ResolveResourceRef(e.Avatar)", "R3 名片墙 avatar 白名单出参（已接 ResolveResourceRef）"},
-	{handlerDir + "/handler.go", "ResolveResourceRef(p.Cover)", "R6 案例详情 cover 出参（已接 ResolveResourceRef）"},
-	{handlerDir + "/handler.go", "ResolveResourceRef(bgImage)", "R9 首页背景出参（已接 ResolveResourceRef）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(ci.Logo, origin)", "R2/R3 企业 logo 出参（已接 ResolveResourceRef，按租户 origin）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(e.Avatar, origin)", "R3 名片墙 avatar 白名单出参（已接 ResolveResourceRef，按租户 origin）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(p.Cover, origin)", "R6 案例详情 cover 出参（已接 ResolveResourceRef，按租户 origin）"},
+	{handlerDir + "/handler.go", "ResolveResourceRef(bgImage, origin)", "R9 首页背景出参（已接 ResolveResourceRef，按租户 origin）"},
 	{handlerDir + "/handler.go", "model.BizService", "R8 服务详情内嵌整个模型（含 icon，已接 ResolveRefs）"},
 	{modelDir + "/models.go", "column:album;type:json", "§2 Album 隐藏列：存的是 URL 数组"},
 	{modelDir + "/media_check.go", `json:"objectKey"`, "§2 MediaCheck.ObjectKey：从 URL 反推的裸键"},
@@ -252,8 +252,12 @@ func TestP0bMiniProgramAssetUrlConsumersMatchBoundaryList(t *testing.T) {
 		"pages/project/list/list.ts":     true,
 		"pages/team/team.ts":             true,
 		"tests/company_video.spec.ts":    true,
-		"utils/request.ts":               true,
-		"utils/team.ts":                  true,
+		// 第六十九轮：直接测真实 assetUrl 的端上契约（不 mock），
+		// 钉住「绝对客户域名 URL 不被二次拼接」。它不是页面消费点，
+		// 但同样引用 assetUrl，必须登记在本清单里。
+		"tests/public_origin_asset_url.spec.ts": true,
+		"utils/request.ts":                      true,
+		"utils/team.ts":                         true,
 	}
 	require.Equal(t, want, got,
 		"小程序 assetUrl 消费文件集合变了：新增消费点必须确认端上 URL 形态契约")

@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,11 +24,14 @@ import (
 // home_layout.bg_image 与 media_check 两列不走出参解析），这是设计而非遗漏。
 
 var (
-	// func (cp *CompanyProfile) ResolveRefs() {
-	reResolveFunc = regexp.MustCompile(`^func \((\w+) \*(\w+)\) ResolveRefs\(\)`)
-	// cp.Cover = ResolveResourceRef(cp.Cover)
+	// func (cp *CompanyProfile) ResolveRefs(o Origin) {
 	//
-	// 不锚 ^：单行形态 `func (e *Employee) ResolveRefs() { e.Avatar = … }` 的字段
+	// 第六十九轮起带 origin 参数，正则只锚到左括号：写成 ResolveRefs\(\) 时
+	// 一个方法都抓不到，cur 恒为空，下面的「方法体外」兜底会拿注释开刀误报。
+	reResolveFunc = regexp.MustCompile(`^func \((\w+) \*(\w+)\) ResolveRefs\(`)
+	// cp.Cover = ResolveResourceRef(cp.Cover, o)
+	//
+	// 不锚 ^：单行形态 `func (e *Employee) ResolveRefs(...) { e.Avatar = … }` 的字段
 	// 与方法声明在同一行上。第一版锚了 ^，于是 7 个字段只抓到 4 个（单行的全漏），
 	// 靠下面 count < 7 的兜底才没变成「静默通过」。
 	reResolveField = regexp.MustCompile(`(\w+)\.(\w+) = ResolveResourceRef\(`)
@@ -47,6 +51,11 @@ func resolveRefFields(t *testing.T) [][2]string {
 		count int    // 抓到的行数，用来兜底「正则被重构搞失效」
 	)
 	for _, line := range regexp.MustCompile(`\r?\n`).Split(string(src), -1) {
+		// 先剥整行注释：refs.go 的文件头解释「为什么只能用副本解析」，
+		// 里面带的示例代码不是真的字段解析行（第六十八轮同类坑）。
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
 		if m := reResolveFunc.FindStringSubmatch(line); m != nil {
 			cur = m[2]
 		}

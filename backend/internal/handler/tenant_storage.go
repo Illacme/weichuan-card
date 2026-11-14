@@ -357,11 +357,10 @@ type tenantStorageReq struct {
 	// PublicBaseURL 客户自有访问域名。三态与凭据一致：nil = 保留原值、
 	// "" = 清空、有值 = 按 storage.ValidatePublicOrigin 归一化后覆盖。
 	//
-	// 目前这一步只是**登记**：出参侧按租户选 origin 的回调（ResolveRef 的
-	// origin 参数）还没接，填了不会改变对象 URL。出参里的 publicBaseUrlActive
-	// 恒为 false、publicBaseUrlNote 会如实说明，界面不许显示成「已生效」。
-	// 让它可登记而不是只能手工 SQL 填，是为了把「库里已经有值但没人知道」
-	// 这种最坏状态收进可校验、可审计的通道。
+	// 第六十九轮起它**真的会承载流量**：出参侧按租户选 origin 已接入，
+	// 但生效还要同时满足「对象真的写进了客户桶」（TENANT_STORAGE_ROUTE /
+	// enabled / driver / 凭据 / publicRead）；出参里的 publicBaseUrlActive
+	// 由 publicOriginState 实况回报，填了不等于立刻切换，界面必须照实渲染。
 	PublicBaseURL *string `json:"publicBaseUrl"`
 	// AccessKey / SecretKey：nil = 保留原值（界面显示掩码时点保存走这条），
 	// "" = 清空，其他 = 覆盖。**不接受**已加密的值——加密只发生在服务端，
@@ -389,14 +388,19 @@ func storageTargetCompanyID(c *gin.Context) (int64, bool) {
 //
 // 「没配过」与「读失败」必须分开：前者是正常状态（走平台存储），后者要报错。
 // 合成一个 nil 会让「库挂了」被当成「这家企业没配」，界面显示一切正常而配置其实读不到。
+//
+// 用 Limit(1).Find 而不是 First：第六十九轮起**每条公开 GET 都会调一次**（按租户取
+// 出参 origin），「没配过」是绝大多数企业的常态；First 查不到行会打一条 gorm
+// "record not found" 错误日志，等于每个访客请求刷屏。三态语义不变，只是别把
+// 正常状态当错误打日志。
 func loadTenantStorage(db *gorm.DB, cid int64) (*model.TenantStorageConfig, error) {
 	var row model.TenantStorageConfig
-	err := db.Where("company_id = ?", cid).First(&row).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, nil
-		}
-		return nil, err
+	res := db.Where("company_id = ?", cid).Limit(1).Find(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
 	}
 	return &row, nil
 }
@@ -486,11 +490,17 @@ func tenantStorageView(row *model.TenantStorageConfig) gin.H {
 	view["hostHeader"] = row.HostHeader
 	view["publicRead"] = row.PublicRead
 	view["enabled"] = row.Enabled
-	// 自有访问域名如实回报三件事：登记了什么、到底生效没有、没生效时下一步做什么。
-	// 只回一个字符串会让超管以为「填了就切过去了」——那是本轮最想避免的误读。
+	// 自有访问域名如实回报三件事：登记了什么、到底生效没有、生效/未生效各自该做什么。
+	// active 与 9 条公开 GET 的 origin 同出 publicOriginState，不会出现「界面绿勾、
+	// 访客裂图」。库里若被手工塞了坏域名，这里仍回显原值并给出不合法原因，
+	// 便于超管照着改，而不是悄悄显示成空串。
+	_, active, reason := publicOriginState(row)
 	view["publicBaseUrl"] = row.PublicBaseURL
-	view["publicBaseUrlActive"] = publicBaseURLActive
-	view["publicBaseUrlNote"] = publicBaseURLNote(row.PublicBaseURL)
+	view["publicBaseUrlActive"] = active
+	// note 必须用**登记值**拼，不能用 publicOriginState 的 base：未生效时那个
+	// base 为空串（生效的 origin 才能进出参），拿它去拼会得到整段空文案，
+	// 超管反而看不到「已登记了哪个域名、为什么没生效」。
+	view["publicBaseUrlNote"] = publicBaseURLNote(row.PublicBaseURL, active, reason)
 	view["status"] = row.Status
 	view["lastError"] = row.LastError
 	view["lastCheckedAt"] = row.LastCheckedAt
@@ -545,29 +555,14 @@ func tenantStorageActive(row *model.TenantStorageConfig) (bool, string) {
 	return true, ""
 }
 
-// publicBaseURLActive 目前**恒为 false**，且必须写死。
+// publicBaseUrlActive / publicBaseUrlNote 的判定已移到 publicorigin.go 的
+// publicOriginState（第六十九轮）。
 //
-// 客户自有访问域名真正生效的落点是「出参侧按租户选 origin」：storage.ResolveRef
-// 的 origin 参数已经留好了，但 model.ResolveResourceRef 现在传空串（返回相对
-// /uploads/...），端上自己拼平台 baseUrl。要按租户换，得让 9 条公开 GET、
-// 后台出口与 /api/public/settings 一起带上该企业的 origin——那是独立一轮，
-// 还会动端上契约。在此之前把它写成 true，等于告诉超管「客户域名已切过去」，
-// 而实际对象 URL 仍走平台统一入口。「填了以为生效」比「不填」更坏，
-// 所以宁可显式恒 false，再给一句能照做的话。
-const publicBaseURLActive = false
-
-// publicBaseURLNote 给超管看的「为什么没生效 / 生效前还要做什么」。
-//
-// 空值返回空串：没登记时不该在界面上挂一段警告，否则每家没配的企业都显示
-// 一条看似故障的提示，反而把真正需要注意的那家淹掉。
-func publicBaseURLNote(base string) string {
-	if strings.TrimSpace(base) == "" {
-		return ""
-	}
-	return "已登记自有访问域名 " + base + "，但出参侧按租户选 origin 尚未接入：" +
-		"对象 URL 仍走平台统一入口，这项目前不会生效（不要以为保存就切换了）。" +
-		"启用前还须在该域名上配好 /uploads/t/<企业id>/ 的回源规则与证书。"
-}
+// 第六十八轮这里曾是 `const publicBaseURLActive = false` 并配一段「出参侧尚未接入」
+// 的固定文案。出参侧真的接上之后，继续写死 false 与继续写「尚未接入」是同一个
+// 错误的两个方向：都会让超管对「客户域名到底切没切」判断错。
+// 现在 active 与 9 条公开 GET 的 origin 取自同一个函数，结构上不可能漂移；
+// TENANT_STORAGE_ROUTE 仍 off 时它会如实回报 false，不需要在这里写死。
 
 // emptyTenantStorageView 是「没配过」时的视图：字段齐全但值全是空的。
 //
@@ -575,18 +570,20 @@ func publicBaseURLNote(base string) string {
 // 在界面上应该是同一套渲染（都是空表单）。
 func emptyTenantStorageView(cid int64) gin.H {
 	return gin.H{
-		"companyId":           cid,
-		"configured":          false,
-		"driver":              nginxsnippet.DriverLocal,
-		"endpoint":            "",
-		"bucket":              "",
-		"region":              "",
-		"useSsl":              true,
-		"hostHeader":          "",
-		"publicRead":          true,
-		"enabled":             false,
-		"publicBaseUrl":       "",
-		"publicBaseUrlActive": publicBaseURLActive,
+		"companyId":     cid,
+		"configured":    false,
+		"driver":        nginxsnippet.DriverLocal,
+		"endpoint":      "",
+		"bucket":        "",
+		"region":        "",
+		"useSsl":        true,
+		"hostHeader":    "",
+		"publicRead":    true,
+		"enabled":       false,
+		"publicBaseUrl": "",
+		// 没配过就一定不生效：这里写死 false 是「无行」这一态的定义，
+		// 与有行时由 publicOriginState 实况计算不冲突。
+		"publicBaseUrlActive": false,
 		"publicBaseUrlNote":   "",
 		"status":              storageStatusUnknown,
 		"lastError":           "",

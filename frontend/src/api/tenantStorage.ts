@@ -31,12 +31,13 @@ export interface TenantStorageConfig {
   /** 客户自有访问域名（纯 origin，如 https://img.cust.com）；空串 = 走平台统一入口 */
   publicBaseUrl: string
   /**
-   * 自有域名此刻是否真的改变了出参 URL。第六十八轮**恒为 false**：
-   * 出参侧按租户选 origin（storage.ResolveRef 的 origin 参数）尚未接入，
-   * 这一列目前只做登记 + 校验 + 如实回报。界面绝不许按 true 渲染成「已切换」。
+   * 自有域名此刻是否真的改变了出参 URL（第六十九轮起按实况回报，不再是恒 false）。
+   * 后端由 publicOriginState 单点判定：域名合法 + 对象真的写进客户桶
+   * （TENANT_STORAGE_ROUTE / enabled / driver / 凭据 / publicRead）全满足才为 true。
+   * 界面必须按它切换 success / warning 两套文案，不许写死「尚未接入」或「已生效」。
    */
   publicBaseUrlActive: boolean
-  /** 非空时是可直接展示给超管的「为什么没生效 / 生效前还要做什么」 */
+  /** 非空时是可直接展示给超管的「已生效说明 / 未生效原因与下一步」 */
   publicBaseUrlNote: string
   /** 连通性自检结果。unknown=配了但没验过，不要渲染成「正常」 */
   status: StorageStatus
@@ -74,7 +75,8 @@ export interface TenantStorageSavePayload {
    * **不传** = 保留原值、空串 = 清空、有值 = 覆盖（服务端归一化后落库）。
    * 与凭据一样是三态：界面「只看不改点保存」时提交的是表单里回显的原值，
    * 不是空串——否则一次改 bucket 的操作会悄悄清掉已登记的域名。
-   * 目前只登记，不会改变出参 URL，见 TenantStorageConfig.publicBaseUrlActive。
+   * 出参侧按租户选 origin 已接入（第六十九轮），但**填了不等于立刻生效**：
+   * 生效条件见 TenantStorageConfig.publicBaseUrlActive，界面按实况给两套提示。
    */
   publicBaseUrl?: string
   /**

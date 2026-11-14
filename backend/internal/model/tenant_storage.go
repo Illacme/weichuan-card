@@ -60,7 +60,8 @@ type TenantStorageConfig struct {
 	// storage.ValidatePublicOrigin 归一化，并原样回显到配置界面；
 	// 但**仍不参与实例构造**：uploadroute.DBLoader 把它放进 Config.PublicOrigin，
 	// 绝不是 Config.BaseURL（那个是上传返回基址，写入侧要靠它剥回裸键）。
-	// 出参侧按租户选 origin 尚未接入，故 publicBaseUrlActive 恒为 false。
+	// 第六十九轮起出参侧按租户选 origin 已接入（handler.publicOriginState）：
+	// 只有对象真的写进客户桶时，publicBaseUrlActive 才回报 true。
 	PublicBaseURL string `gorm:"column:public_base_url;size:255" json:"publicBaseUrl"`
 	// PublicRead 桶是否公开读。第一阶段试点要求为 true：私有桶要走预签名，
 	// 而出参契约（存裸键 / 存 URL）会跟着变，不在本轮范围。

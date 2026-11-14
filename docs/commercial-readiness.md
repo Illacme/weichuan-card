@@ -5084,3 +5084,148 @@ Open 一起改）、删掉桶探测、忽略 `sys_setting`、s3 分支回退本�
 - P4 剩余：`key_id` 轮换、出参侧按租户选 origin、配额口径、解约后清理策略。
 - `driver=oss` 源、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名仍显式拒绝。
 - `gofmt -l` 的 12 个既有格式债文件未动，仍需单独一次纯格式提交。
+
+> 以上五条是**第六十八轮当时口径**，「仍未承载流量」与「P4 剩余里的出参侧」
+> 已在第六十九轮闭环，见下一章。
+
+---
+
+## 第六十九轮 · 出参侧按租户选 origin：`public_base_url` 真正承载流量（2026-11-14）
+
+### 一、承接上一轮那句「没有假装做完」
+
+第六十八轮把 `publicBaseUrlActive` 写死成 `false`，如实告诉超管「填了也不生效」。
+用户本轮选的方向是**出参侧按租户选 origin**：让 `company_id → public_base_url`
+真的进入 `ResolveRefs` 链，覆盖 9 条公开 GET 与 `/api/public/settings`，
+而不是让各 handler 各拼各的域名。
+
+本轮依旧是**零行为变更的纯代码侧改动**：`TENANT_STORAGE_ROUTE` 默认 off 时，
+每一家的 `publicOriginFor` 都返回 `model.PlatformOrigin()`，出参与第六十八轮
+逐字节一致。翻开关属于运营动作，本轮没翻。
+
+### 二、五个不能退的决定
+
+1. **显式 `model.Origin`，不做包级全局 / context 隐式取值**。
+   新增 `type Origin struct { Base string; CompanyID int64 }` 与 `PlatformOrigin()`；
+   `ResolveResourceRef(raw, o Origin)` / `ResolveResourceRefs(list, o Origin)` /
+   六个模型的 `ResolveRefs(o Origin)` 全部改成显式传参。出参点分散在 26 处，
+   隐式取值会让「这个接口用哪家企业的域名」变成看不见的输入，**漏接一处就是跨租户串号**
+   （A 企业的图指到 B 的域名）；显式传参后漏改一处直接编译不过。
+2. **按对象归属分流，不是无差别拼域名**。
+   `storage.ResolveRefForTenant(raw, origin, companyID)` 只有 `ParseRef(rel)` 判为
+   `ScopeTenant` 且 `ref.CompanyID == companyID` 时才用客户域名；`p/` 平台对象
+   （素材库 / 小程序码 / 下架占位图 / 访客未登录头像）、历史无前缀裸键、
+   `/uploads/` 老相对路径、合法外链、别家租户 `t/9/...` 一律走平台入口。
+   客户域名的回源规则只覆盖 `/uploads/t/<企业id>/`，无差别拼域名会让
+   「切量当天全站图 404、后台预览却正常」。
+3. **生效必须滞后于对象真的写进客户桶，且判定单点**。
+   `publicOriginState(row)` 复用 `tenantStorageActive(row)`：要求
+   `TENANT_STORAGE_ROUTE=on`、`enabled=true`、driver 非 local、凭据完整、
+   `publicRead=true`、域名合法；`!row.PublicRead` 另挡私有桶直连 403。
+   后台视图的 `publicBaseUrlActive`、9 条公开 GET 的 origin、
+   `/api/public/settings` 的诊断态**全部来自这一个函数**，
+   结构上不可能出现「后台绿勾、访客裂图」。读库失败打 `[STORAGE][WARN]`
+   并退回平台入口（不是静默降级：平台 nginx 仍有 `/uploads/t/<企业id>/` 回源）。
+   刻意不缓存，PUT 改配置后立刻实况生效。
+4. **诊断出口不猜租户**。
+   `/api/public/settings` 只有显式 `?companyId=<正整数>` 才回传根级
+   `assetOrigin` / `assetOriginActive` / `assetOriginNote`；冷启动的
+   `fetchPublicSettings` 不带租户参数，无条件下发会按缺省企业回传 → 跨租户串号。
+   这三个字段是**给运维核对实况的诊断**，不参与端上 URL 拼接。
+5. **后台出口一律 `model.PlatformOrigin()`**。
+   `content.go` 十处 `ResolveRefs`、`apply.go` 的员工导出都传平台零值；
+   管理端跑在平台域名下、`/uploads/` 同源可达，让后台预览依赖客户证书 /
+   回源规则只会多一条无谓的裂图路径。小程序「我的」页（`/api/employee/me`）
+   是端上消费点，与 9 条公开 GET 用同一口径 `publicOriginFor(db, e.CompanyID)`。
+
+### 三、两条口径订正
+
+**① cache key 的判据不是 `Host`，是租户维度。**
+设计稿 §3.8 初稿写「开放自有域名时 cache key 必须含 `Host`」。落地实现里
+origin 只由 `company_id` 决定、不读 `c.Request.Host`，同一家在任何 Host 下
+响应字节相同，按 Host 分片只制造缓存碎片。真正的风险是**响应按租户变了**：
+9 条公开 GET 中 5 条带 60 秒边缘缓存，若接入层忽略 query string，
+A 企业的客户域名响应会被发给 B 企业访客。硬要求是 cache key 含 `companyId`
+（`/api/card` 为全局唯一 `staffId`）且不折叠 query string。
+这是翻开关前必须确认的接入层项，已同步设计稿 §3.8 / R6 与 URL 边界文档 §3.1。
+
+**② 端上契约零改动，但要拿真单测证明。**
+`miniprogram/utils/request.ts` 的 `assetUrl(p)` 对 `^https?://` 原样返回，
+所以后端从相对 `/uploads/...` 换成绝对 `https://img.cust.com/uploads/...`
+不需要改任何端上拼接代码。新增 `miniprogram/tests/public_origin_asset_url.spec.ts`
+**直接 import 真实 `../utils/request`**，不用页面测试里的 mock——
+mock 里写的只是「我以为 assetUrl 会怎么做」，那是假绿。
+
+### 四、交付物
+
+| 层 | 文件 |
+| --- | --- |
+| 纯函数 | `storage/ref.go`：`refRel` 抽出、`ResolveRefForTenant` 新增、`ResolveRef` 复用 `refRel` |
+| 出参契约 | `model/refs.go`：`Origin` / `PlatformOrigin()`、三个 API 与六个模型方法显式传参 |
+| 单点判定 | `handler/publicorigin.go`（新增）：`publicOriginState` / `publicOriginStateFor` / `publicOriginFor` / `publicBaseURLNote` |
+| 接线 | `handler/handler.go` 9 条公开 GET（`/api/card` 取 `e.CompanyID`，其余 8 条 `publicCompanyID`）、`handler/apply.go`（我的页 / 员工导出）、`handler/content.go`（后台全平台零值）、`handler/settings.go`（显式 companyId 诊断） |
+| 配置视图 | `handler/tenant_storage.go`：删掉 `const publicBaseURLActive = false`、改成 `publicOriginState(row)` 实况；`loadTenantStorage` 改 `Limit(1).Find` |
+| 守门 | `storage/public_origin_wiring_test.go`（新增，按路由块对账 + 至少 9 条读数兜底）、`handler/publicorigin_test.go`（新增，真发请求的行为级集成测试）、`model/refs_test.go`、`storage/ref_boundaries_test.go`、`storage/ref_p0a_guard_test.go`、`refmigrate/inventory_guard_test.go`（签名变化后修正则） |
+| 前端 / 契约 / 文档 | `TenantStorageDialog.vue` 两态提示、`api/tenantStorage.ts` 注释、`api/tenantStorage.spec.ts` 跨端源码契约、`docs/openapi.yaml`、`backend/README.md`、`docs/tenant-storage-url-boundaries.md`、设计稿 §3.8 / §4 / §5 / §6 |
+
+### 五、守门与反向验证
+
+`TestPublicOriginWiringGate` 逐个扫描 `r.GET("/api/...")` 路由块：凡下发资源引用
+就必须含 `publicOriginFor(db, `，且不得出现 `model.PlatformOrigin()`；
+`content.go` 反过来必须全是平台零值、不许出现 `publicOriginFor(`；
+并要求「至少抓到 9 条公开 GET」的读数兜底（抓取型守门一条没抓到就会「全部通过」）。
+
+行为级证据不是只读源码：`handler/publicorigin_test.go` 真发
+`/api/public/settings` 与 `/api/company?companyId=1`，断言默认 off 时仍是
+`/uploads/t/1/logo.png`、条件齐全时才变成 `https://img.cust.com/uploads/t/1/logo.png`，
+且平台对象 `p/...` 不误换。
+
+本轮 7 组反向验证按「注入**整套**坏实现 → 指定用例必红 → 还原 → 复绿 →
+sha256 零漂移」执行，覆盖：恒 false 改回 / 公开 GET 漏接 origin /
+后台出口误用租户 origin / `ResolveRefForTenant` 退化成无差别拼域名 /
+`public/settings` 无 companyId 也回传 / 前端提示恒 warning /
+`assetUrl` 不再原样返回绝对 URL。**7/7 注入必红、7/7 还原复绿、sha256 零漂移**。
+
+### 六、三条「坑」留档
+
+1. **`publicBaseURLNote` 必须拿「登记值」拼，不能拿 `publicOriginState` 的 `base`**。
+   后者在「未生效」时恒为空串（那是「该不该进出参」的口径），拿它拼文案会得到
+   整段空字符串，超管反而看不到自己登记的是哪个域名、为什么没生效。
+   两套文案也要分开：已生效还写「出参侧尚未接入」就是新一轮误导。
+2. **`loadTenantStorage` 从 `First` 改成 `Limit(1).Find` + `RowsAffected==0`**。
+   gorm `First` 查不到行会打 `record not found` 错误日志；公开 GET 每次给
+   「没配自有桶」的企业查一次，会把它刷成满屏假错误。
+3. **签名一改，抓取型守门自己先失效**。`ResolveRefs(o Origin)` 让
+   `inventory_guard_test.go` 的旧正则 `ResolveRefs\(\)` 一条也抓不到 →
+   守门静默全绿。修成 `^func \((\w+) \*(\w+)\) ResolveRefs\(` + 剥整行注释，
+   并保留「至少 7 个模型」读数兜底。这是第 9 条老坑的又一次实例。
+
+### 七、门禁（串行，不并行）
+
+`gofmt -l`（本轮 17 个 Go 文件）**0 输出**（全 backend 仍有 12 个既有格式债文件，未动）·
+`golangci-lint v2.15.0` **0 issues** · `go test ./...` 全绿 ·
+`vue-tsc --noEmit` 0 · 全量 Vitest **98 文件 / 1650 测试全绿**（含新增小程序
+`assetUrl` 用例）· `eslint .` 0 · `vite build --outDir dist-check-r69` 成功 ·
+`bash tools/nginx-check/run.sh` **113 项通过 0 失败** · `git diff --check` 干净。
+
+`vue-tsc` 抓到并修掉本轮 1 处真实类型错误：`tenantStorage.spec.ts` 把说明文案
+传给了 `.toBeGreaterThanOrEqual(8, msg)`，Vitest 运行时**忽略多余参数所以单测全绿**，
+但 TypeScript 报 `TS2554: Expected 1 arguments, but got 2`。改成项目既有的
+`expect(value, 'msg')` 写法（见 `vite/ep-resolver.spec.ts:200`）。这是
+「单测全绿不等于类型检查通过」的又一次实例。
+
+小程序 `tsc --noEmit -p miniprogram/tsconfig.json` 仍报既有的
+`Cannot find name 'wx' / 'App' / 'Page'`：`miniprogram` 保持零依赖、没有微信官方
+typings，不是本轮门禁项；小程序纯逻辑测试由全量 Vitest 覆盖（`vitest.config.ts`
+include `../miniprogram/tests/**/*.spec.ts`）。
+
+### 八、边界与下一步
+
+- **仍是零行为变更**：`TENANT_STORAGE_ROUTE` 默认 off，本轮没翻；
+  翻之前必须确认接入层 cache key 含租户维度、客户域名证书与
+  `/uploads/t/<企业id>/` 回源规则、以及 R1-b 的「谁 Purge 租户自有边缘」。
+- P4 剩余：`key_id` 轮换、配额口径、解约后清理策略。
+  「出参侧按租户选 origin」与「`public_base_url` / `public_read` 配置面」均已闭环。
+- `driver=oss` 源、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名仍显式拒绝；
+  非云厂商桶的 TLS/SNI、CDN、CORS、跨区一致性仍只有有限证据。
+- `gofmt -l` 的既有格式债文件未动，仍需单独一次纯格式提交。

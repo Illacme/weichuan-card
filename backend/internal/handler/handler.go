@@ -123,12 +123,15 @@ func New(db *gorm.DB) *gin.Engine {
 		// 所以可以交给边缘短缓存：访客打开名片要 4 个接口并发，每次回源都要付一次
 		// 跨境往返；缓存 60 秒能把「同一个员工的名片被反复打开」这部分回源全挡掉。
 		// 停用 / 不存在两支（code=1/2）**不设头**——错误响应不能被缓存。
-		// 出参侧资源引用解析（多租户自有存储 P0b）：现行数据（云绝对 URL / 本地
-		// /uploads/ 相对路径）经 ResolveRefs 零行为变更；将来裸键 / 前缀键会自动
-		// 补回 /uploads/。必须在发 60s 缓存头之前完成，否则边缘会缓存旧形态。
-		e.ResolveRefs()
-		ci.ResolveRefs()
-		cp.ResolveRefs()
+		// 出参侧按租户选 origin（第六十九轮）：/api/card 只按 staffId 定位，
+		// 租户必须取自员工归属 e.CompanyID —— 绝不能读 ?companyId=，那是别的
+		// 接口的参数、访客可以随手改，读了就是跨租户串号。平台对象（p/）与
+		// 历史无前缀裸键仍走平台入口，见 storage.ResolveRefForTenant。
+		// 必须在发 60s 缓存头之前完成，否则边缘会缓存旧形态。
+		origin := publicOriginFor(db, e.CompanyID)
+		e.ResolveRefs(origin)
+		ci.ResolveRefs(origin)
+		cp.ResolveRefs(origin)
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "employee": e, "company": ci, "profile": cp})
 	})
@@ -140,6 +143,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		var comp model.Company
 		if db.First(&comp, "id = ?", cid).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
@@ -149,7 +154,7 @@ func New(db *gorm.DB) *gin.Engine {
 		db.First(&ci, "company_id = ?", cid)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"id": comp.ID, "name": comp.Name, "status": comp.Status,
-			"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo),
+			"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo, origin),
 		}})
 	})
 
@@ -175,6 +180,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		page := atoiDefault(c.Query("page"), 1)
 		// size 缺省取 MaxTeamList(300)：改造前这个接口一次最多给 300，
 		// 老版本小程序不带参数时行为保持不变；新端固定传 size=60 做滚动加载。
@@ -195,7 +202,7 @@ func New(db *gorm.DB) *gin.Engine {
 				"staffId": e.StaffID,
 				"name":    e.Name,
 				"title":   e.Title,
-				"avatar":  model.ResolveResourceRef(e.Avatar),
+				"avatar":  model.ResolveResourceRef(e.Avatar, origin),
 			})
 		}
 		// 企业名 / LOGO 一起下发：名片墙顶部要画公司抬头，分两次请求会让首屏
@@ -217,7 +224,7 @@ func New(db *gorm.DB) *gin.Engine {
 			"code": 0,
 			"company": gin.H{
 				"id": cid, "fullName": ci.FullName,
-				"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo),
+				"shortName": ci.ShortName, "logo": model.ResolveResourceRef(ci.Logo, origin),
 			},
 			"entry": gin.H{"mode": entryMode, "staffId": entryStaffID},
 			"data":  data, "total": total,
@@ -236,6 +243,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		cats, featured, err := repository.GetAchievements(db, cid)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
@@ -244,10 +253,10 @@ func New(db *gorm.DB) *gin.Engine {
 		// 出参侧资源引用解析（多租户自有存储 P0b）：category.icon / projectCase.cover
 		// 经 ResolveRefs 零行为变更；必须在发 60s 缓存头之前完成。
 		for i := range cats {
-			cats[i].ResolveRefs()
+			cats[i].ResolveRefs(origin)
 		}
 		for i := range featured {
-			featured[i].ResolveRefs()
+			featured[i].ResolveRefs(origin)
 		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "categories": cats, "featured": featured})
@@ -259,6 +268,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		catID, _ := strconv.ParseInt(c.Query("categoryId"), 10, 64)
 		// ?limit= 只做上限保护（缺省与上限见 repository.MaxProjectsList），端上无分页 UI
 		limit := limitParam(c, repository.MaxProjectsList, repository.MaxProjectsList)
@@ -270,7 +281,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 出参侧资源引用解析（多租户自有存储 P0b）：projectCase.cover 零行为变更；
 		// 必须在发 60s 缓存头之前完成。
 		for i := range ps {
-			ps[i].ResolveRefs()
+			ps[i].ResolveRefs(origin)
 		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ps})
@@ -282,6 +293,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		p, err := repository.GetProject(db, cid, id)
 		if err != nil {
@@ -294,12 +307,12 @@ func New(db *gorm.DB) *gin.Engine {
 		}
 		// 出参侧资源引用解析（多租户自有存储）：cover 与 album 各元素零行为变更。
 		// 此接口刻意不设 Cache-Control（见上方注释），故无需考虑缓存时序。
-		album = model.ResolveResourceRefs(album)
+		album = model.ResolveResourceRefs(album, origin)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"id":           p.ID,
 			"name":         p.Name,
 			"summary":      p.Summary,
-			"cover":        model.ResolveResourceRef(p.Cover),
+			"cover":        model.ResolveResourceRef(p.Cover, origin),
 			"detail":       p.Detail,
 			"album":        album,
 			"categoryId":   p.CategoryID,
@@ -319,6 +332,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		limit := limitParam(c, repository.MaxServicesList, repository.MaxServicesList)
 		s, err := repository.ListServices(db, cid, limit)
 		if err != nil {
@@ -328,7 +343,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 出参侧资源引用解析（多租户自有存储 P0b）：bizService.icon 零行为变更；
 		// 必须在发 60s 缓存头之前完成。
 		for i := range s {
-			s[i].ResolveRefs()
+			s[i].ResolveRefs(origin)
 		}
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
@@ -340,6 +355,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		s, err := repository.GetService(db, cid, id)
 		if err != nil {
@@ -348,7 +365,7 @@ func New(db *gorm.DB) *gin.Engine {
 		}
 		// 出参侧资源引用解析（多租户自有存储 P0b）：bizService.icon 零行为变更；
 		// 此接口刻意不设 Cache-Control，故无需考虑缓存时序。
-		s.ResolveRefs()
+		s.ResolveRefs(origin)
 		// 内嵌保留 BizService 的全部字段与 json 名，只额外补一个 timeMode；
 		// 改成显式 gin.H 会漏字段（富文本、图标、排序都可能被写丢）。
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": struct {
@@ -370,6 +387,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if !ok {
 			return
 		}
+		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
+		origin := publicOriginFor(db, cid)
 		order := []string{"achievement", "service"}
 		var bgImage string
 		var bgMask int
@@ -388,7 +407,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 可以交给边缘短缓存。这条是名片页 4 个并发请求之一，且每次切风格都会重新取。
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{
-			"code": 0, "order": order, "bgImage": model.ResolveResourceRef(bgImage), "bgMask": bgMask,
+			"code": 0, "order": order, "bgImage": model.ResolveResourceRef(bgImage, origin), "bgMask": bgMask,
 			"styleId": styleID, "brandColorId": brandColorID,
 		})
 	})

@@ -58,7 +58,26 @@ func RegisterSettings(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				data["login_brand_name"] = comp.ShortName
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": data})
+		resp := gin.H{"code": 0, "data": data}
+
+		// 第六十九轮：按租户回报「客户自有访问域名此刻是否真的改变了出参 URL」。
+		//
+		// 这一接口**不下发任何资源 URL**（setting.Public 只回非敏感配置字符串），
+		// 所以这些字段是给运维 curl / 取证用的诊断态，不参与端上 URL 拼接：
+		// 小程序 assetUrl 对后端返回的绝对 URL 原样返回，相对 /uploads/ 才拼
+		// baseUrl()，两者都不需要额外下发域名。
+		//
+		// **只有显式 ?companyId=<正数> 才回传**。冷启动的 fetchPublicSettings 不带
+		// 租户参数（此时 companyId 可能还来自尚未到达的扫码 / 分享粘滞值）；
+		// 若在没有 companyId 时按缺省企业下发，所有访客都会拿到 1 号企业的域名，
+		// 那就是跨租户串号。宁可不回传，也不猜。
+		if q, err := strconv.ParseInt(c.Query("companyId"), 10, 64); err == nil && q > 0 {
+			base, active, reason := publicOriginStateFor(db, q)
+			resp["assetOrigin"] = base
+			resp["assetOriginActive"] = active
+			resp["assetOriginNote"] = reason
+		}
+		c.JSON(http.StatusOK, resp)
 	})
 
 	plat := middleware.PlatformAdminMiddleware(db)

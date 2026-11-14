@@ -63,9 +63,10 @@ type Config struct {
 	// PublicOrigin 是客户自有访问域名（public_base_url）的归一化值。
 	//
 	// 它属于**访客侧 / 出参侧**，回答「端上 URL 以哪个域名开头」；与回源侧的
-	// endpoint / host_header 正交。目前只登记、不参与实例构造：真正生效的落点是
-	// storage.ResolveRef(raw, origin) 按租户选 origin，尚未接入
-	//（见 handler.publicBaseURLActive，出参里恒回报 false）。
+	// endpoint / host_header 正交。它**不参与实例构造**（上传返回基址恒为 BaseURL），
+	// build 只校验它的格式；真正按租户选 origin 的判定在
+	// handler.publicOriginState + storage.ResolveRefForTenant（第六十九轮接入），
+	// 读的是同一张配置行。本包把值带进 Config 是为了让上传侧与出参侧对账时不缺字段。
 	PublicOrigin string
 	// PublicRead 桶是否公开读。第一阶段只支持公开读桶：私有桶需要预签名链路，
 	// 出参契约（存裸键还是存 URL）会跟着变，本期没做。

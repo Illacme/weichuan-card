@@ -69,7 +69,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		// 后台出参也过解析（与公开接口同一口径）：库里是裸键时，编辑页的 logo 预览
 		// 需要一个可访问的 URL。ci 是本次查询的局部变量，解析不会写回库。
-		ci.ResolveRefs()
+		//
+		// 本文件所有出口都传 model.PlatformOrigin()：它们是 /api/admin/*，跑在平台
+		// 域名下，/uploads/ 同源可达。客户自有域名只服务访客侧出参；让后台预览
+		// 也依赖客户的证书 / 回源规则，等于平白多一条「客户没配好、运营先看不到图」
+		// 的故障路径。公开 GET 的接线在 handler.go，两边不要混。
+		ci.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ci})
 	})
 	r.PUT("/api/admin/company-info", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -117,7 +122,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 已经落库了，这里解析的是**副本**：直接改 ci 再 Save 会把 /uploads/t/5/x.jpg
 		// 写回库，形态从裸键退回历史形态且无任何报错（见 model/refs.go 的落地纪律）。
 		resp := ci
-		resp.ResolveRefs()
+		resp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
@@ -135,7 +140,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			cp.VideoSource = model.VideoSourceNone
 		}
 		// cover / videoUrl / videoBackupUrl 三处都可能来自上传，后台预览要用可访问 URL
-		cp.ResolveRefs()
+		cp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
 	})
 	r.PUT("/api/admin/company-profile", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -257,7 +262,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		resp := cp
-		resp.ResolveRefs()
+		resp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
@@ -266,7 +271,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		var list []model.AchievementCategory
 		db.Where("company_id = ?", targetCompanyID(c)).Order("sort asc").Find(&list)
 		for i := range list {
-			list[i].ResolveRefs()
+			list[i].ResolveRefs(model.PlatformOrigin())
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": list})
 	})
@@ -290,7 +295,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		resp := req
-		resp.ResolveRefs()
+		resp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 	registerSortRoute(r, db, "/api/admin/categories/sort", &model.AchievementCategory{}, targetCompanyID)
@@ -441,7 +446,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		var list []model.BizService
 		db.Where("company_id = ?", targetCompanyID(c)).Order("sort asc").Find(&list)
 		for i := range list {
-			list[i].ResolveRefs()
+			list[i].ResolveRefs(model.PlatformOrigin())
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": list})
 	})
@@ -469,7 +474,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		resp := s
-		resp.ResolveRefs()
+		resp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 	registerSortRoute(r, db, "/api/admin/services/sort", &model.BizService{}, targetCompanyID)
@@ -862,8 +867,8 @@ func projectToMap(p model.ProjectCase) gin.H {
 	// 后台出参与公开 /api/projects/:id 同一口径：库里是裸键时也要补回 /uploads/ 前缀，
 	// 否则运营在编辑页看到封面/图集破图，而公开页正常——这种「一半好一半坏」最容易被
 	// 当成前端 bug 排查半天。p 是入参的值副本，解析不会影响 DB。
-	p.ResolveRefs()
-	album = model.ResolveResourceRefs(album)
+	p.ResolveRefs(model.PlatformOrigin())
+	album = model.ResolveResourceRefs(album, model.PlatformOrigin())
 	return gin.H{
 		"id":             p.ID,
 		"categoryId":     p.CategoryID,

@@ -685,12 +685,28 @@ type Resolver interface {
 
 ### 3.8 与 P1 边缘缓存的关系
 
-- 五条公开只读接口的 60 秒缓存（`cdnCache(c, 60)`）应在 `Resolve` **之后**发出，
-  响应里是平台统一入口 URL；
+- 五条公开只读接口的 60 秒缓存（`cdnCache(c, 60)`）应在 `Resolve` **之后**发出；
+  第六十九轮之前响应里都是平台统一入口 URL；
 - `staffId → company_id` 是确定映射，且 `staffId` 进 cache key ⇒ 不会跨租户串号；
-- **但将来开放客户自有域名时，cache key 必须含 `Host`**，否则同一 `staffId` 在 A / B
-  两个域名下会复用同一份响应 → 跨租户串图。这条写进 P4 守门；
 - 改动后必须重跑 CF 行为验收：五条路径 + 错误分支 `BYPASS` + 查询串不折叠。
+
+> **第六十九轮订正（2026-11-14）**：初稿还有一条「开放客户自有域名时，cache key
+> 必须含 `Host`，否则同一 `staffId` 在 A / B 两个域名下会复用同一份响应 → 串图」。
+> 按落地实现**依据和结论都要改**：出参 origin 只由 `company_id` 决定
+> （`handler.publicOriginState` 读的是配置行，**不读 `c.Request.Host`**），
+> 同一家企业在任何 Host 下拿到的响应字节完全相同，按 `Host` 分片只会把缓存打碎，
+> 并不解决串号。
+>
+> 真正的风险是**响应本身按租户变了**：9 条公开 GET 里 5 条带 60 秒边缘缓存，
+> A 企业（有客户域名）与 B 企业（平台入口）走同一条路由，现在会返回不同域名的绝对 URL。
+> 若接入层忽略 query string 折叠缓存，A 的客户域名响应会被发给 B 的访客 →
+> 图全裂，且只在切换后那 60 秒出现，事后极难复现。
+>
+> 因此硬要求是 **cache key 含租户维度**（小程序这批 GET 都带 `?companyId=`；
+> `/api/card` 按全局唯一的 `staffId` 定位），且**绝不折叠 query string**；
+> `Host` 只在将来「同一 URL 按 Host 返回不同内容」时才需要入键。
+> 这是翻 `TENANT_STORAGE_ROUTE` 之前必须确认的接入层项，已同步进
+> `docs/tenant-storage-url-boundaries.md` §3.1 与 R6。
 
 ---
 
@@ -773,9 +789,10 @@ type Resolver interface {
 > **仍未做**：`driver=oss` 源显式拒绝；虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名时
 > 显式拒绝（回填不经 nginx，改不了 Host/SNI）；非云厂商桶，TLS/SNI、CDN、CORS
 > 仍只有有限证据；平台桶走 `BucketLookupAuto`，只在 IP 端点上实测过。
-> P4 剩余（**以本节末尾第六十八轮的订正为准**）：`key_id` 轮换、出参侧按租户选 origin、
-> 配额口径、解约后清理策略。`public_base_url` / `public_read` 的配置面与运行时硬消费
-> 已在第六十八轮闭环；「审计前端标签」经复核早在第六十轮就闭环，从待办里划掉。
+> P4 剩余（**以本节末尾第六十九轮的订正为准**）：`key_id` 轮换、配额口径、
+> 解约后清理策略。`public_base_url` / `public_read` 的配置面与运行时硬消费已在
+> 第六十八轮闭环，**出参侧按租户选 origin 已在第六十九轮闭环**；
+> 「审计前端标签」经复核早在第六十轮就闭环，从待办里划掉。
 > `TENANT_STORAGE_ROUTE` 默认值**仍是 off**：代码侧前置已齐，
 > 但翻它属于运营动作（多租户并发 / 配额 / CDN Purge 归属 / 灰度批次），需单独决策，
 > 不在本轮自动发生。
@@ -827,6 +844,60 @@ type Resolver interface {
 > **仍未做**：`key_id` 轮换、**出参侧按租户选 origin（自有域名真正承载流量）**、配额口径、
 > 解约后清理策略。`driver=oss` 源与「虚拟主机风格且 hostHeader 与 endpoint 不同域名」
 > 仍显式拒绝。`TENANT_STORAGE_ROUTE` 默认值**仍是 off**，本轮没有翻。
+>
+> （以上是第六十八轮当时口径，「仍未做」里的出参侧已在第六十九轮闭环。）
+
+> ✅ **第六十九轮（2026-11-14）：出参侧按租户选 origin——`public_base_url` 真正承载流量**
+>
+> 上一轮写死的 `const publicBaseURLActive = false` 已删除。用户本轮选的方向是
+> 「让 `company_id → public_base_url` 真正进出参链」，而不是各 handler 各拼域名。
+>
+> **五个不能退的决定**：
+> 1. **显式 `model.Origin`**。`type Origin struct { Base string; CompanyID int64 }`
+>    + `PlatformOrigin()`；`ResolveResourceRef(raw, o)` / `ResolveResourceRefs(list, o)` /
+>    六个模型 `ResolveRefs(o)` 全部显式传参。出参点 26 处，隐式 context 取值
+>    漏接一处就是跨租户串号；显式传参漏改一处直接编译不过。
+> 2. **按对象归属分流**。`storage.ResolveRefForTenant(raw, origin, companyID)`
+>    只给 `ParseRef` 判 `ScopeTenant` 且 `CompanyID == companyID` 的新键用客户域名；
+>    `p/` 平台对象（素材库 / 小程序码 / 下架占位图 / 访客未登录头像）、历史无前缀裸键、
+>    `/uploads/` 老相对路径、合法外链、别家租户 `t/9/...` 全走平台入口。
+>    客户域名回源只覆盖 `/uploads/t/<企业id>/`，无差别拼域名会让切量当天全站裂图。
+> 3. **单点判定 + 生效滞后于对象真进客户桶**。`handler/publicorigin.go` 的
+>    `publicOriginState(row)` 复用 `tenantStorageActive(row)`（开关 on / enabled /
+>    driver 非 local / 凭据完整 / `publicRead` / 域名合法），后台 `publicBaseUrlActive`、
+>    9 条公开 GET 的 origin、`/api/public/settings` 诊断态全部同源，
+>    结构上杜绝「后台绿勾、访客裂图」。刻意不缓存，PUT 改配置立刻实况生效；
+>    读库失败打 `[STORAGE][WARN]` 并退回平台入口（平台 nginx 仍有该租户回源，不裂图）。
+> 4. **诊断出口不猜租户**。`GET /api/public/settings?companyId=5` 才回传根级
+>    `assetOrigin` / `assetOriginActive` / `assetOriginNote`；冷启动不带参数，
+>    无条件下发会按缺省企业串号。这三个字段是运维诊断，不参与端上 URL 拼接。
+> 5. **后台出口一律平台零值**。`content.go` 十处 `ResolveRefs` 与员工导出传
+>    `model.PlatformOrigin()`；`/api/card` 只按 `staffId` 定位、租户取 `e.CompanyID`，
+>    绝不读访客可改的 `?companyId=`；小程序「我的」页与公开 GET 同口径。
+>    9 条公开 GET 的解析仍全部在 `cdnCache(c, 60)` **之前**完成。
+>
+> **端上契约零改动**：小程序 `assetUrl` 对 `^https?://` 原样返回，后端从相对
+> `/uploads/...` 换成绝对客户域名 URL 无需改端上代码；新增
+> `miniprogram/tests/public_origin_asset_url.spec.ts` 直接 import 真实
+> `../utils/request`，不用 mock（mock 只写「我以为的行为」，是假绿）。
+>
+> **cache key 判据订正见 §3.8**：不是 `Host`，是租户维度 `companyId` / `staffId`
+> 且绝不折叠 query string；翻开关前必须在接入层确认。
+>
+> **守门**：`TestPublicOriginWiringGate` 按 `r.GET("/api/...")` 路由块逐个对账
+> （公开必须含 `publicOriginFor(db, `、不许 `PlatformOrigin()`；后台反过来）
+> +「至少 9 条」读数兜底；`handler/publicorigin_test.go` 真发请求证明
+> `TENANT_STORAGE_ROUTE=off → /uploads/t/1/logo.png`、条件齐全 →
+> `https://img.cust.com/uploads/t/1/logo.png`，且 `p/...` 平台对象不误换。
+> 7 组反向验证全部「注入整套坏实现 → 必红 → 还原复绿 → sha256 零漂移」。
+> 取证细节见 `docs/commercial-readiness.md` 第六十九轮。
+>
+> **本轮边界**：仍是零行为变更——`TENANT_STORAGE_ROUTE` 默认 off 时每家都返回
+> `model.PlatformOrigin()`，出参与第六十八轮逐字节一致。**翻开关前**必须确认
+> 接入层 cache key 含租户维度、客户域名证书与 `/uploads/t/<企业id>/` 回源规则、
+> 以及 R1-b 的「谁 Purge 租户自有边缘」。
+> **仍未做**：`key_id` 轮换、配额口径、解约后清理策略；
+> `driver=oss` 源与「虚拟主机风格且 hostHeader 与 endpoint 不同域名」仍显式拒绝。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→
@@ -848,6 +919,11 @@ type Resolver interface {
 8. 以企业管理员身份访问配置页被路由守卫挡下、菜单里没有入口；直接拿接口地址带该企业管理员
    令牌硬调 CRUD / 自检 / 启停 / 搬迁，全部 `code=403`，配置表零变更；
 9. 以平台超管身份替某企业改配置，审计里能查到操作者与目标 `company_id`，且不带密钥原文。
+10. 该企业自有域名生效后，只有 `t/<本企业id>/...` 的对象 URL 换成客户域名；
+    `p/` 平台对象、历史无前缀裸键、合法外链、别家租户键仍走平台统一入口；
+    `/api/admin/*` 后台预览不受客户证书 / 回源规则影响；
+    不带 `companyId` 的 `/api/public/settings` 不回传任何 `assetOrigin*` 诊断字段；
+    接入层缓存不得折叠 query string（否则 A 企业的域名响应会发给 B 企业访客）。
 
 ---
 
@@ -860,7 +936,7 @@ type Resolver interface {
 | R3 | URL 契约双轨：小程序 `assetUrl` 绝对原样返回、管理端 `thumbnailURL` 按 URL 末位插 `_thumb` | `Resolve` 统一出参；`_thumb` 派生规则前后端对账守门 |
 | R4 | 平台级资源被 JWT `companyId` 带跑 | scope 显式枚举，四类平台资源单测逐个钉住 |
 | R5 | 解约 / 换桶后对象残留在平台桶，或搬迁把旧 URL 洗没了 | P3 保留 `old_url` 记录 + rollback；对象只复制不删除 |
-| R6 | CF Purge 按租户误伤 / 漏清；P1 的 60 秒边缘缓存跨租户串号 | 刷新带 `companyID`；开放自有域名前把 `Host` 纳入 cache key 写进守门 |
+| R6 | CF Purge 按租户误伤 / 漏清；P1 的 60 秒边缘缓存跨租户串号 | 刷新带 `companyID`；**第六十九轮订正**：按租户选 origin 后响应按企业变化，cache key 必须含 `companyId`（`/api/card` 为全局唯一 `staffId`）且**绝不折叠 query string**，`Host` 不是判据（origin 只看 `company_id`，见 §3.8）；R1-b「谁 Purge 租户自有边缘」仍未解决 |
 | R7 | 密钥与 PII 绑定、将来无法独立轮换 | 推荐独立 `STORAGE_ENC_KEY` + `key_id`；若复用必须写进评审结论 |
 | R8 | 新 `RegisterX` 漏改 devserver / `handler_test.go` → 静默 404 | 三处同步清单 + 源码级守门 |
 | **R9** | **权限误放开**：新配置接口照抄 `RegisterStorage` 的 `AuthMiddleware(db,"admin")`，企业管理员就能改客户云凭据；或前端只藏菜单、后端没拦 | 用户已拍板「只有平台超管代填」（§1.1）；P1 加源码级守门 + 企业管理员 403 集成测试，前端 `platformOnly` 只当体验层 |

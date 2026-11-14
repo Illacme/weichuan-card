@@ -21,7 +21,7 @@ import (
 //  1. 写入侧 API（NormalizeRef / ObjectKeyFor / ParseRef / IsNormalizedRef）只允许在
 //     sanctioned 写侧 / 出参侧文件出现，防止有人把键生成散落到后台接口；
 //  2. storage.ResolveRef 只允许在 model/refs.go 内调用（集中口径，handler 走 model 封装）；
-//  3. model.ResolveResourceRef / .ResolveRefs() 只许在出参侧 sanctioned 文件调用，
+//  3. model.ResolveResourceRef / .ResolveRefs(...) 只许在出参侧 sanctioned 文件调用，
 //     防止有人顺手把解析接到写入路径（那会让解析值被 Save 回库，形态静默退回历史形态）；
 //  4. album 这类「模型方法解不开、只能在展开点手工解析」的字段，展开点必须跟着解析
 //     （见 TestAlbumExpansionSitesResolved）。
@@ -57,7 +57,9 @@ func TestRefWiringGate(t *testing.T) {
 
 	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|NormalizeOrKeep|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)
 	resolveRefAPI := regexp.MustCompile(`storage\.ResolveRef\s*\(`)
-	resolveResourceRefAPI := regexp.MustCompile(`model\.ResolveResourceRef\s*\(|\.ResolveRefs\(\)`)
+	// 第六十九轮起 ResolveRefs / ResolveResourceRef 都带 origin 参数，
+	// 正则只锚到左括号；否则「一个参数都没抓到 → 全部通过」比报错更坏。
+	resolveResourceRefAPI := regexp.MustCompile(`model\.ResolveResourceRef\s*\(|\.ResolveRefs\s*\(`)
 
 	var writeOffenders, resolveRefOffenders, resolveOffenders []string
 	// 「抓取型守门」必须自带「至少抓到 N 个」兜底：正则一旦写错、或剥注释剥过了头，
@@ -192,6 +194,8 @@ func TestP0aRefIsPureStdlibOnly(t *testing.T) {
 		"type Scope string", "type Ref struct",
 		"func ObjectKeyFor(", "func ParseRef(", "func IsNormalizedRef(",
 		"func NormalizeRef(", "func ResolveRef(",
+		// 第六十九轮：按租户选 origin 的出参解析，也必须是纯函数（只读 raw/origin/cid）。
+		"func ResolveRefForTenant(",
 		// 第五十九轮：写入侧宽松归一的闸门。它同样必须是纯函数——
 		// 一旦它开始读 env / 写日志，handler 那条「回滚开关只有一个」的承诺就散了。
 		"func NormalizeOrKeep(",

@@ -117,7 +117,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `bgMask` | `int` 蒙层浓度（`models.go:270`） |
 | `bgId` | 内置背景 id（`models.go:446`），值是 `poster-*` / `c-*` 标识 |
 | `files` | 存储用量累计文件数（`model/storage_usage.go:26`），`int64` |
-| `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第六十八轮订正：此前「第一阶段恒为空、连回显都还没有」已不成立——现在它会回显 `publicBaseUrl`，并附 `publicBaseUrlActive=false` / `publicBaseUrlNote` 如实说明尚未承载流量；但**仍没有**作为 origin 传进 `ResolveRef`，所以「解析器的输入、不是输出」这一定位与白名单理由都不变 |
+| `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第六十八轮订正：此前「第一阶段恒为空、连回显都还没有」已不成立——现在它会回显 `publicBaseUrl`，并附 `publicBaseUrlActive=false` / `publicBaseUrlNote` 如实说明实况。**第六十九轮再订正**：出参侧按租户选 origin 已接入，`public_base_url` 经 `publicOriginState` 判定后成为 `model.Origin.Base`，确实作为 origin 进了 `storage.ResolveRefForTenant`；但它在配置接口里**仍是原样回显的输入**，不是资源字段的输出，白名单理由与「不许对它调 `ResolveRef`」的边界都不变 |
 
 > `publicBaseUrl` 是这五条里唯一「长得像资源字段、语义却是解析器输入」的一条。
 > 将来若真有人把它接进 `ResolveRefs`，症状不是裂图，而是**配置页显示的基址被悄悄改形**，
@@ -141,13 +141,22 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `/api/services/:id` | 内嵌 `model.BizService` + `timeMode` | ❌ |
 | `/api/home-layout` | 根级 `bgImage` | ✅ `:361` |
 
-**时序约束**：带缓存的 5 条，`ResolveRef` 必须在 `cdnCache(c, 60)` **之前**完成，
-响应里是统一入口 URL；错误分支仍不许带缓存头（`public_list_test.go` 已钉）。
-将来开放客户自有域名时 cache key 必须含 `Host`（设计稿 §3.8）。
+**时序约束**：带缓存的 5 条，解析必须在 `cdnCache(c, 60)` **之前**完成；
+错误分支仍不许带缓存头（`public_list_test.go` 已钉）。
+**第六十九轮起响应不再是「统一入口 URL」**：按租户选 origin 后，同一条路由对不同企业
+可能返回不同域名的绝对 URL。缓存键必须能区分租户——小程序对这批 GET 都会带
+`?companyId=`，`/api/card` 按 `staffId` 定位（staff_id 全局唯一）。
+若 CDN 配成忽略 query string 缓存，A 企业的客户域名响应会被发给 B 企业访客；
+这是翻 `TENANT_STORAGE_ROUTE` 之前必须确认的接入层项（设计稿 §3.8）。
 
-> **接入状态（2026-11-13 实装）**：上表 9 条路由**已全部接入** `model/refs.go` 的出参侧解析
-> （整模型路由调 `ResolveRefs()`、内联 `gin.H` 路由调 `model.ResolveResourceRef`），
-> 对现行生产数据零行为变更。下一阶段写键后，这里无需再动——`ResolveRef` 会自动补前缀。
+> **接入状态（2026-11-13 实装 / 2026-11-14 第六十九轮升级）**：上表 9 条路由**已全部接入**
+> `model/refs.go` 的出参侧解析（整模型路由调 `ResolveRefs(o)`、内联 `gin.H` 路由调
+> `model.ResolveResourceRef(raw, o)`），对现行生产数据零行为变更。
+> 第六十九轮把 `o` 从平台零值升级为按 `company_id` 取的 `model.Origin`：
+> `/api/card` 用 `e.CompanyID`，其余 8 条用 `publicCompanyID(c, db)`；
+> 判定单点在 `handler/publicorigin.go`。`TENANT_STORAGE_ROUTE` 默认 off 时，
+> 每一家的 `o` 都是平台零值，出参与第六十八轮完全一致。
+> 接线守门见 `TestPublicOriginWiringGate`（按路由块逐个对账 + 至少 9 条读数兜底）。
 
 ### 3.2 其它出参出口
 
@@ -159,6 +168,19 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | R13 | `handler/content.go:239,397`（列表）/ `:255,418`（POST 回显） | `"data": list` / `"data": resp` | 后台分类 / 服务，**第五十七轮已接**（`for i := range list { list[i].ResolveRefs() }`） |
 | R14 | `handler/apply.go:109`（`/api/employee/me`）、`:842`（员工导出） | `"data": e` | 员工模型（含 `avatar`），**第五十七轮已接** |
 | R15 | `handler/settings.go:73` / `handler/wechat_admin.go:91` | `"data": items` / `rows` | **核查后判定无需接**（见下） |
+
+**第六十九轮：出参 origin 在 §3.1 与 §3.2 之间刻意不同**（不是漏点）：
+
+- §3.1 的 9 条公开 GET，以及 R14 的 `/api/employee/me`（小程序「我的」页，端上消费），
+  传 `publicOriginFor(db, cid)`；
+- §3.2 里所有 `/api/admin/*` 后台出口（含员工导出、`projectToMap` 的 album 展开），
+  一律传 `model.PlatformOrigin()`。管理端跑在平台域名下、`/uploads/` 同源可达；
+  让后台预览依赖客户证书 / 回源规则只会多一条无谓的裂图路径。
+
+`TestPublicOriginWiringGate` 分别钉住这两边。另：`/api/public/settings` **不下发任何
+资源 URL**，因此不在本表内；第六十九轮起它在显式 `?companyId=` 时回传
+`assetOrigin` / `assetOriginActive` / `assetOriginNote` 三个**诊断**字段，
+供运维核对某家此刻的实况，不参与端上 URL 拼接（裸拉不回传，避免按缺省企业串号）。
 
 **R15 为什么不需要接**（这属于判断，不是漏点，所以写清依据）：
 

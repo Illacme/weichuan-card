@@ -65,16 +65,19 @@
           只填 <b>纯域名</b>（http(s)://host[:port]），不带路径 / 查询。
           它是<b>访客侧 origin</b>，与上面的「Host 头」（回源侧 Host / TLS SNI）是两件事，互不影响；
           客户自有域名不要填进 Host 头，那里只照桶方控制台抄。
+          填了<b>不等于立刻生效</b>：只有对象真的写进客户桶、桶公开读、域名合法时，
+          公开出参才会换成这个域名（看下方提示）。
         </div>
-        <!-- 「填了以为生效」比「不填」更坏：只要表单里有值而后端回报未生效，
-             当场把这句话摆出来，不等保存后才发现。 -->
+        <!-- 生效 / 未生效两套提示，都由后端 publicBaseUrlActive 实况驱动。
+             第六十九轮起它真的会承载流量：再写死一句「尚未接入」是误导，
+             而在未生效时写成 success 则是最坏的那种误导。 -->
         <el-alert
-          v-if="publicBaseUrlPending"
-          type="warning"
+          v-if="publicBaseUrlNotice"
+          :type="publicBaseUrlNotice.type"
           :closable="false"
           show-icon
-          title="已登记，但当前不会改变出参 URL"
-          :description="cfg?.publicBaseUrlNote || '出参侧按租户选 origin 尚未接入：对象 URL 仍走平台统一入口。'"
+          :title="publicBaseUrlNotice.title"
+          :description="publicBaseUrlNotice.description"
           style="margin-top: 8px"
         />
       </el-form-item>
@@ -215,7 +218,7 @@ const alertView = computed(() => {
     return {
       type: 'success' as const,
       title: '该企业正在使用自有桶',
-      desc: '新上传写入客户桶，出参 URL 形态不变（已登记的自有访问域名当前也不会改变它）；存量对象仍在平台侧。若这里填错，该企业的上传会直接失败，不会退回平台存储。',
+      desc: '新上传写入客户桶；存量对象仍在平台侧（需 P3 回填搬迁）。若这里填错，该企业的上传会直接失败，不会退回平台存储。自有访问域名此刻是否改变了出参 URL，看表单里那一条独立提示（publicBaseUrlActive），两者不是一回事。',
     }
   }
   if (cfg.value?.trafficEnabled) {
@@ -246,12 +249,22 @@ const form = reactive({
   secretKey: '',
 })
 
-// 表单里有值、但后端如实回报「尚未接入」时，当场显示未生效提示。
-// 用 form 而不是 cfg.publicBaseUrl：超管刚敲进去、还没点保存的新值也要被提醒，
+// 自有域名提示两态：已生效（success）/ 已登记但未生效（warning）。
+// 用 form 而不是 cfg.publicBaseUrl：超管刚敲进去、还没点保存的新值也要当场有反馈，
 // 否则提示只在「保存完再打开一次对话框」才出现。
-const publicBaseUrlPending = computed(
-  () => form.publicBaseUrl.trim() !== '' && cfg.value?.publicBaseUrlActive === false
-)
+// 但 description 用的是后端 note（说的是**已保存**那次的实况）——表单里刚敲的值
+// 还没落库，所以已生效的文案也要点明「新值保存后才生效」，不能替用户宣布切换完成。
+const publicBaseUrlNotice = computed(() => {
+  if (form.publicBaseUrl.trim() === '') return null
+  const active = cfg.value?.publicBaseUrlActive === true
+  return {
+    type: (active ? 'success' : 'warning') as 'success' | 'warning',
+    title: active ? '自有域名已生效' : '已登记，但当前不会改变出参 URL',
+    description: cfg.value?.publicBaseUrlNote || (active
+      ? '该企业公开出参里归属自己的对象键已以自有域名开头；表单里的新值保存后才生效。'
+      : '对象 URL 仍走平台统一入口；生效需先满足对象真的写进客户桶（见上方状态）。'),
+  }
+})
 
 const akPlaceholder = computed(() => {
   if (!cfg.value?.accessKeyConfigured) return '未配置，填写 AccessKey'

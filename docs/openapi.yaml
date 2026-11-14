@@ -3297,6 +3297,9 @@ paths:
         命中则 data 额外返回 login_brand_name（该企业 short_name），用于登录页按企业区分显示简称；
         未命中（无参数 / 不匹配 / 企业停用）则不返回该键，前端回落全局 brand_name。
         安全口径：只回传 short_name，绝不泄露企业 ID / 名称 / 管理员等其它字段。
+        第六十九轮：另支持 ?companyId=<正整数>，用于回报该企业自有访问域名**此刻是否
+        真的改变了公开出参 URL**（响应根级的三个 assetOrigin* 诊断字段）。本接口本身
+        不下发任何资源 URL；这些字段供运维 curl / 取证核对，不参与端上 URL 拼接。
       parameters:
         - name: company
           in: query
@@ -3304,10 +3307,22 @@ paths:
           description: 登录页白标码（?company=）。命中 enabled 企业时回传其简称作为登录品牌名
           schema:
             type: string
+        - name: companyId
+          in: query
+          required: false
+          description: >-
+            显式企业 id（正整数）。传入且合法时，响应根级额外返回 assetOrigin /
+            assetOriginActive / assetOriginNote 三个诊断字段；**不传、0、负数或非法值
+            一律不返回**。冷启动的 fetchPublicSettings 不带租户参数，此刻 companyId
+            可能还来自尚未到达的扫码 / 分享粘滞值；若无条件下发就会按缺省企业回传，
+            让所有访客拿到同一家的域名（跨租户串号），所以宁可不回传也不猜。
+          schema:
+            type: integer
+            format: int64
       tags: [设置]
       responses:
         "200":
-          description: code=0，data 为 key→value 映射
+          description: code=0，data 为 key→value 映射；companyId 显式传入时根级另有诊断字段
           content:
             application/json:
               schema:
@@ -3319,6 +3334,23 @@ paths:
                     type: object
                     additionalProperties:
                       type: string
+                  assetOrigin:
+                    type: string
+                    description: >-
+                      仅显式 companyId 时出现。生效时为该企业归一化后的纯 origin
+                      （如 https://img.cust.com），未生效时为空串。这是诊断态：后端公开
+                      GET 下发的资源 URL 已是绝对地址，小程序 assetUrl 对 ^https?://
+                      原样返回，端上不需要拿这个字段去拼相对路径。
+                  assetOriginActive:
+                    type: boolean
+                    description: >-
+                      该企业的自有域名此刻是否真的改变了公开出参 URL。与后台视图的
+                      publicBaseUrlActive 同出 publicOriginState，不会漂移。
+                  assetOriginNote:
+                    type: string
+                    description: >-
+                      未生效原因（可直接给运维看）；生效时为空串。典型原因是
+                      TENANT_STORAGE_ROUTE 未开 / 配置未启用 / 凭据不全 / 私有桶。
 
   /api/admin/settings:
     get:
@@ -5082,12 +5114,16 @@ components:
         publicBaseUrlActive:
           type: boolean
           description: >-
-            该域名此刻是否真的改变了出参 URL。第六十八轮**恒为 false**：
-            出参侧按租户选 origin（ResolveRef 的 origin 参数）尚未接入，
-            本字段目前只做登记 + 校验 + 如实回报。界面不许把它渲染成「已切换」。
+            该域名此刻是否真的改变了公开出参 URL（第六十九轮起按实况回报，不再恒 false）。
+            后端由 publicOriginState 单点判定，需同时满足：域名经 ValidatePublicOrigin
+            合法、本进程开启 TENANT_STORAGE_ROUTE、配置 enabled=true、driver 非 local、
+            凭据完整、publicRead=true——也就是「对象必须真的写进了客户桶」。
+            界面按它切换 success / warning 两套文案，不许写死「尚未接入」或「已生效」。
         publicBaseUrlNote:
           type: string
-          description: publicBaseUrl 非空时给超管看的「为什么没生效 / 生效前还要做什么」；空值时为空串
+          description: >-
+            publicBaseUrl 非空时给超管看的文案：已生效说明 / 未生效原因与下一步动作；
+            空值时为空串。生效与未生效是两套内容，不是同一句话改几个字。
         status:
           type: string
           enum: [unknown, ok, error]
@@ -5139,8 +5175,9 @@ components:
           type: string
           description: >-
             客户自有访问域名，纯 origin（http(s)://host[:port]）。省略 = 保留原值；
-            空串 = 清空；有值 = 服务端归一化后覆盖。目前只登记，不会改变出参 URL
-            （见 TenantStorageConfig.publicBaseUrlActive）。
+            空串 = 清空；有值 = 服务端归一化后覆盖。出参侧按租户选 origin 已接入
+            （第六十九轮），但**填了不等于立刻生效**，条件见
+            TenantStorageConfig.publicBaseUrlActive；界面按实况给两套提示。
         accessKey:
           type: string
           description: 省略 = 保留原值；空串 = 清空；有值 = 覆盖（服务端加密后落库，不接受密文）

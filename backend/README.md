@@ -455,9 +455,22 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   回填侧不拦——凭据在手就能写对象，公开读与否只影响端上能否直接取。
 - `publicBaseUrl` 是客户自有访问域名，只收**纯 origin**（`http(s)://host[:port]`，不带路径 / 查询）。
   三态与凭据一致：不传 = 保留、空串 = 清空、有值 = 归一化后覆盖。
-  **目前只登记，不会改变出参 URL**：出参 `publicBaseUrlActive` 恒为 false，
-  `publicBaseUrlNote` 给出未生效原因与启用前要做的接入层配置。
-  真正生效要等出参侧按 `storage.ResolveRef(raw, origin)` 按租户选 origin，那是下一轮。
+  第六十九轮起**出参侧按租户选 origin 已接入**：`model.ResolveResourceRef(raw, model.Origin)`
+  → `storage.ResolveRefForTenant`。9 条公开 GET 与小程序「我的」页下发的
+  **归属该企业的新形态对象键**（`t/<企业id>/...`）会以它开头；平台对象（`p/` 素材库 /
+  小程序码 / 未登录上传头像）、历史无前缀裸键、别家租户键、合法外链仍走平台统一入口，
+  因为客户域名的回源规则只覆盖 `/uploads/t/<企业id>/`。后台 `/api/admin/*` 出参一律
+  走平台入口：管理端同源可达，不该依赖客户的证书与回源配置。
+  端上无需改动——小程序 `assetUrl` 对 `^https?://` 原样返回。
+  **填了不等于立刻生效**：`publicBaseUrlActive` 由 `handler.publicOriginState` 实况回报，
+  需同时满足 `TENANT_STORAGE_ROUTE` 已开、`enabled=true`、driver 非 local、凭据完整、
+  `publicRead=true`、域名合法。对象还在平台盘时就换域名，客户域名回源取不到对象，
+  全站裂图且没有任何报错——所以判定直接复用 `tenantStorageActive`。
+  `publicBaseUrlNote` 分「已生效说明 / 未生效原因与下一步」两套文案。
+  核对某家此刻的实况：`curl "$BASE/api/public/settings?companyId=5"` 看根级
+  `assetOrigin` / `assetOriginActive` / `assetOriginNote`；**不带 companyId 不回传**
+  （冷启动拿不到租户，按缺省企业下发会跨租户串号）。
+  `TENANT_STORAGE_ROUTE` 默认值仍是 `off`，本轮没翻。
 
 ```bash
 # 平台超管令牌下（示例：给企业 5 配自己的 MinIO）
