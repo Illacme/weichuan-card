@@ -36,6 +36,13 @@ type fakeS3 struct {
 	putBody          string
 	statSizeOverride *int64
 	paths            []string
+	// BucketExists 走的是 HEAD /<bucket>（path 风格）或 HEAD /（虚拟主机风格）。
+	// 桶级与对象级是两个不同的请求，必须分开模拟，否则「桶不存在」这个
+	// 源端独有的兜底根本测不到。
+	bucketMissing bool
+	bucketStatus  int
+	bucketBody    string
+	bucketProbes  int
 }
 
 // decodeAWSChunked 还原 minio-go 的 SigV4 流式签名载荷。
@@ -85,8 +92,32 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	override := f.statSizeOverride
 	f.mu.Unlock()
 
+	// 桶级 HEAD 没有对象键：minio-go 的 BucketExists 用它判「桶在不在」。
+	// path 风格是 /<bucket> 或 /<bucket>/，虚拟主机风格是 /。
+	isBucketHead := r.URL.Path == "/"+fakeBucket ||
+		r.URL.Path == "/"+fakeBucket+"/" || r.URL.Path == "/"
+
 	switch r.Method {
 	case http.MethodHead:
+		if isBucketHead {
+			f.mu.Lock()
+			f.bucketProbes++
+			f.mu.Unlock()
+			// 桶不存在按 S3 的真实形态回 404 且**不带 body**：minio-go 会把
+			// objectName=="" 的 404 归一成 NoSuchBucket → (false, nil)。
+			if f.bucketMissing {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if f.bucketStatus != 0 {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(f.bucketStatus)
+				_, _ = io.WriteString(w, f.bucketBody)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if status != 0 {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(status)
@@ -161,6 +192,12 @@ func (f *fakeS3) object(key string) ([]byte, bool) {
 	defer f.mu.Unlock()
 	v, ok := f.objects[key]
 	return append([]byte(nil), v...), ok
+}
+
+func (f *fakeS3) probeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bucketProbes
 }
 
 // testS3Store 起一个 path-style 假桶并返回对应适配器。

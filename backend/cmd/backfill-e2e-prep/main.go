@@ -1,11 +1,15 @@
 // Command backfill-e2e-prep 是 tools/backfill-e2e 灰度装置的**取证准备**工具。
 //
-// 它不属于生产二进制，只做三件 shell 做不了的事：
+// 它不属于生产二进制，只做几件 shell 做不了的事：
 //   - upsert：建真桶、清掉上一轮遗留的 t/<cid>/ 对象、把 tenant_storage_configs
 //     配置行用 pii.Encrypt 写进真 MySQL（凭据密文没法用 SQL 拼）；
 //   - delete：删掉配置行，用来验「缺配置时回填必须显式失败、不回退平台盘」；
 //   - stat：用**签名 GET** 从真桶把对象读回来，输出 size 与 sha256。
-//     curl 不会签 SigV4，直接从 POSIX 后端目录读又证明不了「服务端真的认这个对象」。
+//     curl 不会签 SigV4，直接从 POSIX 后端目录读又证明不了「服务端真的认这个对象」；
+//   - putsrc / addsrc / delsrc（第六十七轮）：往**平台源桶**写 / 删历史形态对象
+//     （键是裸相对键，如 shared-logo.png，不带 p/ 前缀）。putsrc 先清空该桶，
+//     保证取证从干净态开始；addsrc 不清桶，用来追加一个 p/ 前缀的诱饵对象；
+//     delsrc 用于验「桶在、对象不在」时的报错口径。
 //
 // 为什么是独立命令而不是 _test.go：它要求一个正在跑的真 S3 端点与真 MySQL，
 // 写进 test 只会得到一条永远 skip 的用例，反而给人「已有覆盖」的错觉
@@ -13,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -39,14 +44,15 @@ func fail(format string, a ...any) {
 
 func main() {
 	var (
-		mode     = flag.String("mode", "upsert", "upsert / delete / stat")
+		mode     = flag.String("mode", "upsert", "upsert / delete / stat / bucket / putsrc / addsrc / delsrc")
 		dsn      = flag.String("dsn", "", "真 MySQL DSN")
 		endpoint = flag.String("endpoint", "127.0.0.1:19000", "S3 端点 host[:port]")
 		ak       = flag.String("access-key", "testuser", "AccessKey")
 		sk       = flag.String("secret-key", "testsecret", "SecretKey")
-		bucket   = flag.String("bucket", "wc-t7", "桶名")
+		bucket   = flag.String("bucket", "wc-t7", "桶名（putsrc/delsrc 时是平台源桶）")
 		cid      = flag.Int64("company", 7, "租户 company_id")
-		key      = flag.String("key", "", "stat 模式要读的对象键")
+		key      = flag.String("key", "", "stat / putsrc / delsrc 的对象键")
+		srcFile  = flag.String("src-file", "", "putsrc 要上传的本地文件")
 		clean    = flag.Bool("clean", true, "upsert 时是否清掉桶里 t/<cid>/ 的旧对象")
 	)
 	flag.Parse()
@@ -78,6 +84,26 @@ func main() {
 	switch *mode {
 	case "stat":
 		statObject(ctx, client, *bucket, *key)
+		return
+	case "bucket":
+		ok, err := client.BucketExists(ctx, *bucket)
+		if err != nil {
+			fail("探测桶失败：%v", err)
+		}
+		if ok {
+			fmt.Println("EXISTS=1")
+		} else {
+			fmt.Println("MISSING=1")
+		}
+		return
+	case "putsrc":
+		putSourceObject(ctx, client, *bucket, *key, *srcFile)
+		return
+	case "addsrc":
+		addSourceObject(ctx, client, *bucket, *key, *srcFile)
+		return
+	case "delsrc":
+		removeSourceObject(ctx, client, *bucket, *key)
 		return
 	case "delete":
 		// 不碰桶里的对象：R5 要求回滚后对象保留，负例只撤配置。
@@ -155,6 +181,77 @@ func prepare(ctx context.Context, client *minio.Client, dsn, ak, sk, endpoint, b
 		fail("写配置行失败：%v", err)
 	}
 	fmt.Printf("桶 %s 就绪；company_id=%d 配置行已写入（清理了 %d 个旧对象）\n", bucket, cid, len(stale))
+}
+
+// putSourceObject 往平台源桶写一个「历史形态」对象：键是 legacyRel 推出的
+// 裸相对键（如 shared-logo.png），绝不带 p/ 前缀。先清桶，保证每次从干净态开始。
+// 用签名 PUT 而不是直接往 POSIX 后端目录拷文件：后者绕过了 SigV4，
+// 证明不了「服务端真的认这个对象」。
+func putSourceObject(ctx context.Context, client *minio.Client, bucket, key, srcFile string) {
+	if key == "" {
+		fail("putsrc 必须给 -key（历史相对键，如 shared-logo.png）")
+	}
+	if srcFile == "" {
+		fail("putsrc 必须给 -src-file")
+	}
+	data, err := os.ReadFile(srcFile)
+	if err != nil {
+		fail("读取源文件失败：%v", err)
+	}
+	exists, err := client.BucketExists(ctx, bucket)
+	if err != nil {
+		fail("探测平台源桶失败：%v", err)
+	}
+	if !exists {
+		if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			fail("创建平台源桶失败：%v", err)
+		}
+	}
+	var stale []string
+	for obj := range client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Recursive: true}) {
+		if obj.Err != nil {
+			fail("列举平台源桶对象失败：%v", obj.Err)
+		}
+		stale = append(stale, obj.Key)
+	}
+	for _, k := range stale {
+		if err := client.RemoveObject(ctx, bucket, k, minio.RemoveObjectOptions{}); err != nil {
+			fail("清理平台源桶旧对象 %q 失败：%v", k, err)
+		}
+	}
+	if _, err := client.PutObject(ctx, bucket, key, bytes.NewReader(data), int64(len(data)),
+		minio.PutObjectOptions{ContentType: "application/octet-stream"}); err != nil {
+		fail("写平台源对象失败：%v", err)
+	}
+	fmt.Printf("平台源桶 %s 已就绪：%s（%d 字节，清理了 %d 个旧对象）\n", bucket, key, len(data), len(stale))
+}
+
+// addSourceObject 不清桶地追加一个诱饵对象。取证用它往平台源桶放一份
+// p/shared-logo.png：源键必须是不带前缀的历史相对键，若哪天实现给源键
+// 加了 p/，apply 会「成功」但搬的是诱饵字节——比单纯 404 更难察觉。
+func addSourceObject(ctx context.Context, client *minio.Client, bucket, key, srcFile string) {
+	if key == "" || srcFile == "" {
+		fail("addsrc 必须给 -key 与 -src-file")
+	}
+	data, err := os.ReadFile(srcFile)
+	if err != nil {
+		fail("读取诱饵文件失败：%v", err)
+	}
+	if _, err := client.PutObject(ctx, bucket, key, bytes.NewReader(data), int64(len(data)),
+		minio.PutObjectOptions{ContentType: "application/octet-stream"}); err != nil {
+		fail("写诱饵对象失败：%v", err)
+	}
+	fmt.Printf("诱饵对象已写入 %s/%s（%d 字节）\n", bucket, key, len(data))
+}
+
+func removeSourceObject(ctx context.Context, client *minio.Client, bucket, key string) {
+	if key == "" {
+		fail("delsrc 必须给 -key")
+	}
+	if err := client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		fail("删除平台源对象失败：%v", err)
+	}
+	fmt.Printf("已删除平台源对象 %s/%s\n", bucket, key)
 }
 
 func statObject(ctx context.Context, client *minio.Client, bucket, key string) {

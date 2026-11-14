@@ -206,9 +206,25 @@ PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
   --plan /tmp/plan.json --dsn "$DSN" --source-dir /var/lib/weichuan/uploads \
   --target-store tenant --yes
 
+# 平台自有 S3/MinIO 桶当源：存量对象本来就在那个桶里，不必先下载到本地。
+# 配置来自 env / CONFIG_FILE，再被 sys_setting 的非空值覆盖（与生产上传侧同一份）。
+# 不许给 --source-dir；凭据只从配置读，绝不做命令行参数。
+./storage-backfill apply --plan /tmp/plan.json --dsn "$DSN" \
+  --source-store s3 --target-store tenant --yes
+
 ./storage-backfill status   --plan /tmp/plan.json --dsn "$DSN"
 ./storage-backfill rollback --plan /tmp/plan.json --dsn "$DSN" --yes
 ```
+
+源与目标**正交**，四种组合都合法；两个默认值都是 `local`，所以第六十五轮的既有命令
+一字不改照常跑：
+
+| `--source-store` | `--target-store` | 用途 |
+| --- | --- | --- |
+| `local` + `--source-dir` | `local` + `--target-dir` | 离线演练（默认） |
+| `local` + `--source-dir` | `tenant` | 平台本地盘 → 客户真桶 |
+| `s3`（平台桶） | `local` + `--target-dir` | 从平台桶取存量对象，离线核对字节 |
+| `s3`（平台桶） | `tenant` | 生产形态：平台桶 → 客户真桶 |
 
 - **`plan` 不写任何数据**：不 UPDATE、不 INSERT、不访问对象存储。九张表的 `CHECKSUM TABLE`
   在盘点前后逐字节一致（取证方法见 `docs/commercial-readiness.md` 第六十四轮）。
@@ -222,6 +238,8 @@ PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
   留空时退到「`/uploads/` 段匹配」。
 - `--dsn` / `--plan` / `--source-dir` / `--target-dir` **都没有默认值**，刻意如此：
   缺目标目录时绝不能悄悄回退到平台盘——那会复制出一堆看似成功的对象，客户桶里其实一个都没有。
+  `--source-store=s3` 反过来**禁止**给 `--source-dir`：两个源同时出现时无法判断哪个生效，
+  命令看起来像「读过了」而实际读的是另一个。
 - `--force` 只放宽一件事：目标对象已存在但大小与源不一致时用源覆盖（上次复制到一半的残件）。
   它**绝不放宽库值的过期检测**：库被别人改过要么停下、要么人工修数据，没有 force 选项。
 - 退出码：0 正常 / 1 命令出错 / 2 数据需人工处理。`go run` 不传递子进程退出码，
@@ -238,16 +256,37 @@ PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
 - 上传侧与回填侧共用 `storage.S3BucketLookup` 判定路径风格（由 `host_header` 决定
   桶名进 path 还是 Host），不让 minio-go 的 `BucketLookupAuto` 自己猜——
   第六十三轮真桶实测猜错的代价是 `400 InvalidBucketName`，且两端日志都不报错。
-- **源端本轮只有平台本地盘**：`--source-dir` 是必填的现有对象目录，两种目标共用。
-  平台自己的 S3 桶当源 / `driver=oss` 目标 / 虚拟主机风格且 `hostHeader` 与
-  `endpoint` 不是同一域名（回填不经 nginx，改不了 Host/SNI）都还没接，会显式报错。
+- **源端两种**：`local`（默认，需 `--source-dir`）读平台本地盘；`s3` 读平台自己的
+  MinIO / S3 兼容桶。后者复用 `storage.NewMinioUploader` 且**省略路径风格变参**，
+  拿到与 `cmd/server.newUploader` 完全同一个客户端构造（`BucketLookupAuto`）——
+  平台侧没有 `company_id` / `host_header` 列，套用租户那套 `S3BucketLookup` 反而会分叉。
+  源键是 `legacyRel` 推出的**历史相对裸键**（如 `shared-logo.png`），**不加 `p/` 前缀**；
+  加了会整批 404。源端只读：`Put` 显式报错，绝不把对象覆盖写回平台桶。
+- **平台配置只读、与生产同源**：`config.Load()`（env > `CONFIG_FILE` > 内置缺省）+
+  `sys_setting` 非空值覆盖，空串 / 纯空白视为未设置；bool 用 `setting.ParseBool` 同一真值表。
+  刻意不调 `setting.Init()`——它会 `seedDefaults` 往业务库 INSERT，回填命令只读配置却顺手写库
+  既越权又会在只读从库上失败。凭据只能来自这三类来源，不作为命令行参数（会留进
+  shell history / `ps` / 工单）。`driver=oss` / `local` / 缺任一项配置一律显式拒绝，
+  **不回退本地盘**。
+- **源端没有 `Put` 兜底，所以必须探桶**：第六十六轮靠「Put 的显式错误码 + 写后回读」
+  区分「桶不存在」；S3 的 `HEAD` 响应按 HTTP 规范不带 body，`Stat` 层分不出
+  `NoSuchKey` 与 `NoSuchBucket`。`PlatformS3Source` 在第一次 `Stat`/`Open` 前用
+  `BucketExists` 探一次（`sync.Once` 缓存，不逐对象重复发请求），把「桶名 / 凭据 / 网络错」
+  报成「平台源桶不存在 / 探测失败」，而不是误导性的「源对象不存在」。
+- 虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名（回填不经 nginx，改不了
+  Host/SNI）、`driver=oss`、云厂商桶的 TLS/SNI/CDN/CORS 仍未覆盖，会显式报错。
 - S3 侧的原子性由协议本身保证：单次 PUT 完整可见；大对象分块上传在
   `CompleteMultipartUpload` 之前不会被 `StatObject` 看见。写完适配器仍立即回读一次
   size，挡住「端点会回 200 但没真存」这种没人报错的假成功。桶方错误只压成
   「错误码 + HTTP 状态码」，`Message`（可能回显 AccessKey 片段）绝不进日志。
-- 真桶 + 存量对象灰度装置：`tools/backfill-e2e/`（versitygw + 真 MySQL，37 条断言，
-  含签名 GET 字节比对、回滚后校验和一致、三个负例）。它补齐了 `tools/s3-e2e`
-  README 里原本写着「不覆盖存量对象」的那条空白。
+- 真桶 + 存量对象灰度装置（两套并列，`tools/backfill-e2e/README.md` 有分工说明）：
+  - `run.sh`：平台本地盘 → 客户桶（第六十六轮，37 条断言，含签名 GET 字节比对、
+    回滚后校验和一致、三个负例）。它补齐了 `tools/s3-e2e` README 里原本写着
+    「不覆盖存量对象」的那条空白。
+  - `run-s3-source.sh`：平台 S3 桶 → 客户桶（第六十七轮，74 条断言）。用「双量尺」
+    证明源真的来自 S3：平台桶放正确字节 A、本地盘放诱饵 B、平台桶再放一份 `p/` 前缀
+    诱饵 C，`apply` 后客户桶必须 `== A`、`!= B`、`!= C`；env 给错误诱饵、界面给正确值，
+    只有 `sys_setting` 覆盖生效才搬得成；另有「桶不存在」与「源对象不存在」的成对负例。
 - 取证数据：`tools/backfill-fixture/seed.sql`（只能灌进一次性库，文件头部先清九张表）。
 
 ```bash

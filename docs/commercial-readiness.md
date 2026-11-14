@@ -4862,3 +4862,113 @@ MySQL 事务**里：要么都成，要么都不成。于是三步的失败面被
 - P4 仍待：密钥轮换 `key_id`、`public_base_url` / `public_read` 消费方、审计前端标签、
   配额口径、解约后清理策略。
 - `gofmt -l` 的 12 个既有文件仍未动，需单独一次纯格式提交。
+
+---
+
+## 第六十七轮 · 平台自有 S3 桶当回填源（2026-11-14）
+
+上一轮收尾把「源端 S3 适配器」列为留到下一轮的对称补齐，用户确认后本轮交付。
+`TENANT_STORAGE_ROUTE` **仍是 off**，本轮不动上传链路开关、不改默认值。
+
+### 一、四个不能退的决定
+
+1. **平台源必须与生产上传侧同源**。平台自身存储没有 `company_id`、没有 `host_header`
+   列，套用租户那套 `NewS3Store` + `S3BucketLookup` 会与写入侧分叉。所以
+   `refmigrate.PlatformS3Source` 复用 `storage.NewMinioUploader` 且**省略 lookup 变参**，
+   拿到与 `cmd/server.newUploader` 完全同一个客户端构造（`BucketLookupAuto`）。
+   有源码级守门钉住「不许自己 `minio.New`、不许另写路径风格」。
+2. **源端只读**。接口要求 `Put`，但回填绝不改动源桶；`Put` 显式报错而不是委托内部
+   `S3Store`。万一有人把 Source / Target 接反，会立刻失败，而不是静默把对象覆盖写回
+   平台桶（那会污染全部存量）。
+3. **桶不存在必须显式报桶**。第六十六轮靠「`Put` 的显式错误码 + 写后回读」兜住
+   S3 `HEAD` 不带 body 的协议限制；**源端没有 `Put`**，若桶名或凭据写错，`Stat` 的
+   404 会被 `isMissingObject` 当成「源对象不存在」——运维会去查对象为什么丢了，
+   真正错的是配置。这里在第一次 `Stat`/`Open` 前用 `BucketExists` 探一次
+   （`sync.Once` 缓存，不逐对象重复发请求）。
+4. **配置只读、与生产同源，凭据不进命令行**。`config.Load()`（env > `CONFIG_FILE` >
+   内置缺省）加 `sys_setting` 非空值覆盖，空串 / 纯空白视为未设置，bool 复用
+   `setting.ParseBool` 同一真值表。刻意不调 `setting.Init()`——它会 `seedDefaults`
+   往业务库 INSERT，回填命令只读配置却顺手写库既越权又会在只读从库上失败。
+
+源键是 `legacyRel` 推出的**历史相对裸键**（如 `shared-logo.png`），**不加 `p/` 前缀**；
+`p/` 是写入侧 `ObjectKeyFor` 的产物，加在这里会整批 404。
+
+### 二、交付物
+
+| 文件 | 内容 |
+| --- | --- |
+| `internal/refmigrate/platform_source.go` | `PlatformS3Config` / `PlatformS3Source`、`ensureBucket`、只读 `Put` |
+| `cmd/storage-backfill/source_config.go` | 平台配置只读加载（7 项）、`sys_setting` 覆盖、保留字 `key` 用 map 条件 |
+| `cmd/storage-backfill/execute.go` | `--source-store=local\|s3` 分派、`sourceFor` 唯一源选择口、`buildStores` 四组合 |
+| `internal/setting/setting.go` | 抽出 `ParseBool` 供 CLI 复用，避免第二份真值表 |
+| `cmd/backfill-e2e-prep/main.go` | 新增 `bucket` / `putsrc` / `addsrc` / `delsrc` 四种取证动作 |
+| `tools/backfill-e2e/run-s3-source.sh` | 真桶 + 真 MySQL 的 74 条断言装置 |
+
+两个默认值都仍是 `local`，第六十五轮既有命令一字不改照常跑。
+
+### 三、真实 versitygw + MySQL 8.0 取证（74 条断言全绿）
+
+**「双量尺」**是本轮最核心的证据设计：只断言「客户桶里有对象」证明不了源来自哪里，
+本地盘悄悄顶上也一样绿。所以同时放三种内容不同的 20 字节：
+
+| 位置 | 内容 | 抓什么 |
+| --- | --- | --- |
+| 平台源桶 `shared-logo.png` | A | 正确源（裸相对键） |
+| 本地诱饵盘 `shared-logo.png` | B | 偷偷回退本地盘 |
+| 平台源桶 `p/shared-logo.png` | C | 给源键加 `p/` 前缀（会成功搬完但搬错对象，比 404 难察觉） |
+
+`apply` 后客户桶签名 GET 的 sha256 必须 `== A`、`!= B`、`!= C`；脚本开头先断言
+三种 sha 两两不同，即**先证明量尺自己有读数**。
+
+配置同源也做了真桶证据：env 给一份错误诱饵（`STORAGE_DRIVER=local`、
+`MINIO_BUCKET=wc-env-decoy`、假凭据），`sys_setting` 给 7 项正确值。只看 env 会被
+`NewPlatformS3Source` 当场拒绝——所以正向搬迁成功本身就是覆盖生效的证据。
+另有负例：删掉界面里的 `storage_bucket` 后必须回落到诱饵桶并显式报「平台源桶不存在」；
+全程比对 `CHECKSUM TABLE sys_setting`，确认读配置没有顺手写库。
+
+| # | 动作 | 结果 |
+| --- | --- | --- |
+| ① | `plan --company 7` | 3 条待搬 / 1 个对象；计划里的 `SourceKey` 是裸键；校验和不变 |
+| ② | `apply --source-store s3 --target-store tenant --dry-run` | 零写入：库值 / 校验和 / 客户桶 / 平台源桶全不动 |
+| ③ | `apply … --yes` | 客户桶签名 GET `== A`、`!= B`、`!= C`；三处库值变 `t/7/…`；平台源对象仍在；平台源桶无 `t/7/` 键；本地盘无 `t/7/` 文件；`sys_setting` 校验和不变 |
+| ④ | 重跑 / `status` | 复制 0 / 改写 0；台账 3 行 `applied` |
+| ⑤ | `rollback --yes` | 库值回 `/uploads/…`；九张业务表校验和与搬迁前逐字节一致；客户桶与平台源桶对象都在（R5） |
+| ⑥ | 13 个负例 | 参数歧义（2）、桶不存在（4）、对象不存在（3，退出码 2）、`driver=oss`（2）、凭据缺一（2）、回落 env 诱饵（2）、第六十六轮既有负例（3）；全部跑完后校验和仍等于基线 |
+
+**成对的负例**验证 `BucketExists` 真的把两种错误分开了：桶名错时报
+`平台源桶 "…" 不存在：这不是「源对象不存在」` 且不含「无法复制成」；删掉源对象但
+保留桶时报 `源对象 … 不存在，无法复制成`（退出码 2）且不含「平台源桶」。
+
+### 四、反向验证（源码级 12 处 + 端到端 4 处）
+
+源码级 12 处逐一改坏、指定用例必红：源端 `Put` 委托内部 `S3Store` / 删桶探测 /
+桶探测不缓存 / 源键加 `p/` / 源码守门漏判 / CLI 源分派回退本地盘 /
+`buildStores` 忽略 `sourceStore` / s3 允许 `--source-dir` 歧义 / 配置忽略
+`sys_setting` / 另写 bool 真值表 / 读配置顺手写库 / `runApply` 不传 `sourceStore`。
+其中一处注入因 `sync.Once{}` 不能调指针方法而编译失败，改成真正可编译的
+「不缓存」版本后如期变红。
+
+**端到端 4 处**（在真桶 + 真 MySQL 上跑整套取证，不只是单测）：源键加 `p/`（Stat 与
+Open 一起改）、删掉桶探测、忽略 `sys_setting`、s3 分支回退本地盘——每处对应断言
+必红，逐条还原后 74 条全绿、零漂移。第六十六轮 `run.sh` 37 条断言回归全绿。
+
+### 五、两条「假绿」留档
+
+1. **第一次端到端注入只改了 `Stat` 没改 `Open`**：预检看到 `p/` 诱饵 C、复制时仍读
+   裸键 A，字节断言反而没红。这是「半吊子坏实现」，不是我们要测的那种坏实现——
+   判据仍是那条：**测试要测承诺本身，别测一个更容易满足的代理**。改成两处一起改后必红。
+2. **取证脚本的 `-u MINIO_ACCESS_KEY` 被后面的赋值重新设回来**，且只清 env 时
+   `sys_setting` 里还有正确凭据——「凭据缺一」负例会恒绿。补了专用环境数组 +
+   同时删界面配置行。另外用空 sha 断言「对象不存在」也有假绿风险（端点不通时
+   sha 同样是空串），改成断言服务端明确回 `MISSING=1`。
+
+### 六、边界与下一步
+
+- **平台桶走 `BucketLookupAuto`**：本次端点 `127.0.0.1:19000` 是 IP，实测走路径风格；
+  云厂商上端点形态不同仍需单独验收。上传侧与回填侧共用同一构造函数，行为同源。
+- `driver=oss` 源、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名仍**显式拒绝**。
+- 非云厂商桶：TLS/SNI、CDN、CORS、跨区一致性仍只有有限证据。
+- **`TENANT_STORAGE_ROUTE` 默认值仍是 off**；翻它属于运营动作，需单独决策。
+- P4 仍待：`key_id` 轮换、`public_base_url` / `public_read` 消费方、审计前端标签、
+  配额口径、解约后清理策略。
+- `gofmt -l` 的 12 个既有文件仍未动，需单独一次纯格式提交。

@@ -750,10 +750,27 @@ type Resolver interface {
 > 真 `PutObject`（签名 GET 取回的 sha256 与源逐字节一致）→ 重跑 0/0 →
 > rollback 后九张业务表 `CHECKSUM` 与搬迁前逐字节一致、对象仍在（R5）→ 三个负例。
 >
-> **仍未做**：源端只支持平台本地盘（平台自有 S3 桶当源待接 `ObjectStore.Open`）；
-> `driver=oss` 显式拒绝；虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名时
+> **P3 源端补齐（2026-11-14 第六十七轮）**：`apply --source-store s3 --target-store tenant`
+> 已交付，四种源 / 目标组合都合法，两个默认值仍是 `local`（第六十五轮既有命令不改照常跑）。
+> 平台源复用 `storage.NewMinioUploader` 且**省略路径风格变参**——平台侧没有
+> `company_id` / `host_header`，套租户那套 `S3BucketLookup` 反而会与上传侧分叉；
+> 源键是 `legacyRel` 推出的历史裸相对键（**不加 `p/`**），源端只读（`Put` 显式拒绝）。
+> 配置走 `config.Load()` + `sys_setting` **只读覆盖**（不调 `setting.Init`，避免
+> `seedDefaults` 往业务库写）；凭据只从配置读，不进命令行。
+> 源端没有 `Put` 兜底，而 S3 的 `HEAD` 不带 body 分不出桶不存在 / 对象不存在，
+> 因此 `PlatformS3Source` 用 `BucketExists`（`sync.Once` 缓存）把两者分开报。
+> `tools/backfill-e2e/run-s3-source.sh`（versitygw + 真 MySQL 8.0）**74 条断言全绿**：
+> 「双量尺」字节证据（桶内 A / 本地诱饵 B / `p/` 前缀诱饵 C，客户桶必须 `==A`、`!=B`、`!=C`）、
+> env 错误诱饵 + 界面正确值（证明覆盖生效）、签名 GET 字节一致 → 重跑 0/0 →
+> status 台账 → rollback 校验和一致（R5）→ 13 个负例；另有 4 处端到端反向验证必红、
+> 还原后 74 条全绿，第六十六轮 `run.sh` 37 条回归全绿。
+>
+> **仍未做**：`driver=oss` 源显式拒绝；虚拟主机风格且 `hostHeader` 与 `endpoint` 不是同一域名时
 > 显式拒绝（回填不经 nginx，改不了 Host/SNI）；非云厂商桶，TLS/SNI、CDN、CORS
-> 仍只有有限证据。`TENANT_STORAGE_ROUTE` 默认值**仍是 off**：代码侧前置已齐，
+> 仍只有有限证据；平台桶走 `BucketLookupAuto`，只在 IP 端点上实测过。
+> P4 剩余：`key_id` 轮换、`public_base_url` / `public_read` 消费方、审计前端标签、
+> 配额口径、解约后清理策略。
+> `TENANT_STORAGE_ROUTE` 默认值**仍是 off**：代码侧前置已齐，
 > 但翻它属于运营动作（多租户并发 / 配额 / CDN Purge 归属 / 灰度批次），需单独决策，
 > 不在本轮自动发生。
 

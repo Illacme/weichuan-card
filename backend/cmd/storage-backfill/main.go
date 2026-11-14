@@ -3,10 +3,13 @@
 // 用法：
 //
 //	storage-backfill plan --dsn DSN --out plan.json
-//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-store local --target-dir DIR [--dry-run] [--yes]
-//	storage-backfill apply --plan plan.json --dsn DSN --source-dir DIR --target-store tenant [--dry-run] [--yes]
+//	storage-backfill apply --plan plan.json --dsn DSN --source-dir SRC --target-dir DST [--dry-run] [--yes]
+//	storage-backfill apply --plan plan.json --dsn DSN --source-store s3 --target-store tenant [--dry-run] [--yes]
 //	storage-backfill rollback --plan plan.json --dsn DSN --yes
 //	storage-backfill status --plan plan.json --dsn DSN
+//
+// 源（local / s3）与目标（local / tenant）正交，四种组合都合法；
+// 两个默认值都是 local，第六十五轮的既有命令一字不改照常跑。
 //
 // plan 只读；apply / rollback 会改库，二者**消费同一份计划 JSON，不重扫库**。
 // 计划是某一时刻看到的库，重扫一次看到的是另一个时刻的库——两者相等时看不出
@@ -88,8 +91,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `storage-backfill —— P3 存量资源引用的盘点 / 搬迁 / 回滚
 
   plan     --dsn DSN [--base-url URL] [--company N] [--out FILE] [--json] [--fail-on-problem]
-  apply    --plan FILE --dsn DSN --source-dir DIR [--target-store local|tenant]
-           [--target-dir DIR] [--dry-run] [--yes] [--force]
+  apply    --plan FILE --dsn DSN [--source-store local|s3] [--source-dir DIR]
+           [--target-store local|tenant] [--target-dir DIR] [--dry-run] [--yes] [--force]
   rollback --plan FILE --dsn DSN [--dry-run] [--yes]
   status   --plan FILE --dsn DSN
 
@@ -104,7 +107,10 @@ plan（只读）:
 apply / rollback（会改数据）:
   --plan            必填，plan --out 产出的那份 JSON；执行器不重扫库
   --dsn             必填，无默认值（避免误连生产）
-  --source-dir      平台侧现有对象所在的本地目录（两种目标都必填）
+  --source-store    local（默认，平台本地盘，需 --source-dir）/ s3（平台自有
+                    MinIO / S3 兼容桶，直接从桶里读历史对象）。与 --target-store 正交。
+  --source-dir      仅 source-store=local 时必填：平台侧现有对象的本地目录。
+                    s3 模式给了这个参数会直接报错（避免误以为两边都生效）。
   --target-store    local（默认，离线演练）/ tenant（按 company_id 解密
                     tenant_storage_configs，对象真的写进客户自己的桶）
   --target-dir      仅 target-store=local 时的目标对象根目录。本地适配器把各租户
@@ -114,6 +120,15 @@ apply / rollback（会改数据）:
   --yes             确认真的执行。不加时自动按 dry-run 处理
   --force           仅允许「目标对象已存在但大小与源不一致」时用源覆盖；
                     绝不放宽库值的过期检测
+
+source-store=s3 的配置来源（优先级：系统设置 > 环境变量/CONFIG_FILE > 内置缺省）：
+  storage_driver / storage_endpoint / storage_bucket / storage_access_key /
+  storage_secret_key / storage_use_ssl / storage_region
+  从 sys_setting 只读加载，与生产上传侧是同一份配置；命令不会写这张表。
+  凭据不接受命令行参数（会留在 history / ps / 工单里），也不出现在错误文本中。
+  driver=local 或 oss 会显式拒绝，绝不拿一个空桶冒充源，也绝不回退本地盘。
+  桶不存在 / 凭据错 / 网络不可达会在第一次 Stat 就报「平台源桶」，
+  不会退化成「源对象不存在」那种让人去查文件的误导性错误。
 
 退出码：0 正常 / 需要人工确认时加 --yes；1 命令出错；2 数据需人工处理。
 `)
@@ -229,7 +244,8 @@ func printReport(plan *refmigrate.Plan, driver string, company int64) {
 		}
 	}
 
-	fmt.Printf("\n下一步：apply --plan <这份 JSON> --dsn … --source-dir … " +
+	fmt.Printf("\n下一步：apply --plan <这份 JSON> --dsn … " +
+		"[--source-store local --source-dir DIR | --source-store s3] " +
 		"[--target-store local --target-dir DIR | --target-store tenant] --dry-run（先预检）。\n")
 }
 

@@ -38,18 +38,27 @@ func TestExitForMapsNeedsHumanToTwo(t *testing.T) {
 func TestLocalStoresRefusesMissingDirs(t *testing.T) {
 	// 「目标没配就回退到平台盘」是最危险的便利：对象会复制到本地新键下、
 	// 库改成 t/<cid>/...，后台显示搬迁成功，真把流量切到客户桶才发现一个都没有。
-	_, err := localStores("", "/tmp/x")
+	_, err := sourceFor("local", "", nil)
 	if err == nil {
 		t.Error("缺 --source-dir 必须报错")
 	}
-	_, err = localStores(t.TempDir(), "")
-	if err == nil {
-		t.Error("缺 --target-dir 必须报错")
-	}
-	_, err = localStores(filepath.Join(t.TempDir(), "nope"), "/tmp/x")
+	_, err = sourceFor("local", filepath.Join(t.TempDir(), "nope"), nil)
 	if err == nil {
 		t.Error("源目录不存在必须报错，不许当成空桶静默跳过")
 	}
+	src := t.TempDir()
+	_, err = localStores(mustSource(t, "local", src, nil), "")
+	if err == nil {
+		t.Error("缺 --target-dir 必须报错")
+	}
+}
+
+// mustSource 直接走唯一的源选择口，避免测试自己搭一条绕过分派的路径。
+func mustSource(t *testing.T, store, dir string, db *gorm.DB) refmigrate.ObjectStore {
+	t.Helper()
+	src, err := sourceFor(store, dir, db)
+	require.NoError(t, err)
+	return src
 }
 
 func TestLocalStoresUsesTheGivenRoots(t *testing.T) {
@@ -59,7 +68,7 @@ func TestLocalStoresUsesTheGivenRoots(t *testing.T) {
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stores, err := localStores(src, dst)
+	stores, err := localStores(mustSource(t, "local", src, nil), dst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,30 +113,38 @@ func TestBuildStoresDefaultsToLocal(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	require.NoError(t, os.MkdirAll(src, 0o755))
-	stores, err := buildStores("local", src, filepath.Join(root, "dst"), nil)
+	stores, err := buildStores("local", "local", src, filepath.Join(root, "dst"), nil)
 	require.NoError(t, err)
 	target, err := stores.TargetFor(7)
 	require.NoError(t, err)
 	require.IsType(t, &refmigrate.LocalStore{}, target,
 		"默认必须还是第六十五轮的本地盘行为，一句话不改也能跑")
+	require.IsType(t, &refmigrate.LocalStore{}, stores.Source,
+		"默认源也必须是本地盘")
 }
 
 func TestBuildStoresRejectsUnknownTargetStore(t *testing.T) {
-	_, err := buildStores("s3", t.TempDir(), t.TempDir(), nil)
+	_, err := buildStores("local", "s3", t.TempDir(), t.TempDir(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "未知 --target-store")
 }
 
+func TestBuildStoresRejectsUnknownSourceStore(t *testing.T) {
+	_, err := buildStores("oss", "local", t.TempDir(), t.TempDir(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "未知 --source-store")
+}
+
 func TestBuildStoresTenantRejectsTargetDir(t *testing.T) {
 	testPiiKey(t)
-	_, err := buildStores("tenant", t.TempDir(), t.TempDir(), testEmptyDB(t))
+	_, err := buildStores("local", "tenant", t.TempDir(), t.TempDir(), testEmptyDB(t))
 	require.Error(t, err, "两个目标同时出现时无法判断哪个生效，必须拒绝")
 	require.Contains(t, err.Error(), "--target-dir")
 }
 
 func TestBuildStoresTenantRequiresSourceDir(t *testing.T) {
 	testPiiKey(t)
-	_, err := buildStores("tenant", "", "", testEmptyDB(t))
+	_, err := buildStores("local", "tenant", "", "", testEmptyDB(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--source-dir")
 }
@@ -137,7 +154,7 @@ func TestBuildStoresTenantRefusesPlaceholderKey(t *testing.T) {
 	pii.Reload()
 	t.Cleanup(pii.Reload)
 	require.True(t, pii.UsingPlaceholderKey())
-	_, err := buildStores("tenant", t.TempDir(), "", testEmptyDB(t))
+	_, err := buildStores("local", "tenant", t.TempDir(), "", testEmptyDB(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), pii.KeyEnvVar)
 	require.Contains(t, err.Error(), "dev 密钥")
@@ -146,7 +163,7 @@ func TestBuildStoresTenantRefusesPlaceholderKey(t *testing.T) {
 func TestBuildStoresTenantNeverFallsBackToLocalDisk(t *testing.T) {
 	testPiiKey(t)
 	db := testEmptyDB(t) // 故意不建 tenant_storage_configs 表
-	stores, err := buildStores("tenant", t.TempDir(), "", db)
+	stores, err := buildStores("local", "tenant", t.TempDir(), "", db)
 	require.NoError(t, err)
 	target, err := stores.TargetFor(7)
 	require.Error(t, err, "读不到配置时必须整批停下")
@@ -154,12 +171,15 @@ func TestBuildStoresTenantNeverFallsBackToLocalDisk(t *testing.T) {
 	require.Nil(t, target, "绝不返回本地盘实例顶上")
 }
 
-// runApply 必须走 buildStores 这个唯一分派口。绕过去直接调 localStores，
-// 就等于把 --target-store=tenant 变成一个「参数收下了但不生效」的开关。
+// runApply 必须走 buildStores 这个唯一分派口，且源 / 目标两个参数都要真的传进去。
+// 绕过去直接调 localStores，就等于把 --source-store=s3 / --target-store=tenant
+// 变成「参数收下了但不生效」的开关。
 func TestRunApplyDispatchesThroughBuildStores(t *testing.T) {
 	b, err := os.ReadFile("execute.go")
 	require.NoError(t, err)
 	s := string(b)
-	require.Contains(t, s, "stores, err := buildStores(targetStore, srcDir, dstDir, db)")
+	require.Contains(t, s, "stores, err := buildStores(sourceStore, targetStore, srcDir, dstDir, db)")
 	require.NotContains(t, s, "stores, err := localStores(", "runApply 不该直接调 localStores")
+	require.Contains(t, s, "fs.StringVar(&sourceStore, \"source-store\", \"local\"",
+		"必须真的注册 --source-store 参数，不能只在 buildStores 里收着")
 }

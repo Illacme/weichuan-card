@@ -31,14 +31,38 @@ func localSource(srcDir string) (*refmigrate.LocalStore, error) {
 	return refmigrate.NewLocalStore(srcDir)
 }
 
-// localStores 是离线演练用的本地盘 → 本地盘适配器。
-func localStores(srcDir, dstDir string) (*refmigrate.Stores, error) {
+// sourceFor 是**唯一的源选择口**。目标端（local / tenant）与源端（local / s3）
+// 正交：四种组合都合法，例如「平台 S3 桶 → 本地盘」可用于离线演练核对字节。
+func sourceFor(sourceStore, srcDir string, db *gorm.DB) (refmigrate.ObjectStore, error) {
+	switch sourceStore {
+	case "local":
+		return localSource(srcDir)
+	case "s3":
+		// 两个源同时给出时无法判断哪个生效：--source-dir 里可能根本没有该对象，
+		// 但命令看起来像「读过了」，这种歧义必须在参数层就挡掉。
+		if strings.TrimSpace(srcDir) != "" {
+			return nil, fmt.Errorf("--source-store=s3 时不要给 --source-dir：" +
+				"两者同时出现无法判断哪个生效，S3 源绝不读本地源目录")
+		}
+		cfg, err := platformSourceConfig(db)
+		if err != nil {
+			return nil, err
+		}
+		src, err := refmigrate.NewPlatformS3Source(cfg)
+		if err != nil {
+			// 不回退本地盘：那会拿一个空目录当源，把所有对象报成「不存在」。
+			return nil, fmt.Errorf("平台 S3 源不可用（不回退本地盘）：%w", err)
+		}
+		return src, nil
+	default:
+		return nil, fmt.Errorf("未知 --source-store=%q（可用：local / s3）", sourceStore)
+	}
+}
+
+// localStores 是离线演练用的本地盘目标。
+func localStores(src refmigrate.ObjectStore, dstDir string) (*refmigrate.Stores, error) {
 	if strings.TrimSpace(dstDir) == "" {
 		return nil, fmt.Errorf("--target-store=local 必须给 --target-dir")
-	}
-	src, err := localSource(srcDir)
-	if err != nil {
-		return nil, err
 	}
 	dst, err := refmigrate.NewLocalStore(dstDir)
 	if err != nil {
@@ -54,18 +78,14 @@ func localStores(srcDir, dstDir string) (*refmigrate.Stores, error) {
 	}, nil
 }
 
-// tenantStores 是真桶适配器：平台本地盘 → 按 company_id 解密配置得到的客户桶。
+// tenantStores 是真桶目标：按 company_id 解密配置得到的客户桶。
 //
 // 刻意不提供「目标没配就回退到平台盘」这种便利：那会复制出一堆看似成功的对象，
 // 库也改成 t/<cid>/...，但真正的客户桶里一个都没有。配置缺失必须显式报错。
-func tenantStores(db *gorm.DB, srcDir, dstDir string) (*refmigrate.Stores, error) {
+func tenantStores(src refmigrate.ObjectStore, db *gorm.DB, dstDir string) (*refmigrate.Stores, error) {
 	if strings.TrimSpace(dstDir) != "" {
 		return nil, fmt.Errorf("--target-store=tenant 时不要给 --target-dir：" +
 			"两者同时出现无法判断哪个生效，真桶模式绝不读本地目标目录")
-	}
-	src, err := localSource(srcDir)
-	if err != nil {
-		return nil, err
 	}
 	// 凭据解密依赖与写配置行时同一把钥匙。用内置 dev 密钥去解生产库里的密文
 	// 会以 GCM 认证失败告终，但报错像「数据被篡改」；这里先把真正的原因说清楚。
@@ -79,14 +99,18 @@ func tenantStores(db *gorm.DB, srcDir, dstDir string) (*refmigrate.Stores, error
 	}, nil
 }
 
-// buildStores 是唯一的参数 → 适配器分派口。默认值保持 local，
+// buildStores 是唯一的参数 → 适配器分派口。两个默认值都保持 local，
 // 让第六十五轮的既有命令一字不改也照常跑。
-func buildStores(targetStore, srcDir, dstDir string, db *gorm.DB) (*refmigrate.Stores, error) {
+func buildStores(sourceStore, targetStore, srcDir, dstDir string, db *gorm.DB) (*refmigrate.Stores, error) {
+	src, err := sourceFor(sourceStore, srcDir, db)
+	if err != nil {
+		return nil, err
+	}
 	switch targetStore {
 	case "local":
-		return localStores(srcDir, dstDir)
+		return localStores(src, dstDir)
 	case "tenant":
-		return tenantStores(db, srcDir, dstDir)
+		return tenantStores(src, db, dstDir)
 	default:
 		return nil, fmt.Errorf("未知 --target-store=%q（可用：local / tenant）", targetStore)
 	}
@@ -94,12 +118,14 @@ func buildStores(targetStore, srcDir, dstDir string, db *gorm.DB) (*refmigrate.S
 
 func runApply(args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ExitOnError)
-	var planPath, dsn, srcDir, dstDir, targetStore string
+	var planPath, dsn, srcDir, dstDir, sourceStore, targetStore string
 	var dryRun, yes, force bool
 	fs.StringVar(&planPath, "plan", "", "计划 JSON（必填）")
 	fs.StringVar(&dsn, "dsn", "", "数据库 DSN（必填）")
-	fs.StringVar(&srcDir, "source-dir", "", "平台侧现有对象的本地目录")
+	fs.StringVar(&srcDir, "source-dir", "", "source-store=local 时平台侧现有对象的本地目录")
 	fs.StringVar(&dstDir, "target-dir", "", "target-store=local 时的目标对象根目录")
+	fs.StringVar(&sourceStore, "source-store", "local",
+		"源存储：local（平台本地盘，需 --source-dir）/ s3（平台自有 S3 桶，配置来自 env/CONFIG_FILE/sys_setting）")
 	fs.StringVar(&targetStore, "target-store", "local",
 		"目标存储：local（本地盘，需 --target-dir）/ tenant（按 company_id 解密配置走客户真桶）")
 	fs.BoolVar(&dryRun, "dry-run", false, "只预检")
@@ -119,7 +145,7 @@ func runApply(args []string) error {
 	if err != nil {
 		return fmt.Errorf("连接数据库失败：%w", err)
 	}
-	stores, err := buildStores(targetStore, srcDir, dstDir, db)
+	stores, err := buildStores(sourceStore, targetStore, srcDir, dstDir, db)
 	if err != nil {
 		return err
 	}

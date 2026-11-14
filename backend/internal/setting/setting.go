@@ -582,6 +582,15 @@ func (s *Store) GetBool(key string, def bool) bool {
 	if !ok || v == "" {
 		return def
 	}
+	return ParseBool(v, def)
+}
+
+// ParseBool 是系统设置布尔项的**唯一真值表**。
+// 单独导出是为了让 storage-backfill 这类只读命令也能用同一套判定：它不初始化
+// 全局 Store（Init 会 seedDefaults 写库），而是直接读 sys_setting 行再调这里。
+// 若两边各写一份 switch，界面上写着 "on" 的 HTTPS 开关在回填命令里会被当成
+// false，源端就会连到 http 端点——两边日志都不报错，只是读不到对象。
+func ParseBool(v string, def bool) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":
 		return true
