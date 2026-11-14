@@ -15,6 +15,7 @@
 # 临时跳过：
 #     SKIP_TYPECHECK=1 git push        # 只跳过类型检查
 #     SKIP_NOTICES=1  git push         # 只跳过许可清单检查
+#     SKIP_AUDIT_LABELS=1 git push     # 只跳过审计动作中文名对账
 #     git push --no-verify             # 跳过全部钩子
 #
 # 设计取舍：
@@ -22,6 +23,9 @@
 #     否则每次推送固定多等两分钟，很快就会被 --no-verify 绕过去。
 #   · 许可清单检查只在改了依赖文件（go.mod / go.sum / package.json / package-lock.json）
 #     时才跑——它要读 node_modules 里的许可正文，没装依赖时只提示不阻断。
+#   · 审计动作中文名对账只在动到 internal/audit/audit.go 或
+#     frontend/src/api/audit.ts 时才跑——它不依赖 node_modules（只用 node 内置模块），
+#     几秒出结论，先于类型检查跑，让漏同步尽早暴露。
 #   · 还没装依赖（新克隆）时只提示不阻断，避免本地环境问题挡住推送；
 #     真正的门禁仍在 CI，钩子只是提前。
 #   · 与 CI 用同一条命令（node 直调 vue-tsc，不经 npx），保证两边结论一致。
@@ -31,8 +35,10 @@ set -u
 ZERO=0000000000000000000000000000000000000000
 need_check=0
 need_notices=0
+need_audit=0
 skip_typecheck="${SKIP_TYPECHECK:-0}"
 skip_notices="${SKIP_NOTICES:-0}"
+skip_audit="${SKIP_AUDIT_LABELS:-0}"
 
 # git 通过标准输入给出每个待推的 ref：<local ref> <local sha> <remote ref> <remote sha>
 while read -r _local_ref local_sha _remote_ref remote_sha; do
@@ -57,11 +63,50 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   case "$changed" in
     *backend/go.mod*|*backend/go.sum*|*frontend/package.json*|*frontend/package-lock.json*) need_notices=1 ;;
   esac
+  case "$changed" in
+    *backend/internal/audit/audit.go*|*frontend/src/api/audit.ts*) need_audit=1 ;;
+  esac
 done
 
-[ "$need_check" = "0" ] && [ "$need_notices" = "0" ] && exit 0
+[ "$need_check" = "0" ] && [ "$need_notices" = "0" ] && [ "$need_audit" = "0" ] && exit 0
 
-# ── 1. 第三方许可清单（快，先跑） ──────────────────────────────────────
+# ── 1. 后端审计动作 ↔ 前端中文名 跨端对账（快，先于类型检查） ───────────
+# 只在动到审计埋点（backend/internal/audit/audit.go）或前端中文名表
+# （frontend/src/api/audit.ts）时才跑。这俩文件改动都不依赖 node_modules，
+# 只用 node 内置模块，本地几秒出结论。
+#   背景：2026-11-14 真实踩坑——后端加了 ActionTenantStorageRekey，前端
+#   漏了 storage.config.rekey 的中文名，只靠 CI 的 audit.spec.ts 拦，
+#   一路推到远端才红。接进钩子后本地推送前即拦下。
+if [ "$need_audit" = "1" ]; then
+  if [ "$skip_audit" = "1" ]; then
+    echo "[pre-push] 已按 SKIP_AUDIT_LABELS=1 跳过审计动作中文名对账"
+  elif ! command -v node >/dev/null 2>&1; then
+    echo "[pre-push] 本机没有 node，跳过审计动作中文名对账（CI 仍会拦）。"
+  else
+    echo "[pre-push] 检测到审计埋点/中文名变更，正在核对跨端一致性……"
+    if node scripts/check_audit_labels.mjs; then
+      echo "[pre-push] 审计动作与前端中文名一一对应。"
+    else
+      cat <<'MSG'
+
+[pre-push] 后端审计动作与前端中文名不一致，已阻止推送。
+
+  · 后端在 internal/audit/audit.go 新增/改了 ActionXxx 常量，但前端
+    frontend/src/api/audit.ts 的 ACTION_LABELS 没同步中文名（或反之）。
+    这是 2026-11-14 真实踩过的坑：storage.config.rekey 缺中文名，
+    一直推到 CI 才被 audit.spec.ts 拦下。
+  · 修复：按上面提示补/删 ACTION_LABELS 的键，再提交。
+  · 确实是草稿分支要备份，可以跳过：
+        SKIP_AUDIT_LABELS=1 git push
+        git push --no-verify
+
+MSG
+      exit 1
+    fi
+  fi
+fi
+
+# ── 2. 第三方许可清单（快，先跑） ──────────────────────────────────────
 if [ "$need_notices" = "1" ]; then
   if [ "$skip_notices" = "1" ]; then
     echo "[pre-push] 已按 SKIP_NOTICES=1 跳过第三方许可清单检查"
@@ -94,7 +139,7 @@ MSG
   fi
 fi
 
-# ── 2. 前端类型检查 ───────────────────────────────────────────────────
+# ── 3. 前端类型检查 ───────────────────────────────────────────────────
 [ "$need_check" = "0" ] && exit 0
 
 if [ "$skip_typecheck" = "1" ]; then
