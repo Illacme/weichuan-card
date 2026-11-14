@@ -591,6 +591,27 @@ func tenantStorageActive(row *model.TenantStorageConfig) (bool, string) {
 	return true, ""
 }
 
+// tenantUsesOwnBucket 判断该租户此刻的文件是否真的写进自己的桶（即平台配额不应再硬拦截）。
+//
+// 直接复用 tenantStorageActive 的同一份判定（路由开关 on + 已启用 + 驱动非 local + 凭据完整），
+// 与「谁会先挡住上传」同源——避免「上传侧豁免了硬拦截、出参侧却还当平台对象」这种漂移。
+//
+// 热点短路：先判进程级开关（纯内存、无 DB 查询），关着直接返回 false；
+// 只有 TENANT_STORAGE_ROUTE 真的打开时才会去读这家企业的配置行。
+// 开关默认 off，所以这个改动在功能启用之前是**零行为变更**——标准部署（开关关着）
+// 的 checkStorageQuota 走不到这一支，硬拦截语义与改造前逐字节一致。
+func tenantUsesOwnBucket(db *gorm.DB, cid int64) bool {
+	if cid <= 0 || !tenantStorageTrafficEnabled() {
+		return false
+	}
+	row, err := loadTenantStorage(db, cid)
+	if err != nil || row == nil {
+		return false
+	}
+	ok, _ := tenantStorageActive(row)
+	return ok
+}
+
 // publicBaseUrlActive / publicBaseUrlNote 的判定已移到 publicorigin.go 的
 // publicOriginState（第六十九轮）。
 //

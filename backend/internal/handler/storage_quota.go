@@ -76,6 +76,13 @@ func checkStorageQuota(db *gorm.DB, cid, incoming int64) (bool, string) {
 		// 平台自身对象（素材库 / 小程序码 / 平台超管直传）不归属任何租户，不计量也不拦。
 		return true, ""
 	}
+	// 租户已切到自有桶：对象落在客户自己的存储，平台不持有这些字节，
+	// 平台配额不再硬拦截（成本不在平台），改为计量与展示（见 storageGetHandler）。
+	// 判定复用 tenantStorageActive 的同一份口径，与"谁会先挡住上传"同源；
+	// 开关默认 off，功能未启用前这一支恒不命中，是零行为变更。
+	if tenantUsesOwnBucket(db, cid) {
+		return true, ""
+	}
 	quota := storageQuotaBytesFor(db, cid)
 	if quota <= 0 {
 		return true, ""
@@ -198,9 +205,12 @@ func storageGetHandler(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
 			return
 		}
+		// 已切到自有桶的租户：平台配额不约束其上传（成本不在平台），
+		// 这里的 bytes 仅作"累计上传量"展示用，不再画满格拦截进度条。
+		usesOwnBucket := tenantUsesOwnBucket(db, cid)
 		quota := storageQuotaBytesFor(db, cid)
 		percent := 0
-		if quota > 0 {
+		if quota > 0 && !usesOwnBucket {
 			percent = int(row.Bytes * 100 / quota)
 			if percent > 100 {
 				percent = 100
@@ -218,6 +228,9 @@ func storageGetHandler(db *gorm.DB) gin.HandlerFunc {
 			"unlimited":   quota <= 0,
 			"updatedAt":   row.UpdatedAt,
 			"quotaGlobal": globalStorageQuotaMBFn(),
+			// 前端据此切换展示：false 时显示"使用自有存储，不受平台配额限制"，
+			// 而不是满格拦截进度条；开关 off 或未切自有桶时为 true，行为不变。
+			"platformQuotaApplies": !usesOwnBucket,
 		}})
 	}
 }
