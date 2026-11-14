@@ -218,6 +218,20 @@ func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": tenantStorageView(saved)})
 	})
 
+	// DELETE /storage = 解约 / 撤掉自有桶配置（不可逆）。
+	//
+	// 保守保留政策（第七十轮，契合 R5 与 audit.purge 的「默认不删」哲学）：
+	//   - 删的只有 tenant_storage_configs 这一行；
+	//   - 凭据密文（AccessKeyEnc/SecretKeyEnc）只落在这张表，删行即随行清除，
+	//     不单独再写一次「清凭据」；
+	//   - 以下三类**一律不碰**，对账时要能解释这个「裂缝」：
+	//       1) 客户桶里的对象——平台不持有删桶权限，也不主动主张删；
+	//       2) 回填台账 storage_backfill_refs——按 company_id 溯源留痕，R5 兜底；
+	//       3) 业务表 t/<cid>/ 引用（refmigrate.Inventory 的 14 列）——配置删后
+	//          新上传走平台 origin 回落，存量对象仍在客户桶不丢（R5）。
+	//   企业 disabled 是软状态、可逆，绝不在此级联触发——禁用与重置是两件独立的事。
+	//   这条「只删配置行」的边界由 tenant_storage_guard_test.go 的源码级守门钉死，
+	//   并由 tenant_storage_test.go 的运行时用例断言三张表都不动。
 	r.DELETE("/api/admin/companies/:id/storage", plat, func(c *gin.Context) {
 		if writeLocked(c) {
 			return
@@ -249,9 +263,18 @@ func RegisterTenantStorage(r *gin.Engine, db *gorm.DB) {
 				"endpoint": row.Endpoint,
 				"bucket":   row.Bucket,
 				"enabled":  row.Enabled,
-				// 明确记下「有对象留在原桶」：切回平台盘只改新上传的去向，
-				// 存量对象不会被搬走，对账时要能解释这个裂缝。
+				// 明确记下「删了什么 / 留了什么」，审计员一眼能区分
+				// 「保守保留式删除」与「连带清理式删除」——后者绝不能在此发生。
+				"deleted": "tenant_storage_configs",
+				// 切回平台盘只改新上传的去向，存量对象不会被搬走。
 				"objectsLeftInBucket": true,
+				// 注：retained 用语义名而非表名，避免与「源码级守门」的表名清单互相干扰；
+				// 语义依次为：客户桶对象 / 回填台账 / 业务表引用。
+				"retained": []string{
+					"customer_bucket_objects",
+					"backfill_ledger",
+					"business_references",
+				},
 			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})

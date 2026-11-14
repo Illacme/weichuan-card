@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/auth"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
@@ -560,4 +561,70 @@ func TestTenantStorageRejectsBadPublicBaseURL(t *testing.T) {
 	require.Equal(t, before.AccessKeyEnc, after.AccessKeyEnc)
 	require.Equal(t, "https://img.cust.com/prefix", after.PublicBaseURL,
 		"被拒的请求不能顺手把坏值改掉（那是另一件事），也不能写入新值")
+}
+
+// TestTenantStorageResetPreservesCustomerData 是「保守保留」政策的运行时证据
+// （第七十轮，用户选定口径：解约/撤桶只删配置行，其余一律保留）。
+//
+// 删配置行时，平台不持有删桶凭据，客户桶对象是否真删无法在单测里断言；但回填台账
+// storage_backfill_refs 与业务表 t/<cid>/ 引用这两类在库里看得到，是政策最强的可测
+// 锚点——它们必须原封不动。
+//
+// 为什么必须钉死这两条：未来有人接「解约就清干净」需求时，最自然的实现是 DELETE
+// 顺手把 storage_backfill_refs 与业务引用一起删。那会留下「存量对象还在客户桶、却
+// 没了台账与引用」的烂摊子——既解释不了遗留对象、又丢了回滚依据。删库容易，恢复无门。
+//
+// 反向验证：把下面第②/③步的断言删掉、或在 handler 里临时加一行
+// `db.Delete(&model.StorageBackfillRef{})` 后跑本用例必红；还原后复绿。
+func TestTenantStorageResetPreservesCustomerData(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	plat := loginAdmin(t, c)
+	stubStorageProbeOK(t)
+
+	const path = "/api/admin/companies/1/storage"
+	doStorage(t, c, "PUT", path, storagePayload(), plat)
+
+	// P3 存量回填留下的溯源台账（company_id=1）
+	require.NoError(t, db.Create(&model.StorageBackfillRef{
+		PlanHash: "plan-1", RefID: "ref-1",
+		RefTable: "company_info", PKCol: "id", PKValue: 1, RefCol: "logo",
+		ArrayIndex: -1, OldValue: "old.png", NewValue: "t/1/logo.png",
+		CompanyID: 1, Status: "applied",
+	}).Error)
+
+	// 业务表 t/<cid>/ 引用：company_info.logo 是 refmigrate.Inventory 的 14 列之一
+	require.NoError(t, db.Create(&model.CompanyInfo{
+		CompanyID: 1, Logo: "t/1/logo.png",
+	}).Error)
+
+	// 解约 / 撤桶
+	doStorageOK(t, c, "DELETE", path, nil, plat)
+
+	// ① 配置行确实被删（正面证据：删除发生了，不是空跑）
+	require.Error(t, db.Where("company_id = ?", 1).First(&model.TenantStorageConfig{}).Error,
+		"解约后配置行应被删除")
+
+	// ② 回填台账按 company_id 保留——R5 溯源留痕，删了就再也回滚不了
+	var refs int64
+	require.NoError(t, db.Model(&model.StorageBackfillRef{}).
+		Where("company_id = ?", 1).Count(&refs).Error)
+	require.Equal(t, int64(1), refs, "解约不得删除回填台账：存量对象还在客户桶，台账是唯一的回滚依据")
+
+	// ③ 业务表 t/<cid>/ 引用保留——配置删后出参走平台 origin 回落，对象仍在客户桶
+	var ci model.CompanyInfo
+	require.NoError(t, db.Where("company_id = ?", 1).First(&ci).Error)
+	require.Equal(t, "t/1/logo.png", ci.Logo, "解约不得回退业务表引用：存量对象仍在客户桶，引用要留着指向它")
+
+	// ④ 审计明确记录「删了配置行、保留了三类」
+	var log model.AuditLog
+	require.NoError(t, db.Where("action = ? AND target_id = ?", audit.ActionTenantStorageReset, "1").
+		Order("id DESC").First(&log).Error, "应有一条 storage.config.reset 审计")
+	var detail map[string]any
+	require.NoError(t, json.Unmarshal([]byte(log.Detail), &detail), "审计 detail 必须是合法 JSON")
+	require.Equal(t, "tenant_storage_configs", detail["deleted"], "审计要写清删了什么")
+	require.Equal(t, true, detail["objectsLeftInBucket"], "审计要写清客户桶对象留着")
+	retained, ok := detail["retained"].([]any)
+	require.True(t, ok, "审计要列出保留了哪些（retained 必须是数组）")
+	require.Len(t, retained, 3, "保留三类：客户桶对象 / 回填台账 / 业务引用")
 }

@@ -81,6 +81,78 @@ func readHandlerSource(t *testing.T, name string) string {
 	return string(b)
 }
 
+// TestTenantStorageResetDeletesOnlyConfigRow 是「保守保留」政策的源码级守门
+// （第七十轮，用户选定口径：解约/撤桶只删配置行，客户桶对象/回填台账/业务引用一律保留）。
+//
+// 运行时用例（TestTenantStorageResetPreservesCustomerData）只能证明「当前没删」，
+// 守不住「有人给 DELETE 加了删除」。这条静态守门钉的是 DELETE handler 的**边界**：
+// 它的函数体除了删 tenant_storage_configs 这一行，绝不能出现任何一张被保护表的删除。
+//
+// 被保护的清单来自 refmigrate.Inventory() 的 14 个引用列 + 回填台账 + 对象存储删除：
+//   - 业务表：company_info / media_check / project_case / employee / open_apply /
+//     achievement_category / biz_service / home_layout
+//   - 回填台账：storage_backfill_refs
+//   - 对象存储删除：DeleteObject / RemoveObject（客户桶对象由客户自己管，平台不代删）
+//
+// 反向验证：在 handler 里临时加一行 `db.Delete(&model.StorageBackfillRef{})` 或
+// `s3.DeleteObject(...)`，本测试必红；删掉后复绿。
+func TestTenantStorageResetDeletesOnlyConfigRow(t *testing.T) {
+	src := readHandlerSource(t, "tenant_storage.go")
+	body := deleteHandlerBody(t, src)
+
+	// 必须存在且仅存在一个「删配置行」的调用，且目标是 TenantStorageConfig，
+	// 作用域被 company_id 限定（不会误伤其它租户）。
+	require.Contains(t, body, `db.Where("company_id = ?", cid).Delete(&model.TenantStorageConfig{})`,
+		"DELETE 必须删 tenant_storage_configs 这一行，且按 company_id 限定作用域")
+
+	// 剥掉注释再判：本文件 handler 注释里会提到这些表名（解释为什么不能删），
+	// 裸 contains 会把说明书本身当成违规，造成「永远通过 / 误伤自己」。
+	stripped := stripGoComments(body)
+
+	// 「至少抓到 N 处」的读数兜底：守门要盯的表清单必须非空，否则守门空跑=假绿。
+	protected := []string{
+		"StorageBackfillRef", "storage_backfill_refs",
+		"CompanyInfo", "company_info",
+		"MediaCheck", "media_check",
+		"ProjectCase", "project_case",
+		"Employee", "employee",
+		"OpenApply", "open_apply",
+		"AchievementCategory", "achievement_category",
+		"BizService", "biz_service",
+		"HomeLayout", "home_layout",
+		"DeleteObject", "RemoveObject",
+	}
+	require.GreaterOrEqual(t, len(protected), 18, "守门清单本身要有读数，别让守门空跑")
+	// 整段函数体里只允许出现一次 .Delete( —— 也就是删配置行那一次。
+	require.Equal(t, 1, strings.Count(stripped, ".Delete("),
+		"DELETE handler 里只能有「删配置行」这一次 .Delete(，不得有任何额外的删除")
+	for _, tok := range protected {
+		require.NotContains(t, stripped, tok,
+			"DELETE 不得触碰被保护的对象（%s）：解约只删配置行，客户桶对象/回填台账/业务引用一律保留", tok)
+	}
+}
+
+// deleteHandlerBody 取出 DELETE 路由 handler 的完整函数体（含外层花括号）。
+//
+// 注释块在 r.DELETE(...) 之前，不在这个调用文本里，所以取出的是纯函数体，
+// 交给 stripGoComments 后判守门条件最干净。
+func deleteHandlerBody(t *testing.T, src string) string {
+	t.Helper()
+	for _, call := range scanRouteCalls(src) {
+		if !strings.HasPrefix(call.text, "r.DELETE(") {
+			continue
+		}
+		i := strings.Index(call.text, "func(")
+		require.GreaterOrEqual(t, i, 0, "DELETE 路由必须有 handler 函数体")
+		brace := strings.Index(call.text[i:], "{") + i
+		close := matchBrace(call.text, brace)
+		require.GreaterOrEqual(t, close, 0, "DELETE handler 花括号不配对")
+		return call.text[brace : close+1]
+	}
+	t.Fatalf("tenant_storage.go 里找不到 r.DELETE 路由")
+	return ""
+}
+
 // scanRouteCalls 扫出所有 `r.GET(` / `r.PUT(` / `r.POST(` / `r.DELETE(` / `r.PATCH(` 调用。
 //
 // 为什么不用按行正则：路由注册经常跨多行（本文件里 check 那条就是
@@ -149,6 +221,33 @@ func matchParen(src string, open int) int {
 		case '(':
 			depth++
 		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// matchBrace 返回与 src[open] 处左花括号配对的右花括号下标；不配对返回 -1。
+// 同样要跳过字符串字面量：审计 detail 里那些 JSON 串的引号是 "，里面的字符
+// 不得随意被当成结构括号。逻辑与 matchParen 对称，只换括号字符。
+func matchBrace(src string, open int) int {
+	if open < 0 || open >= len(src) || src[open] != '{' {
+		return -1
+	}
+	depth := 0
+	for i := open; i < len(src); i++ {
+		switch src[i] {
+		case '"', '\'', '`':
+			i = skipStringLiteral(src, i)
+			if i < 0 {
+				return -1
+			}
+		case '{':
+			depth++
+		case '}':
 			depth--
 			if depth == 0 {
 				return i
