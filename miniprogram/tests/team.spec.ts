@@ -28,6 +28,10 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn(async (..._args: any[]): Promise<any> => ({})),
 }))
 
+// request 的第 4 参是 latestGuard 的取消信号。断言只认「传了一个可 aborted 的信号」，
+// 不把信号对象的具体形状焊死在测试里。
+const SIGNAL = expect.objectContaining({ aborted: expect.any(Boolean) })
+
 vi.mock('../utils/request', () => ({
   request: mocks.request,
   assetUrl: (u: string) =>
@@ -77,7 +81,7 @@ describe('名片墙 · 状态与数据', () => {
     const p = await page()
 
     // 首屏只拉一页 60（不是全量 300）：大企业不必等几百条 JSON 解析完才出画面
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 }, SIGNAL)
     expect(p.data.list).toHaveLength(2)
     expect(p.data.list[0]).toMatchObject({ staffId: 11, name: '高立新', title: '销售经理' })
     expect(p.data.total).toBe(2)
@@ -177,7 +181,7 @@ describe('名片墙 · 搜索', () => {
     await flush()
 
     // 两端空格必须吃掉，否则后端会拿着「  张  」去匹配
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60, keyword: '张' })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60, keyword: '张' }, SIGNAL)
     expect(p.data.activeKeyword).toBe('张')
   })
 
@@ -208,7 +212,48 @@ describe('名片墙 · 搜索', () => {
 
     expect(p.data.keyword).toBe('')
     expect(p.data.activeKeyword).toBe('')
-    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 })
+    expect(mocks.request).toHaveBeenCalledWith('GET', '/api/team', { page: 1, size: 60 }, SIGNAL)
+  })
+
+  // 防竞态测的是承诺本身，不是「参数里有没有 signal」这个更容易满足的代理：
+  // 两次搜索同时在途，故意让旧关键字的响应先回来——它既不能覆盖列表，
+  // 也不能把整页打成错误态（取消不是故障）。
+  it('连续换关键字：旧响应晚回不覆盖新结果，也不误报错误态', async () => {
+    mocks.request.mockReset()
+    mocks.request.mockImplementation(async (..._a: any[]) => ({}))
+    const pending: Array<(v: any) => void> = []
+    const hold = () => new Promise<any>((resolve) => { pending.push(resolve) })
+    mocks.request
+      .mockImplementationOnce(hold) // 首屏
+      .mockImplementationOnce(hold) // 搜「张」
+      .mockImplementationOnce(hold) // 搜「李」
+
+    const p = await page()
+    pending[0](teamResp())
+    await flush()
+    mocks.request.mockClear()
+
+    p.onKeywordInput({ detail: { value: '张' } })
+    p.onSearch()
+    p.onKeywordInput({ detail: { value: '李' } })
+    p.onSearch()
+
+    // 旧响应先到，带一个绝不该出现的人
+    pending[1](teamResp({
+      data: [{ staffId: 99, name: '旧结果·张', title: '', avatar: '' }], total: 1,
+    }))
+    await flush()
+    expect(p.data.list).toHaveLength(2) // 仍是首屏结果，旧响应被 isCurrent 挡住
+    expect(p.data.error).toBe(false)
+
+    // 新响应随后到，才是这一轮该显示的内容
+    pending[2](teamResp({
+      data: [{ staffId: 88, name: '新结果·李', title: '', avatar: '' }], total: 1,
+    }))
+    await flush()
+    expect(p.data.list).toHaveLength(1)
+    expect(p.data.list[0].name).toBe('新结果·李')
+    expect(p.data.error).toBe(false)
   })
 
   // 用户在墙上搜人时突然被弹进某个人的名片，会觉得「我搜的人呢」

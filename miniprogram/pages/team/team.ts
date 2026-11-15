@@ -26,6 +26,7 @@ import { mapTeamList, teamParams, hasMoreOf } from '../../utils/team'
 import { readEntryStaff, writeEntryStaff, clearEntryStaff } from '../../utils/entry'
 import { getCompanyId } from '../../utils/tenant'
 import { bindTheme } from '../../utils/theme'
+import { latestGuard, isSuperseded } from '../../utils/latest'
 
 Page({
   data: {
@@ -65,8 +66,17 @@ Page({
     unavailable: false,
   },
 
+  // 搜索 / 清空 / 下拉刷新共用一个守门：连续换关键字时，旧关键字的响应晚回
+  // 会把列表填回旧结果（用户点中的人反而不在列表里），且不报错、不打日志。
+  guard: null as any,
+
+  onUnload() {
+    this.guard?.cancel()
+  },
+
   onLoad(query: any) {
     bindTheme(this)
+    if (!this.guard) this.guard = latestGuard()
     // 平台模式下企业可能由扫码 scene 带进来；query 里的 companyId 只用于
     // 兜底展示，实际请求的 companyId 由 utils/request 按租户语义统一注入。
     const cid = parseInt((query && query.companyId) || '0', 10)
@@ -130,11 +140,17 @@ Page({
   // 名片页又说「员工不存在」→ 再送回来…… 来回跳。
   async load(opts?: { silent?: boolean; noRedirect?: boolean }) {
     const noRedirect = !!(opts && opts.noRedirect)
+    if (!this.guard) this.guard = latestGuard()
+    const guard = this.guard
+    const sig = guard.next()
     const patch: Record<string, unknown> = { error: false, unavailable: false }
     if (!opts || !opts.silent) patch.loading = true
     this.setData(patch)
     try {
-      const r: any = await request('GET', '/api/team', teamParams(1, this.data.activeKeyword))
+      const r: any = await request('GET', '/api/team', teamParams(1, this.data.activeKeyword), sig)
+      // 旧轮响应（或已被取消后仍回来的）一律不写回：包括下面的默认入口改道——
+      // 否则用旧关键字发起的请求会把正在搜人的访客弹进某个人的名片。
+      if (!guard.isCurrent(sig)) return
       if (r.code !== 0) {
         // 企业不存在 / 停用：这不是网络问题，重试也没用，给明确说法
         this.setData({ loading: false, unavailable: true })
@@ -185,7 +201,9 @@ Page({
       })
       // 导航栏标题与页面抬头一致；企业信息为空时回落品牌名
       applyBrandTitle({ shortName: comp.shortName, fullName: comp.fullName })
-    } catch {
+    } catch (e) {
+      // 被取消 / 已被新轮取代：不是故障，别把整页打成错误态，也别清掉新轮的 loading
+      if (isSuperseded(e) || !guard.isCurrent(sig)) return
       this.setData({ loading: false, error: true })
     }
   },
