@@ -45,6 +45,10 @@
       {
         "type": "file",
         "value": "README.md"
+      },
+      {
+        "type": "file",
+        "value": ".DS_Store"
       }
     ],
     "include": []
