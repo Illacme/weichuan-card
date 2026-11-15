@@ -130,3 +130,38 @@ func TestStorageGetReportsPlatformQuotaNotApplicable(t *testing.T) {
 	d = sb["data"].(map[string]any)
 	require.Equal(t, true, d["platformQuotaApplies"], "开关关掉后平台配额必须重新适用")
 }
+
+// TestStorageQuotaPutRejectsOwnBucketTenant 守住写侧：管理后台已跳过提交，后端仍要拒收。
+// 否则任何绕过界面的调用方都能写进一条永远不生效的 quota_mb，还留一条审计。
+func TestStorageQuotaPutRejectsOwnBucketTenant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r, db := setupEngineWithDB(t)
+	c := newTestClient(r, t)
+	admin := loginAdmin(t, c)
+
+	const cid = 2
+	// PUT 会先校验企业存在。不建这行，「企业不存在」同样返回 code=1，
+	// 断言就会假绿——根本没走到自有桶闸门。先让前置条件成立，再钉住拒绝原因。
+	require.NoError(t, db.Create(&model.Company{ID: cid, Name: "乙公司", Status: "enabled"}).Error)
+	insertOwnBucketConfig(t, db, cid)
+
+	t.Setenv("TENANT_STORAGE_ROUTE", "on")
+	put := map[string]any{"companyId": cid, "quotaMb": 50}
+	_, body := c.do("PUT", "/api/admin/storage/quota", put, admin)
+	require.EqualValues(t, 1, body["code"], "自有桶租户不应能设置平台配额：%v", body)
+	require.Contains(t, body["msg"], "不适用", "必须因「平台配额不适用」被拒，不是参数错误 / 企业不存在")
+
+	row, err := storageUsageOf(db, cid)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, row.QuotaMB, "被拒的请求不能留下 quota_mb 覆盖值")
+
+	// 反向验证：开关关掉后平台配额重新适用，同一家企业的 PUT 应正常落库。
+	// 若上面把整个写接口禁掉了（而不是按自有桶判定），这一支会红。
+	t.Setenv("TENANT_STORAGE_ROUTE", "off")
+	_, body = c.do("PUT", "/api/admin/storage/quota", put, admin)
+	require.EqualValues(t, 0, body["code"], "开关关掉后必须恢复配额写入：%v", body)
+
+	row, err = storageUsageOf(db, cid)
+	require.NoError(t, err)
+	require.EqualValues(t, 50, row.QuotaMB)
+}

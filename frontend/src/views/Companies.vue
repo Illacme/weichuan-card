@@ -1002,14 +1002,19 @@ async function submitLicense() {
       expiresAt: licForm.expiresAt,
       features: licForm.features,
     })
-    // 用量没取到就不提交配额：那时 licForm.quotaMb 还是初值 0，提交等于把客户
-    // 已设的上限悄悄改回「跟随全局」。宁可这次不改，也要说清为什么没改。
-    if (storage.loaded) {
+    // 两种情况下都不提交配额：
+    // ① 用量没取到：那时 licForm.quotaMb 还是初值 0，提交等于把客户已设的上限
+    //    悄悄改回「跟随全局」，一次接口抖动造成的行为变更事后无从解释；
+    // ② 企业已切自有桶：界面明确写了「此项不可设置」并禁用了输入框，此时再 PUT
+    //    只会写一条永远不生效的 quota_mb、留一条审计，和界面自相矛盾。
+    const quotaEditable = storage.loaded && storage.platformQuotaApplies
+    if (quotaEditable) {
       await saveStorageQuota(licCompany.value.id, licForm.quotaMb)
-    } else {
+    } else if (!storage.loaded) {
+      // 自有桶是正常状态，不是「用量拉取失败」，别弹这条误导性警告
       ElMessage.warning('未取到存储用量，本次只保存授权，存储配额未改动')
     }
-    ElMessage.success(storage.loaded ? '授权与配额已保存' : '授权已保存')
+    ElMessage.success(quotaEditable ? '授权与配额已保存' : '授权已保存')
     licVisible.value = false
     await load()
   } catch {

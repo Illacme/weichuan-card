@@ -927,6 +927,32 @@ describe('企业管理 · 授权与存储配额', () => {
     expect(ElMessage.warning).toHaveBeenCalledWith(expect.stringContaining('存储配额未改动'))
     expect(ElMessage.success).toHaveBeenCalledWith('授权已保存')
   })
+
+  // 展示侧把「存储上限」禁用还不够：保存时若照旧 PUT，会覆盖 quotaMb 并留一条审计，
+  // 与界面「此项不可设置」自相矛盾。这条测的是「别提交」，上面那条测的是「框灰了没」——
+  // 只测后者会让本缺陷在全绿的情况下长期存在。
+  it('自有桶企业保存授权时不提交配额（不写库、不留审计）', async () => {
+    mocks.getStorageUsage.mockImplementation(async () => ({
+      code: 0,
+      data: {
+        companyId: 2, bytes: 629145, files: 3, quotaBytes: 0, quotaMb: 0,
+        percent: 0, humanBytes: '0.6 MB', humanQuota: '0.0 MB', unlimited: true, quotaGlobal: 0,
+        platformQuotaApplies: false,
+      },
+    }))
+    const w = await setup()
+    const dlg = await openLic(w, 2)
+    await dlg.findAll('.el-button').find((b: any) => b.text() === '保存')!.trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyLicense).toHaveBeenCalled()
+    expect(mocks.saveStorageQuota).not.toHaveBeenCalled()
+    // 配额根本没改，报「授权与配额已保存」会让运营以为改动落库了
+    expect(ElMessage.success).toHaveBeenCalledWith('授权已保存')
+    expect(ElMessage.success).not.toHaveBeenCalledWith('授权与配额已保存')
+    // 自有桶是正常状态，不是用量拉取失败
+    expect(ElMessage.warning).not.toHaveBeenCalledWith(expect.stringContaining('存储配额未改动'))
+  })
 })
 
 // 登录页白标码（login_code）。

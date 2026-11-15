@@ -256,6 +256,14 @@ func storageQuotaPutHandler(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
 			return
 		}
+		// 纵深防御：已切自有桶的租户平台配额不适用（GET 出参 platformQuotaApplies=false、
+		// 管理后台也已禁用这一栏并跳过提交）。这里再拒一次，保证即便有别的前端 / 脚本
+		// 绕过界面，也不会写进一条永远不生效的 quota_mb 并污染审计日志。
+		// 判定与 GET 出参同源（tenantUsesOwnBucket），不会出现「界面说不适用、后端照收」。
+		if tenantUsesOwnBucket(db, req.CompanyID) {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该企业已使用自有存储，平台配额不适用（无需设置）"})
+			return
+		}
 		// 只改 quota_mb，不动 bytes/files：这两列是累计事实，改配额不该清零用量。
 		// 行不存在时先插一条零用量行（upsert 只在这一列上，与 addStorageUsage 互补）。
 		now := time.Now()
