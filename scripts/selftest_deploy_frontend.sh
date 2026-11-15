@@ -102,6 +102,11 @@ case "$*" in
             echo MIG_DIR_MISSING; exit 0
         fi
         echo MIG_DIR_OK
+        # 探针回传契约是「状态行 + 命中的真实目录 + *.sql 清单」三行起。
+        # 少回这一行，deploy 会把第一个 .sql 文件名当成 MIG_DIR，并从第 3 行
+        # 开始读清单 → 清单恒少一个文件 → 明明一致也误报「部署包不完整」。
+        # 这里必须用装置认可的目录回一行，7.2 另有断言盯住它。
+        echo "${FAKE_MIGRATIONS_DIR:-/site/backend/migrations}"
         if [ -n "${FAKE_MIGRATIONS_DIR-}" ] && [ -d "$FAKE_MIGRATIONS_DIR" ]; then
             (cd "$FAKE_MIGRATIONS_DIR" && ls -1 *.sql 2>/dev/null) | while IFS= read -r f; do
                 [ -n "$f" ] || continue
@@ -388,6 +393,13 @@ else
     bad "事故说明或修复命令不全"
 fi
 if has "$OUT" '默认只警告、继续发版'; then ok "默认模式明确提示可加严格模式"; else bad "缺少严格模式引导"; fi
+# 盯住「探针回传真实目录」这一行：MIG_DIR 若被第一个 .sql 文件名污染，
+# 修复命令里的 rsync 目标就不再是目录，而 7.1 仍可能因为别的原因看起来正常。
+if has "$OUT" "rsync -av backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
+    ok "修复命令用探针回传的真实目录（没被 .sql 文件名污染）"
+else
+    bad "迁移目录回传契约漂移：修复命令里的路径不对"
+fi
 
 # 7.3 严格模式：上传前就死
 reset_probe
