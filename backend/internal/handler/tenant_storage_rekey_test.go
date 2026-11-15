@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"encoding/base64"
+	"os"
+	"strings"
 	"testing"
 
 	"weichuan/internal/model"
@@ -111,4 +113,48 @@ func TestRekeyTenantStorageFailsOnUnknownKey(t *testing.T) {
 	row := loadStorageRow(t, db, 1)
 	require.Equal(t, "", row.KeyID)
 	require.Equal(t, akThird, row.AccessKeyEnc, "失败不应改写任何行")
+}
+
+// TestTenantStorageRekeyScopeIsStatedAtCLI 钉住「re-key 范围」这条跨文件口径。
+//
+// 命令名带 rekey，最危险的误读是把它当成「全库换钥」：实际上它只重加密
+// tenant_storage_configs 的云凭据，employees / open_applies /
+// card_modify_applies.snapshot 的业务 PII 一行都不碰。换钥对那些表仍不可逆，
+// 所以警告必须在**连库之前**就打出来——等跑完才说「没覆盖」就白停了一次机。
+//
+// 反向验证：删掉 CLI 里的 log.Printf 范围警告、或把它挪到 dbopen.Open 之后，本测试必红。
+func TestTenantStorageRekeyScopeIsStatedAtCLI(t *testing.T) {
+	cli, err := os.ReadFile("../../cmd/server/main.go")
+	require.NoError(t, err, "守门必须在 handler 包目录下运行")
+	src := string(cli)
+	start := strings.Index(src, "func runTenantStorageRekey(")
+	require.GreaterOrEqual(t, start, 0, "找不到 CLI 函数 runTenantStorageRekey")
+	rel := strings.Index(src[start:], "\n}")
+	require.Greater(t, rel, 0, "取不到函数体")
+	body := src[start : start+rel]
+
+	// 量尺自己有读数：清单本身不能为空，否则下面的循环一条也不跑、恒绿。
+	tables := []string{"tenant_storage_configs", "employees", "open_applies", "card_modify_applies"}
+	require.GreaterOrEqual(t, len(tables), 4)
+	// 用完整短语而不是光盯 [REKEY][WARN]：CLI 里另有一条「未提供旧密钥」的 WARN，
+	// 只判前缀的话，把范围警告整段删掉也照样能命中那条、守门会假绿。
+	const warnPhrase = "[REKEY][WARN] 本命令只重加密"
+	require.Contains(t, body, warnPhrase, "CLI 必须打印范围警告")
+	for _, tbl := range tables {
+		require.Contains(t, body, tbl, "范围警告要点名 %s", tbl)
+	}
+
+	dbAt := strings.Index(body, "dbopen.Open(")
+	require.Greater(t, dbAt, 0, "CLI 应真的连库；扫到空壳说明函数体截取错了")
+	require.Less(t, strings.Index(body, warnPhrase), dbAt, "范围警告必须在连库之前")
+	require.Less(t, strings.Index(body, "employees"), dbAt, "业务 PII 表名必须出现在连库前的警告里")
+
+	// 实现侧同样盯住边界：文档说「不覆盖业务 PII」，代码就不能悄悄扩范围。
+	impl, err := os.ReadFile("tenant_storage_rekey.go")
+	require.NoError(t, err)
+	code := stripGoComments(string(impl))
+	for _, tok := range []string{"model.Employee", "model.OpenApply", "model.CardModifyApply"} {
+		require.NotContains(t, code, tok,
+			"RekeyTenantStorage 不应触碰 %s：业务 PII 换钥仍不可逆，别把它混进凭据 re-key", tok)
+	}
 }

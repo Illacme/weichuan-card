@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"weichuan/internal/audit"
 	"weichuan/internal/auth"
@@ -20,17 +21,53 @@ import (
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
+	"weichuan/internal/setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// applyOpenLimitFn 公开开通申请端点的每分钟 / 每 IP 阈值。
+//
+// 抽成包级变量是为了测试能把阈值压到 2，真跑出 429 分支（同 uploadLimitFn 的
+// 间接层手法）；限流器构造时存的是**函数值**，所以下面必须传读变量的闭包，
+// 传当前值会让测试里替换变量失效。
+// defaultApplyOpenRateLimit 缺省阈值：既是 setting 没登记时的取值，也是界面把
+// 阈值填成 0 / 负数时 NewRateLimiter 的兜底——两处同源，防止「界面填 0 就关掉防护」。
+// 上限不能放宽到几十次以上：这是无鉴权写库端点，额度越宽越接近没限。
+const defaultApplyOpenRateLimit = 10
+
+var applyOpenLimitFn = func() int {
+	return setting.GetInt("apply_open_rate_limit_per_min", defaultApplyOpenRateLimit)
+}
+
+// applyOpenLimiter 公开开通申请的限流器：按客户端 IP 分桶 + 数据库共享计数。
+//
+// 为什么必须限流：这是**无鉴权的写库端点**。一次提交会查手机号是否重复、
+// 调微信内容安全文本检测、再写一条待审申请；不限流时一个脚本就能灌满后台
+// 待审列表、把内容安全接口配额打爆。同链路的匿名头像上传已有 uploadLimiter，
+// 但那只挡文件上传，挡不住「提交申请」本身——两条是独立的公开入口。
+//
+// 桶键带 apply-open: 前缀：与 login:/refresh:/upload:/track: 共用同一张
+// rate_limit_hits 表，裸 IP 当键会挤进同一行计数，用申请额度把同 IP 的登录
+// 打成 429（办公网 NAT 共享出口 IP 时完全可达）。
+//
+// 不按 companyId 分桶：脚本正是靠换企业 ID 放大调用量，按业务 ID 分桶等于没限。
+func applyOpenLimiter(db *gorm.DB) *middleware.RateLimiter {
+	return middleware.NewRateLimiter(func() int { return applyOpenLimitFn() }, defaultApplyOpenRateLimit, time.Minute).
+		WithKey(func(c *gin.Context) string { return "apply-open:" + c.ClientIP() }).
+		WithMessage("提交过于频繁，请稍后再试").
+		WithCounter(dbRateCounter{db: db})
+}
+
 // RegisterApply 注册写操作：开通申请 / 名片修改审核 / 员工管理 / 统计。
 // 多租户：所有 /api/admin 端点按 tenantScope 收窄（企业管理员只见本企业）；
 // 公开申请端点按请求体 companyId 归属租户（缺省 1 号租户朗汇）。
 func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
-	// 员工自助提交开通申请（公开）
-	r.POST("/api/apply/open", func(c *gin.Context) {
+	// 员工自助提交开通申请（公开、无鉴权）。
+	// 限流中间件挂在**最前面**：查手机号、内容安全检测、写库三步都在它之后，
+	// 被挡掉的请求一次库都不查，否则「限了但没挡住成本」等于白限。
+	r.POST("/api/apply/open", applyOpenLimiter(db).Handler(), func(c *gin.Context) {
 		var req model.OpenApply
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})

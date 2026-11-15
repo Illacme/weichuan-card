@@ -5229,3 +5229,39 @@ include `../miniprogram/tests/**/*.spec.ts`）。
 - `driver=oss` 源、虚拟主机风格且 `hostHeader` 与 `endpoint` 不同域名仍显式拒绝；
   非云厂商桶的 TLS/SNI、CDN、CORS、跨区一致性仍只有有限证据。
 - `gofmt -l` 的既有格式债文件未动，仍需单独一次纯格式提交。
+
+
+---
+
+## 第七十二轮收口 · 现状订正（2026-11-16）
+
+> 本文档按轮次时间线累积，前面各章的「P4 剩余」「恒 false」「12 个格式债文件」
+> 都是**当时口径**，不是当前状态。这里集中列出此后已变化的结论，读文档时以本节为准。
+
+- **P4 已全部闭环**：`key_id` 轮换（第七十一轮，稳定指纹 + 停机式 `server tenant-storage-rekey`）、
+  配额口径（自有桶租户只计量展示，保存链路不再 PUT 配额）、解约后清理策略（只删配置行、
+  保留客户桶对象 / 回填台账 / 业务引用）。第六十九轮末尾「P4 剩余：`key_id` 轮换、配额口径、
+  解约后清理策略」是当时的待办，现已划掉。
+- **`publicBaseUrlActive` 不再恒 false**：第六十九轮把 `public_base_url` / `public_read`
+  接入 9 条公开 GET 与 `/api/public/settings` 的按租户 origin，第六十八轮「恒 false」是接线前状态。
+- **re-key 要分两层说**：现在有 `server tenant-storage-rekey`，但**只重加密
+  `tenant_storage_configs` 的云凭据**；`employees` / `open_applies` /
+  `card_modify_applies.snapshot` 的业务 PII 与盲索引**没有 re-key**。
+  所以「业务 PII 必须在首次写入前定死 `PII_ENC_KEY`」仍然成立，
+  而「本项目没有 re-key 机制」已不准确。CLI 在连库前会打印范围警告，
+  `RekeyTenantStorage` 的实现侧有源码级守门盯住这条边界。
+- **PII 解密不再是零日志**：`decPII`（统计 JOIN 姓名）解密失败现在打 `[PII][WARN]`
+  并带链路标识，日志不含密文 / 明文；换钥后统计页姓名变空，运维能在日志里看到原因。
+- **`gofmt` 口径订正**：`gofmt -l ./...` 是错误用法（`gofmt` 不接受 go 的 `./...` 语法，
+  会报 `stat ./...: no such file or directory`），此前据此得出的「0 文件」是假结论。
+  正确命令 `gofmt -l .` 当前实测 **12 个**既有格式债文件，仍需单独一次纯格式提交；
+  各轮「本轮改动文件 0 处」的结论不受影响。**别顺手 `gofmt -w` 既有格式债文件**：
+  新版 gofmt 重排 doc comment 时会把注释里的 SQL 空串 `''` 静默改成弯引号 `”`，
+  这类损伤不报错、只让设计说明变味；本轮已把 `stat.go` 恢复为只改 2 行功能代码。
+- **公开申请端点已限流**：`/api/apply/open` 是公开写库 + 内容安全检测端点，
+  此前无限流；现按 IP 固定窗口限流（系统设置 `apply_open_rate_limit_per_min`，缺省 10 次/分），
+  桶键带 `apply-open:` 前缀、计数走 `rate_limit_hits` 共享表。
+- **写库守门不再是空转**：`db_write_test.go` 旧守门只认行首 `db.Create(`，
+  真实代码全是 `if err := db.Create(&x).Error; ...`，一条也抓不到；
+  现改为 AST 扫描全部 handler 生产文件，并顺带修掉 4 处真实裸写
+  （平台超管改名 1 处、新建企业事务里的开箱模板 3 处）。

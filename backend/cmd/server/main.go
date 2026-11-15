@@ -603,7 +603,17 @@ func newUploader(cfg config.Config) (storage.Uploader, error) {
 // 为什么必须先装载新密钥且拒绝占位密钥：本命令会把所有凭据重加密成「当前进程密钥」加密，
 // 若当前是 dev 占位密钥（未设 PII_ENC_KEY 被放行），重加密后就只有 dev 密钥能解——
 // 等于把生产凭据锁进公开密钥，后果比不轮换更糟，故直接 Fatal 拒绝。
+// 处理范围（务必先读）：只重加密 tenant_storage_configs 的云凭据，
+// **不覆盖业务 PII**——employees / open_applies / card_modify_applies.snapshot
+// 的加密列与盲索引都不在本命令范围内。命令名带 rekey，很容易被当成「全库换钥」；
+// 若 PII_ENC_KEY 已更换且这些表有存量数据，它们仍不可解密，本命令无法补救。
 func runTenantStorageRekey(cfg config.Config) {
+	// 范围警告必须在连库（更别说写库）之前打印：真有人是在换钥后拿它「救数据」，
+	// 跑到一半才发现救不了，就已经白停了一次机。
+	log.Printf("[REKEY][WARN] 本命令只重加密 tenant_storage_configs 的云凭据；" +
+		"不覆盖业务 PII（employees / open_applies / card_modify_applies.snapshot 的加密列与盲索引）。" +
+		"若 PII_ENC_KEY 已更换且这些表有存量数据，它们仍不可解密，本命令无法补救；" +
+		"换钥前必须确认业务 PII 为空或另有回填方案。")
 	if config.Resolved("DB_DSN") == "" {
 		log.Fatal("[REKEY] DB_DSN 未配置：请用 DB_DSN=... server tenant-storage-rekey 显式指定")
 	}

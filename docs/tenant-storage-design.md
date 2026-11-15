@@ -12,12 +12,14 @@
 > | 迁移 0044 建 `tenant_storage_configs` + 模型进 `model.All()` | 第五十八轮 |
 > | 生成器接真实配置表（`--dsn`，含对账同一来源） | 第五十八轮 |
 >
-> | **尚未落地**（按既定顺序，不可颠倒） | 影响 |
+> | **2026-11-13 当时尚未落地**（下表四项均已在后续轮次闭环，仅作历史记录） | 当时影响 |
 > | --- | --- |
 > | 配置写接口 + 后台界面（掩码 / 自检 / 审计，仅平台超管） | 目前表能读不能写：生产上只能手工 SQL 插入 |
 > | 写入侧 `NormalizeRef` 收敛（③，必须一个 env 能回滚） | 落库形态仍是三种混存 |
 > | `UploaderResolver` + 5 处注入（P2） | 上传仍走平台那一套存储，`--dsn` 生成的 snippet 暂无实际流量 |
 > | 存量回填 P3 | 老数据仍是绝对 URL / `/uploads/` 形态 |
+>
+> **现状订正（2026-11-16）**：上表「尚未落地」与 §3.6 的「没有 re-key」都是首版设计当时的口径。配置写接口 / 后台界面、写入侧归一、`UploaderResolver` 注入、存量回填 P3 均已落地；`key_id` 已是当前密钥的稳定指纹，并有停机式 `server tenant-storage-rekey` 命令——但该命令**只重加密 `tenant_storage_configs` 凭据，不覆盖业务 PII**，因此「业务 PII 必须在首次写入前定死密钥」的约束至今不变。
 >
 > 文中所有文件路径、标识符与行号都来自对仓库的实读，不引用印象。
 >
@@ -282,7 +284,7 @@ type Ref struct {
 | `driver` | `local` / `minio` / `oss` / `s3`，与现有枚举一致 |
 | `endpoint` / `bucket` / `region` / `use_ssl` | 与 `config.OverlayFromSettings` 现有字段一一对应 |
 | `access_key_enc` / `secret_key_enc` | 密文列；模型上 `json:"-"`，只写不读 |
-| `key_id` | 密钥版本标识，为将来换钥匙留口子 |
+| `key_id` | 密钥版本标识，首版为将来换钥匙留口子；第七十一轮已落地为当前 `PII_ENC_KEY` 的稳定指纹 |
 | `public_base_url` | 第一阶段**留空**（= 走平台统一入口）；客户自有域名开关启用时才填 |
 | `public_read` | 桶是否公开读；第一阶段试点要求为 true |
 | `enabled` / `status` / `last_checked_at` / `last_error` | 开关 / 连通性自检结果 / 脱敏错误摘要 |
@@ -657,8 +659,7 @@ type Resolver interface {
 
 现成机制在 `internal/pii/pii.go`：`Encrypt` / `Decrypt` / `IsEncrypted` / `SetKey` /
 `Reload`，`v1:` 前缀、AES-256-GCM、`base64.StdEncoding`，密钥来自 `PII_ENC_KEY`，
-且有启动自检 `UsingPlaceholderKey()`。项目基线是 **写任何 PII 之前必须把密钥定死，
-没有 re-key**；租户凭据同理，第一条配置写进去之前就要定死。
+且有启动自检 `UsingPlaceholderKey()`。项目基线是 **写任何 PII 之前必须把密钥定死**（2026-11-13 当时没有 re-key）。后续已补 `server tenant-storage-rekey`：它只重加密 `tenant_storage_configs` 的云凭据，**不覆盖业务 PII**，所以业务 PII 的时间约束不变；租户凭据可在停机窗口内换钥。
 
 **推荐**：抽 `internal/secrets`，用独立的 `STORAGE_ENC_KEY`，不与 PII 共用一把钥匙。
 理由：两类数据的保留期、轮换需求、泄露后果都不同；`key_id` 列预留在表里，将来换钥匙

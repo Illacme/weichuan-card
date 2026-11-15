@@ -301,21 +301,28 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		// 一旦企业建成而授权行没写成，这家企业就永远落在"不限制"那一侧——
 		// 而且事后没人会知道本该有一条。宁可让这次开通整体失败、让运营重试。
 		//
-		// 种子内容三件套的 error 仍旧不中断：它们只是"开箱即用的空白模板"，
-		// 缺了页面照样能打开（各自都有兜底），不值得为它整体回滚。
+		// 种子内容三件套失败不中断开通：只是"开箱即用的空白模板"，缺了页面照样
+		// 能打开（各自都有兜底），不值得为它整体回滚。但 error 必须接出来、提交后
+		// 统一报一条 WARN——裸写不判错会让「模板没建成」变成谁都查不到的静默失败。
 		//
-		// catErr 单独接出来而不是在事务里打日志：事务一旦回滚，那条 WARN 就是假警报
-		// （分类其实没留下，甚至企业也没留下），排查时会被带偏。
-		var catErr error
+		// catErr / seedErr 单独接出来而不是在事务里打日志：事务一旦回滚，那条 WARN
+		// 就是假警报（分类其实没留下，甚至企业也没留下），排查时会被带偏。
+		var catErr, seedErr error
 		err := db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Create(&comp).Error; err != nil {
 				return err
 			}
 			// 简称种子取开通时显式填写的值，未填则留空——小程序顶栏回落展示企业全称，
 			// 不跟随 company.short_name 的缺省值「微传名片」（两者相互独立）
-			tx.Create(&model.CompanyInfo{CompanyID: comp.ID, FullName: req.Name, ShortName: strings.TrimSpace(req.ShortName)})
-			tx.Create(&model.CompanyProfile{CompanyID: comp.ID})
-			tx.Create(&model.HomeLayout{CompanyID: comp.ID, Order: `["achievement","service"]`})
+			if e := tx.Create(&model.CompanyInfo{CompanyID: comp.ID, FullName: req.Name, ShortName: strings.TrimSpace(req.ShortName)}).Error; e != nil && seedErr == nil {
+				seedErr = e
+			}
+			if e := tx.Create(&model.CompanyProfile{CompanyID: comp.ID}).Error; e != nil && seedErr == nil {
+				seedErr = e
+			}
+			if e := tx.Create(&model.HomeLayout{CompanyID: comp.ID, Order: `["achievement","service"]`}).Error; e != nil && seedErr == nil {
+				seedErr = e
+			}
 			// 业绩分类模板：零数据版装完后新企业一个分类都没有，企业管理员登录后
 			// 业绩页是空的、小程序业绩 Tab 也渲染不出来——必须先建分类才能录案例。
 			if req.SeedCategories == nil || *req.SeedCategories {
@@ -328,6 +335,10 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			log.Printf("[COMPANY][ERROR] 开通企业失败（已回滚）：%v", err)
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})
 			return
+		}
+		if seedErr != nil {
+			// 企业已建成、只是开箱模板不全，运营补建即可；不回滚、不影响开通结果。
+			log.Printf("[COMPANY][WARN] 企业 %d 开箱模板写入失败（已跳过）：%v", comp.ID, seedErr)
 		}
 		if catErr != nil {
 			// 提交之后再报：企业已建成，只是分类不全，运营补建即可（业绩页能正常打开）

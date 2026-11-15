@@ -3,8 +3,10 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -183,27 +185,217 @@ func TestEmployeeLoginFailAuditHasNoPlainPII(t *testing.T) {
 	}
 }
 
-// TestNoIgnoredDBWritesInTouchedHandlers：源码级守门，防止后续新增接口又把
-// GORM 的 Error 丢掉。剥掉整行注释后逐行找「裸写库」语句。
-func TestNoIgnoredDBWritesInTouchedHandlers(t *testing.T) {
-	commentLine := regexp.MustCompile(`(?m)^[ \t]*//.*$`)
-	for _, file := range []string{"content.go", "apply.go", "auth.go", "admins.go"} {
-		src, err := os.ReadFile(file)
-		require.NoError(t, err)
-		clean := commentLine.ReplaceAllString(string(src), "")
-		for i, line := range strings.Split(clean, "\n") {
-			l := strings.TrimSpace(line)
-			if strings.HasPrefix(l, "//") || l == "" {
-				continue
-			}
-			isWrite := strings.HasPrefix(l, "db.Create(") ||
-				strings.HasPrefix(l, "db.Save(") ||
-				strings.HasPrefix(l, "db.Delete(") ||
-				(strings.HasPrefix(l, "db.Model(") && strings.Contains(l, ".Updates("))
-			if !isWrite {
-				continue
-			}
-			require.Failf(t, "裸写库", "%s:%d 写库未判 Error：%s", file, i+1, l)
+// gormWriteMethods：handler 层会直接调用的 GORM 写方法。
+// 只盯接收者根为 db / tx 的调用——os.Create、up.Save、setting.Upsert 这些
+// 同名/近名方法各有自己的错误通道，混进来只会制造误报，把守门变成噪音。
+var gormWriteMethods = map[string]bool{
+	"Create": true, "Save": true, "Delete": true, "Exec": true,
+	"Updates": true, "Update": true, "UpdateColumn": true, "UpdateColumns": true,
+	"CreateInBatches": true, "FirstOrCreate": true, "Upsert": true,
+}
+
+type scannedWrite struct {
+	file, method, snippet string
+	line                  int
+	direct                bool // 结果直接被取 .Error / .RowsAffected
+	checked               bool // 结果确实被检查了
+}
+
+// rootReceiverName 沿链式调用找到最左端的接收者，如 db.Model(&x).Updates(...) → "db"。
+func rootReceiverName(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.SelectorExpr:
+		return rootReceiverName(v.X)
+	case *ast.CallExpr:
+		return rootReceiverName(v.Fun)
+	case *ast.IndexExpr:
+		return rootReceiverName(v.X)
+	}
+	return ""
+}
+
+// enclosingFuncBody 找离写调用最近的函数体：判断「赋值后的变量有没有被检查」
+// 必须限定在同一个函数里，否则文件里另一处 res.Error 会让本处漏判变绿。
+func enclosingFuncBody(n ast.Node, parents map[ast.Node]ast.Node) ast.Node {
+	for p := parents[n]; p != nil; p = parents[p] {
+		switch v := p.(type) {
+		case *ast.FuncLit:
+			return v.Body
+		case *ast.FuncDecl:
+			return v.Body
 		}
+	}
+	return nil
+}
+
+// resultChecked 判断一次写调用的结果有没有被消费。
+//
+// 合规形态只有两种：
+//   - 直接取 .Error / .RowsAffected（含 `if err := db.Create(&x).Error; err != nil`）；
+//   - 结果赋给变量，且同一函数体内检查了该变量的 .Error / .RowsAffected。
+//
+// 裸语句（db.Create(&x)）、显式丢弃（_ = ...）、赋了值却从不看结果，一律算未检查。
+func resultChecked(call *ast.CallExpr, parents map[ast.Node]ast.Node) (direct, checked bool) {
+	switch v := parents[call].(type) {
+	case *ast.SelectorExpr:
+		if v.Sel.Name == "Error" || v.Sel.Name == "RowsAffected" {
+			return true, true
+		}
+	case *ast.AssignStmt:
+		if len(v.Lhs) == 0 {
+			return false, false
+		}
+		id, ok := v.Lhs[0].(*ast.Ident)
+		if !ok || id.Name == "_" {
+			return false, false
+		}
+		body := enclosingFuncBody(call, parents)
+		if body == nil {
+			return false, false
+		}
+		found := false
+		ast.Inspect(body, func(n ast.Node) bool {
+			s, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			x, ok := s.X.(*ast.Ident)
+			if ok && x.Name == id.Name && (s.Sel.Name == "Error" || s.Sel.Name == "RowsAffected") {
+				found = true
+			}
+			return true
+		})
+		return false, found
+	}
+	return false, false
+}
+
+// writesInFile 用 AST 扫一个 Go 文件里的 GORM 写调用。
+// 用 AST 而不是按行正则，是因为真实代码里写库几乎都长成
+// `if err := db.Create(&x).Error; err != nil {` 或跨行的 `res := db.Model(...)`
+// ——旧守门只认「行首 db.Create(」，一条也抓不到，于是永远全绿。
+func writesInFile(fset *token.FileSet, f *ast.File, name string, src []byte) []scannedWrite {
+	parents := map[ast.Node]ast.Node{}
+	var stack []ast.Node
+	ast.Inspect(f, func(n ast.Node) bool {
+		if n == nil {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			return true
+		}
+		if len(stack) > 0 {
+			parents[n] = stack[len(stack)-1]
+		}
+		stack = append(stack, n)
+		return true
+	})
+
+	lines := strings.Split(string(src), "\n")
+	var out []scannedWrite
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !gormWriteMethods[sel.Sel.Name] {
+			return true
+		}
+		if root := rootReceiverName(sel.X); root != "db" && root != "tx" {
+			return true
+		}
+		direct, checked := resultChecked(call, parents)
+		line := fset.Position(call.Pos()).Line
+		snippet := ""
+		if line-1 < len(lines) {
+			snippet = strings.TrimSpace(lines[line-1])
+		}
+		out = append(out, scannedWrite{name, sel.Sel.Name, snippet, line, direct, checked})
+		return true
+	})
+	return out
+}
+
+func scanHandlerWrites(t *testing.T) ([]scannedWrite, []string) {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err, "守门必须在 handler 包目录下运行")
+	var writes []scannedWrite
+	var files []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		files = append(files, name)
+		src, err := os.ReadFile(name)
+		require.NoError(t, err)
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, name, src, 0)
+		require.NoError(t, err, "解析 %s 失败", name)
+		writes = append(writes, writesInFile(fset, f, name, src)...)
+	}
+	return writes, files
+}
+
+// TestNoIgnoredDBWritesAcrossHandlers：源码级守门，防止新增接口又把 GORM 的
+// Error 丢掉。覆盖 handler 包**全部**生产 .go 文件（旧版只扫 4 个文件，且一条
+// 真实语句都匹配不到）。
+//
+// 「量尺自己有读数」：写调用总数、直接取 .Error 的数量、锚点文件三道下限，
+// 任何一道归零都说明解析器空转——那正是旧守门「全绿但什么都没盯」的死法。
+func TestNoIgnoredDBWritesAcrossHandlers(t *testing.T) {
+	writes, files := scanHandlerWrites(t)
+	require.GreaterOrEqual(t, len(writes), 60,
+		"扫到的写调用明显偏少：解析器空转会让下面全部恒绿，先修扫描器")
+	direct := 0
+	for _, w := range writes {
+		if w.direct {
+			direct++
+		}
+	}
+	require.GreaterOrEqual(t, direct, 40,
+		"直接取 .Error/.RowsAffected 的合规写法几乎没抓到，守门可能退化成只看赋值分支")
+	for _, anchor := range []string{"apply.go", "content.go", "companies.go", "admins.go", "tenant_storage.go"} {
+		require.Contains(t, files, anchor, "守门应覆盖 %s", anchor)
+	}
+
+	var bad []string
+	for _, w := range writes {
+		if !w.checked {
+			bad = append(bad, fmt.Sprintf("%s:%d [%s] %s", w.file, w.line, w.method, w.snippet))
+		}
+	}
+	require.Empty(t, bad, "以下写库语句没有判 Error / RowsAffected：\n%s", strings.Join(bad, "\n"))
+}
+
+// TestGormWriteGuardCatchesRealWorldShapes 守门自己的反向验证，跑在内存夹具上，
+// 不需要临时改生产文件：故意混合「合规 / 裸写 / 裸写 / 赋值后不看结果」四种形态，
+// 证明扫描器既能认出项目里真实使用的 `if err := ...Error` 写法，也确实会抓漏判。
+//
+// 少了这一条，只要有人把正则/方法清单改坏，上一条就会退化成「零违规 → 通过」。
+func TestGormWriteGuardCatchesRealWorldShapes(t *testing.T) {
+	const fixture = `package p
+func f(db *gorm.DB, tx *gorm.DB) {
+	if err := db.Create(&x).Error; err != nil { return }
+	db.Model(&a).Update("username", "b")
+	tx.Create(&c)
+	res := db.Delete(&d)
+	_ = res
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fixture.go", fixture, 0)
+	require.NoError(t, err)
+	writes := writesInFile(fset, f, "fixture.go", []byte(fixture))
+	require.Len(t, writes, 4, "夹具里应有 4 处写调用，少一条说明扫描器漏抓")
+	require.True(t, writes[0].checked, "if err := db.Create(&x).Error 是项目主流合规写法，必须放行")
+	require.True(t, writes[0].direct)
+	for i := 1; i < len(writes); i++ {
+		require.False(t, writes[i].checked,
+			"第 %d 处是 bad case（%s），守门必须判为未检查", i+1, writes[i].snippet)
 	}
 }

@@ -103,7 +103,13 @@ func RegisterAdmins(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在"})
 			return
 		}
-		db.Model(&a).Update("username", req.Username)
+		// 写库失败不能回 code:0：此前这里是一条裸 Update，失败时照样返回成功、
+		// 还把「改名成功」写进审计日志。界面显示新名字、库里还是旧的，排查时
+		// 只会看到一条与之矛盾的审计记录。
+		if err := db.Model(&a).Update("username", req.Username).Error; err != nil {
+			dbWriteFailed(c, "重命名平台超管", "修改失败，请稍后重试", err)
+			return
+		}
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionAdminRename, TargetType: "admin", TargetID: strconv.FormatInt(id, 10),
 			Detail: map[string]any{"from": a.Username, "to": req.Username},
