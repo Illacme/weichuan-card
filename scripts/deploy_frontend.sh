@@ -392,12 +392,15 @@ MIGRATIONS_SKIP=0
 # ${VAR-__AUTO__} 用单横杠：完全没设才推导；DEPLOY_MIGRATIONS_DIR= 显式置空 = 跳过。
 case "${DEPLOY_MIGRATIONS_DIR-__AUTO__}" in
     __AUTO__)
-        # 默认约定：站点目录（DEPLOY_PATH 的父目录）下，后端二进制与 migrations/ 同级。
+        # 默认约定：后端在「站点目录（DEPLOY_PATH 的父目录）」下，但布局有变体——
+        # 有的是 <site>/migrations，有的是 <site>/backend/migrations（后端二进制同级）。
+        # 列成候选，远端探针选第一个存在的目录，避免「猜错路径 → 误报目录不存在」。
         _SITE_DIR=$(dirname "${DEPLOY_PATH%/}")
-        MIG_DIR="${_SITE_DIR}/migrations"
+        MIG_CANDIDATES="${_SITE_DIR}/backend/migrations ${_SITE_DIR}/migrations"
+        MIG_DIR="${_SITE_DIR}/backend/migrations"   # 默认首选（与线上实际布局一致）
         ;;
-    '') MIGRATIONS_SKIP=1; MIG_DIR='' ;;
-    *)  MIG_DIR=${DEPLOY_MIGRATIONS_DIR} ;;
+    '') MIGRATIONS_SKIP=1; MIG_DIR=''; MIG_CANDIDATES='' ;;
+    *)  MIG_DIR=${DEPLOY_MIGRATIONS_DIR}; MIG_CANDIDATES="${MIG_DIR}" ;;
 esac
 
 LOCAL_MIGRATIONS_DIR="${SCRIPT_DIR}/../backend/migrations"
@@ -430,17 +433,25 @@ else
         # 远端只回「状态行 + *.sql 文件名」，别把 ls 的报错、目录路径混进来。
         # 首行注释是给离线自检用的探针标记，远端 sh 会当注释忽略。
         MIG_RC=0
+        # 探针在远端依次试候选目录，选第一个存在的；命中后回传「状态行 + 解析出的真实路径 + *.sql 清单」。
+        # 这样不论后端在 <site>/migrations 还是 <site>/backend/migrations，都不会因默认路径猜错而误报。
         MIG_INFO=$(remote "# __WC_MIG_PROBE__
-if [ -d '${MIG_DIR}' ]; then
+_WC_MIG=''
+for _d in ${MIG_CANDIDATES}; do
+    [ -d \"\$_d\" ] && { _WC_MIG=\"\$_d\"; break; }
+done
+if [ -n \"\$_WC_MIG\" ]; then
     echo MIG_DIR_OK
-    (cd '${MIG_DIR}' && ls -1 *.sql 2>/dev/null) || true
+    echo \"\$_WC_MIG\"
+    (cd \"\$_WC_MIG\" && ls -1 *.sql 2>/dev/null) || true
 else
     echo MIG_DIR_MISSING
 fi") || MIG_RC=$?
         MIG_STATE=$(printf '%s\n' "${MIG_INFO}" | sed -n 1p)
         case "${MIG_STATE}" in
             MIG_DIR_OK)
-                REMOTE_MIG_LIST=$(printf '%s\n' "${MIG_INFO}" | sed -n '2,$p' | grep '[.]sql$' | sort) || REMOTE_MIG_LIST=''
+                MIG_DIR=$(printf '%s\n' "${MIG_INFO}" | sed -n 2p)
+                REMOTE_MIG_LIST=$(printf '%s\n' "${MIG_INFO}" | sed -n '3,$p' | grep '[.]sql$' | sort) || REMOTE_MIG_LIST=''
                 MIG_DIR_EXISTS=1 ;;
             MIG_DIR_MISSING)
                 REMOTE_MIG_LIST=''
@@ -475,7 +486,7 @@ EOF
             echo "  ✓ 远端 migrations 清单一致（${LOCAL_MIG_COUNT} 个 .sql）"
         else
             if [ "${MIG_DIR_EXISTS}" = 0 ]; then
-                warn "  ✗ 远端 migrations 目录不存在：${MIG_DIR}"
+                warn "  ✗ 远端 migrations 目录不存在（已探：${MIG_CANDIDATES}）"
             else
                 warn "  ✗ 远端 migrations 缺 ${MISSING_MIG_COUNT} 个文件（本地共 ${LOCAL_MIG_COUNT} 个）"
             fi
