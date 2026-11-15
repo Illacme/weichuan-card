@@ -653,10 +653,10 @@ if [ "$DO_VERIFY" = 1 ] && [ -n "$DEPLOY_URL" ]; then
             "$DEPLOY_URL/theme-previews/$probe_name?cb=$$$(date +%s)") || PROBE="curl 失败"
         case "$PROBE" in
             200\ image/png*)
-                echo "  ✓ 主题预览图可取（$probe_name）"
+                echo "  ✓ 主题预览图可取 ($probe_name)"
                 ;;
             *)
-                warn "✗ 主题预览图异常（$probe_name）：$PROBE"
+                warn "✗ 主题预览图异常 ($probe_name)：$PROBE"
                 warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
                 warn "  文件在但仍显示旧版式，说明缓存里还是旧副本：先确认 URL 带的是新构建戳"
                 warn "  （?v=__APP_BUILD__），再 Purge CDN 的 /theme-previews/*。"
