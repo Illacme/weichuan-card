@@ -51,8 +51,14 @@ type TenantStorageConfig struct {
 	// json:"-" 是硬要求：一旦被序列化进任何接口出参，等于把租户凭据交给全网。
 	AccessKeyEnc string `gorm:"column:access_key_enc;size:512" json:"-"`
 	SecretKeyEnc string `gorm:"column:secret_key_enc;size:512" json:"-"`
-	// KeyID 加密密钥版本标识。换钥匙时据此判断哪些行还需要重加密，
-	// 现在不填（空串 = 当前密钥），留口子而已。
+	// KeyID 是本行凭据所用 PII_ENC_KEY 的稳定指纹（pii.CurrentKeyID），不是预留口子。
+	// 写入侧：PUT 改动凭据时记为当前指纹、清空凭据时一并置空（见
+	// handler/tenant_storage.go 的 credentialsChanged 分支）；不传凭据沿用旧值时
+	// 保持原样，否则会谎报「已是当前密钥」让 re-key 漏掉这一行。
+	// 换钥匙侧：RekeyTenantStorage 全表解密重加密后把 key_id 刷成新指纹，
+	// 对「密文已是当前密钥但标记为空」的行也做校正。
+	// 空串只表示「这行没有可标记的凭据」（含换钥前未标记的历史行），不能当密钥版本
+	// 参与判断——re-key 刻意不按 key_id 过滤，正是为了自愈标记与实际不符的脏数据。
 	KeyID string `gorm:"column:key_id;size:32" json:"keyId"`
 
 	// PublicBaseURL 客户自有访问域名，纯 origin（http(s)://host[:port]）。

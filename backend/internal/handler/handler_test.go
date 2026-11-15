@@ -190,6 +190,10 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterWechat(r, db, cfg, res, refresher)
 	RegisterMediaCheck(r, db, cfg, res, refresher) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
 	RegisterSettings(r, db, cfg)                   // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	// 前端报错上报是无鉴权公开端点，两个 cmd/main.go 都注册了。原先这里漏了，
+	// 于是 buildEngine 声称「与生产等价」却根本没有 /api/client-error：
+	// 集成测试里该路径只会拿到 gin 的 404 纯文本。补进来才能进 SQLite/MySQL parity。
+	RegisterClientError(r)
 
 	return r
 }
@@ -292,6 +296,15 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 			"staffId": 99999, "eventType": "hack",
 		}, "")
 		require.EqualValues(t, 1, body["code"])
+
+		// 前端报错上报：无鉴权公开端点。buildEngine 漏注册时这里拿到的是 gin 的
+		// 404 纯文本，JSON 解包会红在「看不出是路由缺失」的地方；补进 runAPIFlow
+		// 才能让 SQLite 与 MySQL parity 都真正覆盖这条装配。
+		code, body = c.do("POST", "/api/client-error", map[string]interface{}{
+			"message": "parity smoke", "level": "error", "requestId": "parity-flow",
+		}, "")
+		require.Equal(t, 200, code)
+		require.EqualValues(t, 0, body["code"])
 	})
 
 	// ===== 2. 超管登录与鉴权 =====

@@ -2,6 +2,8 @@ package handler
 
 import (
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -146,4 +148,78 @@ func TestAssemblyPassesResolverNotUploader(t *testing.T) {
 				strings.Contains(body, "uploadroute.New("),
 			"%s 必须同时有「默认走 StaticResolver」与「开关打开后走 uploadroute.New」两条分支", f)
 	}
+}
+
+// assemblyCallRE 只认「行首缩进后的路由装配调用」：不认注释里的解释、不认字符串里的
+// 样例，也不会把 func RegisterXxx( 定义行当成已接线。注释已在 stripGoComments 剥掉，
+// 这里再用行首锚点收一次，避免「注释写了记得注册」被判成「真的注册了」。
+var assemblyCallRE = regexp.MustCompile(`(?m)^[ \t]*(?:handler\.)?(Register[A-Za-z0-9_]+)[ \t]*\(`)
+
+// assemblyCalls 抓一个装配点的 RegisterXxx 名字集合；scope 非空时只看该函数体。
+func assemblyCalls(t *testing.T, file, scope string) map[string]bool {
+	t.Helper()
+	src, err := os.ReadFile(file)
+	require.NoError(t, err, "%s 读不到", file)
+	body := stripGoComments(string(src))
+	if scope != "" {
+		start := strings.Index(body, "func "+scope+"(")
+		require.GreaterOrEqual(t, start, 0, "%s 里找不到 func %s( 的函数体", file, scope)
+		body = body[start:]
+		if next := strings.Index(body, "\nfunc "); next >= 0 {
+			body = body[:next]
+		}
+	}
+	out := map[string]bool{}
+	for _, m := range assemblyCallRE.FindAllStringSubmatch(body, -1) {
+		out[m[1]] = true
+	}
+	return out
+}
+
+// namesOnlyIn 返回 a 有、b 没有的名字（排序后便于读失败信息）。
+func namesOnlyIn(a, b map[string]bool) []string {
+	var out []string
+	for k := range a {
+		if !b[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestAssemblyParityAcrossThreeSites 盯「新增 handler.RegisterX 必须同时改三处」这条纪律。
+//
+// 背景：RegisterClientError 在两个 cmd/main.go 里都注册了，唯独 buildEngine 漏了，
+// 于是 handler_test.go 顶部「装配与生产 main.go 等价」的承诺是假的。这类缺口不会
+// 编译失败、单测也不会红（clienterror_test.go 自带独立引擎，跑得好好的），只有真的
+// 对 buildEngine 发 /api/client-error 才会撞上 gin 的 404 纯文本。
+//
+// 判据用「两个生产入口互相相等」+「生产入口与测试引擎双向相等」，而不是写死一份
+// 清单：写死的清单在加新路由时忘了更新，守门反而恒绿。
+// 但仍保留数量下限与 RegisterClientError 锚点——抓取型守门最坏的坏法就是改个写法
+// 后一条也抓不到，于是「三个空集合互相相等」全部通过。
+func TestAssemblyParityAcrossThreeSites(t *testing.T) {
+	server := assemblyCalls(t, "../../cmd/server/main.go", "")
+	dev := assemblyCalls(t, "../../cmd/devserver/main.go", "")
+	engine := assemblyCalls(t, "handler_test.go", "buildEngine")
+
+	for name, got := range map[string]map[string]bool{
+		"cmd/server/main.go":    server,
+		"cmd/devserver/main.go": dev,
+		"buildEngine":           engine,
+	} {
+		require.GreaterOrEqual(t, len(got), 20,
+			"%s 只抓到 %d 条装配，正则可能失效了（守门不能空转通过）", name, len(got))
+		require.Contains(t, got, "RegisterClientError", "%s 没抓到 RegisterClientError 锚点", name)
+	}
+
+	require.Empty(t, namesOnlyIn(server, dev),
+		"cmd/devserver 漏注册这些路由（dev 环境静默 404）")
+	require.Empty(t, namesOnlyIn(dev, server),
+		"cmd/server 漏注册这些路由（生产静默 404）")
+	require.Empty(t, namesOnlyIn(server, engine),
+		"buildEngine 漏注册这些路由：集成测试 / SQLite-MySQL parity 覆盖不到，且「与生产等价」是假承诺")
+	require.Empty(t, namesOnlyIn(engine, server),
+		"buildEngine 注册了生产没有的路由（测试装配与线上不一致）")
 }

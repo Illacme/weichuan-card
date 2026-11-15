@@ -29,6 +29,9 @@
 #   · 还没装依赖（新克隆）时只提示不阻断，避免本地环境问题挡住推送；
 #     真正的门禁仍在 CI，钩子只是提前。
 #   · 与 CI 用同一条命令（node 直调 vue-tsc，不经 npx），保证两边结论一致。
+#   · vue-tsc 显式给 4G 堆：本机默认堆跑全量类型检查会被系统 SIGKILL（exit 137，
+#     2026-11-15 推送时实际踩到，当时只能靠外部 NODE_OPTIONS 救场）。CI 的
+#     ubuntu-latest 内存够用，所以这里只放大堆上限、不改命令本身，两边结论仍一致。
 
 set -u
 
@@ -154,7 +157,17 @@ if [ ! -f frontend/node_modules/vue-tsc/bin/vue-tsc.js ]; then
 fi
 
 echo "[pre-push] 检测到前端改动，正在跑类型检查（vue-tsc --noEmit，约 2 分钟）……"
-if ( cd frontend && node node_modules/vue-tsc/bin/vue-tsc.js --noEmit ); then
+
+# 本机默认 Node 堆跑全量 vue-tsc 会被 SIGKILL（137），必须显式放大到 4G。
+# 只改堆上限、不改命令本身，与 CI 的 `npm run type-check`（vue-tsc --noEmit）结论一致；
+# 这样直接 `git push` 就能过，不再依赖调用方记得在外面设 NODE_OPTIONS。
+# 调用方若已显式给过 --max-old-space-size（例如内存更小的机器），尊重它的取值。
+tsc_node_options="${NODE_OPTIONS:-}"
+case "$tsc_node_options" in
+  *--max-old-space-size=*) ;;
+  *) tsc_node_options="--max-old-space-size=4096${tsc_node_options:+ $tsc_node_options}" ;;
+esac
+if ( cd frontend && NODE_OPTIONS="$tsc_node_options" node node_modules/vue-tsc/bin/vue-tsc.js --noEmit ); then
   echo "[pre-push] 类型检查通过。"
   exit 0
 fi
