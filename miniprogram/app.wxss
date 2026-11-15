@@ -839,6 +839,9 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .cell-arrow { color: #ccc; font-size: 32rpx; }
 /* 分组小标题：灰色、位于两组白色卡片之间，用于区隔功能组（名片 / 数据 / 账号 / 隐私与合规） */
 .group-label { color: #999; font-size: 24rpx; padding: 0 24rpx; margin: 24rpx 0 4rpx; }
+/* 分组标题里的补充说明（如「企业管理员 · 仅管理员使用」）：比标题再弱一档，
+   与 .cell-label.muted 同色，避免低优先级提示抢过分组标题本身。 */
+.group-hint { color: #b2b2b2; font-size: 22rpx; }
 /* 退出登录：独立按钮（非列表项），中性色与下方红色「注销账号」拉开距离，避免同级红色误触 */
 .logout-wrap { margin: 32rpx 0 8rpx; }
 .logout-btn { background: #fff; color: #666; border: 1rpx solid #e8e8e8; border-radius: 16rpx; font-size: 32rpx; line-height: 2.6; }

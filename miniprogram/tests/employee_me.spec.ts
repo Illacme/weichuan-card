@@ -132,11 +132,54 @@ describe('employee/me 页', () => {
 
   // 目标页由 adminEntry 在导航前定好；本页绝不自己 navigateTo 审核页，
   // 否则审核页会先渲染「待处理」列表再异步 redirectTo 登录页（真机闪一下）。
-  it('点「待审申请」交给 adminEntry 决策，本页不直接打开审核页', async () => {
+  it('点「管理员入口」交给 adminEntry 决策，本页不直接打开审核页', async () => {
     const p = await page()
     await p.goAdminApply()
     expect(mocks.goAdminArea).toHaveBeenCalledTimes(1)
     expect(wxStub.navigateTo).not.toHaveBeenCalled()
+  })
+
+  // ---- 企业管理员入口的文案状态 ----
+  //
+  // 未登录时这一行其实是登录入口，写成「待审申请」会让普通用户误读（2026-11-15 真机反馈）。
+  // 状态必须只认 adminToken：员工登录态 / 访客态都不能把它顶成 true，否则又回到老问题。
+
+  it('员工已登录但没有 adminToken：入口仍是「管理员登录」态', async () => {
+    storage.set('empToken', 'tk-1')
+    mocks.request.mockResolvedValueOnce(meData)
+    const p = await page()
+
+    p.onShow()
+    await flush()
+
+    // 先证明员工态确实登上了，避免「因为谁都没登录所以是 false」的假绿
+    expect(p.data.me.name).toBe('张伟')
+    expect(p.data.adminLoggedIn).toBe(false)
+  })
+
+  it('已有 adminToken：onShow 把入口刷成「待审申请」态', async () => {
+    storage.set('adminToken', 'at-1')
+    const p = await page()
+
+    p.onShow()
+    await flush()
+
+    expect(p.data.adminLoggedIn).toBe(true)
+  })
+
+  // 测承诺本身：状态要跟着管理员令牌变化，而不是只在 onLoad 算一次。
+  // 管理员在别的页退出 / 401 清令牌后返回本页，若没重读就会「已退出仍显示待审申请」。
+  it('管理员令牌被清掉后再次 onShow：入口文案回退到登录态', async () => {
+    storage.set('adminToken', 'at-1')
+    const p = await page()
+    p.onShow()
+    expect(p.data.adminLoggedIn).toBe(true)
+
+    storage.delete('adminToken') // 模拟 endAdminSession / 401 清令牌
+    p.onShow()
+    await flush()
+
+    expect(p.data.adminLoggedIn).toBe(false)
   })
 
   // ---- 改密 ----

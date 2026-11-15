@@ -2,6 +2,7 @@ import { request, assetUrl } from '../../../utils/request'
 import { onImgFail } from '../../../utils/thumb'
 import { wxLoginCode } from '../../../utils/wechat'
 import { goAdminArea } from '../../../utils/adminEntry'
+import { hasAdminToken } from '../../../utils/adminRequest'
 
 // 员工「我的」页（tabBar）：未登录给登录 / 申请开通入口，已登录给名片与账号操作。
 // 数据在 onShow 拉取而非 onLoad——从登录页 / 编辑页返回时需要刷新登录态与资料。
@@ -21,8 +22,14 @@ Page({
     // 头像加载失败的地址：WXML 用 `me.avatar && avatarFail !== me.avatar` 判断
     // （见 utils/thumb.ts onImgFail——记 URL 而不是布尔标记，换头像自动重试）
     avatarFail: '',
+    // 企业管理员入口的文案按这个状态切换。只认 adminToken，绝不拿 me（员工登录态）
+    // 或 empToken 推——两套身份通道严格分离，「我在『我的』里登过员工」不能证明是管理员。
+    adminLoggedIn: false,
   },
   onShow() {
+    // 每次显示都重读：管理员登录 / 退出 / 401 清令牌都发生在别的页面，返回本页时
+    // 文案必须跟着变，只在 onLoad 算一次会出现「已退出仍显示待审申请」。
+    this.setData({ adminLoggedIn: hasAdminToken() })
     this.loadMe()
   },
   async loadMe() {

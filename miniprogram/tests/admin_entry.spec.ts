@@ -89,7 +89,7 @@ describe('静默免密的准入门槛', () => {
     expect(canTrySilentLogin(now + SILENT_COOLDOWN_MS * 10)).toBe(false)
   })
 
-  it('从「我的」点待审申请：首次只探测一次，探测失败后连点零请求（限流误伤的根因）', async () => {
+  it('从「我的」点管理员入口：首次只探测一次，探测失败后连点零请求（限流误伤的根因）', async () => {
     mocks.adminRequest.mockResolvedValue({ code: 3, msg: '该微信还没有绑定管理员账号' })
     await goAdminArea()
     expect(mocks.adminRequest).toHaveBeenCalledTimes(1)
@@ -231,6 +231,7 @@ describe('退出管理员登录', () => {
 describe('静态守门', () => {
   const applyTS = code(readFileSync(resolve(HERE, '../pages/admin/apply/apply.ts'), 'utf8'))
   const meTS = code(readFileSync(resolve(HERE, '../pages/employee/me/me.ts'), 'utf8'))
+  const meWXML = readFileSync(resolve(HERE, '../pages/employee/me/me.wxml'), 'utf8')
   const applyWXML = readFileSync(resolve(HERE, '../pages/admin/apply/apply.wxml'), 'utf8')
 
   it('审核页绝不自动发微信免密登录请求（限流误伤的根因）', () => {
@@ -251,5 +252,37 @@ describe('静态守门', () => {
   it('「我的」页不再无条件 navigateTo 审核页，改由 adminEntry 决定目标页', () => {
     expect(meTS).toContain('goAdminArea')
     expect(meTS).not.toContain("wx.navigateTo({ url: '/pages/admin/apply/apply' })")
+  })
+
+  // 2026-11-15 真机反馈：未登录时这一行其实是**登录入口**，固定写成「待审申请」
+  // 会让绝大多数普通用户以为是自己提交的申请在待审 / 自己能去审核别人。
+  // 只有已登录管理员才该看到「待审申请 · 快捷审核」。
+  it('管理员入口按 adminToken 分两档文案，未登录不显示「待审申请」', () => {
+    // 量尺自己有读数：先证明抓到的是「我的」页管理员这一组，而不是空串或别处
+    expect(meWXML).toContain('bindtap="goAdminApply"')
+    expect(meWXML).toContain('管理员登录')
+    expect(meWXML).toContain('待审申请')
+    const adminBlock = meWXML.slice(meWXML.indexOf('企业管理员'))
+    expect(adminBlock).toContain('goAdminApply')
+    expect(adminBlock).toContain('cell-label')
+
+    // 两档文案必须由 adminLoggedIn 驱动，且「管理员登录」落在未登录那一档
+    expect(meWXML).toContain("{{adminLoggedIn ? '待审申请' : '管理员登录'}}")
+    expect(meWXML).toContain("{{adminLoggedIn ? '快捷审核' : '用 PC 后台账号'}}")
+    // 老实现（固定文案）必须被抓住，不能只靠「文件里出现过新词」就放行
+    expect(meWXML).not.toContain('<text class="cell-label">待审申请</text>')
+    expect(meWXML).toContain('仅管理员使用')
+    expect(meWXML).toContain('wx:if="{{!adminLoggedIn}}"')
+
+    // 状态由管理员令牌在 onShow 重读：只在 onLoad 算一次会「已退出仍显示待审申请」，
+    // 拿员工 me 推则会让普通员工看到管理员入口文案（两套身份通道不能混）。
+    const onShowAt = meTS.indexOf('onShow()')
+    const loadMeAt = meTS.indexOf('async loadMe()')
+    expect(onShowAt).toBeGreaterThan(-1)
+    expect(loadMeAt).toBeGreaterThan(onShowAt)
+    const onShowBody = meTS.slice(onShowAt, loadMeAt)
+    expect(onShowBody).toContain('hasAdminToken()')
+    expect(onShowBody).toContain('adminLoggedIn')
+    expect(meTS).toContain("from '../../../utils/adminRequest'")
   })
 })
