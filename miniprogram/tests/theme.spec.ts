@@ -1054,16 +1054,26 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 第二十八轮之后用户实测：后台预览每款背景色不同，但小程序首页背景是写死蓝渐变，
   // 切模板背景不变——预览与真机对不上。首页背景必须跟随主题 token（与预览一致），
   // 且「首页背景」图仍由 page-bg 整幅覆盖优先。改回写死蓝会变红。
-  it('小程序首页背景跟随主题 token，与后台预览一致（改回写死蓝会变红）', () => {
+  //
+  // 2026-11-16 加浓（用户对照设计稿反馈「只有背景渐变差异较大」）：旧公式
+  // soft→tint 两个浅底互渐，淡到肉眼不可见，切色系只有色相变化、没有浓度变化。
+  // 新公式顶部从 --wc-primary-rgb 的 rgba 派生浓度——色相与浓度都跟随后台
+  // 「整体风格 / 页面配色」，中段与底部仍停靠 soft / tint 两个浅底 token。
+  // 渐变串在端上与预览脚本两处**逐字同源**，本测试把同一子串钉在两边。
+  it('小程序首页背景跟随主题 token（含主色浓度），与后台预览同一公式', () => {
+    const gradient =
+      'linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint))'
     const wxss = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxss'), 'utf-8')
     const page = wxss.match(/\.page\s*\{[^}]*\}/)?.[0] || ''
     expect(page, '取不到 .page 规则').not.toBe('')
-    expect(page, '首页背景没用主题 token，切模板不会变色').toContain('var(--wc-primary-soft)')
-    expect(page, '首页背景没用主题 token，切模板不会变色').toContain('var(--wc-primary-tint)')
+    expect(page, '首页背景没用主题 token，切模板不会变色').toContain(gradient)
+    expect(page, 'alpha 顶部必须混在白底，落到 page 的 #f5f5f5 会把蓝调混灰').toContain(
+      'background-color: #fff'
+    )
     expect(page, '首页背景仍是写死蓝，与后台预览不一致').not.toContain('#d5e7fa')
-    // 后台预览 .phone 同样用这两个 token，两端一致
+    // 后台预览 .phone 必须是同一公式，两端一致
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-    expect(script).toContain('var(--wc-primary-soft), var(--wc-primary-tint)')
+    expect(script).toContain(gradient)
   })
 
   it('后台固定预览区是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {

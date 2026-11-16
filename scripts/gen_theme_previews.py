@@ -454,10 +454,14 @@ HTML = Template("""<!doctype html>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; width: ${w}px; height: ${h}px; overflow: hidden; }
   body { color: #222; font: 12px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-  /* 真机整页是浅蓝底 + 白卡浮于其上，不是灰白底：这是上一版最刺眼的差异之一 */
+  /* 真机整页是品牌色系渐变底 + 白卡浮于其上，不是灰白底：这是上一版最刺眼的差异之一。
+     2026-11-16 与端上 pages/index/index.wxss .page 同步加浓：顶部从主色 rgba 派生浓度
+     （色相跟随风格 / 色系），中段与底部停靠 soft / tint。两端必须保持同一公式——
+     theme.spec.ts 会把两个文件里的渐变串逐字对账。 */
   .phone {
     width: ${w}px; height: ${h}px; position: relative; padding-bottom: ${tail_gap}px;
-    background: linear-gradient(180deg, var(--wc-primary-soft), var(--wc-primary-tint));
+    background-color: #fff;
+    background-image: linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint));
 ${tokens}
   }
   /* 状态栏与微信胶囊只画占位：真机的系统图标 / 安全区不该被伪造进示意图 */
