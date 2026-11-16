@@ -106,6 +106,15 @@ export const ACTION_LABELS: Record<string, string> = {
   // CDN 缓存刷新失败（覆盖写后让边缘旧缓存失效）。异步 best-effort，失败不阻断主流程，
   // 但「文件改了 CDN 却没刷」会让线上仍是旧图，故失败单独留痕；Detail 只记 url_count，不写错误原文或 URL
   'cdn.refresh': 'CDN 缓存刷新失败',
+  // 内容管理：客户名片页展示什么的最终决定权在这些接口，此前整份 content.go 零审计。
+  // 三张内容表共用动作，Detail 里的 op 区分新建 / 编辑 / 删除。
+  'content.info': '修改公司基础信息',
+  'content.profile': '修改公司简介与视频',
+  'content.category': '编辑业绩分类',
+  'content.project': '编辑项目案例',
+  'content.service': '编辑业务服务',
+  'content.layout': '修改首页布局',
+  'content.sort': '调整内容排序',
 }
 
 // 审计日志只查不写：记录一旦可改就等于没有审计，因此不提供任何写接口。

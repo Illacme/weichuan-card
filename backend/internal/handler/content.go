@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/license"
 	"weichuan/internal/middleware"
@@ -123,6 +124,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 写回库，形态从裸键退回历史形态且无任何报错（见 model/refs.go 的落地纪律）。
 		resp := ci
 		resp.ResolveRefs(model.PlatformOrigin())
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentInfo, TargetType: "company", TargetID: strconv.FormatInt(cid, 10),
+			Detail: map[string]any{"fullName": req.FullName},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
@@ -263,6 +268,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		resp := cp
 		resp.ResolveRefs(model.PlatformOrigin())
+		// videoFeedToken 是取片凭证，绝不能进审计表；只记档位便于回答「谁把视频源换掉了」
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentProfile, TargetType: "company", TargetID: strconv.FormatInt(cid, 10),
+			Detail: map[string]any{"videoSource": req.VideoSource},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 
@@ -296,6 +306,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		resp := req
 		resp.ResolveRefs(model.PlatformOrigin())
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentCategory, TargetType: "category", TargetID: strconv.FormatInt(req.ID, 10),
+			Detail: map[string]any{"op": "create", "name": req.Name},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})
 	registerSortRoute(r, db, "/api/admin/categories/sort", &model.AchievementCategory{}, targetCompanyID)
@@ -330,6 +344,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "更新业绩分类", "保存失败，请稍后重试", err)
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentCategory, TargetType: "category", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "update", "name": req.Name},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 	r.DELETE("/api/admin/categories/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -360,6 +378,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentCategory, TargetType: "category", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "delete", "name": cat.Name},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -395,6 +417,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "新建项目案例", "保存失败，请稍后重试", err)
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentProject, TargetType: "project", TargetID: strconv.FormatInt(p.ID, 10),
+			Detail: map[string]any{"op": "create", "name": in.Name},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": projectToMap(p)})
 	})
 	registerSortRoute(r, db, "/api/admin/projects/sort", &model.ProjectCase{}, targetCompanyID)
@@ -425,6 +451,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "重读项目案例", "保存失败，请稍后重试", err)
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentProject, TargetType: "project", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "update", "name": in.Name},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": projectToMap(p)})
 	})
 	r.DELETE("/api/admin/projects/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -438,6 +468,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentProject, TargetType: "project", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "delete"},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -473,6 +507,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "新建业务服务", "保存失败，请稍后重试", err)
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentService, TargetType: "service", TargetID: strconv.FormatInt(s.ID, 10),
+			Detail: map[string]any{"op": "create", "title": req.Title},
+		})
 		resp := s
 		resp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
@@ -508,6 +546,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "更新业务服务", "保存失败，请稍后重试", err)
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentService, TargetType: "service", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "update", "title": req.Title},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 	r.DELETE("/api/admin/services/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
@@ -521,6 +563,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentService, TargetType: "service", TargetID: strconv.FormatInt(id, 10),
+			Detail: map[string]any{"op": "delete"},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
@@ -738,6 +784,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				}
 			}
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentLayout, TargetType: "company", TargetID: strconv.FormatInt(cid, 10),
+			Detail: map[string]any{"orderTouched": orderJSON != "", "themeTouched": themeTouched},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 }
@@ -813,6 +863,10 @@ func registerSortRoute(r *gin.Engine, db *gorm.DB, path string, dest interface{}
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "提交失败"})
 			return
 		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionContentSort, TargetType: "sort", TargetID: c.FullPath(),
+			Detail: map[string]any{"count": len(items)},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 }

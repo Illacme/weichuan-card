@@ -13,6 +13,7 @@
 //      低版本会静默变普通弹窗，理由根本填不进去）。
 import { adminRequest, hasAdminToken, clearAdminAuth } from '../../../utils/adminRequest'
 import { LOGIN_PAGE, endAdminSession } from '../../../utils/adminEntry'
+import { latestGuard, isSuperseded, type RequestSignal } from '../../../utils/latest'
 
 const STATUS_TEXT: Record<string, string> = {
   pending: '待审核',
@@ -93,6 +94,12 @@ export function decorateModify(row: any): any {
   }
 }
 
+// 同一页面会因切页签 / 切筛选 / 下拉刷新 / 加载更多 / 审批后重刷连续查同一批接口。
+// 模块级单例守门：小程序页面是单例，模块作用域的 guard 与页面实例同寿。
+// 写操作（onApprove / onRejectConfirm）刻意不接 signal——取消提交只会让管理员
+// 以为没点动，而后端可能已经执行；它们成功后主动 load(1,true) 开新一轮即可。
+const guard = latestGuard()
+
 Page({
   data: {
     // 身份未确认前 WXML 不渲染任何审核内容。旧版 onShow 里异步试免密，
@@ -119,6 +126,11 @@ Page({
     this.ensureAuth()
   },
 
+  // 页面卸载后旧响应不得再 setData；小程序没有 onUnmounted，只有 onUnload。
+  onUnload() {
+    guard.cancel()
+  },
+
   // ensureAuth 是同步的：有令牌才 ready + 拉列表，没有就直接回登录页。
   // 曾经这里会 wx.login → POST /api/admin/login/wechat，两个代价：
   //  ① 异步期间 WXML 已渲染审核页 → 真机上「先闪一下列表再跳登录页」；
@@ -136,6 +148,9 @@ Page({
 
   // load 拉一页数据。reset=true 时从第一页重来（切页签 / 切筛选 / 下拉刷新 / 操作后）。
   async load(page: number, reset: boolean) {
+    // 每轮先取消上一轮在途请求：管理员快速切「待处理/全部」时，慢的那次
+    // 回来会把新筛选的结果盖掉，表现为「切了筛选却还显示上一档的申请」。
+    const sig: RequestSignal = guard.next()
     if (reset) {
       this.setData({ loading: true, error: '', moreError: '' })
     } else {
@@ -145,7 +160,9 @@ Page({
     if (this.data.status !== 'all') query.status = this.data.status
     const kind = this.data.tab
     try {
-      const r = await adminRequest('GET', '/api/admin/apply/' + kind, query)
+      const r = await adminRequest('GET', '/api/admin/apply/' + kind, query, sig)
+      // 写回、401 跳转、错误态之前都要判：旧响应连错误提示都不许落到新页面上。
+      if (!guard.isCurrent(sig)) return
       if (r.code === 401) {
         clearAdminAuth()
         wx.redirectTo({ url: LOGIN_PAGE })
@@ -169,8 +186,14 @@ Page({
         hasMore: merged.length < total,
       })
     } catch (err) {
+      // 被取消是正常控制流，不能把页面打成「网络异常」（否则管理员每次快速
+      // 切筛选都会闪一下红色错误条）。
+      if (isSuperseded(err) || !guard.isCurrent(sig)) return
       this.setData(reset ? { error: '网络异常，请下拉刷新重试' } : { moreError: '加载更多失败，点击重试' })
     } finally {
+      // 旧轮次的 finally 不能关掉新轮次的 loading，否则新请求还在飞，
+      // 页面却已经可点「加载更多」，会连发两次。
+      if (!guard.isCurrent(sig)) return
       this.setData({ loading: false, loadingMore: false })
     }
   },

@@ -11,6 +11,7 @@
 // 租户隔离靠 JWT 里的 companyId，故刻意不做 withCompanyId 自动补参——
 // 那套白名单是给公开内容接口用的，给 /api/admin/* 补 companyId 毫无意义。
 import { apiBaseUrl, type ApiResult } from './request'
+import { SupersededError, type RequestSignal } from './latest'
 
 export const ADMIN_TOKEN_KEY = 'adminToken'
 export const ADMIN_REFRESH_KEY = 'adminRefreshToken'
@@ -85,12 +86,16 @@ async function tryRefresh(): Promise<string | null> {
   return null
 }
 
+// 第四个参数 signal 与员工通道 utils/request.ts 完全同构：不传时行为与从前一致，
+// 只有同一页面连续重查的 GET 才传。**写操作（审批 / 驳回）绝不接 signal**——
+// 取消一次提交只会让管理员以为没点动，而后端可能已经执行了。
 export function adminRequest<T = any>(
   method: 'GET' | 'POST' | 'PUT',
   path: string,
-  data?: any
+  data?: any,
+  signal?: RequestSignal
 ): Promise<ApiResult<T>> {
-  return doAdminRequest<T>(method, path, data, wx.getStorageSync(ADMIN_TOKEN_KEY), false)
+  return doAdminRequest<T>(method, path, data, wx.getStorageSync(ADMIN_TOKEN_KEY), false, signal)
 }
 
 function doAdminRequest<T>(
@@ -98,7 +103,8 @@ function doAdminRequest<T>(
   path: string,
   data: any,
   token: string,
-  retried: boolean
+  retried: boolean,
+  signal?: RequestSignal
 ): Promise<ApiResult<T>> {
   return new Promise((resolve, reject) => {
     let url = apiBaseUrl() + path
@@ -111,7 +117,7 @@ function doAdminRequest<T>(
       if (qs) url += (url.indexOf('?') >= 0 ? '&' : '?') + qs
       body = undefined
     }
-    wx.request({
+    const task = wx.request({
       url,
       method,
       data: body,
@@ -120,6 +126,12 @@ function doAdminRequest<T>(
         ...(token ? { Authorization: 'Bearer ' + token } : {}),
       },
       success: (res) => {
+        // abort() 可能来不及阻止回调（尤其同步应答的桩），这里再挡一道：
+        // 旧响应绝不能进调用方的成功分支，否则管理员会看到过期的待审列表。
+        if (signal?.aborted) {
+          reject(new SupersededError())
+          return
+        }
         const result = res.data as ApiResult<T>
         // 网关兜底页（nginx 404/502 的 HTML）不是接口信封，统一按网络错误 reject，
         // 否则页面会把「服务不可达」误判成业务态（见 utils/request.ts 同一段注释）。
@@ -136,8 +148,14 @@ function doAdminRequest<T>(
             })
           }
           adminRefreshing.then((newToken) => {
+            // 刷新链跨多轮微任务，期间页面可能已经切了页签/筛选。
+            // 不在这里挡，就会为一次已被取消的旧查询再发一个请求。
+            if (signal?.aborted) {
+              reject(new SupersededError())
+              return
+            }
             if (newToken) {
-              doAdminRequest<T>(method, path, data, newToken, true).then(resolve, reject)
+              doAdminRequest<T>(method, path, data, newToken, true, signal).then(resolve, reject)
             } else {
               clearAdminAuth()
               resolve(result)
@@ -148,7 +166,27 @@ function doAdminRequest<T>(
         if (result && result.code === 401) clearAdminAuth()
         resolve(result)
       },
-      fail: (err) => reject(err),
+      fail: (err) => {
+        // 真 wx.request 的 abort() 会触发 fail("request:fail abort")：
+        // 这是主动取消，不能当成网络错误把页面打成错误态。
+        if (signal?.aborted) {
+          reject(new SupersededError())
+          return
+        }
+        reject(err)
+      },
     })
+    if (signal) {
+      signal.task = task
+      // 同步应答的桩在拿到 task 之前就跑完 success，那时 abort 还没发；
+      // 若此刻已被取消就补一次（真环境异步，next() 里已经发过，这里不会重复生效）。
+      if (signal.aborted && task && typeof task.abort === 'function') {
+        try {
+          task.abort()
+        } catch {
+          // 请求已结束，忽略
+        }
+      }
+    }
   })
 }

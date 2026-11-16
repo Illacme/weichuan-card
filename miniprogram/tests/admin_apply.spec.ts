@@ -38,6 +38,10 @@ vi.mock('../utils/adminEntry', () => ({
   endAdminSession: mocks.endAdminSession,
 }))
 
+// 列表 GET 现在传第 4 参 signal（写操作仍不传）。signal 是运行时对象，
+// 只钉形状，不钉具体实例。
+const SIGNAL = expect.objectContaining({ aborted: expect.any(Boolean) })
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 let wxStub: any
@@ -80,7 +84,7 @@ describe('身份兜底', () => {
 
     expect(p.data.ready).toBe(true)
     expect(mocks.wxLoginCode).not.toHaveBeenCalled()
-    expect(mocks.adminRequest).toHaveBeenCalledWith('GET', '/api/admin/apply/open', { page: 1, size: 20, status: 'pending' })
+    expect(mocks.adminRequest).toHaveBeenCalledWith('GET', '/api/admin/apply/open', { page: 1, size: 20, status: 'pending' }, SIGNAL)
     expect(p.data.list).toHaveLength(1)
   })
 
@@ -200,11 +204,11 @@ describe('列表与筛选', () => {
 
     p.onTabChange({ currentTarget: { dataset: { tab: 'modify' } } })
     await flush()
-    expect(mocks.adminRequest).toHaveBeenLastCalledWith('GET', '/api/admin/apply/modify', { page: 1, size: 20, status: 'pending' })
+    expect(mocks.adminRequest).toHaveBeenLastCalledWith('GET', '/api/admin/apply/modify', { page: 1, size: 20, status: 'pending' }, SIGNAL)
 
     p.onStatusChange({ currentTarget: { dataset: { status: 'all' } } })
     await flush()
-    expect(mocks.adminRequest).toHaveBeenLastCalledWith('GET', '/api/admin/apply/modify', { page: 1, size: 20 })
+    expect(mocks.adminRequest).toHaveBeenLastCalledWith('GET', '/api/admin/apply/modify', { page: 1, size: 20 }, SIGNAL)
   })
 
   it('加载更多按 total 判定是否还有下一页', async () => {
@@ -220,6 +224,30 @@ describe('列表与筛选', () => {
     await flush()
     expect(p.data.list).toHaveLength(3)
     expect(p.data.hasMore).toBe(false)
+  })
+
+  it('快速切筛选时旧响应后回来，也不盖掉新结果（真正测竞态承诺）', async () => {
+    mocks.hasAdminToken.mockReturnValue(true)
+    let resolveOld: (v: any) => void = () => {}
+    const oldResp = new Promise<any>((r) => { resolveOld = r })
+    mocks.adminRequest
+      .mockReturnValueOnce(oldResp as any)
+      .mockResolvedValueOnce({ code: 0, total: 1, data: [{ id: 2, name: '新结果·王', status: 'pending' }] })
+
+    const p = await page()
+    p.onShow()
+    await flush()
+    p.onStatusChange({ currentTarget: { dataset: { status: 'all' } } })
+    await flush()
+    expect(p.data.list[0].name).toBe('新结果·王')
+
+    // 第一轮慢响应此刻才回来：没有 guard 会把新结果盖成「旧结果·李」。
+    resolveOld({ code: 0, total: 1, data: [{ id: 1, name: '旧结果·李', status: 'pending' }] })
+    await flush()
+    expect(p.data.list).toHaveLength(1)
+    expect(p.data.list[0].name).toBe('新结果·王')
+    expect(p.data.error).toBe('')
+    expect(p.data.loading).toBe(false)
   })
 
   it('接口失败落到可重试的错误态，而不是空列表', async () => {
@@ -337,6 +365,16 @@ describe('静态守门', () => {
     // 自动微信免密是限流误伤的根因，只能存在于 utils/adminEntry.ts
     expect(applyTS).not.toContain('/api/admin/login/wechat')
     expect(applyTS).not.toContain('wxLoginCode')
+  })
+
+  it('连续重查接竞态守门，写操作仍不接（取消提交会造成假失败）', () => {
+    expect(applyTS).toContain('latestGuard')
+    expect(applyTS).toContain('isCurrent(')
+    expect(applyTS).toContain('isSuperseded(')
+    expect(applyTS).toContain("'GET', '/api/admin/apply/' + kind, query, sig")
+    // 审批 / 驳回不得传 signal：后端可能已执行，前端却把错误吞掉
+    expect(applyTS).not.toMatch(/adminRequest\(\s*'POST'[^)]*,\s*sig/)
+    expect(applyTS).toContain('guard.cancel()')
   })
 
   it('驳回理由用页内 textarea，不用 wx.showModal 的 editable（低版本会吞输入）', () => {

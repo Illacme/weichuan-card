@@ -167,6 +167,19 @@ const (
 	// 客户没续」与「我们根本没提醒就把他停服了」之间唯一的证据。
 	// 按档位变化记录（warn → urgent → expired），不按天记，否则审计表会变成闹钟。
 	ActionLicenseExpiring = "license.expiring"
+
+	// 内容管理写操作（见 handler/content.go）。此前整份 content.go 零审计：
+	// 客户名片页展示什么的最终决定权都在这几个接口，主页被人改了却查不出是谁。
+	// 三张内容表共用「对象.编辑」一个动作，Detail 里的 op 区分 create / update / delete，
+	// 既不炸审计字典，也能回答「谁在什么时候动了哪一行」。
+	ActionContentInfo     = "content.info"
+	ActionContentProfile  = "content.profile"
+	ActionContentCategory = "content.category"
+	ActionContentProject  = "content.project"
+	ActionContentService  = "content.service"
+	ActionContentLayout   = "content.layout"
+	// ActionContentSort 批量排序（三个资源共用 /sort 路由），TargetID 记完整路由。
+	ActionContentSort = "content.sort"
 )
 
 // ResultSuccess / ResultFail 操作结果。

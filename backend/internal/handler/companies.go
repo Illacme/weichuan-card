@@ -494,7 +494,10 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 		}
 		pwd, err := genPassword()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			// 与 apply.go 同口径：随机数失败的底层错误可能带出运行环境细节，
+			// 只落服务端日志，客户端给可重试的固定文案。
+			log.Printf("[COMPANY][ERROR] 生成初始密码失败 path=%s err=%v", c.FullPath(), err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "生成初始密码失败，请稍后重试"})
 			return
 		}
 		hash, err := auth.HashPassword(pwd)
@@ -507,7 +510,7 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			"password_hash": hash, "token_version": a.TokenVersion + 1,
 		})
 		if res.Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+			dbWriteFailed(c, "重置企业管理员密码", "重置失败，请稍后重试", res.Error)
 			return
 		}
 		// 审计只记「给谁重置了」，绝不记新密码

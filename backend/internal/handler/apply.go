@@ -845,7 +845,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		res := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
 			Updates(map[string]interface{}{"status": "disabled", "token_version": gorm.Expr("token_version + 1")})
 		if res.Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+			dbWriteFailed(c, "禁用员工", "操作失败，请稍后重试", res.Error)
 			return
 		}
 		if res.RowsAffected == 0 {
@@ -864,7 +864,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		res := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
 			Updates(map[string]interface{}{"status": "enabled", "token_version": gorm.Expr("token_version + 1")})
 		if res.Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+			dbWriteFailed(c, "启用员工", "操作失败，请稍后重试", res.Error)
 			return
 		}
 		if res.RowsAffected == 0 {
@@ -898,7 +898,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		res := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
 			Updates(map[string]interface{}{"password_hash": hash, "token_version": gorm.Expr("token_version + 1")})
 		if res.Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+			dbWriteFailed(c, "重置员工密码", "重置失败，请稍后重试", res.Error)
 			return
 		}
 		if res.RowsAffected == 0 {

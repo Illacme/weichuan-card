@@ -156,3 +156,54 @@ describe('管理员请求通道', () => {
     expect(hasAdminWxBound()).toBe(false)
   })
 })
+
+describe('管理员通道的可选 signal（只给连续重查的 GET）', () => {
+  it('signal 挂上 RequestTask，取消时真调 abort（不是只翻布尔）', async () => {
+    const { adminRequest } = await mod()
+    const { latestGuard } = await import('../utils/latest')
+    storage.set('adminToken', 'admin-tk')
+    const aborted: number[] = []
+    let success: any
+    wxStub.request = vi.fn((o: any) => {
+      success = o.success
+      return { abort: () => aborted.push(1) }
+    })
+
+    const guard = latestGuard()
+    const first = guard.next()
+    const p = adminRequest('GET', '/api/admin/apply/open', {}, first)
+    expect(first.task, 'signal 必须拿到 wx.request 的 RequestTask').toBeTruthy()
+
+    guard.next()
+    expect(aborted).toHaveLength(1)
+    // 同步桩的 success 仍会回来，但被取消的请求必须 reject，不能进成功分支
+    success({ statusCode: 200, data: { code: 0, data: [{ id: 1 }] } })
+    await expect(p).rejects.toThrow('superseded')
+  })
+
+  it('abort 触发的 fail(request:fail abort) 不当成网络错误', async () => {
+    const { adminRequest } = await mod()
+    const { latestGuard } = await import('../utils/latest')
+    storage.set('adminToken', 'admin-tk')
+    let fail: any
+    wxStub.request = vi.fn((o: any) => { fail = o.fail })
+
+    const guard = latestGuard()
+    const sig = guard.next()
+    const p = adminRequest('GET', '/api/admin/apply/open', {}, sig)
+    guard.next()
+    fail({ errMsg: 'request:fail abort' })
+
+    await expect(p).rejects.toThrow('superseded')
+  })
+
+  it('不传 signal 时行为与改动前完全一致（写操作走这条）', async () => {
+    const { adminRequest } = await mod()
+    storage.set('adminToken', 'admin-tk')
+    wxStub.request = vi.fn((o: any) => o.success({ statusCode: 200, data: { code: 0, ok: true } }))
+
+    const r = await adminRequest('POST', '/api/admin/apply/open/1/approve', {})
+    expect(r.code).toBe(0)
+    expect((r as any).ok).toBe(true)
+  })
+})

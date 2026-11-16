@@ -21,6 +21,7 @@ const RACY_PAGES = [
   'miniprogram/pages/team/all.ts',
   'miniprogram/pages/team/team.ts',
   'miniprogram/pages/employee/stat/stat.ts',
+  'miniprogram/pages/admin/apply/apply.ts',
 ]
 const GUARD_TOOL_FILE = 'frontend/src/api/latest.ts' // 守门工具自身的定义，不算消费方
 
