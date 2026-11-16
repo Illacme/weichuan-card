@@ -225,6 +225,7 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
+      bgGradientStrength: 100,
       styleId: 'default',
       brandColorId: null,
       templateEntitled: true,
@@ -443,6 +444,7 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
+      bgGradientStrength: 100,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
     })
