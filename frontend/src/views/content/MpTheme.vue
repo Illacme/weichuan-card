@@ -72,10 +72,28 @@
               <!-- 顶部主色浓度遮罩：静态 PNG 是 100% 原色出图，这里叠一层白色把背景顶部
                    混淡到当前浓度，拖动滑杆即时生效。**只盖到名片卡片顶部**——卡片是不透明
                    白容器，真机上浓度只改变卡片背后/周围的背景，卡片与文字完全不受影响；
-                   铺满整图会把卡片内文字一起冲淡。遮罩高度按风格内联（veilStyle），
-                   随长图一起滚动。仅无背景图时真机才有此渐变；设了首页背景图时真机顶部被
-                   整幅盖住，此遮罩仍会盖在预览图顶部，属示意偏差，以真机为准。 -->
-              <div v-if="!failedPreviews[currentId]" class="strength-veil" :style="veilStyle" />
+                   铺满整图会把卡片内文字一起冲淡。用 SVG 而不是纯色 div：公司名是烘焙在
+                   PNG 里的白字，浓度低时会被冲淡，这里按真机同一阈值（<50 切深色）重绘，
+                   并用主色混白的不透明块盖住原白字。viewBox 375×74 对齐状态栏 26 + 导航 42
+                   + 卡片 margin 6，随长图一起滚动。设了首页背景图时真机顶部被整幅盖住，
+                   此遮罩仍会盖在预览图顶部，属示意偏差，以真机为准。 -->
+              <svg
+                v-if="!failedPreviews[currentId]"
+                class="strength-veil"
+                :style="{ height: veilHeight }"
+                viewBox="0 0 375 74"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <rect x="0" y="0" width="375" height="74" fill="#fff" :fill-opacity="veilAlpha" />
+                <template v-if="navTitleOnLight">
+                  <rect x="126" y="31" width="123" height="32" :fill="veilBgColor" />
+                  <text
+                    x="187.5" y="47" text-anchor="middle" dominant-baseline="central"
+                    font-size="14" font-weight="700" fill="#333"
+                  >{{ PREVIEW_SHORT_NAME }}</text>
+                </template>
+              </svg>
             </div>
           </div>
           <!-- 悬停预览图时才显示的标注，默认不遮挡示意图观感：客户最容易把「按 token 复刻的示意图」
@@ -205,7 +223,22 @@
         <div class="zoom-scroll">
           <div class="shot-wrap">
             <img class="zoom-shot" :src="fullUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
-            <div class="strength-veil" :style="veilStyle" />
+            <svg
+              class="strength-veil"
+              :style="{ height: veilHeight }"
+              viewBox="0 0 375 74"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <rect x="0" y="0" width="375" height="74" fill="#fff" :fill-opacity="veilAlpha" />
+              <template v-if="navTitleOnLight">
+                <rect x="126" y="31" width="123" height="32" :fill="veilBgColor" />
+                <text
+                  x="187.5" y="47" text-anchor="middle" dominant-baseline="central"
+                  font-size="14" font-weight="700" fill="#333"
+                >{{ PREVIEW_SHORT_NAME }}</text>
+              </template>
+            </svg>
           </div>
         </div>
       </div>
@@ -257,10 +290,31 @@ const CARD_TOP_PCT: Record<string, number> = {
   warm: 2.9,
   teal: 4.3,
 }
-const veilStyle = computed(() => ({
-  height: `${CARD_TOP_PCT[styleId.value] ?? 6}%`,
-  opacity: (100 - bgGradientStrength.value) / 100,
-}))
+const veilHeight = computed(() => `${CARD_TOP_PCT[styleId.value] ?? 6}%`)
+const veilAlpha = computed(() => (100 - bgGradientStrength.value) / 100)
+// 预览图里的公司名是烘焙进 PNG 的白字，浓度调低时会被遮罩冲淡到看不见；
+// 真机在 bgGradientStrength<50 时把顶栏文字切成深色。这里在遮罩里按同一阈值重绘
+// 公司名：<50 用不透明背景块盖住原白字 + 深色字，≥50 让 PNG 白字原样透出。
+const navTitleOnLight = computed(() => bgGradientStrength.value < 50)
+// 与 scripts/gen_theme_previews.py 的 PLACEHOLDER_TEXT.short_name 同步（MpTheme.spec 对账）。
+const PREVIEW_SHORT_NAME = '示例企业'
+// 背景块颜色 = 主色按浓度混白（与遮罩白层叠在原背景上的结果一致，避免可见色块边界）。
+const veilBgColor = computed(() =>
+  mixHex(currentPreviewPrimary.value, '#ffffff', veilAlpha.value)
+)
+function parseHex(h: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec((h || '').trim())
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+function mixHex(a: string, b: string, t: number): string {
+  const pa = parseHex(a)
+  const pb = parseHex(b)
+  if (!pa || !pb) return a
+  const ch = (i: number) => Math.round(pa[i] * (1 - t) + pb[i] * t)
+  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`
+}
 // 「使用中」是后端已保存的组合，不是界面上刚点过的组合：未保存时不能显示使用中，
 // 否则客户会以为已经生效。load 时记一次，save 成功后同步。
 const savedStyleId = ref(DEFAULT_STYLE)
@@ -676,9 +730,9 @@ onMounted(load)
   color: #909399;
   line-height: 1.6;
 }
-/* 浓度遮罩：只盖到名片卡片顶部，把 100% 原色的背景顶部混淡到当前浓度。
-   卡片是不透明白容器，浓度不该影响它——height 由 veilStyle 按风格内联给出
-   （卡片顶部比例），opacity = 1-浓度，background 纯白。
+/* 浓度遮罩（SVG）：只盖到名片卡片顶部，把 100% 原色的背景顶部混淡到当前浓度。
+   卡片是不透明白容器，浓度不该影响它——height 由 veilHeight 按风格内联给出
+   （卡片顶部比例），内部白层 fill-opacity = 1-浓度；浓度<50 时额外重绘深色公司名。
    pointer-events:none 让滚轮照常穿透到 .preview-scroll 滚动长图；
    z-index 压在 img 之上、但低于角标/查看大图按钮（它们 z-index 2/3）。 */
 .strength-veil {
@@ -687,8 +741,10 @@ onMounted(load)
   left: 0;
   right: 0;
   z-index: 1;
+  display: block;
+  width: 100%;
   pointer-events: none;
-  background: #fff;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 /* 预览容器是**手机窗口**而非整张长图：窄于 1:3.2 的长图，默认只露出约两屏高度，

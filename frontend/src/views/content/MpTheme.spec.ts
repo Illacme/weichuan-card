@@ -283,7 +283,9 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
 
   // ===== 顶部主色浓度（第 3 步）：滑杆 → 遮罩即时预览 → 保存三值 =====
   const veil = (w: any) => w.find('.preview-scroll .strength-veil')
-  const veilBg = (w: any) => veil(w).attributes('style') || ''
+  const veilStyle = (w: any) => veil(w).attributes('style') || ''
+  // 遮罩是 SVG：外层只有 height（卡片顶部比例），白层透明度在第一个 rect 的 fill-opacity。
+  const veilAlphaAttr = (w: any) => veil(w).find('rect').attributes('fill-opacity')
 
   it('第 3 步有浓度滑杆，默认 100% 原色：遮罩 opacity=0（不遮），高度止于卡片顶部', async () => {
     const w = await mountPage()
@@ -293,12 +295,12 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     expect(slider.exists()).toBe(true)
     expect(slider.attributes('value')).toBe('100')
     expect(w.find('.strength-val').text()).toBe('100%')
-    // 100% 时 opacity=0，遮罩不显；高度=default 风格卡片顶部 5.7%（不是铺满整图）
+    // 100% 时白层 fill-opacity=0，遮罩不显；高度=default 风格卡片顶部 5.7%（不是铺满整图）
     expect(veil(w).exists()).toBe(true)
-    expect(veilBg(w)).toContain('opacity: 0')
-    expect(veilBg(w)).toContain('height: 5.7%')
+    expect(veilAlphaAttr(w)).toBe('0')
+    expect(veilStyle(w)).toContain('height: 5.7%')
     // 卡片不被遮罩覆盖：遮罩高度必须明显小于整图（用户实测反馈「卡片也被变白」）
-    expect(veilBg(w)).not.toContain('height: 100%')
+    expect(veilStyle(w)).not.toContain('height: 100%')
   })
 
   it('拖低浓度：遮罩 opacity 实时变大、数值联动，保存带上新浓度', async () => {
@@ -308,13 +310,14 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     await flush()
 
     expect(w.find('.strength-val').text()).toBe('40%')
-    // opacity = (100-40)/100 = 0.6，滑杆一动遮罩即时更新，不必重新切图
-    expect(veilBg(w)).toContain('opacity: 0.6')
-    expect(veilBg(w)).toContain('height: 5.7%')
-    // 大图浮层的遮罩必须同步（同一 veilStyle）
+    // alpha = (100-40)/100 = 0.6，滑杆一动遮罩即时更新，不必重新切图
+    expect(veilAlphaAttr(w)).toBe('0.6')
+    expect(veilStyle(w)).toContain('height: 5.7%')
+    // 大图浮层的遮罩必须同步（同一 veilHeight / veilAlpha）
     await w.find('.preview-zoom-btn').trigger('click')
     await flush()
-    expect(w.find('.zoom-scroll .strength-veil').attributes('style')).toBe(veilBg(w))
+    expect(w.find('.zoom-scroll .strength-veil').attributes('style')).toBe(veilStyle(w))
+    expect(w.find('.zoom-scroll .strength-veil').find('rect').attributes('fill-opacity')).toBe('0.6')
 
     await (w.vm as any).save()
     await flush()
@@ -330,7 +333,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     await flush()
 
     expect(w.find('.strength-val').text()).toBe('0%')
-    expect(veilBg(w)).toContain('opacity: 1')
+    expect(veilAlphaAttr(w)).toBe('1')
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
@@ -338,10 +341,34 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     })
   })
 
+  it('浓度<50 时重绘深色公司名（PNG 白字会被遮罩冲淡），≥50 让原白字透出', async () => {
+    const w = await mountPage()
+    // 100%：白字原样透出，不重绘
+    expect(veil(w).find('text').exists()).toBe(false)
+
+    await w.find('.strength-row input.el-slider').setValue('40')
+    await flush()
+    const text = veil(w).find('text')
+    expect(text.exists()).toBe(true)
+    expect(text.text()).toBe('示例企业')
+    expect(text.attributes('fill')).toBe('#333')
+    // 背景块用主色混白（default 默认色 #1a8cff、alpha 0.6），盖住原白字避免双影
+    const rects = veil(w).findAll('rect')
+    expect(rects).toHaveLength(2)
+    expect(rects[1].attributes('fill')).toBe('rgb(163, 209, 255)')
+
+    // 阈值与真机 wxml 的 `< 50` 一致：50 仍是白字（不重绘）
+    await w.find('.strength-row input.el-slider').setValue('50')
+    await flush()
+    expect(veil(w).find('text').exists()).toBe(false)
+  })
+
   it('浓度遮罩高度按风格止于卡片顶部：与 manifest 实测高度对账', async () => {
     // 卡片顶 = 状态栏 26 + 导航 42 + 卡片 margin 6 = 74px；整图高 = contentBottom + 20 + 60。
     // 遮罩只覆盖卡片顶部以上的背景，卡片与文字不受浓度影响。
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf-8'))
+    // 组件里重绘公司名用的占位文案必须与生成脚本一致，否则遮罩里会叠出两种公司名
+    expect(manifest.placeholders?.short_name).toBe('示例企业')
     const bottoms: Record<string, number> = manifest.contentBottoms
     const w = await mountPage()
     for (let i = 0; i < STYLE_IDS.length; i++) {
@@ -349,7 +376,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
       await flush()
       const h = bottoms[STYLE_IDS[i]] + 20 + 60
       const pct = Math.round((74 / h) * 1000) / 10
-      expect(veilBg(w), `${STYLE_IDS[i]} 卡片顶部比例应与 manifest 实测高度一致`)
+      expect(veilStyle(w), `${STYLE_IDS[i]} 卡片顶部比例应与 manifest 实测高度一致`)
         .toContain(`height: ${pct}%`)
     }
   })
@@ -358,7 +385,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     const w = await mountPage({ ...DEFAULT_LAYOUT, bgGradientStrength: 65 })
 
     expect(w.find('.strength-val').text()).toBe('65%')
-    expect(veilBg(w)).toContain('opacity: 0.35')
+    expect(veilAlphaAttr(w)).toBe('0.35')
     expect(w.find('.pane-combo-line').text()).toContain('使用中')
 
     await w.find('.strength-row input.el-slider').setValue('30')
