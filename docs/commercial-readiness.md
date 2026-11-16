@@ -5270,13 +5270,17 @@ include `../miniprogram/tests/**/*.spec.ts`）。
 
 ## 第七十三轮 · 客户反馈两连修：首页背景渐变 + 品牌配色扩到 10 款（2026-11-16）
 
-- **首页背景渐变加浓（commit `eac7b60`）**：旧公式 soft→tint 两个浅底互渐，
-  淡到肉眼不可见，切色系只有色相微变。新公式
-  `linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint))`
-  顶部 15% 浓度主色混白（`background-color` 显式 #fff），色相与浓度都由
-  `--wc-primary-rgb` 决定——后台选哪个配色组合，渐变就是哪个色系的明显渐变，
-  无需「首页背景」图。同一公式钉死在 `pages/index/index.wxss` 与
-  `gen_theme_previews.py` 两处（`theme.spec.ts` 逐字比对）。
+- **首页背景渐变加浓（commit `eac7b60`，同日 `88721a2` 二次修正）**：旧公式
+  soft→tint 两个浅底互渐，淡到肉眼不可见；第一版改成顶部 15% 主色混白，
+  渲染出来是 `#dadeF8`（近乎白），客户一眼看出「不是设计稿那个蓝」。
+  **最终公式顶部直接用品牌原色**：
+  `linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint))`
+  ——切宝蓝顶部就是 `#0820d0`、正红就是 `#d40c0a`，与 logo 主色逐字一致。
+  顶部变深后顶栏公司名在真机上反白、滚动过 `navHeight` 由 `navMask` 切回深色，
+  预览图首屏同步反白（`background-color` 仍显式 #fff 供 alpha 过渡混色）。
+  系统状态栏文字由微信绘制、`navigationStyle: custom` 下无法改色，是已知边界。
+  同一公式钉死在 `pages/index/index.wxss` 与 `gen_theme_previews.py` 两处
+  （`theme.spec.ts` 逐字比对 + 顶栏反白守门）。
 - **品牌配色新增「宝蓝(brand-royal)」「正红(brand-scarlet)」**：现有 8 款
   对不齐部分客户 LOGO 的高饱和主色。色值取自客户 LOGO 采样（透明像素过滤
   alpha≥128 后取簇均值）：宝蓝 `#0820d0` 即 LOGO 原色；正红 LOGO 原色

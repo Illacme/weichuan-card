@@ -37,7 +37,8 @@
         <!-- 企业简称居中展示（pointer-events:none 不挡「我的」点击）。
              企业信息未就绪时**留白**而不是写死某个企业名——一套代码多租户，
              写死客户名等于给别的客户看别人家的公司名 -->
-        <view class="nav-title">{{company.shortName || company.fullName || ''}}</view>
+        <!-- 顶部是品牌原色深底时反白，滚动过 navHeight 后白遮罩浮现、切回深色（见 index.wxss） -->
+        <view class="nav-title {{navMask >= 0.5 ? 'scrolled' : ''}}">{{company.shortName || company.fullName || ''}}</view>
       </view>
     </view>
     <view class="nav-spacer" style="height: {{navHeight}}px;" />

@@ -461,7 +461,7 @@ HTML = Template("""<!doctype html>
   .phone {
     width: ${w}px; height: ${h}px; position: relative; padding-bottom: ${tail_gap}px;
     background-color: #fff;
-    background-image: linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint));
+    background-image: linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
 ${tokens}
   }
   /* 状态栏与微信胶囊只画占位：真机的系统图标 / 安全区不该被伪造进示意图 */
@@ -475,8 +475,10 @@ ${tokens}
         background: #fff; color: var(--wc-primary); font-size: 10px; }
   .me-avatar { width: 20px; height: 20px; border-radius: 50%; flex: none;
                background: var(--wc-primary-chip); border: 1px solid var(--wc-primary-border); }
+  /* 与真机首屏一致：顶部是品牌原色深底，公司名反白（真机滚动后由 navMask 切回深色，
+     预览只画未滚动的首屏状态）。 */
   .nav-title { position: absolute; left: 0; right: 0; text-align: center;
-               font-size: 14px; font-weight: 700; color: #1a1a1a; pointer-events: none; }
+               font-size: 14px; font-weight: 700; color: #fff; pointer-events: none; }
   .wx-capsule { width: 76px; height: 28px; border-radius: 15px; background: rgba(255,255,255,.92);
                 border: 1px solid #e3e8ef; display: flex; align-items: center;
                 justify-content: space-evenly; font-size: 12px; color: #222; }

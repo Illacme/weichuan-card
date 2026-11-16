@@ -882,9 +882,9 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 
   // 「每张图都在、尺寸都对、快照也对」仍挡不住一种静默失败：只用一套布局或只用
-  // 一套颜色出 36 张图，客户看到的是一堆重复预览。36 张摘要互不相同，
+  // 一套颜色出 44 张图，客户看到的是一堆重复预览。44 张摘要互不相同，
   // 再加「同风格全部色档互不相同」「同色档 4 风格互不相同」两层分组，才钉得住两轴。
-  it('36 张预览图两两不同：布局与颜色都真的进了图', () => {    const combos = expectedCombos()
+  it('44 张预览图两两不同：布局与颜色都真的进了图', () => {    const combos = expectedCombos()
     const digests: Record<string, string> = {}
     for (const cid of Object.keys(combos)) {
       digests[cid] = createHash('sha256')
@@ -931,7 +931,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(script, '缺 ImageMagick 时要显式报错，不能跳过缩略图')
       .toMatch(/raise SystemExit\(\s*"✗ 找不到 ImageMagick/)
 
-    // ③ 36 张缩略图必须真的存在，尺寸按原图等比、体积真的更小
+    // ③ 44 张缩略图必须真的存在，尺寸按原图等比、体积真的更小
     for (const cid of Object.keys(combos)) {
       const full = readFileSync(join(PREVIEW_DIR, `${cid}.png`))
       const thumbPath = join(PREVIEW_DIR, `${cid}.thumb.png`)
@@ -952,7 +952,7 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 
   // 2026-11-12 线上真实事故：管理员发版后切风格，预览图「看不到任何变化」，
-  // 第一反应是「发布文件不全」。逐张比对 36 张图的字节数与本地完全一致、入口 JS 的
+  // 第一反应是「发布文件不全」。逐张比对 44 张图的字节数与本地完全一致、入口 JS 的
   // 内容 hash 也一致——文件是全的，是被缓存住了：图片名不含内容 hash（`ink--brand-crimson.png`
   // 这种组合键），源站又没发 Cache-Control，Cloudflare 按静态图片默认给了 max-age=14400。
   //
@@ -1055,25 +1055,41 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 切模板背景不变——预览与真机对不上。首页背景必须跟随主题 token（与预览一致），
   // 且「首页背景」图仍由 page-bg 整幅覆盖优先。改回写死蓝会变红。
   //
-  // 2026-11-16 加浓（用户对照设计稿反馈「只有背景渐变差异较大」）：旧公式
-  // soft→tint 两个浅底互渐，淡到肉眼不可见，切色系只有色相变化、没有浓度变化。
-  // 新公式顶部从 --wc-primary-rgb 的 rgba 派生浓度——色相与浓度都跟随后台
-  // 「整体风格 / 页面配色」，中段与底部仍停靠 soft / tint 两个浅底 token。
+  // 2026-11-16 二次修正（用户指出 15% 混白仍与设计稿差很大）：旧公式顶部是
+  // rgba(primary, 0.15) 混白、渲染成 #dadeF8（近乎白），客户一眼看出不是设计稿的蓝。
+  // 新公式顶部直接用 --wc-primary **原色**，0→12% 微降到 0.9 alpha，12%→48% 快速
+  // 过渡到 soft、再到 tint：切宝蓝顶部就是 #0820d0、正红就是 #d40c0a，与 logo 逐字一致。
+  // 顶部变深后顶栏公司名必须反白（滚动后 navMask 浮现再切深色），预览脚本同步。
   // 渐变串在端上与预览脚本两处**逐字同源**，本测试把同一子串钉在两边。
-  it('小程序首页背景跟随主题 token（含主色浓度），与后台预览同一公式', () => {
+  it('小程序首页背景顶部用品牌原色（非混白），与后台预览同一公式', () => {
     const gradient =
-      'linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint))'
+      'linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint))'
     const wxss = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxss'), 'utf-8')
     const page = wxss.match(/\.page\s*\{[^}]*\}/)?.[0] || ''
     expect(page, '取不到 .page 规则').not.toBe('')
     expect(page, '首页背景没用主题 token，切模板不会变色').toContain(gradient)
-    expect(page, 'alpha 顶部必须混在白底，落到 page 的 #f5f5f5 会把蓝调混灰').toContain(
+    expect(page, 'alpha 过渡必须混在白底，落到 page 的 #f5f5f5 会把蓝调混灰').toContain(
       'background-color: #fff'
+    )
+    expect(page, '顶部退回 15% 混白（设计稿差距大的根因）').not.toContain(
+      'rgba(var(--wc-primary-rgb), 0.15)'
     )
     expect(page, '首页背景仍是写死蓝，与后台预览不一致').not.toContain('#d5e7fa')
     // 后台预览 .phone 必须是同一公式，两端一致
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     expect(script).toContain(gradient)
+    // 顶部变深后，顶栏公司名在真机与预览里都要反白（滚动前状态）
+    expect(wxss, '真机顶栏公司名未反白，深蓝底上会看不清').toMatch(
+      /\.custom-nav \.nav-title\s*\{[^}]*color:\s*#fff/
+    )
+    expect(wxss, '真机滚动后白遮罩浮现，公司名需切回深色').toContain(
+      '.custom-nav .nav-title.scrolled { color: #333; }'
+    )
+    const wxml = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxml'), 'utf-8')
+    expect(wxml, '顶栏未随 navMask 切换反白/深色').toContain("navMask >= 0.5 ? 'scrolled' : ''")
+    expect(script, '预览图顶栏公司名未反白，与真机首屏不一致').toMatch(
+      /\.nav-title\s*\{[^}]*color:\s*#fff/
+    )
   })
 
   it('后台固定预览区是手机窗口、内部滚动看完整长图（比例不对 / 退回长条会变红）', () => {
@@ -1182,7 +1198,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 
 // ===== P5：44 组合预览图 + 后台两步 UI =====
 //
-// 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，36 张 PNG 一张不少、
+// 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，44 张 PNG 一张不少、
 // token 快照也没变、尺寸也对，客户看到的却是旧版式。布局必须留快照并与 WXSS
 // 对账；后台也必须真的按 (styleId, brandColorId) 组合键寻图、按两轴保存，
 // 且 4 个风格下全部色档可选。
