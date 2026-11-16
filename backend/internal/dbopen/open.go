@@ -94,7 +94,8 @@ func (l redactingLogger) Trace(
 // SQL 形状仍然一眼能看懂。数字字面量（LIMIT 10、id = 1）保留——它们不含敏感信息，
 // 打码反而影响排查（分页、行 id 是最常看的东西）。
 //
-// 转义形态：SQL 标准用双写引号（'' 或 ""），MySQL 还支持反斜杠转义（\'）。
+// 转义形态：SQL 标准把引号连写两遍来转义（两个连续单引号 / 两个连续双引号），
+// MySQL 还支持反斜杠转义（\'）。
 func redactSQL(sql string) string {
 	if !strings.ContainsAny(sql, `'"`) {
 		return sql

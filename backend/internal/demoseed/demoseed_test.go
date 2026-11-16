@@ -208,7 +208,7 @@ func TestLoadIsIdempotent(t *testing.T) {
 
 // 盲索引用的是「写入那一刻」的 PII 密钥。这条用例把最贵的坑钉死：
 // 安装向导若在签发真密钥之前写演示员工，重启后按手机号永远查不到这个人
-//（登录报账号不存在），而报错和密钥毫无关联。
+// （登录报账号不存在），而报错和密钥毫无关联。
 func TestEmployeeBlindIndexFollowsCurrentKey(t *testing.T) {
 	if err := pii.SetKey(testKey(1)); err != nil {
 		t.Fatalf("装载测试密钥失败：%v", err)

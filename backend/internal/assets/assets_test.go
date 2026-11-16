@@ -214,17 +214,17 @@ func TestStyleCountsMatchActualTotals(t *testing.T) {
 
 func TestContentType(t *testing.T) {
 	cases := map[string]string{
-		"a/b/icon.png":       "image/png",
-		"cover.jpg":          "image/jpeg",
-		"cover.JPEG":         "image/jpeg",
-		"x.webp":             "image/webp",
-		"x.gif":              "image/gif",
-		"weird.pdf":          "application/octet-stream",
-		"no-extension":       "application/octet-stream",
-		"dir.d/name.svg":     "application/octet-stream",
-		"upper/case.PNG":     "image/png",
-		"trailing.dot.":      "application/octet-stream",
-		"":                   "application/octet-stream",
+		"a/b/icon.png":   "image/png",
+		"cover.jpg":      "image/jpeg",
+		"cover.JPEG":     "image/jpeg",
+		"x.webp":         "image/webp",
+		"x.gif":          "image/gif",
+		"weird.pdf":      "application/octet-stream",
+		"no-extension":   "application/octet-stream",
+		"dir.d/name.svg": "application/octet-stream",
+		"upper/case.PNG": "image/png",
+		"trailing.dot.":  "application/octet-stream",
+		"":               "application/octet-stream",
 	}
 	for rel, want := range cases {
 		require.Equal(t, want, ContentType(rel), "ContentType(%q)", rel)

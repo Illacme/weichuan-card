@@ -40,13 +40,13 @@ var seedAssetFS embed.FS
 // 缺省租户（见 handler/tenant.go），演示数据必须以它为主体，小程序才无需任何
 // 额外参数就能展示。
 const (
-	DemoCompanyID   int64  = 1
-	DemoCompanyName        = "廊坊市朗汇机电设备有限公司"
-	DemoShortName          = "朗汇机电"
-	DemoLoginCode          = "langhui"
-	DemoEmployeePhone      = "13832603521"
-	DemoEmployeeName       = "高立新"
-	DemoAdminUser          = "langhui"
+	DemoCompanyID     int64 = 1
+	DemoCompanyName         = "廊坊市朗汇机电设备有限公司"
+	DemoShortName           = "朗汇机电"
+	DemoLoginCode           = "langhui"
+	DemoEmployeePhone       = "13832603521"
+	DemoEmployeeName        = "高立新"
+	DemoAdminUser           = "langhui"
 )
 
 // Options 演示数据的写入参数。

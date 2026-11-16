@@ -318,16 +318,16 @@ func statTrend(c *gin.Context, db *gorm.DB, from, to string) ([]statTrendRow, er
 	var rows []statTrendRow
 	q := db.Model(&model.StatEvent{}).
 		Where("staff_id IN (?)", db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
-		Select(statDateExpr+" AS `day`, "+
-			"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, "+
-			"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS `call`, "+
-			"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS `save`, "+
+		Select(statDateExpr + " AS `day`, " +
+			"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
+			"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
+			"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
 			// 注意：别名一律 snake_case。GORM Scan 按字段 DBName 匹配列名，
 			// 写成驼峰（projectView）会**静默扫不进来、计数恒 0 不报错**。
-			"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, "+
-			"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, "+
-			"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, "+
-			"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS `share`, "+
+			"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
+			"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
+			"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
+			"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
 			"SUM(CASE WHEN event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
 		Group("stat_date").Order("stat_date asc")
 	if from != "" {
@@ -371,7 +371,7 @@ type statTopRow struct {
 func statTopTargets(c *gin.Context, db *gorm.DB, from, to, eventType, table, nameCol string, limit int) ([]statTopRow, error) {
 	var rows []statTopRow
 	q := db.Table("stat_events").
-		Joins("LEFT JOIN " + table + " ON " + table + ".id = stat_events.target_id AND " + table + ".deleted_at IS NULL").
+		Joins("LEFT JOIN "+table+" ON "+table+".id = stat_events.target_id AND "+table+".deleted_at IS NULL").
 		Where("stat_events.event_type = ?", eventType).
 		Where("stat_events.staff_id IN (?)",
 			db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
@@ -414,7 +414,7 @@ type statSourceRow struct {
 // 携带有意义的来源；call/save/project_view 等是进入之后的行为，其 source
 // 只是复用了进入时的上下文，聚合它们会重复计数把分布放大。
 //
-// 空串兜底：历史库（迁移 0022 之前）的 source 为空，按 '' 分组会多出一个
+// 空串兜底：历史库（迁移 0022 之前）的 source 为空，按空串分组会多出一个
 // 空桶——用 CASE WHEN 归一成 'unknown'，与 normalizeSource 的缺省值对齐，
 // 历史数据自然落到 unknown 桶，分布图不出现裸空串。CASE WHEN 在 MySQL /
 // SQLite 同形态，不引方言分支。
@@ -619,10 +619,11 @@ func statTargetName(eventType string, targetID int64, caseNames, svcNames map[in
 // （pagination.go 是唯一权威实现）。
 //
 // 筛选参数均可缺省（缺省即不过滤）：
-//   from/to   日期范围，复用 statDateRange 的严格校验（坏值 code:1，不静默忽略）
-//   staffId   指定员工（别家员工的 id 查过来是空列表——租户隔离由子查询保证）
-//   eventType 指定事件类型，白名单外拒收（同埋点进水口：脏值会让「筛了却没生效」）
-//   targetId  指定内容对象（配 eventType=project_view/service_view 下钻 TOP 榜）
+//
+//	from/to   日期范围，复用 statDateRange 的严格校验（坏值 code:1，不静默忽略）
+//	staffId   指定员工（别家员工的 id 查过来是空列表——租户隔离由子查询保证）
+//	eventType 指定事件类型，白名单外拒收（同埋点进水口：脏值会让「筛了却没生效」）
+//	targetId  指定内容对象（配 eventType=project_view/service_view 下钻 TOP 榜）
 func RegisterStatsDetail(r *gin.Engine, db *gorm.DB) {
 	r.GET("/api/admin/stats/detail", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		from, to, ok := statDateRange(c)
@@ -874,14 +875,14 @@ func statMeSummaryOf(db *gorm.DB, staffID int64, from, to string) (statMeSummary
 func statMeTrend(db *gorm.DB, staffID int64, from, to string) ([]statTrendRow, error) {
 	var rows []statTrendRow
 	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
-		Select(statDateExpr+" AS `day`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, "+
-			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, "+
+		Select(statDateExpr + " AS `day`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
+			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
 			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
 		Group("stat_date").Order("stat_date asc").
 		Scan(&rows).Error
@@ -901,7 +902,7 @@ func statMeTopTargets(db *gorm.DB, staffID int64, from, to, eventType, table, na
 	err := statMeWhere(db.Table("stat_events"), staffID, from, to).
 		Joins("LEFT JOIN "+table+" ON "+table+".id = stat_events.target_id AND "+table+".deleted_at IS NULL").
 		Where("stat_events.event_type = ?", eventType).
-		Select("stat_events.target_id AS target_id, COALESCE("+table+"."+nameCol+", '已删除') AS `name`, COUNT(*) AS cnt").
+		Select("stat_events.target_id AS target_id, COALESCE(" + table + "." + nameCol + ", '已删除') AS `name`, COUNT(*) AS cnt").
 		Group("stat_events.target_id, " + table + "." + nameCol).
 		// 次级排序固定 target_id：同票数时顺序稳定（也让测试可断言）
 		Order("cnt DESC, stat_events.target_id ASC").

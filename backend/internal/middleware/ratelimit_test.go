@@ -68,7 +68,7 @@ func TestRateLimiterSweepsExpiredBuckets(t *testing.T) {
 
 	// 50 个「来过一次就不再出现」的 key：正是真实流量里最常见的那一类
 	for i := 0; i < 50; i++ {
-		lim.allow("192.0.2."+string(rune('0'+i%10))+string(rune('a'+i%26)))
+		lim.allow("192.0.2." + string(rune('0'+i%10)) + string(rune('a'+i%26)))
 	}
 	lim.mu.Lock()
 	before := len(lim.buckets)

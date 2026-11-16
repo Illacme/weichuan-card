@@ -632,11 +632,11 @@ func TestSettingsValueValidation(t *testing.T) {
 
 	// 合法值：先确认放行路径没被校验误伤
 	for k, v := range map[string]string{
-		"upload_max_mb":         "30",
-		"miniprogram_base_url":  "https://api.example.com",
-		"upload_base_url":       "http://127.0.0.1:8080/uploads",
-		"storage_driver":        "oss",
-		"pinned_company_id":     "1", // 朗汇（seed 的 1 号租户，enabled）
+		"upload_max_mb":        "30",
+		"miniprogram_base_url": "https://api.example.com",
+		"upload_base_url":      "http://127.0.0.1:8080/uploads",
+		"storage_driver":       "oss",
+		"pinned_company_id":    "1", // 朗汇（seed 的 1 号租户，enabled）
 	} {
 		_, body := c.do("PUT", "/api/admin/settings", map[string]string{k: v}, adminToken)
 		require.EqualValues(t, 0, body["code"], "%s=%s 应合法：%v", k, v, body["msg"])

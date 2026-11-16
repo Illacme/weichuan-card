@@ -269,6 +269,7 @@ func jpgWithExif() []byte {
 //   - 输入含 "Exif\0\0" 标记；
 //   - ProcessImage 输出不再含该标记（整段 EXIF 连同 GPS 被丢弃）；
 //   - 输出仍是可解码的合法 JPEG，且尺寸与原文一致（像素无损，仅丢元数据）。
+//
 // 反向验证：若把 ProcessImage 改回「jpeg 原样透传」，本用例会 FAIL，证明它不是空跑。
 func TestProcessImageStripsExif(t *testing.T) {
 	var base bytes.Buffer

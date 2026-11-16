@@ -64,7 +64,7 @@ type Result struct {
 	Total       int          `json:"total"` // 过滤后的总条数（非本页条数）
 	Page        int          `json:"page"`
 	Size        int          `json:"size"`
-	Pages       int          `json:"pages"` // 总页数
+	Pages       int          `json:"pages"`       // 总页数
 	StyleCounts []StyleCount `json:"styleCounts"` // 当前 分类+关键字 下各调性的素材数
 }
 

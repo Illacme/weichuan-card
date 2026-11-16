@@ -59,11 +59,11 @@ func CDNProviderNeedsKeyPair(provider string) bool {
 // CDNConfig 厂商无关的刷新配置：由 config（环境变量）经 setting 覆盖后填好传入。
 // 同一组字段在不同厂商下含义不同，见 NewCDNRefresher 与各实现的注释。
 type CDNConfig struct {
-	Provider         string // 厂商标识，留空按 aliyun（兼容既有部署）
-	AccessKeyID      string // AK：阿里云 AccessKeyId / 腾讯云 SecretId / 七牛 AccessKey / CloudFront AccessKeyId
-	AccessKeySecret  string // SK：阿里云 Secret / 腾讯云 SecretKey / 七牛 SecretKey / CloudFront SecretAccessKey / Cloudflare API Token
-	Endpoint         string // 刷新接口端点，留空按厂商取默认值
-	ResourceID       string // 资源标识：Cloudflare Zone ID / CloudFront Distribution ID
+	Provider        string // 厂商标识，留空按 aliyun（兼容既有部署）
+	AccessKeyID     string // AK：阿里云 AccessKeyId / 腾讯云 SecretId / 七牛 AccessKey / CloudFront AccessKeyId
+	AccessKeySecret string // SK：阿里云 Secret / 腾讯云 SecretKey / 七牛 SecretKey / CloudFront SecretAccessKey / Cloudflare API Token
+	Endpoint        string // 刷新接口端点，留空按厂商取默认值
+	ResourceID      string // 资源标识：Cloudflare Zone ID / CloudFront Distribution ID
 }
 
 // NewCDNRefresher 按厂商构造刷新器；provider 为空按 aliyun（既有部署没有这一项）。

@@ -642,6 +642,7 @@ func TestEmployeeStatRangeAppliesToAllBlocks(t *testing.T) {
 	require.Equal(t, "scan", distWeek[0].(map[string]interface{})["source"],
 		"海报那次访问在范围外，来源分布里不该再有海报")
 }
+
 // 名字回落「已删除」，计数不减——否则「榜单各行加起来对不上汇总」，
 // 而这正是最难排查的一类对账事故（同管理端 statTopTargets 的口径约定）。
 func TestEmployeeStatTopDeletedTarget(t *testing.T) {
@@ -1122,16 +1123,16 @@ func TestStatsDetailBadParams(t *testing.T) {
 	require.Len(t, body["data"].([]interface{}), 0)
 
 	for _, q := range []string{
-		"?from=2026-02-31",          // 不存在的日期
-		"?to=2026-13-01",            // 不存在的月份
-		"?from=20260101",            // 错格式
-		"?eventType=hack",           // 白名单外的事件类型
-		"?staffId=abc",              // 非数字
-		"?staffId=0",                // 非正数
-		"?staffId=-1",               // 负数
-		"?targetId=abc",             // 非数字
-		"?targetId=0",               // 非正数（TOP 榜下钻传的永远是正 id）
-		"?targetId=-1",              // 负数
+		"?from=2026-02-31", // 不存在的日期
+		"?to=2026-13-01",   // 不存在的月份
+		"?from=20260101",   // 错格式
+		"?eventType=hack",  // 白名单外的事件类型
+		"?staffId=abc",     // 非数字
+		"?staffId=0",       // 非正数
+		"?staffId=-1",      // 负数
+		"?targetId=abc",    // 非数字
+		"?targetId=0",      // 非正数（TOP 榜下钻传的永远是正 id）
+		"?targetId=-1",     // 负数
 	} {
 		_, body = c.do("GET", "/api/admin/stats/detail"+q, nil, admin)
 		require.EqualValues(t, 1, body["code"], "坏参数应被拒绝: %s", q)
