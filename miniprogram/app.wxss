@@ -6,11 +6,11 @@
      取值与模板功能上线前逐字一致，升级零突变。
    - .wc-style-<id> 是布局层：4 个风格各自给出全套 18 个 token + 各模块的版式规则。
      default 不另写 token 块（继承 page，避免两处同值漂移）。
-   - .wc-brand-<id> 是颜色层：8 款色系**只给 11 个颜色 token**，一个 --wc-r-* /
+   - .wc-brand-<id> 是颜色层：10 款色系**只给 11 个颜色 token**，一个 --wc-r-* /
      --wc-card-shadow* 都不许出现（theme.spec.ts 会拦）。版式由同挂的 style 层决定，
      所以「换品牌配色不会顺手改掉圆角」这条产品承诺从结构上成立，不靠人工自觉。
    - 颜色层写在布局层之后：同为单类选择器时后定义者覆盖前者，品牌色才能生效。
-   - P5 起两轴全叉乘：8 款色系可叠加在**任意**风格上（4 × 9 = 36 组合），
+   - P5 起两轴全叉乘：10 款色系可叠加在**任意**风格上（4 × 11 = 44 组合），
      风格只管布局、色系只管颜色；颜色层不写版式 token，所以叠加后版式仍由
      .wc-style-* 决定。根节点两层 class 同时挂，改 utils/theme.ts 的归一逻辑
      把带色系的组合打回 default，客户会只换色不换布局，theme.spec.ts 会拦。
@@ -103,10 +103,10 @@ page {
   --wc-card-shadow-soft: 0 2rpx 10rpx rgba(15, 118, 110, 0.08);
   --wc-card-shadow-bg: 0 4rpx 16rpx rgba(8, 69, 63, 0.16);
 }
-/* ===== 品牌配色预设色板（颜色层 .wc-brand-*，8 款） =====
+/* ===== 品牌配色预设色板（颜色层 .wc-brand-*，10 款） =====
    与上面的「整体风格」不同，这一系列是**纯颜色层**：只给 11 个颜色 token，
    7 个版式 token 一律不写，由根节点同挂的 .wc-style-<id> 决定。客户拿它对齐
-   自有 VI 主色时，不该连带把已验收过的版式也换掉——P1 的存量映射把 8 款 brand-*
+   自有 VI 主色时，不该连带把已验收过的版式也换掉——P1 的存量映射把 brand-*
    全归 default 风格之下，所以它们继承的就是 classic 基线版式，视觉零突变。
    色值按统一算法从主色派生（deep/grad 压暗、alt 提亮、浅色档混白），12 组真实
    搭配全部实测过 WCAG AA，注释里的最低值由同一套公式算出，不是手挑的「好看组合」。
@@ -223,6 +223,40 @@ page {
   --wc-primary-pcat: #f6eef2;
   --wc-track: #e0dfe9;
   --wc-primary-rgb: 140, 35, 88;
+}
+/* 宝蓝（2026-11-16 客户反馈补档）：高饱和宝蓝，primary 即客户 LOGO 采样原色
+   #0820d0——深底白字对比度 9.9，12 组关键搭配全部轻松过 AA，无需加深。
+   适合机电、制造、科技与体育品牌。 */
+.wc-brand-royal {
+  --wc-primary: #0820d0;
+  --wc-primary-deep: #0617a6;
+  --wc-primary-grad: #051193;
+  --wc-primary-alt: #1a3ee0;
+  --wc-primary-soft: #f4f6fe;
+  --wc-primary-border: #b7c3f0;
+  --wc-primary-tint: #e6ebfa;
+  --wc-primary-chip: #e8edfc;
+  --wc-primary-pcat: #eaf0fd;
+  --wc-track: #e4e6f0;
+  --wc-primary-rgb: 8, 32, 208;
+}
+/* 正红（2026-11-16 客户反馈补档）：LOGO 原色 #eb0a07 对白底只有 4.59、对任何可见
+   浅红底都 <4.5，做 --wc-primary 过不了端上可读性守门，故 primary 加深一档到
+   #d40c0a（最低配对 4.75）；**LOGO 原色 #eb0a07 保留在 --wc-primary-alt**——
+   开通申请页 / 我的数据页的白字按钮与文字（白字/alt = 4.59）恰好达标，
+   客户在页面元素上仍看得到原色。适合餐饮、零售与喜庆场景品牌。 */
+.wc-brand-scarlet {
+  --wc-primary: #d40c0a;
+  --wc-primary-deep: #a50806;
+  --wc-primary-grad: #870705;
+  --wc-primary-alt: #eb0a07;
+  --wc-primary-soft: #fdf5f5;
+  --wc-primary-border: #f3b8b7;
+  --wc-primary-tint: #fbecec;
+  --wc-primary-chip: #fceded;
+  --wc-primary-pcat: #fdf1f1;
+  --wc-track: #f0e4e4;
+  --wc-primary-rgb: 212, 12, 10;
 }
 
 /* ===== 布局层：风格 × 模块（P2 落前 2 模块，P3 补齐后 2 模块，共 4×4） =====

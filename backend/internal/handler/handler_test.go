@@ -993,7 +993,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, true, hl["templateEntitled"], "缺省授权应视为全部开通")
 		require.Len(t, hl["templates"], len(mptemplate.All()))
 		require.Equal(t, mptemplate.DefaultID, hl["templates"].([]interface{})[0].(map[string]interface{})["id"])
-		// 分组由服务端下发：缺 series 时后台会把 12 款挤进一组，且没人报错。
+		// 分组由服务端下发：缺 series 时后台会把全部款式挤进一组，且没人报错。
 		brandCount := 0
 		for _, raw := range hl["templates"].([]interface{}) {
 			item := raw.(map[string]interface{})
@@ -1006,7 +1006,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 				require.Equal(t, mptemplate.SeriesStyle, item["series"], id)
 			}
 		}
-		require.Equal(t, 8, brandCount, "品牌配色 8 款都要随清单下发")
+		require.Equal(t, 10, brandCount, "品牌配色 10 款都要随清单下发")
 
 		// 品牌配色款同样走白名单：选中的两轴值必须原样出现在公开接口根级，
 		// 否则端上 normalizeTheme 会静默回 default，后台却显示「使用中」。

@@ -9,12 +9,12 @@
 //   - brandColor（品牌配色）是叠加在风格之上的纯颜色层 → .wc-brand-<id>
 // 根节点同时挂两层：布局来自 style 层，颜色来自 brand 层，换色系不会顺手改掉版式。
 //
-// P5 起两轴**全叉乘**：任意风格 × (nil + 8 款色系) = 4 × 9 = 36 个组合都合法，
+// P5 起两轴**全叉乘**：任意风格 × (nil + 10 款色系) = 4 × 11 = 44 个组合都合法，
 // 色系不再隶属于某个风格。app.wxss 的颜色层写在布局层之后，同为单类选择器时
 // 后定义者覆盖前者，所以「墨款布局 + 海蓝色」本来就能渲染；P4 的
 // normalizeSelection 把它打回 default 是唯一的阻碍，P5 已放开。
 //
-// 缓存（wc_theme_id）因此不能再存扁平 templateId：12 个扁平 id 装不下 36 个组合
+// 缓存（wc_theme_id）因此不能再存扁平 templateId：12 个扁平 id 装不下 44 个组合
 // （ink + brand-crimson 压扁后只剩 brand-crimson，旧端会看成「标准均衡 + 绛红」）。
 // P5 起写带前缀的两轴串 `wc2:<styleId>|<brandColorId 或 ->`；不带前缀的旧值
 // 仍按扁平 12 款解析，老用户升级零迁移。后端的 template_id 兼容列同理，只是
@@ -29,8 +29,9 @@ export const STYLE_IDS = ['default', 'ink', 'warm', 'teal'] as const
 export const BRAND_IDS = [
   'brand-crimson', 'brand-coral', 'brand-amber', 'brand-forest',
   'brand-ocean', 'brand-indigo', 'brand-violet', 'brand-magenta',
+  'brand-royal', 'brand-scarlet',
 ] as const
-/** 扁平 12 个 id 仍是后端白名单 / 兼容派生列的取值集合；36 个组合由两轴表达，不在此集合内。 */
+/** 扁平 12 个 id 仍是后端白名单 / 兼容派生列的取值集合；44 个组合由两轴表达，不在此集合内。 */
 export const THEME_IDS = [...STYLE_IDS, ...BRAND_IDS] as const
 
 export type StyleId = (typeof STYLE_IDS)[number]

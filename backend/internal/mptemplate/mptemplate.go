@@ -8,7 +8,7 @@
 // 四个模块的列数 / 间距 / 圆角 / 封面高度；brand 是「品牌配色预设色板」= 纯颜色层，
 // 只覆盖 11 个颜色 token，不改任何版式 token，用于对齐客户自有 VI 主色。
 // P5 起两轴**全叉乘**：任意风格 × 任意色系（含 nil = 用该风格默认色）都合法，
-// 4 × (1 + 8) = 36 种。色系不再隶属于某个风格：app.wxss 的 .wc-style-* 与
+// 4 × (1 + 10) = 44 种。色系不再隶属于某个风格：app.wxss 的 .wc-style-* 与
 // .wc-brand-* 两层同时挂在根节点，颜色层后定义因而覆盖风格自带的默认色。
 // **仍然走白名单，不是运行时自由色值注入**；后台按 series 分组渲染，不猜 id 前缀。
 //
@@ -36,7 +36,7 @@ const (
 	// SeriesStyle：整体风格（布局族），按布局特色命名；风格自带一套默认色，
 	// 选中品牌色系时该默认色被颜色层覆盖，布局规则不变。
 	SeriesStyle = "style"
-	// SeriesBrand：品牌配色预设色板，8 款色系在 4 个风格上的取值逐字一致，
+	// SeriesBrand：品牌配色预设色板，10 款色系在 4 个风格上的取值逐字一致，
 	// 可叠加在任意风格之上，只换颜色不改版式。
 	SeriesBrand = "brand"
 	// BrandPrefix 是品牌配色系列 id 的统一前缀。它与 Series 是两份独立声明，
@@ -103,8 +103,9 @@ var templates = []Template{
 		PreviewPrimary: "#0f766e",
 		PreviewSoft:    "#dff2ef",
 	},
-	// 品牌配色预设色板：8 款主色按统一算法派生，在 4 个风格上取值逐字一致。
-	// 12 套色板（4 风格默认色 + 8 品牌色）的 WCAG AA 实测最低 4.95，见 theme.spec.ts。
+	// 品牌配色预设色板：10 款主色按统一算法派生，在 4 个风格上取值逐字一致。
+	// 14 套色板（4 风格默认色 + 10 品牌色）的 WCAG AA 实测最低 4.59（brand-scarlet
+	// 的 alt/白底，LOGO 原色档），见 theme.spec.ts。
 	{
 		ID:             "brand-crimson",
 		Name:           "绛红",
@@ -176,6 +177,33 @@ var templates = []Template{
 		Advanced:       true,
 		PreviewPrimary: "#8c2358",
 		PreviewSoft:    "#f0e2e9",
+	},
+	// 2026-11-16 客户反馈补两档：现有 8 款都对不齐部分客户 LOGO 的高饱和主色
+	// （例：某机电客户 LOGO 为宝蓝 #0820d0 + 正红 #eb0a07，默认蓝 #1a8cff 偏浅、
+	// 绛红 #a01f2e 偏暗，色相与明度都不对）。色值直接取自客户 LOGO 采样：
+	//   - 宝蓝 primary 即 LOGO 原色 #0820d0（深底白字对比度 9.9，全场景轻松过 AA）；
+	//   - 正红 LOGO 原色 #eb0a07 对白底只有 4.59、对任何可见浅红底 <4.5，
+	//     做 --wc-primary 会被端上可读性守门拦下，故 primary 加深一档到 #d40c0a
+	//     （最低配对 4.59 仍达 AA），**LOGO 原色 #eb0a07 保留在 --wc-primary-alt**
+	//     （开通申请页 / 我的数据页的白字按钮与文字场景恰好 ≥4.5）——
+	//     客户在页面元素上仍能看到原色，只是链接与按钮底色统一用加深档。
+	{
+		ID:             "brand-royal",
+		Name:           "宝蓝",
+		Description:    "高饱和宝蓝主色，版式跟随所选整体风格，适合机电、制造、科技与体育品牌",
+		Series:         SeriesBrand,
+		Advanced:       true,
+		PreviewPrimary: "#0820d0",
+		PreviewSoft:    "#e6ebfa",
+	},
+	{
+		ID:             "brand-scarlet",
+		Name:           "正红",
+		Description:    "正红主色，版式跟随所选整体风格，适合餐饮、零售与喜庆场景品牌",
+		Series:         SeriesBrand,
+		Advanced:       true,
+		PreviewPrimary: "#d40c0a",
+		PreviewSoft:    "#fbecec",
 	},
 }
 

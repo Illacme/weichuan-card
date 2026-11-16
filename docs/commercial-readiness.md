@@ -5265,3 +5265,25 @@ include `../miniprogram/tests/**/*.spec.ts`）。
   真实代码全是 `if err := db.Create(&x).Error; ...`，一条也抓不到；
   现改为 AST 扫描全部 handler 生产文件，并顺带修掉 4 处真实裸写
   （平台超管改名 1 处、新建企业事务里的开箱模板 3 处）。
+
+---
+
+## 第七十三轮 · 客户反馈两连修：首页背景渐变 + 品牌配色扩到 10 款（2026-11-16）
+
+- **首页背景渐变加浓（commit `eac7b60`）**：旧公式 soft→tint 两个浅底互渐，
+  淡到肉眼不可见，切色系只有色相微变。新公式
+  `linear-gradient(180deg, rgba(var(--wc-primary-rgb), 0.15), var(--wc-primary-soft) 45%, var(--wc-primary-tint))`
+  顶部 15% 浓度主色混白（`background-color` 显式 #fff），色相与浓度都由
+  `--wc-primary-rgb` 决定——后台选哪个配色组合，渐变就是哪个色系的明显渐变，
+  无需「首页背景」图。同一公式钉死在 `pages/index/index.wxss` 与
+  `gen_theme_previews.py` 两处（`theme.spec.ts` 逐字比对）。
+- **品牌配色新增「宝蓝(brand-royal)」「正红(brand-scarlet)」**：现有 8 款
+  对不齐部分客户 LOGO 的高饱和主色。色值取自客户 LOGO 采样（透明像素过滤
+  alpha≥128 后取簇均值）：宝蓝 `#0820d0` 即 LOGO 原色；正红 LOGO 原色
+  `#eb0a07` 对白底 4.59、对任何可见浅红底 <4.5，做 `--wc-primary` 会被
+  AA 守门拦下，故 primary 加深一档到 `#d40c0a`（最低配对 4.59），**LOGO
+  原色保留在 `--wc-primary-alt`**（开通申请页 / 我的数据页白字场景恰好 ≥4.5）。
+- 连带同步：后端白名单与三处测试计数、`docs/openapi.yaml` 枚举与描述、
+  `theme.ts` / `app.wxss` / `MpTheme.vue` 文案、全部 README 与验收文档口径
+  （36→44 组合、8→10 款），并重跑 `gen_theme_previews.py` 出 44 原图 +
+  44 缩略图（`--check` 过）。真机视觉验收（launch-checklist 第 13 项）仍待本人执行。

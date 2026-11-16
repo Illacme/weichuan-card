@@ -550,9 +550,9 @@ paths:
         不需要再为详情页时间档位或整体风格多打一次请求。
 
         P5 起主题是两轴全叉乘：`style`「整体风格」按布局特色命名，决定四个模块的列数 /
-        间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，8 款色系在 4 个
+        间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，10 款色系在 4 个
         风格上取值逐字一致，可叠加在**任意**风格之上，只覆盖颜色 token 不改版式。
-        合法组合 = 4 风格 × (1 个默认色 + 8 款品牌色) = 36 种。两者都走白名单，
+        合法组合 = 4 风格 × (1 个默认色 + 10 款品牌色) = 44 种。两者都走白名单，
         **不是运行时自由色值注入**：小程序代码随版本审核，端上不能动态加载 WXSS，
         这里只下发 id，由端上映射到随包内置的 CSS 变量。
         `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
@@ -591,8 +591,8 @@ paths:
                   brandColorId:
                     type: string
                     nullable: true
-                    enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
-                    description: 两轴第二轴「品牌色系（纯颜色层）」；null（缺省）= 用该风格默认色。P5 起可叠加在任意风格之上，8 款色系在 4 风格上取值一致。
+                    enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta, brand-royal, brand-scarlet]
+                    description: 两轴第二轴「品牌色系（纯颜色层）」；null（缺省）= 用该风格默认色。P5 起可叠加在任意风格之上，10 款色系在 4 风格上取值一致。
 
   /api/team:
     get:
@@ -2805,11 +2805,11 @@ paths:
                       brandColorId:
                         type: string
                         nullable: true
-                        enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                        enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta, brand-royal, brand-scarlet]
                         description: 两轴第二轴「品牌色系（纯颜色层）」；null = 用该风格默认色。P5 起 4 风格 × 9 色档 = 36 组合全部合法。
                       templates:
                         type: array
-                        description: 后台模板页的可选清单，随二进制内置（端上不硬编码）；按 `series` 分成两轴，后台自行叉乘出 36 个组合。
+                        description: 后台模板页的可选清单，随二进制内置（端上不硬编码）；按 `series` 分成两轴，后台自行叉乘出 44 个组合。
                         items:
                           type: object
                           properties:
@@ -2849,7 +2849,7 @@ paths:
         背景与时间档位。`bgImage` 传空串表示清空背景；`order` 未提供时保持原值，
         新建配置行则落缺省顺序。
         时间档位与主题 id 传枚举外的值一律拒绝（code=1），不做静默兜底。
-        **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 9 = 36 种），
+        **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
         `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
         兼容派生列，本接口不再接受 `templateId`）。
@@ -2889,7 +2889,7 @@ paths:
                 brandColorId:
                   type: string
                   nullable: true
-                  enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta]
+                  enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta, brand-royal, brand-scarlet]
                   description: 两轴第二轴「品牌色系（纯颜色层）」；省略或 null = 用该风格默认色。P5 起可叠加在任意风格之上，不再要求「属于所选风格」，否则 code=1 只针对未知 id。
       responses:
         "200":

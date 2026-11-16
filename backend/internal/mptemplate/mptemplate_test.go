@@ -40,7 +40,7 @@ func TestIDsAreUniqueAndDefaultFirst(t *testing.T) {
 			require.Equal(t, SeriesStyle, tpl.Series)
 		}
 	}
-	require.Equal(t, 8, brands, "品牌配色预设色板固定 8 款；加款要同步改这个断言与 openapi enum")
+	require.Equal(t, 10, brands, "品牌配色预设色板固定 10 款；加款要同步改这个断言与 openapi enum")
 	require.False(t, IsAdvancedCombo(DefaultID, nil), "缺省款必须免费，否则升级后客户会被降级")
 	require.True(t, IsAdvancedCombo("ink", nil))
 	require.True(t, IsAdvancedCombo("warm", nil))
@@ -104,9 +104,10 @@ func TestCrossProductComboAndAdvanced(t *testing.T) {
 	brands := []string{
 		"brand-crimson", "brand-coral", "brand-amber", "brand-forest",
 		"brand-ocean", "brand-indigo", "brand-violet", "brand-magenta",
+		"brand-royal", "brand-scarlet",
 	}
 
-	// P1–P4 只允许 default 挂色系；P5 起 4 风格 × (nil + 8 色系) = 36 组合全部合法。
+	// P1–P4 只允许 default 挂色系；P5 起 4 风格 × (nil + 10 色系) = 44 组合全部合法。
 	// 漏掉任意一格客户都只是「点不动」，不会报错，属于典型的静默失败。
 	n := 0
 	for _, s := range styles {
@@ -118,7 +119,7 @@ func TestCrossProductComboAndAdvanced(t *testing.T) {
 			n++
 		}
 	}
-	require.Equal(t, 36, n, "4 风格 × 9 色档")
+	require.Equal(t, 44, n, "4 风格 × 11 色档")
 
 	// 放开叉乘不等于放弃白名单：未知风格 / 未知色系仍要拒绝。
 	require.False(t, IsValidCombo("neon", nil))
@@ -131,7 +132,7 @@ func TestCrossProductComboAndAdvanced(t *testing.T) {
 	require.Equal(t, "warm", NormalizeStyle("warm"))
 	require.Equal(t, "", NormalizeStyle("neon"))
 
-	// 高级款判定：两轴任一高级即高级。当前 8 款色系恰好全是高级款，
+	// 高级款判定：两轴任一高级即高级。当前 10 款色系恰好全是高级款，
 	// 所以「高级风格 + 色系」与旧的短路写法结果相同；改成 OR 是为了将来
 	// 新增免费色系时不会漏判高级风格，不是当下可观测的行为变化。
 	require.True(t, IsAdvancedCombo(DefaultID, &bc))

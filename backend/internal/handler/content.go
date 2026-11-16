@@ -657,7 +657,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 		// ===== 风格 / 色系（两轴，P5 起全叉乘）=====
 		// styleId 决定布局族，brandColorId 只覆盖颜色；任意风格 × 任意已知色系都合法
-		// （4 × 9 = 36 种）。两轴是唯一写入形态，不存在单列 templateId 兼容分支。
+		// （4 × 11 = 44 种）。两轴是唯一写入形态，不存在单列 templateId 兼容分支。
 		//
 		// themeTouched 是「三个页签各存各的」不变量的开关：只有本次请求**显式带了**
 		// 任一风格字段，才允许写风格三列。「名片页面样式」页签只提交

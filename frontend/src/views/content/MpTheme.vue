@@ -4,7 +4,7 @@
       小程序的外观分两步选：第 1 步「<strong>整体风格</strong>」按布局特色区分，决定首页各模块的布局
       （分类列数、精选大图排法、服务卡密度、封面高度与圆角），并自带一套默认色；
       第 2 步「<strong>品牌配色</strong>」只在所选风格之上替换主色，版式不变，用于对齐企业自有 VI 主色。
-      <strong>4 款风格 × 9 档颜色 = 36 种组合</strong>：每款风格都能叠加全部品牌配色，色板在四款风格上完全一致。
+      <strong>4 款风格 × 11 档颜色 = 44 种组合</strong>：每款风格都能叠加全部品牌配色，色板在四款风格上完全一致。
       风格与色系都随小程序版本内置，后台只记录「选了哪一款」，保存后访客端即时生效，
       不需要重新上传代码或提交微信审核。
       左侧预览区<strong>固定在一个位置</strong>，随上面两步的选择实时切换，不必在十几张卡片间来回找图。
@@ -127,10 +127,10 @@
             <span class="step-no">2</span>
             <div>
               <h4>品牌配色</h4>
-              <p>在所选风格之上只替换主色，版式沿用该风格；9 档颜色在任意风格下都能选，用于对齐企业自有 VI 主色。</p>
+              <p>在所选风格之上只替换主色，版式沿用该风格；11 档颜色在任意风格下都能选，用于对齐企业自有 VI 主色。</p>
             </div>
           </div>
-          <!-- P5：树形归属已废止。4 款风格都能叠加全部 8 款色系，色板在四款上完全一致；
+          <!-- P5：树形归属已废止。4 款风格都能叠加全部 10 款色系，色板在四款上完全一致；
                这里只保留「清单没下发」的升级提示，不再按风格禁用，也不在切风格时
                清空色系——那会让客户刚对齐好的 VI 主色无声消失。 -->
           <div v-if="!brandTemplates.length" class="step-disabled">
@@ -219,8 +219,8 @@ const activeBrand = computed(() => brandTemplates.value.find((t) => t.id === bra
 // 紧凑信息 + 默认色是深灰，画成蓝色会让客户以为自己点错了。
 const defaultPrimary = computed(() => activeStyle.value?.previewPrimary || FALLBACK_PRIMARY)
 
-// P5：36 个组合各有一张 PNG，文件名 <styleId>--<brandColorId 或 default>.png。
-// 旧 12 款平铺模板 id 装不下 36 个组合，预览图必须按两轴组合命名，绝不能回退到旧 id。
+// P5：44 个组合各有一张 PNG，文件名 <styleId>--<brandColorId 或 default>.png。
+// 旧 12 款平铺模板 id 装不下 44 个组合，预览图必须按两轴组合命名，绝不能回退到旧 id。
 function comboId(s: string, b: string | null): string {
   return `${s}--${b || 'default'}`
 }

@@ -4,7 +4,7 @@ import { nextTick, defineComponent } from 'vue'
 import MpTheme from './MpTheme.vue'
 
 // 风格页 P5：核心约束是**只提交两轴 (styleId, brandColorId)**，以及
-// 4 风格 × 9 色档 = 36 个组合全部可选、全部按自己的组合键寻图。
+// 4 风格 × 10 色档 = 44 个组合全部可选、全部按自己的组合键寻图。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
 // 的值一起写回去，所以这里用精确断言钉死 payload，而不是 objectContaining。
 // P4 的「非 default 风格清空并禁用色系」已废止：那会让客户对齐好的 VI 主色
@@ -24,6 +24,8 @@ const BRAND_ITEMS = [
   { id: 'brand-indigo', name: '靛青', description: '靛青主色', series: 'brand', advanced: true, previewPrimary: '#38429c', previewSoft: '#e5e6f2' },
   { id: 'brand-violet', name: '紫罗兰', description: '紫罗兰主色', series: 'brand', advanced: true, previewPrimary: '#612a96', previewSoft: '#eae3f1' },
   { id: 'brand-magenta', name: '品红', description: '品红主色', series: 'brand', advanced: true, previewPrimary: '#8c2358', previewSoft: '#f0e2e9' },
+  { id: 'brand-royal', name: '宝蓝', description: '宝蓝主色', series: 'brand', advanced: true, previewPrimary: '#0820d0', previewSoft: '#e6ebfa' },
+  { id: 'brand-scarlet', name: '正红', description: '正红主色', series: 'brand', advanced: true, previewPrimary: '#d40c0a', previewSoft: '#fbecec' },
 ]
 const STYLE_IDS = STYLE_ITEMS.map((t) => t.id)
 const BRAND_IDS = BRAND_ITEMS.map((t) => t.id)
@@ -93,7 +95,7 @@ const colorOptions = (w: any) => w.findAll('.color-option')
 const previewShot = (w: any) => w.find('img.preview-shot')
 const previewSrc = (w: any) => previewShot(w).attributes('src') || ''
 
-describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () => {
+describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockReset()
     mocks.saveHomeLayout.mockClear()
@@ -107,9 +109,9 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     expect(w.findAll('.picker-step')).toHaveLength(2)
     expect(w.text()).toContain('整体风格')
     expect(w.text()).toContain('品牌配色')
-    // 4 张风格卡 + 「默认色」+ 8 款品牌色
+    // 4 张风格卡 + 「默认色」+ 10 款品牌色
     expect(styleCards(w)).toHaveLength(4)
-    expect(colorOptions(w)).toHaveLength(9)
+    expect(colorOptions(w)).toHaveLength(11)
     expect(styleCards(w)[0].text()).toContain('标准均衡')
     expect(styleCards(w)[1].find('.el-tag').text()).toBe('高级')
     expect(colorOptions(w)[0].text()).toContain('默认色')
@@ -203,7 +205,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     })
   })
 
-  it('P5 组合矩阵：4 风格 × 9 色档 = 36 个组合，每个都按自己的组合键寻图', async () => {
+  it('P5 组合矩阵：4 风格 × 10 色档 = 44 个组合，每个都按自己的组合键寻图', async () => {
     const w = await mountPage()
     let seen = 0
     for (let si = 0; si < STYLE_IDS.length; si++) {
@@ -219,7 +221,7 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
         seen++
       }
     }
-    expect(seen).toBe(36)
+    expect(seen).toBe(44)
   })
 
   it('P5：默认色色卡跟随当前风格（紧凑信息的默认色不是全局蓝）', async () => {
@@ -417,12 +419,12 @@ describe('content/MpTheme（P5 固定预览区 + 36 组合两步选择）', () =
     expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
   })
 
-  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图 / 固定预览区 / 36 组合」', async () => {
+  it('页面说明写明「通用平台 / 不含真实客户资料 / 非真机截图 / 固定预览区 / 44 组合」', async () => {
     const w = await mountPage()
     expect(w.text()).toContain('本产品是通用平台')
     expect(w.text()).toContain('不含任何真实企业客户资料')
     expect(w.text()).toContain('不是真机截图')
     expect(w.text()).toContain('固定在一个位置')
-    expect(w.text()).toContain('36 种组合')
+    expect(w.text()).toContain('44 种组合')
   })
 })

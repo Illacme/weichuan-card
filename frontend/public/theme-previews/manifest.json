@@ -150,6 +150,46 @@
       "--wc-r-control": "40rpx",
       "--wc-track": "#d8e2eb"
     },
+    "default--brand-royal": {
+      "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",
+      "--wc-card-shadow-bg": "0 6rpx 20rpx rgba(0,0,0,.10)",
+      "--wc-card-shadow-soft": "0 6rpx 18rpx rgba(30, 90, 160, 0.06)",
+      "--wc-primary": "#0820d0",
+      "--wc-primary-alt": "#1a3ee0",
+      "--wc-primary-border": "#b7c3f0",
+      "--wc-primary-chip": "#e8edfc",
+      "--wc-primary-deep": "#0617a6",
+      "--wc-primary-grad": "#051193",
+      "--wc-primary-pcat": "#eaf0fd",
+      "--wc-primary-rgb": "8, 32, 208",
+      "--wc-primary-soft": "#f4f6fe",
+      "--wc-primary-tint": "#e6ebfa",
+      "--wc-r-card": "20rpx",
+      "--wc-r-card-bg": "16rpx",
+      "--wc-r-chip": "28rpx",
+      "--wc-r-control": "40rpx",
+      "--wc-track": "#e4e6f0"
+    },
+    "default--brand-scarlet": {
+      "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",
+      "--wc-card-shadow-bg": "0 6rpx 20rpx rgba(0,0,0,.10)",
+      "--wc-card-shadow-soft": "0 6rpx 18rpx rgba(30, 90, 160, 0.06)",
+      "--wc-primary": "#d40c0a",
+      "--wc-primary-alt": "#eb0a07",
+      "--wc-primary-border": "#f3b8b7",
+      "--wc-primary-chip": "#fceded",
+      "--wc-primary-deep": "#a50806",
+      "--wc-primary-grad": "#870705",
+      "--wc-primary-pcat": "#fdf1f1",
+      "--wc-primary-rgb": "212, 12, 10",
+      "--wc-primary-soft": "#fdf5f5",
+      "--wc-primary-tint": "#fbecec",
+      "--wc-r-card": "20rpx",
+      "--wc-r-card-bg": "16rpx",
+      "--wc-r-chip": "28rpx",
+      "--wc-r-control": "40rpx",
+      "--wc-track": "#f0e4e4"
+    },
     "default--brand-violet": {
       "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",
       "--wc-card-shadow-bg": "0 6rpx 20rpx rgba(0,0,0,.10)",
@@ -329,6 +369,46 @@
       "--wc-r-chip": "6rpx",
       "--wc-r-control": "8rpx",
       "--wc-track": "#d8e2eb"
+    },
+    "ink--brand-royal": {
+      "--wc-card-shadow": "0 0 0 1rpx rgba(61, 75, 92, 0.16)",
+      "--wc-card-shadow-bg": "0 0 0 1rpx rgba(31, 42, 53, 0.26)",
+      "--wc-card-shadow-soft": "0 0 0 1rpx rgba(61, 75, 92, 0.12)",
+      "--wc-primary": "#0820d0",
+      "--wc-primary-alt": "#1a3ee0",
+      "--wc-primary-border": "#b7c3f0",
+      "--wc-primary-chip": "#e8edfc",
+      "--wc-primary-deep": "#0617a6",
+      "--wc-primary-grad": "#051193",
+      "--wc-primary-pcat": "#eaf0fd",
+      "--wc-primary-rgb": "8, 32, 208",
+      "--wc-primary-soft": "#f4f6fe",
+      "--wc-primary-tint": "#e6ebfa",
+      "--wc-r-card": "6rpx",
+      "--wc-r-card-bg": "6rpx",
+      "--wc-r-chip": "6rpx",
+      "--wc-r-control": "8rpx",
+      "--wc-track": "#e4e6f0"
+    },
+    "ink--brand-scarlet": {
+      "--wc-card-shadow": "0 0 0 1rpx rgba(61, 75, 92, 0.16)",
+      "--wc-card-shadow-bg": "0 0 0 1rpx rgba(31, 42, 53, 0.26)",
+      "--wc-card-shadow-soft": "0 0 0 1rpx rgba(61, 75, 92, 0.12)",
+      "--wc-primary": "#d40c0a",
+      "--wc-primary-alt": "#eb0a07",
+      "--wc-primary-border": "#f3b8b7",
+      "--wc-primary-chip": "#fceded",
+      "--wc-primary-deep": "#a50806",
+      "--wc-primary-grad": "#870705",
+      "--wc-primary-pcat": "#fdf1f1",
+      "--wc-primary-rgb": "212, 12, 10",
+      "--wc-primary-soft": "#fdf5f5",
+      "--wc-primary-tint": "#fbecec",
+      "--wc-r-card": "6rpx",
+      "--wc-r-card-bg": "6rpx",
+      "--wc-r-chip": "6rpx",
+      "--wc-r-control": "8rpx",
+      "--wc-track": "#f0e4e4"
     },
     "ink--brand-violet": {
       "--wc-card-shadow": "0 0 0 1rpx rgba(61, 75, 92, 0.16)",
@@ -510,6 +590,46 @@
       "--wc-r-control": "20rpx",
       "--wc-track": "#d8e2eb"
     },
+    "teal--brand-royal": {
+      "--wc-card-shadow": "0 2rpx 10rpx rgba(15, 118, 110, 0.10)",
+      "--wc-card-shadow-bg": "0 4rpx 16rpx rgba(8, 69, 63, 0.16)",
+      "--wc-card-shadow-soft": "0 2rpx 10rpx rgba(15, 118, 110, 0.08)",
+      "--wc-primary": "#0820d0",
+      "--wc-primary-alt": "#1a3ee0",
+      "--wc-primary-border": "#b7c3f0",
+      "--wc-primary-chip": "#e8edfc",
+      "--wc-primary-deep": "#0617a6",
+      "--wc-primary-grad": "#051193",
+      "--wc-primary-pcat": "#eaf0fd",
+      "--wc-primary-rgb": "8, 32, 208",
+      "--wc-primary-soft": "#f4f6fe",
+      "--wc-primary-tint": "#e6ebfa",
+      "--wc-r-card": "12rpx",
+      "--wc-r-card-bg": "12rpx",
+      "--wc-r-chip": "12rpx",
+      "--wc-r-control": "20rpx",
+      "--wc-track": "#e4e6f0"
+    },
+    "teal--brand-scarlet": {
+      "--wc-card-shadow": "0 2rpx 10rpx rgba(15, 118, 110, 0.10)",
+      "--wc-card-shadow-bg": "0 4rpx 16rpx rgba(8, 69, 63, 0.16)",
+      "--wc-card-shadow-soft": "0 2rpx 10rpx rgba(15, 118, 110, 0.08)",
+      "--wc-primary": "#d40c0a",
+      "--wc-primary-alt": "#eb0a07",
+      "--wc-primary-border": "#f3b8b7",
+      "--wc-primary-chip": "#fceded",
+      "--wc-primary-deep": "#a50806",
+      "--wc-primary-grad": "#870705",
+      "--wc-primary-pcat": "#fdf1f1",
+      "--wc-primary-rgb": "212, 12, 10",
+      "--wc-primary-soft": "#fdf5f5",
+      "--wc-primary-tint": "#fbecec",
+      "--wc-r-card": "12rpx",
+      "--wc-r-card-bg": "12rpx",
+      "--wc-r-chip": "12rpx",
+      "--wc-r-control": "20rpx",
+      "--wc-track": "#f0e4e4"
+    },
     "teal--brand-violet": {
       "--wc-card-shadow": "0 2rpx 10rpx rgba(15, 118, 110, 0.10)",
       "--wc-card-shadow-bg": "0 4rpx 16rpx rgba(8, 69, 63, 0.16)",
@@ -690,6 +810,46 @@
       "--wc-r-control": "999rpx",
       "--wc-track": "#d8e2eb"
     },
+    "warm--brand-royal": {
+      "--wc-card-shadow": "0 10rpx 28rpx rgba(143, 99, 32, 0.12)",
+      "--wc-card-shadow-bg": "0 10rpx 28rpx rgba(90, 60, 20, 0.18)",
+      "--wc-card-shadow-soft": "0 8rpx 22rpx rgba(143, 99, 32, 0.10)",
+      "--wc-primary": "#0820d0",
+      "--wc-primary-alt": "#1a3ee0",
+      "--wc-primary-border": "#b7c3f0",
+      "--wc-primary-chip": "#e8edfc",
+      "--wc-primary-deep": "#0617a6",
+      "--wc-primary-grad": "#051193",
+      "--wc-primary-pcat": "#eaf0fd",
+      "--wc-primary-rgb": "8, 32, 208",
+      "--wc-primary-soft": "#f4f6fe",
+      "--wc-primary-tint": "#e6ebfa",
+      "--wc-r-card": "32rpx",
+      "--wc-r-card-bg": "28rpx",
+      "--wc-r-chip": "999rpx",
+      "--wc-r-control": "999rpx",
+      "--wc-track": "#e4e6f0"
+    },
+    "warm--brand-scarlet": {
+      "--wc-card-shadow": "0 10rpx 28rpx rgba(143, 99, 32, 0.12)",
+      "--wc-card-shadow-bg": "0 10rpx 28rpx rgba(90, 60, 20, 0.18)",
+      "--wc-card-shadow-soft": "0 8rpx 22rpx rgba(143, 99, 32, 0.10)",
+      "--wc-primary": "#d40c0a",
+      "--wc-primary-alt": "#eb0a07",
+      "--wc-primary-border": "#f3b8b7",
+      "--wc-primary-chip": "#fceded",
+      "--wc-primary-deep": "#a50806",
+      "--wc-primary-grad": "#870705",
+      "--wc-primary-pcat": "#fdf1f1",
+      "--wc-primary-rgb": "212, 12, 10",
+      "--wc-primary-soft": "#fdf5f5",
+      "--wc-primary-tint": "#fbecec",
+      "--wc-r-card": "32rpx",
+      "--wc-r-card-bg": "28rpx",
+      "--wc-r-chip": "999rpx",
+      "--wc-r-control": "999rpx",
+      "--wc-track": "#f0e4e4"
+    },
     "warm--brand-violet": {
       "--wc-card-shadow": "0 10rpx 28rpx rgba(143, 99, 32, 0.12)",
       "--wc-card-shadow-bg": "0 10rpx 28rpx rgba(90, 60, 20, 0.18)",
@@ -760,6 +920,14 @@
       "brandColorId": "brand-ocean",
       "styleId": "default"
     },
+    "default--brand-royal": {
+      "brandColorId": "brand-royal",
+      "styleId": "default"
+    },
+    "default--brand-scarlet": {
+      "brandColorId": "brand-scarlet",
+      "styleId": "default"
+    },
     "default--brand-violet": {
       "brandColorId": "brand-violet",
       "styleId": "default"
@@ -794,6 +962,14 @@
     },
     "ink--brand-ocean": {
       "brandColorId": "brand-ocean",
+      "styleId": "ink"
+    },
+    "ink--brand-royal": {
+      "brandColorId": "brand-royal",
+      "styleId": "ink"
+    },
+    "ink--brand-scarlet": {
+      "brandColorId": "brand-scarlet",
       "styleId": "ink"
     },
     "ink--brand-violet": {
@@ -832,6 +1008,14 @@
       "brandColorId": "brand-ocean",
       "styleId": "teal"
     },
+    "teal--brand-royal": {
+      "brandColorId": "brand-royal",
+      "styleId": "teal"
+    },
+    "teal--brand-scarlet": {
+      "brandColorId": "brand-scarlet",
+      "styleId": "teal"
+    },
     "teal--brand-violet": {
       "brandColorId": "brand-violet",
       "styleId": "teal"
@@ -866,6 +1050,14 @@
     },
     "warm--brand-ocean": {
       "brandColorId": "brand-ocean",
+      "styleId": "warm"
+    },
+    "warm--brand-royal": {
+      "brandColorId": "brand-royal",
+      "styleId": "warm"
+    },
+    "warm--brand-scarlet": {
+      "brandColorId": "brand-scarlet",
       "styleId": "warm"
     },
     "warm--brand-violet": {
@@ -1061,6 +1253,46 @@
       "--wc-r-chip": "28rpx",
       "--wc-r-control": "40rpx",
       "--wc-track": "#d8e2eb"
+    },
+    "brand-royal": {
+      "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",
+      "--wc-card-shadow-bg": "0 6rpx 20rpx rgba(0,0,0,.10)",
+      "--wc-card-shadow-soft": "0 6rpx 18rpx rgba(30, 90, 160, 0.06)",
+      "--wc-primary": "#0820d0",
+      "--wc-primary-alt": "#1a3ee0",
+      "--wc-primary-border": "#b7c3f0",
+      "--wc-primary-chip": "#e8edfc",
+      "--wc-primary-deep": "#0617a6",
+      "--wc-primary-grad": "#051193",
+      "--wc-primary-pcat": "#eaf0fd",
+      "--wc-primary-rgb": "8, 32, 208",
+      "--wc-primary-soft": "#f4f6fe",
+      "--wc-primary-tint": "#e6ebfa",
+      "--wc-r-card": "20rpx",
+      "--wc-r-card-bg": "16rpx",
+      "--wc-r-chip": "28rpx",
+      "--wc-r-control": "40rpx",
+      "--wc-track": "#e4e6f0"
+    },
+    "brand-scarlet": {
+      "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",
+      "--wc-card-shadow-bg": "0 6rpx 20rpx rgba(0,0,0,.10)",
+      "--wc-card-shadow-soft": "0 6rpx 18rpx rgba(30, 90, 160, 0.06)",
+      "--wc-primary": "#d40c0a",
+      "--wc-primary-alt": "#eb0a07",
+      "--wc-primary-border": "#f3b8b7",
+      "--wc-primary-chip": "#fceded",
+      "--wc-primary-deep": "#a50806",
+      "--wc-primary-grad": "#870705",
+      "--wc-primary-pcat": "#fdf1f1",
+      "--wc-primary-rgb": "212, 12, 10",
+      "--wc-primary-soft": "#fdf5f5",
+      "--wc-primary-tint": "#fbecec",
+      "--wc-r-card": "20rpx",
+      "--wc-r-card-bg": "16rpx",
+      "--wc-r-chip": "28rpx",
+      "--wc-r-control": "40rpx",
+      "--wc-track": "#f0e4e4"
     },
     "brand-violet": {
       "--wc-card-shadow": "0 6rpx 18rpx rgba(30, 90, 160, 0.08)",

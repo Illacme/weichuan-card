@@ -372,7 +372,7 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(wxml).toContain('标题已绘制在图内')
   })
 
-  it('currentThemeClass 从两轴缓存恢复 36 组合；旧扁平缓存 / 脏值 / 存储不可用都不抛错', () => {
+  it('currentThemeClass 从两轴缓存恢复全部组合（44）；旧扁平缓存 / 脏值 / 存储不可用都不抛错', () => {
     vi.stubGlobal('getCurrentPages', () => [])
     const cached = (v: string | (() => string)) => {
       const getter = typeof v === 'function' ? v : () => v
@@ -435,7 +435,7 @@ describe('小程序整体风格模板 utils/theme', () => {
 // ===== P5：两轴全叉乘 + 缓存升级 =====
 //
 // 树形归属时期只有 12 个合法组合，缓存存扁平 templateId 就够了。P5 放开成
-// 4 风格 × 9 色档 = 36 个组合后，扁平列不可逆地丢掉风格：访客明明选了
+// 4 风格 × 11 色档 = 44 个组合后，扁平列不可逆地丢掉风格：访客明明选了
 // 「紧凑信息 + 绛红」，下次冷启动却按「标准均衡 + 绛红」渲染，后台还显示保存成功。
 // 这类静默失败只能靠「组合矩阵 + 缓存往返」的穷举断言钉住。
 const COMBOS: { styleId: string; brandColorId: string | null }[] = []
@@ -445,8 +445,8 @@ for (const styleId of STYLE_IDS) {
 }
 
 describe('P5 两轴全叉乘与两轴缓存', () => {
-  it('4 风格 × 9 色档 = 36 个组合，每组的 class 唯一且风格层恒挂', () => {
-    expect(COMBOS).toHaveLength(36)
+  it('4 风格 × 11 色档 = 44 个组合，每组的 class 唯一且风格层恒挂', () => {
+    expect(COMBOS).toHaveLength(STYLE_IDS.length * (BRAND_IDS.length + 1))
     const classes = COMBOS.map((c) => themeClass(c.styleId, c.brandColorId))
     expect(new Set(classes).size, '有组合被压扁成同一套 class').toBe(COMBOS.length)
     for (const c of COMBOS) {
@@ -464,7 +464,7 @@ describe('P5 两轴全叉乘与两轴缓存', () => {
     expect(new Set(ocean.map((c) => c.split(' ')[1])).size, '统一色板不该按风格分叉').toBe(1)
   })
 
-  it('缓存串覆盖 36 组合且编解码幂等；扁平 12 款旧缓存零迁移', () => {
+  it('缓存串覆盖全部 44 组合且编解码幂等；扁平 12 款旧缓存零迁移', () => {
     const cache = COMBOS.map((c) => encodeCachedTheme(c.styleId, c.brandColorId))
     expect(new Set(cache).size, '有组合被写成同一个缓存值（风格丢了）').toBe(COMBOS.length)
     for (let i = 0; i < COMBOS.length; i++) {
@@ -502,8 +502,8 @@ describe('小程序风格模板 系列分组', () => {
     }
   })
 
-  it('预设色板固定 8 款，整体风格高级款固定 3 款（加款必须同步扩色板与预览图）', () => {
-    expect(BRAND_IDS).toHaveLength(8)
+  it('预设色板固定 10 款，整体风格高级款固定 3 款（加款必须同步扩色板与预览图）', () => {
+    expect(BRAND_IDS).toHaveLength(10)
     expect(STYLE_ADVANCED_IDS).toEqual(['ink', 'warm', 'teal'])
   })
 
@@ -525,7 +525,7 @@ describe('小程序风格模板 系列分组', () => {
     expect(vue).toContain('v-for="t in brandTemplates"')
     expect(vue).toContain('第 1 步')
     expect(vue).toContain('第 2 步')
-    expect(vue).toContain('36 种组合')
+    expect(vue).toContain('44 种组合')
     expect(vue).toContain(
       'saveHomeLayout({ styleId: styleId.value, brandColorId: brandColorId.value })'
     )
@@ -793,7 +793,7 @@ function comboId(styleId: string, brandColorId: string | null): string {
 function styleOfCombo(cid: string): string {
   return cid.split(COMBO_SEP)[0]
 }
-/** 从 Go 白名单复算 4 风格 × (默认色 + 8 色系) = 36 个组合映射。 */
+/** 从 Go 白名单复算 4 风格 × (默认色 + 10 色系) = 44 个组合映射。 */
 function expectedCombos(): Record<string, { styleId: string; brandColorId: string | null }> {
   const ids = goTemplateIds()
   const styles = ids.filter((i) => !i.startsWith(BRAND_PREFIX))
@@ -847,15 +847,15 @@ function goTemplateIds(): string[] {
 }
 
 describe('小程序整体风格模板 真实预览图', () => {
-  it('36 个组合各有一张合法 PNG，按所属风格画布高度一致，没有旧扁平 id 残留', () => {
+  it('44 个组合各有一张合法 PNG，按所属风格画布高度一致，没有旧扁平 id 残留', () => {
     const ids = goTemplateIds()
     expect(ids.length).toBeGreaterThanOrEqual(2)
     expect([...THEME_IDS].sort()).toEqual([...ids].sort(), '小程序 class 白名单与 Go 白名单漂移')
     const combos = expectedCombos()
-    expect(Object.keys(combos), '组合数必须是 4 × 9 = 36').toHaveLength(36)
+    expect(Object.keys(combos), '组合数必须是 4 × 11 = 44').toHaveLength(44)
     const files = readdirSync(PREVIEW_DIR)
       // 目录里同目录还放着一套 460px 缩略图（`<cid>.thumb.png`），它们的 stem 会多出
-      // `.thumb` 后缀，不排除掉就会把「36 张」比成 72 张而误报。
+      // `.thumb` 后缀，不排除掉就会把「44 张」比成 88 张而误报。
       .filter((f) => f.endsWith('.png') && !f.endsWith('.thumb.png'))
       .map((f) => f.slice(0, -4))
     expect(files.sort()).toEqual(Object.keys(combos).sort(), '加款 / 改组合忘了重跑 gen_theme_previews.py')
@@ -865,7 +865,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     const scale = /SCALE\s*=\s*(\d+)/.exec(script)
     expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
     expect(scale, '生成脚本缺 SCALE').not.toBeNull()
-    // 长图按风格内容高度各自收口，同风格的 9 档颜色共用该风格画布。
+    // 长图按风格内容高度各自收口，同风格的 11 档颜色共用该风格画布。
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const heights = manifest.canvasByStyle as Record<string, number>
     expect(Object.keys(heights).sort()).toEqual([...STYLE_IDS].sort())
@@ -883,7 +883,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 
   // 「每张图都在、尺寸都对、快照也对」仍挡不住一种静默失败：只用一套布局或只用
   // 一套颜色出 36 张图，客户看到的是一堆重复预览。36 张摘要互不相同，
-  // 再加「同风格 9 档互不相同」「同色档 4 风格互不相同」两层分组，才钉得住两轴。
+  // 再加「同风格全部色档互不相同」「同色档 4 风格互不相同」两层分组，才钉得住两轴。
   it('36 张预览图两两不同：布局与颜色都真的进了图', () => {    const combos = expectedCombos()
     const digests: Record<string, string> = {}
     for (const cid of Object.keys(combos)) {
@@ -894,8 +894,8 @@ describe('小程序整体风格模板 真实预览图', () => {
       .toBe(Object.keys(combos).length)
     for (const sid of STYLE_IDS) {
       const group = Object.keys(combos).filter((cid) => combos[cid].styleId === sid)
-      expect(group).toHaveLength(9)
-      expect(new Set(group.map((cid) => digests[cid])).size, `${sid} 的 9 档颜色没进图`)
+      expect(group).toHaveLength(BRAND_IDS.length + 1)
+      expect(new Set(group.map((cid) => digests[cid])).size, `${sid} 的全部色档没进图`)
         .toBe(group.length)
     }
     for (const bid of [null, ...BRAND_IDS]) {
@@ -908,7 +908,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 
   // 后台预览窗口只有 230px 宽，原图却是 750px 宽、单张 0.8~1.8MB（warm 款 5144 高）。
   // 直接喂原图的代价有两个且都不会报错：① 切一次风格就拉 1~2MB（换风格就换图，
-  // 而 36 组原图共约 40MB）；② 750×5144 位图解码约 15MB 内存，老机器切风格明显卡。
+  // 而 44 组原图共约 50MB）；② 750×5144 位图解码约 15MB 内存，老机器切风格明显卡。
   // 所以每个组合出两档：`.thumb.png`（460px / 100~210KB）给列表窗口，
   // `.png` 只在「查看大图」浮层里按需加载。下面四段缺任何一段，优化都会悄悄失效：
   // 前端指错档位（无运行时症状）、缩略图没生成（退回拉原图）、缩略图没真缩（等于没做）。
@@ -1030,7 +1030,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(script).toContain('STYLE_RULE_RE')
     expect(script).toContain('read_layout_rules()')
     expect(script).toContain('MODULE_HOOKS')
-    // P5：两轴都不许压扁。组合键、36 组合并 token（版式只来自风格层）、组合映射
+    // P5：两轴都不许压扁。组合键、44 组合并 token（版式只来自风格层）、组合映射
     // 必须由脚本显式算出；退回 style_of() / 扁平 templateId 会让 36 → 12 塌缩。
     expect(script, '不能退回「色系全归 default」的扁平映射').not.toContain('def style_of(')
     expect(script).toContain('def combo_id(')
@@ -1131,7 +1131,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     for (const id of ids) {
       expect(manifest.tokens[id], `${id} 的 token 快照`).toEqual(current[id])
     }
-    // P5：36 组合的映射与合并 token 也必须有快照。只查 12 组基础色板会放行
+    // P5：44 组合的映射与合并 token 也必须有快照。只查 12 组基础色板会放行
     // 「换色系时把风格版式一起覆盖」：图片一张不少、尺寸也对，客户却看到
     // 紧凑信息的近直角悄悄变回默认圆角。
     const combos = expectedCombos()
@@ -1180,14 +1180,14 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 })
 
-// ===== P5：36 组合预览图 + 后台两步 UI =====
+// ===== P5：44 组合预览图 + 后台两步 UI =====
 //
 // 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，36 张 PNG 一张不少、
 // token 快照也没变、尺寸也对，客户看到的却是旧版式。布局必须留快照并与 WXSS
 // 对账；后台也必须真的按 (styleId, brandColorId) 组合键寻图、按两轴保存，
-// 且 4 个风格下 9 档颜色全部可选。
-describe('P5 36 组合预览图与后台两步选择', () => {
-  it('36 张图按 4 风格分组：每风格 9 档颜色共用同一画布，四风格高度互不相同', () => {
+// 且 4 个风格下全部色档可选。
+describe('P5 44 组合预览图与后台两步选择', () => {
+  it('44 张图按 4 风格分组：每风格全部色档共用同一画布，四风格高度互不相同', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const scale = Number(/SCALE\s*=\s*(\d+)/.exec(script)![1])
@@ -1197,9 +1197,9 @@ describe('P5 36 组合预览图与后台两步选择', () => {
       ;(grouped[c.styleId] ||= []).push(cid)
     }
     expect(Object.keys(grouped).sort()).toEqual([...STYLE_IDS].sort())
-    // P5 全叉乘：四个风格**各**挂 1 款默认色 + 8 款品牌色，不再只有 default 有 9 张
+    // P5 全叉乘：四个风格**各**挂 1 款默认色 + 10 款品牌色，不再只有 default 有独享色系
     for (const sid of STYLE_IDS) {
-      expect(grouped[sid], `${sid} 没能叠加全部 9 档颜色`).toHaveLength(9)
+      expect(grouped[sid], `${sid} 没能叠加全部色档`).toHaveLength(BRAND_IDS.length + 1)
       for (const cid of grouped[sid]) {
         expect(styleOfCombo(cid)).toBe(sid)
         const buf = readFileSync(join(PREVIEW_DIR, `${cid}.png`))

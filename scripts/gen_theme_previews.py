@@ -19,7 +19,7 @@
 **最终观感必须走 `docs/real-device-acceptance.md` §7 的真机验收**，示意图不能替代。
 
 **P5：按「风格 × 色系」两轴全叉乘出图**。4 个风格 × (默认色 + 8 款品牌色系)
-= 36 个组合，文件名是 `<styleId>--<brandColorId 或 default>.png`，两轴都进文件名，
+= 44 个组合，文件名是 `<styleId>--<brandColorId 或 default>.png`，两轴都进文件名，
 不再压扁成 12 个扁平 templateId。模块节点用 `app.wxss` 的真实钩子类名
 （`.emp-card` / `.mp-profile` / `.mp-achievements` / `.mp-services` 及其子元素），
 再把 `.wc-style-<id> ...` 规则**原文**（去掉前缀、rpx 换 px）注入 `<style>`：
@@ -33,7 +33,7 @@
     python3 scripts/gen_theme_previews.py --check    # 只校验产物（CI / 提交前用）
     python3 scripts/gen_theme_previews.py --measure  # 只实测各风格内容高度，不出图
 
---check 不需要浏览器，查「36 个组合都有图 / PNG 合法 / 按风格尺寸一致 /
+--check 不需要浏览器，查「44 个组合都有图 / PNG 合法 / 按风格尺寸一致 /
 token + 布局规则 + 组合映射快照与 app.wxss 同版 / 通用素材齐全 / 区块与按钮
 文案同源 / 不含任何真实客户身份」。生成需要本机 Chrome
 （可用 THEME_PREVIEW_CHROME 指定路径）。
@@ -189,7 +189,7 @@ def read_tokens() -> dict[str, dict[str, str]]:
     P2 起根节点同时挂 .wc-style-*（布局层，给全套 18 个 token）与 .wc-brand-*
     （颜色层，只给 11 个颜色 token）。这里给品牌款补上 default 的 7 个版式 token
     凑成 18 个，供 manifest 快照与守门对账。P5 出图不直接用这组，
-    而是由 combo_tokens() 按「风格 18 个 + 色系 11 个颜色」现算 36 组。
+    而是由 combo_tokens() 按「风格 18 个 + 色系 11 个颜色」现算 44 组。
     """
     src = APP_WXSS.read_text(encoding="utf-8")
     m = DEFAULT_BLOCK_RE.search(src)
@@ -380,7 +380,7 @@ def check_manifest(
     if data.get("tokens") != tokens:
         problems.append("基础色板快照与 app.wxss 当前值不一致：改了配色 / 圆角却没重跑本脚本")
     if data.get("comboTokens") != combo_tok:
-        problems.append("36 组合并 token 快照不一致：风格 / 色系叠加规则变了却没重出图")
+        problems.append("组合 token 快照不一致：风格 / 色系叠加规则变了却没重出图")
     expected_combos = {
         cid: {"styleId": s, "brandColorId": b} for cid, (s, b) in combos.items()
     }
@@ -964,7 +964,7 @@ def main() -> int:
                 print(f"✗ {p}", file=sys.stderr)
             return 1
         print(
-            f"✓ 36 组合原图 + 36 张 {THUMB_WIDTH}px 缩略图、四风格布局、组合 token 与模板白名单同版，"
+            f"✓ {len(combos)} 组合原图 + {len(combos)} 张 {THUMB_WIDTH}px 缩略图、四风格布局、组合 token 与模板白名单同版，"
             "PNG 合法且按风格尺寸一致"
         )
         return 0

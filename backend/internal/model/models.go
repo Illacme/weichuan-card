@@ -279,7 +279,7 @@ type HomeLayout struct {
 	// 0043 已删除 0041 的 template_id 兼容派生列，不再有单列近似。
 	StyleID string `gorm:"column:style_id;size:32;default:default" json:"styleId"`
 	// BrandColorID 品牌色系（颜色层），叠加在所选风格之上；nil = 用该风格默认色。
-	// 两轴模型第二轴；P1 仅 classic 下挂 8 款 brand-*，其余风格暂仅默认色。
+	// 两轴模型第二轴；P5 起全叉乘，全部品牌色系可叠加在任意风格上。
 	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 }
 
