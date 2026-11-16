@@ -507,15 +507,15 @@ describe('小程序风格模板 系列分组', () => {
     expect(STYLE_ADVANCED_IDS).toEqual(['ink', 'warm', 'teal'])
   })
 
-  it('后台按服务端 series 分两步渲染，不自己猜 id 前缀；固定预览区随两轴组合切换', () => {
+  it('后台按服务端 series 分三步渲染（风格/色系/浓度），不自己猜 id 前缀；固定预览区随两轴组合切换', () => {
     const vue = readFileSync(resolve(REPO, 'frontend/src/views/content/MpTheme.vue'), 'utf-8')
     expect(vue).toContain("t.series === 'brand'")
     expect(vue).toContain('brandTemplates')
     expect(vue).toContain('styleTemplates')
     expect(vue).toContain('品牌配色')
     expect(vue).not.toContain("startsWith('brand-')")
-    // P5：整页只有一个固定预览区（sticky），两步选择先风格后色系；
-    // 保存必须发两轴而不是旧的单列 templateId，否则两轴化等于没落后台。
+    // P5：整页只有一个固定预览区（sticky），三步选择：风格 → 色系 → 顶部浓度；
+    // 保存必须发两轴 + 浓度而不是旧的单列 templateId，否则两轴化等于没落后台。
     expect(vue).toContain('class="preview-pane"')
     expect(vue).toContain('position: sticky')
     expect(vue).toContain(':src="thumbUrl(currentId)"')
@@ -525,10 +525,15 @@ describe('小程序风格模板 系列分组', () => {
     expect(vue).toContain('v-for="t in brandTemplates"')
     expect(vue).toContain('第 1 步')
     expect(vue).toContain('第 2 步')
+    // 第 3 步：顶部主色浓度（2026-11-16 从「名片页面样式」移入本页，调色即看即时预览）
+    expect(vue).toContain('第 3 步')
+    expect(vue).toContain('顶部主色浓度')
     expect(vue).toContain('44 种组合')
-    expect(vue).toContain(
-      'saveHomeLayout({ styleId: styleId.value, brandColorId: brandColorId.value })'
-    )
+    // 保存必须发两轴 + 浓度三值（浓度随「保存风格」一起生效），而不是旧的单列 templateId
+    expect(vue).toContain('saveHomeLayout({')
+    expect(vue).toContain('styleId: styleId.value')
+    expect(vue).toContain('brandColorId: brandColorId.value')
+    expect(vue).toContain('bgGradientStrength: bgGradientStrength.value')
     expect(vue, '不能退回只发单列 templateId').not.toContain('saveHomeLayout({ templateId:')
     // P5 树形归属已废止：切风格不清空色系、非 default 不禁用色卡、不留旧提示。
     // 任何一条退回，客户都会「后台保存成功、真机却少了刚对齐的 VI 主色」。
@@ -1202,13 +1207,13 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 })
 
-// ===== P5：44 组合预览图 + 后台两步 UI =====
+// ===== P5：44 组合预览图 + 后台三步 UI =====
 //
 // 最容易静默失败的一处：app.wxss 改了列数 / 封面高度，44 张 PNG 一张不少、
 // token 快照也没变、尺寸也对，客户看到的却是旧版式。布局必须留快照并与 WXSS
 // 对账；后台也必须真的按 (styleId, brandColorId) 组合键寻图、按两轴保存，
 // 且 4 个风格下全部色档可选。
-describe('P5 44 组合预览图与后台两步选择', () => {
+describe('P5 44 组合预览图与后台三步选择', () => {
   it('44 张图按 4 风格分组：每风格全部色档共用同一画布，四风格高度互不相同', () => {
     const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')

@@ -264,9 +264,9 @@ miniprogram/
 - 员工修改页 `pages/employee/edit` 的头像由「URL 文本输入」改为「选图上传」：用 `wx.chooseMedia` 选图，经 `wx.uploadFile` 调后端 `POST /api/employee/upload`（员工鉴权，复用同一 storage.Uploader），返回 URL 写回 `form.avatar`，再随 `PUT /api/employee/me` 提交审核。与 PC 端 `UploadField` 调用 `/api/admin/upload` 同一思路、同一存储层，仅鉴权角色不同。
 
 ## 首页背景图（商业化美化包装，可选）
-- PC 后台「小程序设置 → 名片首页样式」可设置首页背景图（支持从内置素材库「背景」分类直接选用 750×1334 竖幅素材），并可调节遮罩浓度 0~100 与顶部主色浓度 0~100。后端经 `GET /api/home-layout` 在**响应根级**下发 `bgImage` / `bgMask` / `bgGradientStrength`（与 `order` 同级）。
+- PC 后台「小程序设置 → 名片页面样式」可设置首页背景图（支持从内置素材库「背景」分类直接选用 750×1334 竖幅素材）并调节遮罩浓度 0~100；顶部主色浓度 0~100 则在「风格模板」页签第 3 步（与品牌配色同页，拖动即看左侧预览实时变化）。后端经 `GET /api/home-layout` 在**响应根级**下发 `bgImage` / `bgMask` / `bgGradientStrength`（与 `order` 同级）。
 - 首页 `pages/index` 收到非空 `bgImage` 时：铺一层全屏背景（`mode="aspectFill"`），其上叠 `bgMask/100` 透明度的黑色蒙层，白色内容卡片浮于其上形成层次；`bgImage` 为空即不渲染背景层，此时首页背景跟随**当前风格模板的主题 token**——顶部是品牌主色原色、向下渐浅到 `soft`/`tint`（与后台「风格模板」预览图同源，切模板随之变色），由 `index.wxss` 的 `.page` 背景驱动。
-- **顶部主色浓度滑杆**：后台「名片页面样式」页签的 `bgGradientStrength`（0~100，默认 100=原色）经公开接口下发，`index.ts` 换算成 `bgGradientAlpha=浓度/100`、`bgGradientFadeAlpha=前者×0.9`，由 wxml 在 `.page` 内联 `--top-alpha` / `--fade-alpha` 注入渐变。fallback（1 / 0.9）保证旧端与后台预览仍渲染原色。顶栏公司名随滚动（`navMask`）与浓度（<50 视为浅底）切成深色，避免浅底白字不可读。设了 `bgImage` 时整幅渐变被背景盖住，浓度自然无效。
+- **顶部主色浓度滑杆**：后台「风格模板」页签第 3 步的 `bgGradientStrength`（0~100，默认 100=原色）经公开接口下发，`index.ts` 换算成 `bgGradientAlpha=浓度/100`、`bgGradientFadeAlpha=前者×0.9`，由 wxml 在 `.page` 内联 `--top-alpha` / `--fade-alpha` 注入渐变。fallback（1 / 0.9）保证旧端与后台预览仍渲染原色。顶栏公司名随滚动（`navMask`）与浓度（<50 视为浅底）切成深色，避免浅底白字不可读。设了 `bgImage` 时整幅渐变被背景盖住，浓度自然无效。后台预览用白色遮罩实时模拟该浓度，遮罩只盖到名片卡片顶部（卡片是不透明白容器，浓度只影响卡片背后的背景），卡片与文字不受影响。
 - 背景层与蒙层用 `position: fixed` + 负 `z-index` 铺在最底层，内容按常规流绘制天然在其上方，不会互相遮挡；有背景时顶栏改为半透明白、板块卡片加圆角阴影（`.has-bg`）。
 
 ## 腾讯视频档（`company-video` 的 txv 分支）
@@ -838,8 +838,9 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
 白名单只作取值集合、不再表示「色系属于哪个风格」），
 端上色值与版式随版本内置在 `app.wxss` 的两层块里。`utils/theme.ts` 只做
 `两轴 → 两层 class` 映射 + Storage 缓存 + 页面栈广播，不含色值。
-**P4 起后台是「一个固定预览区 + 右侧两步选择」**：先选风格（决定布局），再选色系（只换主色），
-左侧预览图随组合切换，保存只提交 `{ styleId, brandColorId }`（见下文「后台预览」段）。
+**P4 起后台是「一个固定预览区 + 右侧三步选择」**：先选风格（决定布局），再选色系（只换主色），
+第三步调顶部主色浓度（白色遮罩实时模拟，只盖到卡片顶部）；左侧预览图随组合与浓度实时变化，
+保存提交 `{ styleId, brandColorId, bgGradientStrength }`（见下文「后台预览」段）。
 
 **根节点同时挂两层 class**：`class="wc-theme {{themeClass}}"` 里的 `wc-theme` 是保留的
 语义基类（已无 token 定义），`themeClass` 变量展开为 `wc-style-<id>`（布局层，恒挂，

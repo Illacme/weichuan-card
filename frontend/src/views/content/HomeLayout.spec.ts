@@ -10,18 +10,17 @@ import HomeLayout from './HomeLayout.vue'
 // 模板重排属于视觉要求，Vitest 挂载后看不出「谁在前」，只能读源码守门。
 const PAGE_SRC = resolve(dirname(fileURLToPath(import.meta.url)), './HomeLayout.vue')
 
-// 首页布局页：板块顺序 + 背景图 + 遮罩浓度 + 顶部主色浓度。
+// 首页布局页：板块顺序 + 背景图 + 遮罩浓度。
 // 关键约束是「保存时提交的是完整顺序数组」——只提交 firstBlock 会让后端
 // 无从拼出顺序；以及「清除背景必须连遮罩一起归零」，否则留下一个
 // 对纯灰底生效的遮罩值，下次设背景时浓度莫名其妙。
-// 顶部主色浓度与遮罩是两个独立滑杆：前者无背景图时也生效（管渐变顶部），
-// 后者只在有背景图时有意义（管黑色蒙层）。
+// 顶部主色浓度已移到「风格模板」页签（与品牌配色同页，调色即看即时预览），
+// 本页不读写、不提交该字段；后端 PUT 是部分更新，保存本页不会冲掉它。
 const mocks = vi.hoisted(() => ({
   getHomeLayout: vi.fn(async (): Promise<any> => ({
     order: ['achievement', 'service'],
     bgImage: '',
     bgMask: 0,
-    bgGradientStrength: 100,
   })),
   saveHomeLayout: vi.fn(async (_payload: any) => ({ code: 0 })),
 }))
@@ -216,7 +215,6 @@ describe('content/HomeLayout', () => {
       order: ['service', 'achievement'],
       bgImage: '',
       bgMask: 0,
-      bgGradientStrength: 100,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
     })
@@ -253,52 +251,15 @@ describe('content/HomeLayout', () => {
       order: ['achievement', 'service'],
       bgImage: '/uploads/bg.jpg',
       bgMask: 60,
-      bgGradientStrength: 100,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
     })
   })
 
-  // 顶部主色浓度是独立滑杆：无背景图时也生效，不能像遮罩那样被禁用
-  it('顶部主色浓度：无背景图时仍可拖动，与遮罩是两个独立滑杆', async () => {
-    const w = await mountPage()
-    const sliders = w.findAll('.el-slider')
-
-    expect(sliders).toHaveLength(2)
-    // 第一个（遮罩）无背景图时禁用；第二个（顶部浓度）始终可用
-    expect(sliders[0].attributes('disabled')).toBeDefined()
-    expect(sliders[1].attributes('disabled')).toBeUndefined()
-    expect(w.findAll('.mask-val')[1].text()).toBe('100%')
-  })
-
-  // 用户把浓度滑到 0 时，load 的 || 会把它误判成缺省弹回 100——
-  // 这是最隐蔽的一种「设置存不住」：不报错，只是每次刷新又变回原色。
-  it('浓度 0 原样回填（不被 || 误判成缺省弹回 100）', async () => {
-    const w = await mountPage({
-      order: ['achievement', 'service'], bgImage: '', bgMask: 0, bgGradientStrength: 0,
-    })
-
-    expect(w.findAll('.mask-val')[1].text()).toBe('0%')
-  })
-
-  it('拖动顶部浓度随保存提交，且不影响遮罩浓度', async () => {
-    const w = await mountPage({ order: ['achievement', 'service'], bgImage: '/uploads/bg.jpg', bgMask: 40 })
-
-    await w.findAll('.el-slider')[1].setValue(65)
-    await flush()
-    await saveButton(w).trigger('click')
-    await flush()
-
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
-      expect.objectContaining({ bgMask: 40, bgGradientStrength: 65 })
-    )
-  })
-
   // 只清图不清遮罩，会留下一个「对灰底生效」的浓度，下次设图时莫名其妙。
-  // 但顶部主色浓度是独立设置，清背景不该动它（清了图之后渐变才刚生效）。
-  it('清除背景：图与遮罩一起归零，顶部主色浓度保持', async () => {
+  it('清除背景：图与遮罩一起归零', async () => {
     const w = await mountPage({
-      order: ['achievement', 'service'], bgImage: '/uploads/bg.jpg', bgMask: 70, bgGradientStrength: 80,
+      order: ['achievement', 'service'], bgImage: '/uploads/bg.jpg', bgMask: 70,
     })
 
     const clear = w.findAll('.el-button').find((b: any) => b.text() === '清除背景')!
@@ -309,7 +270,7 @@ describe('content/HomeLayout', () => {
     await saveButton(w).trigger('click')
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
-      expect.objectContaining({ bgImage: '', bgMask: 0, bgGradientStrength: 80 })
+      expect.objectContaining({ bgImage: '', bgMask: 0 })
     )
   })
 

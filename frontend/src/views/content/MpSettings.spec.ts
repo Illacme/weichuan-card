@@ -389,7 +389,7 @@ describe('content/MpSettings', () => {
     await save!.trigger('click')
     await flush()
     expect(contentMocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'default', brandColorId: null,
+      styleId: 'default', brandColorId: null, bgGradientStrength: 100,
     })
   })
 
@@ -444,7 +444,6 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
-      bgGradientStrength: 100,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
     })

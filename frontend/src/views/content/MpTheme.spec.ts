@@ -1,10 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import MpTheme from './MpTheme.vue'
 
-// 风格页 P5：核心约束是**只提交两轴 (styleId, brandColorId)**，以及
-// 4 风格 × 10 色档 = 44 个组合全部可选、全部按自己的组合键寻图。
+// 预览图 manifest：浓度遮罩高度按各风格实测高度反算，与生成脚本同源对账。
+const MANIFEST = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../public/theme-previews/manifest.json'
+)
+
+// 风格页 P5：核心约束是**只提交 (styleId, brandColorId, bgGradientStrength) 三值**，
+// 4 风格 × 10 色档 = 44 个组合全部可选、全部按自己的组合键寻图；顶部浓度随这三值
+// 一起保存，并在左侧预览图上用白色遮罩即时模拟（0~12% 段与真机 rgba 数学等价）。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
 // 的值一起写回去，所以这里用精确断言钉死 payload，而不是 objectContaining。
 // P4 的「非 default 风格清空并禁用色系」已废止：那会让客户对齐好的 VI 主色
@@ -34,6 +44,7 @@ const comboId = (s: string, b: string | null) => `${s}--${b || 'default'}`
 const DEFAULT_LAYOUT = {
   styleId: 'default',
   brandColorId: null,
+  bgGradientStrength: 100,
   templateEntitled: true,
   templates: [...STYLE_ITEMS, ...BRAND_ITEMS],
 }
@@ -64,6 +75,13 @@ const ElAlert = defineComponent({
   template: `<div class="el-alert" :data-type="type"><div class="alert-title">{{ title }}</div><slot /></div>`,
 })
 const ElTag = defineComponent({ name: 'ElTag', template: `<span class="el-tag"><slot /></span>` })
+// 浓度滑杆 stub：渲染原生 range，方便 setValue 驱动 v-model，验证即时预览与保存。
+const ElSlider = defineComponent({
+  name: 'ElSlider',
+  props: ['modelValue', 'min', 'max', 'step', 'disabled'],
+  emits: ['update:modelValue'],
+  template: `<input type="range" class="el-slider" :value="modelValue" :min="min" :max="max" :step="step" :disabled="disabled" @input="$emit('update:modelValue', Number($event.target.value))" />`,
+})
 
 const mountOpts = {
   global: {
@@ -72,6 +90,7 @@ const mountOpts = {
       'el-button': ElButton,
       'el-alert': ElAlert,
       'el-tag': ElTag,
+      'el-slider': ElSlider,
     },
     directives: { loading: {} },
   },
@@ -95,20 +114,21 @@ const colorOptions = (w: any) => w.findAll('.color-option')
 const previewShot = (w: any) => w.find('img.preview-shot')
 const previewSrc = (w: any) => previewShot(w).attributes('src') || ''
 
-describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', () => {
+describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶部浓度即时预览）', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockReset()
     mocks.saveHomeLayout.mockClear()
     ;(ElMessage.success as any).mockClear()
   })
 
-  it('挂载即拉取清单，按服务端 series 渲染两步选择', async () => {
+  it('挂载即拉取清单，按服务端 series 渲染三步选择（含顶部浓度）', async () => {
     const w = await mountPage()
 
     expect(mocks.getHomeLayout).toHaveBeenCalledTimes(1)
-    expect(w.findAll('.picker-step')).toHaveLength(2)
+    expect(w.findAll('.picker-step')).toHaveLength(3)
     expect(w.text()).toContain('整体风格')
     expect(w.text()).toContain('品牌配色')
+    expect(w.text()).toContain('顶部主色浓度')
     // 4 张风格卡 + 「默认色」+ 10 款品牌色
     expect(styleCards(w)).toHaveLength(4)
     expect(colorOptions(w)).toHaveLength(11)
@@ -181,7 +201,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'teal', brandColorId: 'brand-crimson',
+      styleId: 'teal', brandColorId: 'brand-crimson', bgGradientStrength: 100,
     })
   })
 
@@ -201,7 +221,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'ink', brandColorId: 'brand-crimson',
+      styleId: 'ink', brandColorId: 'brand-crimson', bgGradientStrength: 100,
     })
   })
 
@@ -255,9 +275,97 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     await flush()
 
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'default', brandColorId: 'brand-coral',
+      styleId: 'default', brandColorId: 'brand-coral', bgGradientStrength: 100,
     })
     expect(ElMessage.success).toHaveBeenCalledWith('已保存小程序风格模板')
+    expect(w.find('.pane-combo-line').text()).toContain('使用中')
+  })
+
+  // ===== 顶部主色浓度（第 3 步）：滑杆 → 遮罩即时预览 → 保存三值 =====
+  const veil = (w: any) => w.find('.preview-scroll .strength-veil')
+  const veilBg = (w: any) => veil(w).attributes('style') || ''
+
+  it('第 3 步有浓度滑杆，默认 100% 原色：遮罩 opacity=0（不遮），高度止于卡片顶部', async () => {
+    const w = await mountPage()
+
+    expect(w.find('.strength-row').exists()).toBe(true)
+    const slider = w.find('.strength-row input.el-slider')
+    expect(slider.exists()).toBe(true)
+    expect(slider.attributes('value')).toBe('100')
+    expect(w.find('.strength-val').text()).toBe('100%')
+    // 100% 时 opacity=0，遮罩不显；高度=default 风格卡片顶部 5.7%（不是铺满整图）
+    expect(veil(w).exists()).toBe(true)
+    expect(veilBg(w)).toContain('opacity: 0')
+    expect(veilBg(w)).toContain('height: 5.7%')
+    // 卡片不被遮罩覆盖：遮罩高度必须明显小于整图（用户实测反馈「卡片也被变白」）
+    expect(veilBg(w)).not.toContain('height: 100%')
+  })
+
+  it('拖低浓度：遮罩 opacity 实时变大、数值联动，保存带上新浓度', async () => {
+    const w = await mountPage()
+
+    await w.find('.strength-row input.el-slider').setValue('40')
+    await flush()
+
+    expect(w.find('.strength-val').text()).toBe('40%')
+    // opacity = (100-40)/100 = 0.6，滑杆一动遮罩即时更新，不必重新切图
+    expect(veilBg(w)).toContain('opacity: 0.6')
+    expect(veilBg(w)).toContain('height: 5.7%')
+    // 大图浮层的遮罩必须同步（同一 veilStyle）
+    await w.find('.preview-zoom-btn').trigger('click')
+    await flush()
+    expect(w.find('.zoom-scroll .strength-veil').attributes('style')).toBe(veilBg(w))
+
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'default', brandColorId: null, bgGradientStrength: 40,
+    })
+  })
+
+  it('浓度滑到 0：值不被 || 吞掉，遮罩 opacity=1（顶部近白），保存的仍是 0', async () => {
+    const w = await mountPage()
+
+    await w.find('.strength-row input.el-slider').setValue('0')
+    await flush()
+
+    expect(w.find('.strength-val').text()).toBe('0%')
+    expect(veilBg(w)).toContain('opacity: 1')
+    await (w.vm as any).save()
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
+      styleId: 'default', brandColorId: null, bgGradientStrength: 0,
+    })
+  })
+
+  it('浓度遮罩高度按风格止于卡片顶部：与 manifest 实测高度对账', async () => {
+    // 卡片顶 = 状态栏 26 + 导航 42 + 卡片 margin 6 = 74px；整图高 = contentBottom + 20 + 60。
+    // 遮罩只覆盖卡片顶部以上的背景，卡片与文字不受浓度影响。
+    const manifest = JSON.parse(readFileSync(MANIFEST, 'utf-8'))
+    const bottoms: Record<string, number> = manifest.contentBottoms
+    const w = await mountPage()
+    for (let i = 0; i < STYLE_IDS.length; i++) {
+      await styleCards(w)[i].trigger('click')
+      await flush()
+      const h = bottoms[STYLE_IDS[i]] + 20 + 60
+      const pct = Math.round((74 / h) * 1000) / 10
+      expect(veilBg(w), `${STYLE_IDS[i]} 卡片顶部比例应与 manifest 实测高度一致`)
+        .toContain(`height: ${pct}%`)
+    }
+  })
+
+  it('load 读回非默认浓度；只改浓度也进「未保存」态，保存后回「使用中」', async () => {
+    const w = await mountPage({ ...DEFAULT_LAYOUT, bgGradientStrength: 65 })
+
+    expect(w.find('.strength-val').text()).toBe('65%')
+    expect(veilBg(w)).toContain('opacity: 0.35')
+    expect(w.find('.pane-combo-line').text()).toContain('使用中')
+
+    await w.find('.strength-row input.el-slider').setValue('30')
+    await flush()
+    expect(w.find('.pane-combo-line').text()).not.toContain('使用中')
+    await (w.vm as any).save()
+    await flush()
     expect(w.find('.pane-combo-line').text()).toContain('使用中')
   })
 
@@ -271,7 +379,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     expect(previewSrc(w)).toContain('teal--default.thumb.png')
     await (w.vm as any).save()
     await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'teal', brandColorId: null, bgGradientStrength: 100 })
   })
 
   it('P5：load 读回跨风格组合，预览与保存都不丢两轴中的任何一维', async () => {
@@ -286,7 +394,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     await (w.vm as any).save()
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith({
-      styleId: 'ink', brandColorId: 'brand-ocean',
+      styleId: 'ink', brandColorId: 'brand-ocean', bgGradientStrength: 100,
     })
   })
 
@@ -371,7 +479,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
 
     await (w.vm as any).save()
     await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null, bgGradientStrength: 100 })
   })
 
   // 授权到期时后端仍允许「带着同一个组合」保存别的设置，前端不能把已选中的
@@ -389,7 +497,7 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合两步选择）', (
     await flush()
     await (w.vm as any).save()
     await flush()
-    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null })
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith({ styleId: 'default', brandColorId: null, bgGradientStrength: 100 })
   })
 
   it('清单为空：暴露的 templates 为空，父组件据此禁用保存', async () => {

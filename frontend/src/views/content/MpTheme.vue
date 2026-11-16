@@ -5,6 +5,7 @@
       （分类列数、精选大图排法、服务卡密度、封面高度与圆角），并自带一套默认色；
       第 2 步「<strong>品牌配色</strong>」只在所选风格之上替换主色，版式不变，用于对齐企业自有 VI 主色。
       <strong>4 款风格 × 11 档颜色 = 44 种组合</strong>：每款风格都能叠加全部品牌配色，色板在四款风格上完全一致。
+      第 3 步「<strong>顶部主色浓度</strong>」调首页顶部主色的深浅，拖动时左侧预览实时变化。
       风格与色系都随小程序版本内置，后台只记录「选了哪一款」，保存后访客端即时生效，
       不需要重新上传代码或提交微信审核。
       左侧预览区<strong>固定在一个位置</strong>，随上面两步的选择实时切换，不必在十几张卡片间来回找图。
@@ -59,14 +60,23 @@
                窗口比例由 .theme-preview 控制，与长图自身比例无关。
                这里取缩略图（460px 宽 / 100~210KB），原图只在「查看大图」时才拉。 -->
           <div class="preview-scroll">
-            <img
-              v-if="!failedPreviews[currentId]"
-              class="preview-shot"
-              :src="thumbUrl(currentId)"
-              :alt="currentName + ' 小程序首页预览'"
-              decoding="async"
-              @error="onPreviewError(currentId)"
-            />
+            <div class="shot-wrap">
+              <img
+                v-if="!failedPreviews[currentId]"
+                class="preview-shot"
+                :src="thumbUrl(currentId)"
+                :alt="currentName + ' 小程序首页预览'"
+                decoding="async"
+                @error="onPreviewError(currentId)"
+              />
+              <!-- 顶部主色浓度遮罩：静态 PNG 是 100% 原色出图，这里叠一层白色把背景顶部
+                   混淡到当前浓度，拖动滑杆即时生效。**只盖到名片卡片顶部**——卡片是不透明
+                   白容器，真机上浓度只改变卡片背后/周围的背景，卡片与文字完全不受影响；
+                   铺满整图会把卡片内文字一起冲淡。遮罩高度按风格内联（veilStyle），
+                   随长图一起滚动。仅无背景图时真机才有此渐变；设了首页背景图时真机顶部被
+                   整幅盖住，此遮罩仍会盖在预览图顶部，属示意偏差，以真机为准。 -->
+              <div v-if="!failedPreviews[currentId]" class="strength-veil" :style="veilStyle" />
+            </div>
           </div>
           <!-- 悬停预览图时才显示的标注，默认不遮挡示意图观感：客户最容易把「按 token 复刻的示意图」
                直接当成真机页面效果去验收，这个误解不会报错，只能靠标注说清；
@@ -161,6 +171,24 @@
             </div>
           </div>
         </div>
+
+        <div class="picker-step">
+          <div class="step-head">
+            <span class="step-no">3</span>
+            <div>
+              <h4>顶部主色浓度</h4>
+              <p>控制首页顶部品牌主色的深浅：100% 为原色（最还原设计稿），调低更柔和。拖动滑杆，左侧预览实时变化。</p>
+            </div>
+          </div>
+          <div class="strength-row">
+            <el-slider v-model="bgGradientStrength" :min="0" :max="100" :step="5" style="flex: 1" />
+            <span class="strength-val">{{ bgGradientStrength }}%</span>
+          </div>
+          <div class="strength-hint">
+            仅在未设置首页背景图时生效（设了背景图时顶部渐变被整幅盖住）；顶栏文字会随浓度自动切换深浅以保证可读。
+            此处选择随「保存风格」一起生效，与背景设置互不覆盖。
+          </div>
+        </div>
       </section>
     </div>
 
@@ -175,7 +203,10 @@
           <el-button size="small" @click="closeZoom">关闭</el-button>
         </div>
         <div class="zoom-scroll">
-          <img class="zoom-shot" :src="fullUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+          <div class="shot-wrap">
+            <img class="zoom-shot" :src="fullUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
+            <div class="strength-veil" :style="veilStyle" />
+          </div>
         </div>
       </div>
     </div>
@@ -202,6 +233,34 @@ const loading = ref(false)
 const saving = ref(false)
 const styleId = ref(DEFAULT_STYLE)
 const brandColorId = ref<string | null>(null)
+// 顶部主色浓度 0~100（默认 100=原色，存量零突变）。用 ?? 而非 ||：用户滑到 0 时
+// 必须保留 0，|| 会把 0 误判成缺省、偷偷弹回 100。
+const bgGradientStrength = ref(100)
+// 已保存的浓度：与两轴一样，「未保存时不能显示使用中」把浓度也算进去。
+const savedBgGradientStrength = ref(100)
+
+// 预览遮罩：静态 PNG 顶部是 100% 原色，叠白色 alpha=(1-浓度) 混淡到目标浓度。
+// **只盖到名片卡片顶部为止**——真机上卡片是不透明白容器，浮在渐变背景之上，
+// 浓度只改变卡片「背后/周围」的背景，卡片本身与里面的文字完全不受影响。
+// 遮罩若铺满整图，会把卡片内的文字一起冲淡（2026-11-16 用户实测反馈「卡片也被
+// 渲染成白色」），所以必须止于卡片顶部。
+//
+// 各风格卡片顶部比例 = 卡片顶 74px（状态栏 26 + 导航 42 + 卡片 margin 6）
+//   ÷ 该风格整图高度（manifest contentBottoms + 呼吸 20 + 底栏 60）。
+//   default 74/1294≈5.7% · ink 74/1182≈6.3% · warm 74/2572≈2.9% · teal 74/1729≈4.3%
+// 该常量由 MpTheme.spec.ts 读 manifest 的 contentBottoms 反算对账，改高度必红。
+// 卡片顶部以上的背景段落在真机渐变 0~12% 区间内（alpha 近似恒为浓度），
+// 故用恒定 alpha 遮罩，与真机误差 <5%。这是一张静态示意图的浓度模拟，非真机截图。
+const CARD_TOP_PCT: Record<string, number> = {
+  default: 5.7,
+  ink: 6.3,
+  warm: 2.9,
+  teal: 4.3,
+}
+const veilStyle = computed(() => ({
+  height: `${CARD_TOP_PCT[styleId.value] ?? 6}%`,
+  opacity: (100 - bgGradientStrength.value) / 100,
+}))
 // 「使用中」是后端已保存的组合，不是界面上刚点过的组合：未保存时不能显示使用中，
 // 否则客户会以为已经生效。load 时记一次，save 成功后同步。
 const savedStyleId = ref(DEFAULT_STYLE)
@@ -247,7 +306,10 @@ const currentPreviewSoft = computed(
   () => activeBrand.value?.previewSoft || activeStyle.value?.previewSoft || FALLBACK_SOFT
 )
 const isCurrentInUse = computed(
-  () => styleId.value === savedStyleId.value && brandColorId.value === savedBrandColorId.value
+  () =>
+    styleId.value === savedStyleId.value &&
+    brandColorId.value === savedBrandColorId.value &&
+    bgGradientStrength.value === savedBgGradientStrength.value
 )
 
 // 预览图是随前端版本发布的静态资源：加载失败时移除该张 <img>，露出底层示意。
@@ -339,8 +401,10 @@ async function load() {
     // 后端直接下发两轴：styleId 缺省回 default，brandColorId 缺失回 null（用风格默认色）。
     styleId.value = d?.styleId || DEFAULT_STYLE
     brandColorId.value = d?.brandColorId || null
+    bgGradientStrength.value = d?.bgGradientStrength ?? 100
     savedStyleId.value = styleId.value
     savedBrandColorId.value = brandColorId.value
+    savedBgGradientStrength.value = bgGradientStrength.value
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -351,12 +415,17 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    // 只提交两轴：三个页签各存各的，后端 PUT 对未提供的字段保持原值。
-    // 整份表单回传会把别的页签刚改过的值一起写回去，属于典型的跨页签覆盖。
+    // 提交两轴 + 顶部浓度：这三个都属于「风格模板」页签，后端 PUT 对未提供的
+    // 字段保持原值，故不会冲掉背景图/遮罩/板块顺序等别的页签字段。
     // brandColorId 为 null = 用该风格默认色，后端会写 NULL 而不是留下旧色系。
-    await saveHomeLayout({ styleId: styleId.value, brandColorId: brandColorId.value })
+    await saveHomeLayout({
+      styleId: styleId.value,
+      brandColorId: brandColorId.value,
+      bgGradientStrength: bgGradientStrength.value,
+    })
     savedStyleId.value = styleId.value
     savedBrandColorId.value = brandColorId.value
+    savedBgGradientStrength.value = bgGradientStrength.value
     ElMessage.success('已保存小程序风格模板')
   } catch {
     /* 拦截器已提示 */
@@ -586,6 +655,42 @@ onMounted(load)
   border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+/* 顶部主色浓度（第 3 步） */
+.strength-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.strength-val {
+  flex: none;
+  width: 48px;
+  text-align: right;
+  font-size: 13px;
+  color: #303133;
+  font-variant-numeric: tabular-nums;
+}
+.strength-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+}
+/* 浓度遮罩：只盖到名片卡片顶部，把 100% 原色的背景顶部混淡到当前浓度。
+   卡片是不透明白容器，浓度不该影响它——height 由 veilStyle 按风格内联给出
+   （卡片顶部比例），opacity = 1-浓度，background 纯白。
+   pointer-events:none 让滚轮照常穿透到 .preview-scroll 滚动长图；
+   z-index 压在 img 之上、但低于角标/查看大图按钮（它们 z-index 2/3）。 */
+.strength-veil {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: #fff;
+}
+
 /* 预览容器是**手机窗口**而非整张长图：窄于 1:3.2 的长图，默认只露出约两屏高度，
    完整首页靠内部滚动查看——比把整张长图压扁在卡片里更贴近真机预览。
    比例必须落在手机竖屏范围（约 1:1.6 ~ 1:2.3），超出会被 theme.spec.ts 判红；
@@ -628,6 +733,12 @@ onMounted(load)
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+/* 图片与浓度遮罩的共同定位父级：高度由 img 撑开，遮罩 inset 跟随图片实际渲染高度，
+   这样渐变的 12%/48% 停靠点正好落在图内顶部渐变的同一位置，滚动时一起移动。 */
+.shot-wrap {
+  position: relative;
+  display: block;
 }
 .preview-shot {
   display: block;
