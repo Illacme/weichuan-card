@@ -1063,7 +1063,7 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 渐变串在端上与预览脚本两处**逐字同源**，本测试把同一子串钉在两边。
   it('小程序首页背景顶部用品牌原色（非混白），与后台预览同一公式', () => {
     const gradient =
-      'linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint))'
+      'linear-gradient(180deg, rgba(var(--wc-primary-rgb), var(--top-alpha, 1)) 0, rgba(var(--wc-primary-rgb), var(--fade-alpha, 0.9)) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint))'
     const wxss = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxss'), 'utf-8')
     const page = wxss.match(/\.page\s*\{[^}]*\}/)?.[0] || ''
     expect(page, '取不到 .page 规则').not.toBe('')
@@ -1086,7 +1086,13 @@ describe('小程序整体风格模板 真实预览图', () => {
       '.custom-nav .nav-title.scrolled { color: #333; }'
     )
     const wxml = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxml'), 'utf-8')
-    expect(wxml, '顶栏未随 navMask 切换反白/深色').toContain("navMask >= 0.5 ? 'scrolled' : ''")
+    // 顶栏反白既要随滚动（navMask）切，也要随浓度低（浅底）切深色，否则浅蓝底白字看不清
+    expect(wxml, '顶栏未随 navMask / 浓度切换反白').toContain(
+      "navMask >= 0.5 || bgGradientStrength < 50 ? 'scrolled' : ''"
+    )
+    // 浓度滑杆经 --top-alpha / --fade-alpha 注入渐变（fallback 保预览/旧端原色）
+    expect(wxml, '浓度未注入渐变 CSS 变量').toContain('--top-alpha: {{bgGradientAlpha}}')
+    expect(wxml, 'fade 浓度未注入渐变 CSS 变量').toContain('--fade-alpha: {{bgGradientFadeAlpha}}')
     expect(script, '预览图顶栏公司名未反白，与真机首屏不一致').toMatch(
       /\.nav-title\s*\{[^}]*color:\s*#fff/
     )

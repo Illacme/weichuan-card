@@ -5291,3 +5291,30 @@ include `../miniprogram/tests/**/*.spec.ts`）。
   `theme.ts` / `app.wxss` / `MpTheme.vue` 文案、全部 README 与验收文档口径
   （36→44 组合、8→10 款），并重跑 `gen_theme_previews.py` 出 44 原图 +
   44 缩略图（`--check` 过）。真机视觉验收（launch-checklist 第 13 项）仍待本人执行。
+- **顶部原色二次修正（commit `aa78151`）**：15% 混白渲染成 `#dadeF8`，客户指出
+  与设计稿差距大。渐变顶部改用 `var(--wc-primary)` 原色（宝蓝 `#0820d0` /
+  正红 `#d40c0a`），顶栏公司名随 `navMask` 反白。系统状态栏文字由微信绘制、
+  custom 导航下无法改色，是已知边界。
+
+---
+
+## 第七十四轮 · 顶部主色浓度滑杆可配置（2026-11-16）
+
+客户要求管理员能自己滑杆调顶部品牌色的浓度，而不是写死原色。新增
+`home_layouts.bg_gradient_strength`（迁移 0046，0~100，默认 **100=原色**，存量零突变），
+与 `bg_mask` 同属「名片页面样式」页签，和风格两轴分开写、互不冲掉。
+
+- **全链路**：后台 `HomeLayout.vue` 加滑杆 → `PUT /api/admin/home-layout` 指针字段
+  → 模型 / 迁移 / admin GET 与公开 GET 下发 → 小程序 `index.ts` 换算
+  `bgGradientAlpha=浓度/100`、`bgGradientFadeAlpha=×0.9` → wxml 在 `.page` 内联
+  `--top-alpha` / `--fade-alpha` 注入 wxss 渐变（fallback 1/0.9 保旧端与预览原色）。
+- **可读性**：顶栏公司名原按 `navMask` 反白，现加浓度条件（<50 视为浅底）也切深色，
+  避免低浓度下白字看不清。
+- **边界**：浓度仅作用于无背景图时；设了 `bgImage` 整幅渐变被背景层盖住，自然无效。
+  后台预览图固定展示 100% 原色，不随滑杆变（预览是静态出图）。
+- 守门：`theme.spec.ts` 钉渐变串与 wxml 变量注入、顶栏反白双条件；
+  `index_home.spec.ts` 钉浓度换算（缺省 100 / 显式 0 / 越界钳制）；
+  `types_contract.spec.ts` 的 HomeLayoutResp 字段清单 + 后端 emit 强约束同步扩列；
+  `HomeLayout.spec.ts` 钉两滑杆独立、0 值不被 `||` 吞、清背景不动浓度。
+- 验证：后端 gofmt/vet/build/test/lint、前端 152 例相关 spec、openapi 解析、
+  预览 `--check`、vue-tsc、CI 全绿。

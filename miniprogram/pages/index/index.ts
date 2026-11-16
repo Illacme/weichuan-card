@@ -31,6 +31,12 @@ Page({
     bgImage: '',
     bgMask: 0,
     bgMaskAlpha: 0,
+    // 顶部品牌主色浓度 0~100（默认 100=原色）。两个 alpha 供 wxml 内联进渐变：
+    // bgGradientAlpha=浓度/100，bgGradientFadeAlpha=前者×0.9（保证 12% 处比顶部淡）。
+    // 缺省 1 / 0.9 与 wxss fallback 一致，兼容旧后端未下发字段的情况。
+    bgGradientStrength: 100,
+    bgGradientAlpha: 1,
+    bgGradientFadeAlpha: 0.9,
     // 加载失败的图片地址（背景图 / 顶栏头像）：WXML 用 `src && xxxFail !== src` 判断，
     // 记 URL 而不是布尔标记——换图或下拉刷新换了地址会自动重试（见 utils/thumb.ts）
     bgFail: '',
@@ -289,6 +295,10 @@ Page({
       const sel = resolveTheme(layout)
       applyTheme(sel.styleId, sel.brandColorId)
       const order = layout.order && layout.order.length ? layout.order : ['achievement', 'service']
+      // 顶部主色浓度：缺省 100（原色，存量零突变）；0 是合法值，故用 ?? 不用 ||。
+      // 端上再钳一次 0~100，防旧后端/脏数据下发越界值让 alpha > 1 或 < 0（CSS 会忽略）。
+      const rawStrength = layout.bgGradientStrength ?? 100
+      const strength = Math.max(0, Math.min(100, rawStrength))
       this.setData({
         employee: cardData.employee,
         company: cardData.company,
@@ -302,6 +312,11 @@ Page({
         bgImage: assetUrl(layout.bgImage || ''),
         bgMask: layout.bgMask || 0,
         bgMaskAlpha: (layout.bgMask || 0) / 100,
+        // 顶部主色浓度：?? 而非 ||，让 0（几乎不显主色）成为合法值而非被当缺省弹回 100。
+        // 服务端的 clampMask 已钳制 0~100，端上再兜一次防旧后端下发脏值。
+        bgGradientStrength: strength,
+        bgGradientAlpha: strength / 100,
+        bgGradientFadeAlpha: (strength / 100) * 0.9,
         disabled: false,
         notFound: false,
         loading: false,

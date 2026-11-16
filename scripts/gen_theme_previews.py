@@ -461,7 +461,9 @@ HTML = Template("""<!doctype html>
   .phone {
     width: ${w}px; height: ${h}px; position: relative; padding-bottom: ${tail_gap}px;
     background-color: #fff;
-    background-image: linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
+    /* 与端上同一公式，只是不注入 --top-alpha/--fade-alpha：走 fallback 1/0.9，即 100% 原色。
+       预览固定展示默认浓度；管理员滑杆调低只在真机生效，预览图不随滑杆变。 */
+    background-image: linear-gradient(180deg, rgba(var(--wc-primary-rgb), var(--top-alpha, 1)) 0, rgba(var(--wc-primary-rgb), var(--fade-alpha, 0.9)) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
 ${tokens}
   }
   /* 状态栏与微信胶囊只画占位：真机的系统图标 / 安全区不该被伪造进示意图 */

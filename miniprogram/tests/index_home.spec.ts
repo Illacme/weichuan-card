@@ -248,6 +248,38 @@ describe('index 首页', () => {
     expect(p.data.bgMaskAlpha).toBeCloseTo(0.6)
   })
 
+  // 顶部主色浓度：后台滑杆 0~100 → alpha 0~1，fade 恒为 top×0.9（渐变单调递减）
+  it('顶部主色浓度 75：top=0.75、fade=0.675，注入 wxml 渐变', async () => {
+    mockApis({ layout: { ...layout, bgGradientStrength: 75 } })
+    const p = await page({ staffId: '42' })
+
+    expect(p.data.bgGradientStrength).toBe(75)
+    expect(p.data.bgGradientAlpha).toBeCloseTo(0.75)
+    expect(p.data.bgGradientFadeAlpha).toBeCloseTo(0.675)
+  })
+
+  // 缺省 100（原色，存量零突变）与显式 0（几乎不显主色）都要正确——
+  // 0 是最容易被 || 误判成缺省弹回 100 的值。
+  it('顶部浓度缺省=100 原色；显式 0 不被当缺省吞掉', async () => {
+    mockApis()
+    const p1 = await page({ staffId: '42' })
+    expect(p1.data.bgGradientStrength).toBe(100)
+    expect(p1.data.bgGradientAlpha).toBeCloseTo(1)
+    expect(p1.data.bgGradientFadeAlpha).toBeCloseTo(0.9)
+
+    mockApis({ layout: { ...layout, bgGradientStrength: 0 } })
+    const p2 = await page({ staffId: '42' })
+    expect(p2.data.bgGradientStrength).toBe(0)
+    expect(p2.data.bgGradientAlpha).toBeCloseTo(0)
+  })
+
+  it('顶部浓度越界被钳制到 0~100（防旧后端脏值让 alpha>1）', async () => {
+    mockApis({ layout: { ...layout, bgGradientStrength: 999 } })
+    const p = await page({ staffId: '42' })
+    expect(p.data.bgGradientStrength).toBe(100)
+    expect(p.data.bgGradientAlpha).toBeCloseTo(1)
+  })
+
   // 业绩区在首页 → 箭头朝下（滚过去）；被布局隐藏 → 朝右（跳案例页）
   it('业绩区在首页时箭头朝下', async () => {
     mockApis()

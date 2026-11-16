@@ -10,7 +10,9 @@
 </block>
 
 <block wx:else>
-  <view class="page {{bgImage && bgFail !== bgImage ? 'has-bg' : ''}} wc-theme {{themeClass}}">
+  <!-- 顶部主色浓度由后台滑杆控制：topAlpha=浓度/100，fadeAlpha=topAlpha×0.9（单调递减）。
+       bgGradientAlpha 缺省 1（原色），兼容旧缓存/未下发字段的后端。 -->
+  <view class="page {{bgImage && bgFail !== bgImage ? 'has-bg' : ''}} wc-theme {{themeClass}}" style="--top-alpha: {{bgGradientAlpha}}; --fade-alpha: {{bgGradientFadeAlpha}};">
     <!-- 首页背景图（可选，后台「首页布局」设置）：全屏铺底 + 遮罩压暗，
          白色内容卡片浮于其上，形成高端名片的层次感。
          背景图挂了 binderror：它是纯装饰，图没了就整块收掉（连遮罩与 has-bg 一起），
@@ -37,8 +39,9 @@
         <!-- 企业简称居中展示（pointer-events:none 不挡「我的」点击）。
              企业信息未就绪时**留白**而不是写死某个企业名——一套代码多租户，
              写死客户名等于给别的客户看别人家的公司名 -->
-        <!-- 顶部是品牌原色深底时反白，滚动过 navHeight 后白遮罩浮现、切回深色（见 index.wxss） -->
-        <view class="nav-title {{navMask >= 0.5 ? 'scrolled' : ''}}">{{company.shortName || company.fullName || ''}}</view>
+        <!-- 顶部深底时反白：滚动过 navHeight（白遮罩浮现）或浓度调低（底变浅）时都要切回深色，
+             否则浅蓝底上的白字看不清（见 index.wxss） -->
+        <view class="nav-title {{navMask >= 0.5 || bgGradientStrength < 50 ? 'scrolled' : ''}}">{{company.shortName || company.fullName || ''}}</view>
       </view>
     </view>
     <view class="nav-spacer" style="height: {{navHeight}}px;" />

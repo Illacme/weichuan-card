@@ -156,6 +156,7 @@ export function sortServices(items: { id: number; sort: number }[]) {
 
 // ===== 首页布局（板块顺序 + 首页背景 + 详情页时间档位 + 整体风格模板） =====
 // bgImage 背景图 URL（空串=不设背景）；bgMask 遮罩浓度 0~100（压暗背景保证白卡片可读）
+// bgGradientStrength 顶部品牌主色浓度 0~100（100=原色，无背景图时生效）
 // 详情页「更新于」的展示档位。与后端 model.TimeMode* 三档一一对应。
 export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 
@@ -178,13 +179,15 @@ export interface HomeLayoutData {
   order: string[]
   bgImage: string
   bgMask: number
+  /** 首页顶部品牌主色浓度 0~100，100=原色（默认）；无背景图时生效 */
+  bgGradientStrength: number
   /** 项目案例详情页：不显示 / 只到日 / 到分 */
   projectTimeMode: DetailTimeMode
   /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */
   serviceTimeMode: DetailTimeMode
   /** 当前整体风格：决定首页各模块布局（白名单真值在后端 internal/mptemplate） */
   styleId: string
-  /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P5 起任意风格 × 任意色系都合法（36 组合） */
+  /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P5 起任意风格 × 任意色系都合法（44 组合） */
   brandColorId: string | null
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
@@ -199,6 +202,7 @@ export function getHomeLayout() {
           order: [],
           bgImage: '',
           bgMask: 0,
+          bgGradientStrength: 100,
           projectTimeMode: 'date',
           serviceTimeMode: 'date',
           styleId: 'default',

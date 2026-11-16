@@ -584,6 +584,12 @@ paths:
                     minimum: 0
                     maximum: 100
                     description: 背景遮罩浓度 0~100
+                  bgGradientStrength:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+                    default: 100
+                    description: 首页顶部品牌主色浓度 0~100（100=原色）；无背景图时注入渐变顶部 alpha，背景图存在时无效
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]
@@ -2788,6 +2794,12 @@ paths:
                         minimum: 0
                         maximum: 100
                         description: 背景遮罩浓度，0=不压暗
+                      bgGradientStrength:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        default: 100
+                        description: 首页顶部品牌主色浓度 0~100（100=原色），无背景图时生效
                       projectTimeMode:
                         type: string
                         enum: [hidden, date, minute]
@@ -2847,7 +2859,8 @@ paths:
         所有字段都是**可选**：未提供的字段保持原值（服务端用指针区分「未提供」与
         「显式传空」），三个页签各存各的——只提交主题字段不会冲掉板块顺序、
         背景与时间档位。`bgImage` 传空串表示清空背景；`order` 未提供时保持原值，
-        新建配置行则落缺省顺序。
+        新建配置行则落缺省顺序。`bgGradientStrength`（顶部主色浓度 0~100）与背景同属
+        「页面样式」页签，100=原色、缺省保持原值；无背景图时才生效。
         时间档位与主题 id 传枚举外的值一律拒绝（code=1），不做静默兜底。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
@@ -2876,6 +2889,11 @@ paths:
                   type: integer
                   minimum: 0
                   maximum: 100
+                bgGradientStrength:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                  description: 首页顶部品牌主色浓度，100=原色（默认）；指针语义，未提供时保持原值
                 projectTimeMode:
                   type: string
                   enum: [hidden, date, minute]

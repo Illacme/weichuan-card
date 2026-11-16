@@ -100,8 +100,11 @@
      顶部原色混白过渡仍需白底：background-color 显式 #fff，别落到 page 的 #f5f5f5
      把蓝调混灰。后台设了「首页背景」图时本渐变被 page-bg 整幅盖住，不冲突。
      渐变串在端上与预览脚本两处逐字同源（theme.spec.ts 对账）。 */
+  /* 顶部浓度由管理员滑杆控制：wxml 在 .page 内联 --top-alpha / --fade-alpha。
+     fallback（1 / 0.9）保证预览脚本、旧缓存、未注入时仍是原色（存量零突变）。
+     浓度 100% → alpha 1（原色 #0820d0）；0% → alpha 0（几乎不显主色）。 */
   background-color: #fff;
-  background-image: linear-gradient(180deg, var(--wc-primary) 0, rgba(var(--wc-primary-rgb), 0.9) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
+  background-image: linear-gradient(180deg, rgba(var(--wc-primary-rgb), var(--top-alpha, 1)) 0, rgba(var(--wc-primary-rgb), var(--fade-alpha, 0.9)) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
 }
 .page-bg { position: fixed; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; z-index: -1; }
 .page-bg-mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: #000; z-index: -1; }

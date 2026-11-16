@@ -268,6 +268,11 @@ type HomeLayout struct {
 	// BgMask 背景遮罩浓度 0~100：背景图上叠加的黑色蒙层不透明度，
 	// 用于压暗花哨的背景、突出白色内容卡片与文字（0=不压暗，默认）。
 	BgMask int `gorm:"column:bg_mask;default:0" json:"bgMask"`
+	// BgGradientStrength 首页顶部品牌主色浓度 0~100（默认 100=原色，零突变）。
+	// 控制无背景图时 .page 渐变顶部的品牌主色 alpha：管理员可在「名片页面样式」
+	// 页签滑杆自选，100 即 var(--wc-primary) 原色、0 则几乎不显主色。
+	// 与 bgMask 同属「页面样式」页签，和风格两轴分开写，互不冲掉。
+	BgGradientStrength int `gorm:"column:bg_gradient_strength;default:100" json:"bgGradientStrength"`
 	// ProjectTimeMode / ServiceTimeMode 项目案例与业务服务详情页的「更新于」档位。
 	// 刻意分成两列：案例带「交付年份」的语义、服务更像常青内容，两者该不该显示
 	// 时间往往不是一个答案，共用一个开关会逼客户二选一。

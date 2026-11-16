@@ -846,10 +846,16 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
 
+		// 顶部品牌主色浓度默认 100（原色）——存量租户升级后零突变。
+		// 这段在任何 PUT 之前读，确保缺省值由 admin GET 兜底而非依赖写过配置。
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 100, body["data"].(map[string]interface{})["bgGradientStrength"])
+
 		// 首页背景：写入 → 后台读回 → 公开接口下发
 		bgURL := "http://127.0.0.1:8080/uploads/library/bg-deepspace.jpg"
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgImage": bgURL, "bgMask": 40,
+			"bgGradientStrength": 75,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
@@ -857,29 +863,33 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		hl := body["data"].(map[string]interface{})
 		require.Equal(t, bgURL, hl["bgImage"])
 		require.EqualValues(t, 40, hl["bgMask"])
+		require.EqualValues(t, 75, hl["bgGradientStrength"])
 
-		// 公开接口根级下发（小程序按 order/bgImage/bgMask 读取）
+		// 公开接口根级下发（小程序按 order/bgImage/bgMask/bgGradientStrength 读取）
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.EqualValues(t, 0, body["code"])
 		require.Equal(t, bgURL, body["bgImage"])
 		require.EqualValues(t, 40, body["bgMask"])
+		require.EqualValues(t, 75, body["bgGradientStrength"])
 		require.EqualValues(t, []interface{}{"service", "achievement"}, body["order"])
 
-		// 只提交 order（不带 bgImage）时背景保持——指针语义区分「未提供」与「清空」
+		// 只提交 order（不带背景/浓度）时两者都保持——指针语义区分「未提供」与「清空」
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"achievement", "service"},
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, bgURL, body["data"].(map[string]interface{})["bgImage"], "未提供 bgImage 不应清空")
+		require.EqualValues(t, 75, body["data"].(map[string]interface{})["bgGradientStrength"], "未提供浓度不应被冲掉")
 
-		// 遮罩浓度钳制到 0~100
+		// 遮罩与浓度都钳制到 0~100
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
-			"order": []string{"achievement", "service"}, "bgMask": 999,
+			"order": []string{"achievement", "service"}, "bgMask": 999, "bgGradientStrength": -5,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 100, body["data"].(map[string]interface{})["bgMask"])
+		require.EqualValues(t, 0, body["data"].(map[string]interface{})["bgGradientStrength"])
 
 		// 显式传空串即清除背景（恢复灰底布局）
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{

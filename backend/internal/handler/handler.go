@@ -392,12 +392,15 @@ func New(db *gorm.DB) *gin.Engine {
 		order := []string{"achievement", "service"}
 		var bgImage string
 		var bgMask int
+		// 无配置行时浓度回默认 100（原色），与 admin GET / 模型 tag / 迁移一致。
+		bgGradient := 100
 		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
 		if l, err := repository.GetHomeLayout(db, cid); err == nil {
 			if l.Order != "" {
 				_ = json.Unmarshal([]byte(l.Order), &order)
 			}
 			bgImage, bgMask = l.BgImage, l.BgMask
+			bgGradient = clampMask(l.BgGradientStrength)
 			// 两轴：优先读 style_id / brand_color_id（0043 已删 template_id 兼容列）。
 			styleID, brandColorID = effectiveStyleBrand(l)
 			// 授权到期 / 未开通高级款时访客回落默认配色，但不抹库里的值。
@@ -408,7 +411,8 @@ func New(db *gorm.DB) *gin.Engine {
 		cdnCache(c, 60)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": model.ResolveResourceRef(bgImage, origin), "bgMask": bgMask,
-			"styleId": styleID, "brandColorId": brandColorID,
+			"bgGradientStrength": bgGradient,
+			"styleId":            styleID, "brandColorId": brandColorID,
 		})
 	})
 

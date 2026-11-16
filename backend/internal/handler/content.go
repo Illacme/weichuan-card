@@ -577,6 +577,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		order := []string{}
 		var bgImage string
 		var bgMask int
+		// 无配置行（新租户）时浓度回默认 100（原色），与模型 tag / 迁移默认值一致，
+		// 前端滑杆才不会落在 0（几乎不显主色）却无从解释。
+		bgGradient := 100
 		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
@@ -586,6 +589,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
 			}
 			bgImage, bgMask = hl.BgImage, hl.BgMask
+			bgGradient = clampMask(hl.BgGradientStrength)
 			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
@@ -600,7 +604,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		entitled := license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
-			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
+			"bgGradientStrength": bgGradient,
+			"projectTimeMode":    projectMode, "serviceTimeMode": serviceMode,
 			"styleId": styleID, "brandColorId": brandColorID,
 			"templates":        mptemplate.All(),
 			"templateEntitled": entitled,
@@ -617,6 +622,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 前端分块保存时可能只提交板块顺序，不能把背景顺手清掉。
 			BgImage *string `json:"bgImage"`
 			BgMask  *int    `json:"bgMask"`
+			// 顶部品牌主色浓度 0~100，与背景同属「页面样式」页签；指针语义同上。
+			BgGradientStrength *int `json:"bgGradientStrength"`
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
@@ -740,6 +747,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if req.BgMask != nil {
 				created.BgMask = clampMask(*req.BgMask)
 			}
+			created.BgGradientStrength = 100
+			if req.BgGradientStrength != nil {
+				created.BgGradientStrength = clampMask(*req.BgGradientStrength)
+			}
 			if projectMode != "" {
 				created.ProjectTimeMode = projectMode
 			}
@@ -760,6 +771,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if req.BgMask != nil {
 				upd["bg_mask"] = clampMask(*req.BgMask)
+			}
+			if req.BgGradientStrength != nil {
+				upd["bg_gradient_strength"] = clampMask(*req.BgGradientStrength)
 			}
 			if projectMode != "" {
 				upd["project_time_mode"] = projectMode
@@ -793,6 +807,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 }
 
 // clampMask 把遮罩浓度钳制到 0~100（前端滑块范围一致，服务端兜底防越界写入）。
+// 也用于首页顶部品牌主色浓度——两者都是 0~100 的滑杆，钳制规则相同。
 func clampMask(v int) int {
 	if v < 0 {
 		return 0

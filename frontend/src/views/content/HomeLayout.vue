@@ -32,6 +32,20 @@
         <div class="bg-hint">背景图较花时调高遮罩压暗，保证白色卡片与文字清晰可读。</div>
       </el-form-item>
 
+      <!-- 顶部主色浓度：无背景图时，首页顶部渐变用「整体风格/品牌配色」选中的主色
+           原色渲染（宝蓝 #0820d0 / 正红 #d40c0a）。这里滑杆调低可让顶部更柔和；
+           默认 100% 即原色。设了背景图时整幅渐变被背景盖住，此滑杆自然无效。 -->
+      <el-form-item label="顶部主色浓度">
+        <div class="mask-row">
+          <el-slider v-model="bgGradientStrength" :min="0" :max="100" :step="5" style="flex: 1" />
+          <span class="mask-val">{{ bgGradientStrength }}%</span>
+        </div>
+        <div class="bg-hint">
+          未设背景图时，首页顶部显示「品牌配色」的主色。100% 为原色（最还原设计稿），调低则更柔和；
+          顶栏文字会随浓度自动切换深浅以保证可读。
+        </div>
+      </el-form-item>
+
       <el-form-item v-if="bgImage" label="效果预览">
         <!-- 点击整块预览可放大查看原图（遮罩/卡片只是叠加效果层，原图可能较花看不清细节） -->
         <div class="bg-preview clickable" @click="bgViewer = true">
@@ -112,6 +126,9 @@ const bgImage = ref('')
 // 背景原图全屏查看器（点击效果预览块打开）
 const bgViewer = ref(false)
 const bgMask = ref(0)
+// 顶部品牌主色浓度 0~100（默认 100=原色）。用 ?? 而非 ||：用户滑到 0 时
+// 必须保留 0（几乎不显主色），|| 会把 0 误判成缺省、偷偷弹回 100。
+const bgGradientStrength = ref(100)
 // 详情页「更新于」档位：案例与服务各一个，互不影响
 const projectTimeMode = ref<DetailTimeMode>('date')
 const serviceTimeMode = ref<DetailTimeMode>('date')
@@ -143,6 +160,7 @@ async function load() {
     if (d && d.order && d.order.length) firstBlock.value = d.order[0]
     bgImage.value = d?.bgImage || ''
     bgMask.value = d?.bgMask || 0
+    bgGradientStrength.value = d?.bgGradientStrength ?? 100
     projectTimeMode.value = d?.projectTimeMode || 'date'
     serviceTimeMode.value = d?.serviceTimeMode || 'date'
   } catch {
@@ -156,12 +174,13 @@ async function save() {
   saving.value = true
   try {
     // 背景与板块顺序一起提交：bgImage 传空串即清空（后端区分「未提供」与「空串」）。
-    // 两个时间档位一起带上：不传后端会保持原值，但这里本就把两者都渲染出来了，
-    // 全量提交更符合「所见即所存」。
+    // 顶部浓度同属本页签一起提交；两个时间档位也全量带上（不传后端会保持原值，
+    // 但这里本就都渲染出来了，全量提交更符合「所见即所存」）。
     await saveHomeLayout({
       order: order.value,
       bgImage: bgImage.value,
       bgMask: bgMask.value,
+      bgGradientStrength: bgGradientStrength.value,
       projectTimeMode: projectTimeMode.value,
       serviceTimeMode: serviceTimeMode.value,
     })
