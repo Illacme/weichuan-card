@@ -736,9 +736,20 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
   it('WXML 按每页实际张数均分整行；static / 单页只渲染第一页', () => {
     const wxml = read('components/featured-projects/index.wxml')
     expect(wxml).toContain('wx:if="{{pageCount > 0}}"')
-    expect(wxml).toContain('wx:if="{{cycleOn || pageIdx === 0}}"')
-    expect(wxml).toContain('style="width:{{itemWidths[pageIdx][index]}}"')
+    expect(wxml).toContain('wx:for="{{visiblePages}}"')
+    expect(wxml).toContain('style="width:{{p.width}}"')
     expect(wxml).toContain('bindtap="onDot"')
+  })
+
+  // 真机曾出现「分类下方一大片空白、精选图全没了」：轮播页把 wx:if 和 wx:for
+  // 写在同一个标签，wx:if 阶段取不到 wx:for-index，条件恒假导致整页被跳过，
+  // 只剩 visibility:hidden 的占位撑出高度。这条守门绝不允许该写法回归。
+  it('WXML 不把 wx:if 与 wx:for 写在同一个标签上', () => {
+    const wxml = read('components/featured-projects/index.wxml')
+    const both = (wxml.match(/<[^>]+>/g) || []).filter(
+      (tag) => /wx:for=/.test(tag) && /wx:if=/.test(tag)
+    )
+    expect(both).toEqual([])
   })
 
   it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
@@ -775,36 +786,42 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     inst.sync()
     expect(inst.data.pageSize).toBe(2)
     expect(inst.data.pageCount).toBe(2)
-    expect(inst.data.pages[0].map((x: any) => x.id)).toEqual([1, 2])
-    expect(inst.data.itemWidths[0]).toEqual(['50%', '50%'])
+    expect(inst.data.visiblePages.length).toBe(2)
+    expect(inst.data.visiblePages[0].items.map((x: any) => x.id)).toEqual([1, 2])
+    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['50%', '50%'])
+    expect(inst.data.visiblePages[0].items.map((x: any) => x.globalIdx)).toEqual([0, 1])
     expect(inst.data.cycleOn).toBe(true)
 
     // 末页不足按实际数量，仍铺满整行
     inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }] })
     inst.sync()
-    expect(inst.data.itemWidths[1]).toEqual(['100%'])
+    expect(inst.data.visiblePages[1].items.map((x: any) => x.width)).toEqual(['100%'])
+    expect(inst.data.visiblePages[1].items[0].globalIdx).toBe(2)
 
     // 1 张铺满、3 张各三分之一
     inst.setData({ featuredCount: 1 })
     inst.sync()
-    expect(inst.data.itemWidths[0]).toEqual(['100%'])
+    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['100%'])
     expect(inst.data.pageCount).toBe(3)
     inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }], featuredCount: 3 })
     inst.sync()
-    expect(inst.data.itemWidths[0][0]).toMatch(/^33\.33/)
+    expect(inst.data.sizerItems[0].width).toMatch(/^33\.33/)
     expect(inst.data.pageCount).toBe(1)
 
-    // 0 = 整块不渲染
+    // 0 = 整块不渲染（连占位一起清掉，不能留下空白）
     inst.setData({ featuredCount: 0 })
     inst.sync()
     expect(inst.data.pageCount).toBe(0)
-    expect(inst.data.pages).toEqual([])
+    expect(inst.data.visiblePages).toEqual([])
+    expect(inst.data.sizerItems).toEqual([])
 
     // static 多页只显示第一页，不做动画
     inst.setData({ featured: [1, 2, 3, 4].map((id) => ({ id })), featuredCount: 2, effect: 'static' })
     inst.sync()
     expect(inst.data.pageCount).toBe(2)
     expect(inst.data.cycleOn).toBe(false)
+    expect(inst.data.visiblePages.length).toBe(1)
+    expect(inst.data.visiblePages[0].items.map((x: any) => x.id)).toEqual([1, 2])
 
     // 页动画：横移走环形最短距离，末页回首页从右侧滑入；翻转只显当前页
     inst.setData({ effect: 'scroll' })

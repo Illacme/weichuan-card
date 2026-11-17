@@ -4,7 +4,11 @@ import { onThumbError } from '../../utils/thumb'
 //   0 → 整块不渲染；1 → 一张铺满整行；2 → 两张各半；3 → 三张各三分之一。
 // 精选多于每页张数时按页分组，多页才按 effect 做淡入 / 横移 / 翻转循环；
 // 只有一页（含精选不足）时静态平铺，不做任何动画。
-// 小程序不能动态加载 WXSS，效果全部随包内置，由后台下发的白名单 id 选择。
+//
+// WXML 只做纯渲染：要显示哪几页、每张图的宽度、图片在原始列表里的下标，
+// 全部在 JS 里算好塞进 visiblePages / sizerItems。
+// **不要把 wx:if 和 wx:for 写在同一个标签上**——小程序 wx:if 阶段拿不到
+// wx:for-index 的变量，条件恒假会让整页被跳过，只剩隐藏占位撑出一块空白。
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -14,13 +18,13 @@ Component({
     staffId: Number, // 从首页透传，子页分享/返回名片用（跳转页文档 §5）
   },
   data: {
-    pageSize: 3, // 钳制后的每页张数，WXML 用它算图片在原始列表里的索引
-    pages: [] as any[][],
+    pageSize: 3, // 钳制后的每页张数
     pageCount: 0,
     current: 0,
     cycleOn: false,
-    pageStyles: [] as string[],
-    itemWidths: [] as string[][],
+    sizerItems: [] as any[], // 第一页的副本，仅用于撑高度（visibility:hidden）
+    visiblePages: [] as any[], // [{ k: 原页码, items: [{...图, width, globalIdx}] }]
+    pageStyles: [] as string[], // 按原页码索引的整页动画样式
   },
   observers: {
     'featured, featuredCount, effect': function () {
@@ -50,8 +54,8 @@ Component({
       const pageSize = Math.max(0, Math.min(3, isNaN(raw) ? 3 : raw))
       if (pageSize === 0 || list.length === 0) {
         this.setData({
-          pageSize, pages: [], pageCount: 0, current: 0, cycleOn: false,
-          pageStyles: [], itemWidths: [],
+          pageSize, pageCount: 0, current: 0, cycleOn: false,
+          sizerItems: [], visiblePages: [], pageStyles: [],
         })
         return
       }
@@ -59,18 +63,31 @@ Component({
       for (let i = 0; i < list.length; i += pageSize) pages.push(list.slice(i, i + pageSize))
       const cycleOn = pages.length > 1 && this.data.effect !== 'static'
       const current = cycleOn && this.data.current >= pages.length ? 0 : this.data.current
-      // 每张图按「该页实际数量」均分整行：最后一页不足时也会铺满（1 张=100%）
-      const itemWidths = pages.map((page) => page.map(() => `${100 / page.length}%`))
-      this.setData({ pageSize, pages, pageCount: pages.length, current, cycleOn, itemWidths })
+      // 每张图带好自己的宽度与在原始列表里的下标（onImgErr 回退原图要用）：
+      // 最后一页不足时按该页实际数量均分，1 张也铺满整行。
+      const decorated = pages.map((page, pi) =>
+        page.map((p, i) => ({
+          ...p,
+          width: `${100 / page.length}%`,
+          globalIdx: pi * pageSize + i,
+        }))
+      )
+      const visiblePages = cycleOn
+        ? decorated.map((items, k) => ({ k, items }))
+        : [{ k: 0, items: decorated[0] }]
+      this.setData({
+        pageSize, pageCount: pages.length, current, cycleOn,
+        sizerItems: decorated[0], visiblePages,
+      })
       this.applyStyles()
       if (cycleOn) this.startTimer()
     },
-    // 页容器的内联 transform/opacity 由这里算好，WXML 只负责绑。
+    // 页容器的内联 transform/opacity 由这里按原页码算好，WXML 只负责绑。
     // 横移用「环形最短距离」：末页回首页保持同向从右侧滑入，不横穿整排。
     applyStyles() {
       const { pageCount, current, effect, cycleOn } = this.data as any
       if (!cycleOn) {
-        this.setData({ pageStyles: Array.from({ length: this.data.pageCount }, () => '') })
+        this.setData({ pageStyles: Array.from({ length: pageCount }, () => '') })
         return
       }
       const half = pageCount / 2
@@ -87,7 +104,6 @@ Component({
         if (effect === 'scroll') {
           return `transform:translateX(${diff * 100}%);opacity:${Math.abs(diff) <= 1 ? 1 : 0};z-index:${active ? 3 : 2};pointer-events:${active ? 'auto' : 'none'};`
         }
-        // static 或未知效果兜底：不做动画
         return active ? layers : `opacity:0;${layers}`
       })
       this.setData({ pageStyles: styles })
