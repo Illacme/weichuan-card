@@ -1671,6 +1671,57 @@ func TestCompanyProfileVideoAutoplay(t *testing.T) {
 	require.EqualValues(t, false, cardProfile()["videoAutoplay"])
 }
 
+// TestCompanyProfileIntroFontScale 钉死「简介文字三档字号」全链路。
+//
+// 覆盖四段（漏任何一段客户都会看到「后台选了、小程序没变」）：
+//
+//	① PUT 保存后立即回包新档（GORM map 更新不写回结构体，曾回旧值）；
+//	② 后台 GET 读回一致；③ `/api/card` 的 profile 带该字段——这是小程序唯一读取口径；
+//	④ 缺字段 / 非法值归一成 large（现状 28rpx），升级零突变且脏值不落到端上。
+func TestCompanyProfileIntroFontScale(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// /api/card 需要真实员工才给 profile
+	_, body := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "李四", "phone": "13700000041", "email": "l@a.com", "title": "经理",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	staffID := int64(body["staffId"].(float64))
+
+	put := func(scale string) map[string]interface{} {
+		_, b := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+			"introText": "简介", "introFontScale": scale, "videoSource": "none",
+		}, adminToken)
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["data"].(map[string]interface{})
+	}
+	cardScale := func() interface{} {
+		_, b := c.do("GET", fmt.Sprintf("/api/card?staffId=%d", staffID), nil, "")
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["profile"].(map[string]interface{})["introFontScale"]
+	}
+
+	// 三档逐一往返：保存回包、后台读回、公开出参三处都必须是刚设的值
+	for _, scale := range []string{"large", "medium", "small"} {
+		require.EqualValues(t, scale, put(scale)["introFontScale"], "保存回包 %s", scale)
+		_, gb := c.do("GET", "/api/admin/company-profile", nil, adminToken)
+		require.EqualValues(t, scale, gb["data"].(map[string]interface{})["introFontScale"], "后台读回 %s", scale)
+		require.EqualValues(t, scale, cardScale(), "/api/card 必须带 %s，否则小程序字号不生效", scale)
+	}
+
+	// 老前端不带该字段 / 直接塞脏值：都归一成 large，绝不把非法值下发到端上
+	_, b := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"introText": "简介", "videoSource": "none",
+	}, adminToken)
+	require.EqualValues(t, 0, b["code"])
+	require.EqualValues(t, "large", b["data"].(map[string]interface{})["introFontScale"])
+	require.EqualValues(t, "large", cardScale())
+	require.EqualValues(t, "large", put("huge")["introFontScale"], "非法档位归一成 large")
+	require.EqualValues(t, "large", cardScale())
+}
+
 // TestAPIFlowMySQL 生产契约 parity：连真实 MySQL、应用 migrations/*.sql，再跑同一套断言。
 // 本地无 TEST_MYSQL_DSN 时跳过；CI 中用 MySQL service 容器提供 DSN。
 func TestAPIFlowMySQL(t *testing.T) {

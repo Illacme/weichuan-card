@@ -81,7 +81,10 @@
           <view class="company-name">{{company.fullName}}</view>
           <!-- 企业名下分隔线：左蓝右灰分段线，与名片卡横线（ec-rows-line）同款 -->
           <view class="line-split company-name-line"></view>
-          <text class="intro">{{profile.introText}}</text>
+          <!-- 简介字号三档：后端 /api/card 保证 introFontScale 是 large/medium/small，
+               端上仍用 || 'large' 兜底（老缓存 / 老后端缺字段时按现状 28rpx 渲染）。
+               只加修饰 class，不覆盖 .intro 本身——风格层的 line-height 覆盖照旧生效。 -->
+          <text class="intro intro-size-{{profile.introFontScale || 'large'}}">{{profile.introText}}</text>
         </view>
       </view>
       <block wx:for="{{homeOrder}}" wx:key="*this">

@@ -5421,6 +5421,14 @@ components:
         introText:
           type: string
           description: 富文本
+        introFontScale:
+          type: string
+          enum: [large, medium, small]
+          default: large
+          description: >-
+            简介文字字号档位，仅作用于小程序首页「简介文字」一段（不改公司名/联系表）。
+            large=28rpx（历史观感，缺省）、medium=26rpx、small=24rpx。历史行空串按 large 处理，
+            升级零视觉突变；`/api/card` 的 profile 里同名字段是小程序唯一读取口径。
         videoSource:
           type: string
           enum: [none, channels, upload, url, tencent]
@@ -5480,6 +5488,10 @@ components:
       properties:
         introText:
           type: string
+        introFontScale:
+          type: string
+          enum: [large, medium, small]
+          description: 简介文字字号；不传或非法值按 large（28rpx，历史观感）处理
         videoSource:
           type: string
           enum: [none, channels, upload, url, tencent]

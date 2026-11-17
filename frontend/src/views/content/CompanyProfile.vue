@@ -10,6 +10,19 @@
         <el-input v-model="form.introText" type="textarea" :rows="5" placeholder="首页简介区文字" />
       </el-form-item>
 
+      <!-- 简介字号：只影响小程序首页「简介文字」这一段，不动公司名 / 联系表。
+           三档 = 大(28rpx，现状) / 中(26rpx) / 小(24rpx)。默认「大」让升级存量零视觉突变。 -->
+      <el-form-item label="简介字号">
+        <el-radio-group v-model="form.introFontScale">
+          <el-radio value="large">大（28rpx，当前）</el-radio>
+          <el-radio value="medium">中（26rpx）</el-radio>
+          <el-radio value="small">小（24rpx）</el-radio>
+        </el-radio-group>
+        <div class="hint">
+          只影响小程序首页的<b>简介文字</b>，不改公司名与其它文字。想让长简介更紧凑就选小一档；默认「大」与升级前一致。
+        </div>
+      </el-form-item>
+
       <el-form-item label="视频来源">
         <el-select v-model="sourceUi" style="width: 280px">
           <el-option label="不展示视频（显示封面）" value="none" />
@@ -258,6 +271,8 @@ const saving = ref(false)
 const form = reactive({
   id: 1,
   introText: '',
+  // 简介字号：默认 large 保持存量零视觉突变；后端历史行空串也会归一成 large
+  introFontScale: 'large',
   videoSource: 'none',
   videoChannelId: '',
   videoFeedId: '',
@@ -430,6 +445,8 @@ async function load() {
     Object.assign(
       form,
       {
+        // 后加的字号列：历史行没这一项，必须给默认值，否则 radio 落到未选中态
+        introFontScale: 'large',
         videoSource: 'none',
         videoChannelId: '',
         videoFeedId: '',
@@ -528,6 +545,7 @@ async function save() {
   try {
     await saveCompanyProfile({
       introText: form.introText,
+      introFontScale: form.introFontScale,
       videoSource: form.videoSource,
       videoChannelId: form.videoChannelId,
       videoFeedId: form.videoFeedId,

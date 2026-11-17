@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getCompanyProfile: vi.fn(async (): Promise<any> => ({
     id: 1,
     introText: '朗汇机电成立于 2003 年',
+    introFontScale: 'large',
     videoSource: 'none',
     videoChannelId: '',
     videoFeedId: '',
@@ -239,6 +240,7 @@ function profile(videoSource: string, videoUrl: string) {
   return {
     id: 1,
     introText: '简介',
+    introFontScale: 'large',
     videoSource,
     videoChannelId: '',
     videoFeedId: '',
@@ -279,6 +281,49 @@ describe('content/CompanyProfile', () => {
     const w = await mountPage({ ...(await mocks.getCompanyProfile()), videoSource: '' })
 
     expect((w.find('.el-select').element as HTMLSelectElement).value).toBe('none')
+  })
+
+  // ---- 简介字号三档（大/中/小）----
+  // 钉三件事：缺省 large（存量零视觉突变）、后端值能回显、选中档随保存提交。
+  // 用 radio 的 data-value 定位，别用第几个 .el-radio——视频档里也有一组 radio。
+  function fontScaleRadio(w: any, value: string) {
+    const r = w.find(`.el-radio[data-value="${value}"]`)
+    if (!r.exists()) throw new Error(`找不到简介字号档位 ${value}`)
+    return r
+  }
+
+  it('简介字号缺省为「大」，三档都可选', async () => {
+    const w = await mountPage()
+    for (const v of ['large', 'medium', 'small']) {
+      expect(fontScaleRadio(w, v).exists()).toBe(true)
+    }
+    // 缺省值必须写进保存 payload——漏了就是「后台选了、小程序没变」
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('large')
+  })
+
+  it('简介字号能回显后端的档位', async () => {
+    const w = await mountPage({ ...(await mocks.getCompanyProfile()), introFontScale: 'small' })
+    // radio 组把 modelValue 透到 DOM 的 checked 上；这里直接读 setupState 更稳
+    expect((w.vm as any).form.introFontScale).toBe('small')
+  })
+
+  it('简介字号选中「中」随保存提交', async () => {
+    const w = await mountPage()
+    await fontScaleRadio(w, 'medium').trigger('click')
+    await flush()
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('medium')
+  })
+
+  // 历史行该字段缺失（老后端 / 直接造数据）时也必须落 large，不能落到未选中态
+  it('简介字号字段缺失时归一到「大」', async () => {
+    const p: any = await mocks.getCompanyProfile()
+    delete p.introFontScale
+    const w = await mountPage(p)
+    expect((w.vm as any).form.introFontScale).toBe('large')
   })
 
   it('视频号档：展开 channelId / feedId / feed-token 三项', async () => {
@@ -626,7 +671,7 @@ describe('content/CompanyProfile', () => {
 
   // ---- 保存 payload ----
 
-  it('保存提交十一个字段，不带 id', async () => {
+  it('保存提交十二个字段，不带 id', async () => {
     const w = await mountPage()
 
     await saveButton(w).trigger('click')
@@ -635,6 +680,7 @@ describe('content/CompanyProfile', () => {
     const payload = mocks.saveCompanyProfile.mock.calls[0][0]
     expect(Object.keys(payload).sort()).toEqual([
       'cover',
+      'introFontScale',
       'introText',
       'videoAutoplay',
       'videoBackupUrl',

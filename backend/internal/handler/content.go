@@ -144,6 +144,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if cp.VideoSource == "" {
 			cp.VideoSource = model.VideoSourceNone
 		}
+		// 字号列后加，历史行空串归一成 large（= 现状 28rpx），后台下拉框才不会落到未选中态
+		cp.IntroFontScale = model.NormalizeIntroFontScale(cp.IntroFontScale)
 		// cover / videoUrl / videoBackupUrl 三处都可能来自上传，后台预览要用可访问 URL
 		cp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
@@ -152,6 +154,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		cid := targetCompanyID(c)
 		var req struct {
 			IntroText        string `json:"introText"`
+			IntroFontScale   string `json:"introFontScale"`
 			VideoSource      string `json:"videoSource"`
 			VideoChannelID   string `json:"videoChannelId"`
 			VideoFeedID      string `json:"videoFeedId"`
@@ -192,6 +195,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			*f.ptr = v
 		}
+		// 字号是纯展示偏好：非法/空值归一成 large，不因此拒掉整段简介保存。
+		// 归一在写入前做一次，出参直接回归一后的值，避免「存进去的是脏值、读出来是兜底值」。
+		req.IntroFontScale = model.NormalizeIntroFontScale(req.IntroFontScale)
 		if !model.IsValidVideoSource(req.VideoSource) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "视频来源取值非法"})
 			return
@@ -223,6 +229,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		exists := db.First(&cp, "company_id = ?", cid).Error == nil
 		cp.CompanyID = cid
 		cp.IntroText = req.IntroText
+		cp.IntroFontScale = req.IntroFontScale
 		cp.VideoSource = req.VideoSource
 		cp.VideoChannelID = req.VideoChannelID
 		cp.VideoFeedID = req.VideoFeedID
@@ -236,6 +243,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 		fields := map[string]interface{}{
 			"intro_text":         req.IntroText,
+			"intro_font_scale":   req.IntroFontScale,
 			"video_source":       req.VideoSource,
 			"video_channel_id":   req.VideoChannelID,
 			"video_feed_id":      req.VideoFeedID,

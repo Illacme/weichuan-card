@@ -125,9 +125,13 @@ func NormalizeMpEntryMode(mode string) string {
 // videoBackupUrl 只服务 upload / url 两档：主 MP4 加载失败时切换的备用地址。
 // 两者不能共用一列——否则后台填的备用地址会在保存主视频源时被覆盖。
 type CompanyProfile struct {
-	ID             int64  `gorm:"primaryKey;column:id" json:"id"`
-	CompanyID      int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
-	IntroText      string `gorm:"column:intro_text;type:text" json:"introText"`
+	ID        int64  `gorm:"primaryKey;column:id" json:"id"`
+	CompanyID int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
+	IntroText string `gorm:"column:intro_text;type:text" json:"introText"`
+	// IntroFontScale 简介文字字号档位（见下方 IntroFont* 常量）。空串等同 large：
+	// 该列后加，历史行的简介一直按 page 的 28rpx 渲染（客户说的「当前最大值」），
+	// 归一成 large 让升级前后零视觉突变，也免得每个消费端各写一遍兜底。
+	IntroFontScale string `gorm:"column:intro_font_scale;size:16;default:large" json:"introFontScale"`
 	VideoSource    string `gorm:"column:video_source" json:"videoSource"`
 	VideoChannelID string `gorm:"column:video_channel_id" json:"videoChannelId"`
 	VideoFeedID    string `gorm:"column:video_feed_id" json:"videoFeedId"`
@@ -164,6 +168,32 @@ const (
 	VideoSourceURL      = "url"      // 外部 MP4 直链
 	VideoSourceTencent  = "tencent"  // 腾讯视频插件（需 MP_TENCENT_VIDEO=1 才可选）
 )
+
+// 简介文字字号档位（company_profiles.intro_font_scale）。
+// 三档只专门给「简介文字」用，不影响 page 的其它文字；默认 large = 原 28rpx。
+// 新增 / 改档必须同步：后台 CompanyProfile.vue、小程序 app.wxss 的 .intro-size-* 与
+// index.wxml 的 class 绑定、openapi.yaml 两处 schema。
+const (
+	IntroFontLarge  = "large"  // 28rpx，历史观感（缺省）
+	IntroFontMedium = "medium" // 26rpx
+	IntroFontSmall  = "small"  // 24rpx
+)
+
+// DefaultIntroFontScale 缺省档位。选 large 是因为存量全部按 28rpx 渲染，
+// 升级时改小等于把客户已经认可的字号偷偷改掉（见 0047 迁移注释）。
+const DefaultIntroFontScale = IntroFontLarge
+
+// NormalizeIntroFontScale 把外部传入的档位归一；空串与非法值都落回缺省档。
+// 非法值不报错而是归一，是因为这是**纯展示偏好**：直接调接口塞了个脏值，
+// 最坏也只是字大一点，不该让整段简介保存失败（后端契约对展示字段一律宽松）。
+func NormalizeIntroFontScale(v string) string {
+	switch v {
+	case IntroFontLarge, IntroFontMedium, IntroFontSmall:
+		return v
+	default:
+		return DefaultIntroFontScale
+	}
+}
 
 // IsValidVideoSource 校验 video_source 取值。空串按 none 处理：
 // 该列是后加的，历史行没有值，不能因为缺省就把保存整个拒掉。

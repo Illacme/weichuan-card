@@ -73,6 +73,8 @@ export interface CompanyProfile {
   id: number
   companyId: number
   introText: string
+  /** 简介文字字号：large(28rpx,缺省) / medium(26rpx) / small(24rpx) */
+  introFontScale: string
   videoSource: string
   videoChannelId: string
   /** feedId（同主体，可自动播放）与 feedToken（跨主体，强制不能自动播放）二选一 */

@@ -119,6 +119,8 @@ func New(db *gorm.DB) *gin.Engine {
 		if cp.VideoSource == "" {
 			cp.VideoSource = model.VideoSourceNone
 		}
+		// 字号列同为后加；空串/脏值归一成 large（现状 28rpx），端上 class 绑定才不会落空
+		cp.IntroFontScale = model.NormalizeIntroFontScale(cp.IntroFontScale)
 		// 公开只读，且**只按 staffId 决定内容**（没有登录态、没有访客相关字段），
 		// 所以可以交给边缘短缓存：访客打开名片要 4 个接口并发，每次回源都要付一次
 		// 跨境往返；缓存 60 秒能把「同一个员工的名片被反复打开」这部分回源全挡掉。

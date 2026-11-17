@@ -24,6 +24,8 @@ export function getCompanyProfile() {
 }
 export function saveCompanyProfile(p: {
   introText: string
+  /** 简介文字字号：large(28rpx,当前) / medium(26rpx) / small(24rpx)；缺省按 large */
+  introFontScale: string
   videoSource: string
   videoChannelId: string
   videoFeedId: string
