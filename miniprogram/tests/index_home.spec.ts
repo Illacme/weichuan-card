@@ -836,4 +836,40 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(inst.data.pageStyles[1]).toContain('rotateY(0deg)')
     inst.stopTimer() // 测试里不留定时器
   })
+
+  // 真机「设置怎么改都没图、只剩一块空白」的真实根因（2026-11-18）：种子/存量素材
+  // 没有 _thumb 兄弟图，缩略图必 404；通用 onThumbError 回退改的是外层 featured，
+  // 而组件真正渲染的是重排后的 visiblePages，回退打空 → image 一直裂着。
+  it('缩略图 404 回退改到正在渲染的 visiblePages 项，不让精选变空白', async () => {
+    vi.resetModules()
+    let opts: any = null
+    vi.stubGlobal('Component', (o: any) => { opts = o })
+    await import('../components/featured-projects/index')
+
+    const seed = [
+      { id: 101, cover: 'http://h/uploads/cover-daxing.jpg', coverThumb: 'http://h/uploads/cover-daxing_thumb.jpg' },
+      { id: 102, cover: 'http://h/uploads/cover-hospital.jpg', coverThumb: 'http://h/uploads/cover-hospital_thumb.jpg' },
+    ]
+    const inst: any = {
+      data: { ...JSON.parse(JSON.stringify(opts.data)), featured: seed, featuredCount: 2, effect: 'fade' },
+      setData(patch: any) { Object.assign(this.data, patch) },
+    }
+    for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
+
+    inst.sync()
+    expect(inst.data.visiblePages[0].items[0].coverThumb).toContain('_thumb')
+    inst.onImgErr({ currentTarget: { dataset: {
+      idx: 0, full: 'http://h/uploads/cover-daxing.jpg',
+    } } })
+    // 屏幕上那张图必须回退到原图；不能再让裂图只剩占位空白
+    expect(inst.data.visiblePages[0].items[0].coverThumb).toBe('http://h/uploads/cover-daxing.jpg')
+    // 另一张不受影响
+    expect(inst.data.visiblePages[0].items[1].coverThumb).toContain('_thumb')
+    // 源数据 featured 也回退：再次 sync（切后台回来）不会用旧 _thumb 重建、让图再裂一次
+    expect(inst.data.featured[0].coverThumb).toBe('http://h/uploads/cover-daxing.jpg')
+    inst.sync()
+    expect(inst.data.visiblePages[0].items[0].coverThumb).toBe('http://h/uploads/cover-daxing.jpg')
+    // 已回退过的不再重复 setData（靠 coverThumb !== full 判断，无死循环）
+    inst.stopTimer()
+  })
 })

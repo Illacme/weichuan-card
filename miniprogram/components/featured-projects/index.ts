@@ -1,5 +1,3 @@
-import { onThumbError } from '../../utils/thumb'
-
 // 精选案例：featuredCount 决定「每页并排几张」，不是「总共显示几张」。
 //   0 → 整块不渲染；1 → 一张铺满整行；2 → 两张各半；3 → 三张各三分之一。
 // 精选多于每页张数时按页分组，多页才按 effect 做淡入 / 横移 / 翻转循环；
@@ -9,6 +7,43 @@ import { onThumbError } from '../../utils/thumb'
 // 全部在 JS 里算好塞进 visiblePages / sizerItems。
 // **不要把 wx:if 和 wx:for 写在同一个标签上**——小程序 wx:if 阶段拿不到
 // wx:for-index 的变量，条件恒假会让整页被跳过，只剩隐藏占位撑出一块空白。
+// 精选案例专用回退：通用 onThumbError 按 data-arr 改的是外层同名数组，但本组件
+// 真正渲染的是重排后的 visiblePages[].items[]，两者不是一份数据——种子/存量素材
+// 没有 _thumb 兄弟图时缩略图必 404，回退打空就会让整块只剩占位撑出的空白
+// （2026-11-18 真机实测：设置怎么改都没图，就是这个原因）。这里按 globalIdx
+// 遍历 visiblePages 找到渲染项，直接改它，保证回退真的落到屏幕上那张 image。
+function onFeaturedImgErr(this: any, e: any): void {
+  const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+  const idx: number = ds.idx
+  const full: string = ds.full
+  if (idx == null || !full) return
+  const pages = Array.isArray(this.data && this.data.visiblePages) ? this.data.visiblePages : []
+  let touched = false
+  // 整块重建再 setData，不用路径写法：路径语法在小程序脚手架/部分基础库上行为不一，
+  // 而且整写让「改的就是屏幕上那份数据」这件事一目了然。
+  const nextPages = pages.map((pg: any) => ({
+    ...pg,
+    items: (Array.isArray(pg.items) ? pg.items : []).map((it: any) => {
+      if (it.globalIdx === idx && it.coverThumb !== full) {
+        touched = true
+        return { ...it, coverThumb: full }
+      }
+      return it
+    }),
+  }))
+  if (!touched) return
+  // 同步改回源数据 featured：否则 show / observer 再次 sync 时会用旧的 _thumb URL
+  // 重建 visiblePages，回退就丢了，图会再裂一次、闪一下。改源数据让回退持久。
+  const patch: Record<string, unknown> = { visiblePages: nextPages }
+  const featured = Array.isArray(this.data && this.data.featured) ? this.data.featured : []
+  if (featured[idx] && featured[idx].coverThumb !== full) {
+    patch.featured = featured.map((it: any, i: number) =>
+      i === idx ? { ...it, coverThumb: full } : it
+    )
+  }
+  this.setData(patch)
+}
+
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -46,7 +81,7 @@ Component({
     },
   },
   methods: {
-    onImgErr: onThumbError,
+    onImgErr: onFeaturedImgErr,
     sync() {
       this.stopTimer()
       const list = this.data.featured || []
