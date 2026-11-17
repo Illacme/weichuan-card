@@ -810,6 +810,11 @@ Wave2 必须等 Wave1 回来才知道图片地址，于是用户的实际等待 
 ## 运行
 1. 微信开发者工具 → 导入项目 → 选择 `miniprogram/` 目录（appid 可用测试号）。
 2. **基址按运行环境自动切换**（见 `utils/config.ts` 的 `resolveBaseUrl()`）：微信开发者工具（`envVersion='develop'`）自动用 `DEV_BASE_URL`（默认 `http://127.0.0.1:8080`，需在开发者工具勾选「不校验合法域名」，`project.config.json` 已设 `urlCheck:false`）；体验版 / 正式版（`trial`/`release`）用 `DEFAULT_BASE_URL`（生产域名 `https://weichuan.ziyuanxingqiu.cn`）。**无需再手动改代码**；临时想让 develop 连别的地址，可在开发者工具 Console 执行 `wx.setStorageSync('mpBaseUrlOverride', 'https://xxx')`（删除该键或写空串即恢复自动）。生产基址也可由 PC 后台「系统设置 → 小程序 → `miniprogram_base_url`」下发覆盖（目标域名仍需是已配置的 request 合法域名）。
+   - **⚠️ develop 默认走 HTTP 会导致所有图片不显示**（2026-11-18 实测，基础库 3.17.4）：微信已禁止 `<image>` 加载 `http://` 链接，控制台报 `图片链接 <URL> 不再支持 HTTP 协议，请升级到 HTTPS`。此时 `assetUrl` 把 `/uploads/xxx` 拼成 `http://127.0.0.1:8080/uploads/xxx`，精选封面 / 分类图标 / 服务图标一律裂图（**只留占位撑出的空白，看起来像"设置没生效"**）。要把开发者工具切到生产 HTTPS 验证真实配置与图片，在 Console 执行一次：
+     ```js
+     wx.setStorageSync('mpBaseUrlOverride', 'https://weichuan.ziyuanxingqiu.cn')
+     ```
+     然后重新编译。这样既加载 HTTPS 图片，又能读到你在生产后台改的配置（`develop` 默认读的是本地 devserver 自己的种子库，看不到生产后台的改动——这也是"后台改了没变化"的常见原因）。调试完本地后端时执行 `wx.removeStorageSync('mpBaseUrlOverride')` 恢复。
 3. 生产需在小程序后台配置 request 合法域名（https）。
 
 ## 本地联调（推荐：免 MySQL 的 devserver）
