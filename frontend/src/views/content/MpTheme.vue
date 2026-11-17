@@ -69,23 +69,32 @@
                 decoding="async"
                 @error="onPreviewError(currentId)"
               />
-              <!-- 顶部主色浓度遮罩：静态 PNG 是 100% 原色出图，这里叠一层白色把背景顶部
-                   混淡到当前浓度，拖动滑杆即时生效。**只盖到名片卡片顶部**——卡片是不透明
-                   白容器，真机上浓度只改变卡片背后/周围的背景，卡片与文字完全不受影响；
-                   铺满整图会把卡片内文字一起冲淡。用 SVG 而不是纯色 div：公司名是烘焙在
-                   PNG 里的白字，浓度低时会被冲淡，这里按真机同一阈值（<50 切深色）重绘，
-                   并用主色混白的不透明块盖住原白字。viewBox 375×74 对齐状态栏 26 + 导航 42
-                   + 卡片 margin 6，随长图一起滚动。设了首页背景图时真机顶部被整幅盖住，
-                   此遮罩仍会盖在预览图顶部，属示意偏差，以真机为准。 -->
+              <!-- 顶部主色浓度遮罩：静态 PNG 是 100% 原色出图，这里叠一层白色把
+                   背景混淡到当前浓度，拖动滑杆即时生效。遮罩不是简单的顶部矩形：
+                   真机上浓度影响的是「0~12% 的整段背景」，而卡片是不透明白容器浮在
+                   背景上——只盖到卡片顶会让顶栏变淡、卡片外侧仍是深蓝，出现硬分界
+                   （2026-11-17 用户实测反馈）。现在按 scripts/gen_theme_previews.py
+                   生成的背景遮罩图逐像素取背景区域：卡片、照片、控件一律排除，
+                   所以卡片内文字完全不受影响，顶部与卡片外侧颜色连续。
+                   viewBox 按该风格画布高度铺满整图，随长图一起滚动。 -->
               <svg
                 v-if="!failedPreviews[currentId]"
                 class="strength-veil"
-                :style="{ height: veilHeight }"
-                viewBox="0 0 375 74"
+                :style="{ height: '100%' }"
+                :viewBox="veilViewBox"
                 preserveAspectRatio="none"
                 aria-hidden="true"
               >
-                <rect x="0" y="0" width="375" height="74" fill="#fff" :fill-opacity="veilAlpha" />
+                <defs>
+                  <mask id="wc-veil-mask-preview" maskUnits="userSpaceOnUse" x="0" y="0" width="375" :height="canvasHeight">
+                    <image :href="maskUrl(styleId)" x="0" y="0" width="375" :height="canvasHeight" />
+                  </mask>
+                </defs>
+                <rect
+                  x="0" y="0" width="375" :height="canvasHeight"
+                  fill="#fff" :fill-opacity="veilAlpha" mask="url(#wc-veil-mask-preview)"
+                />
+                <!-- 公司名烘焙在 PNG 里的白字会被冲淡，真机 <50 切深色，这里同阈值重绘 -->
                 <template v-if="navTitleOnLight">
                   <rect x="126" y="31" width="123" height="32" :fill="veilBgColor" />
                   <text
@@ -225,12 +234,20 @@
             <img class="zoom-shot" :src="fullUrl(zoomId)" :alt="zoomName + ' 小程序首页预览大图'" />
             <svg
               class="strength-veil"
-              :style="{ height: veilHeight }"
-              viewBox="0 0 375 74"
+              :style="{ height: '100%' }"
+              :viewBox="veilViewBox"
               preserveAspectRatio="none"
               aria-hidden="true"
             >
-              <rect x="0" y="0" width="375" height="74" fill="#fff" :fill-opacity="veilAlpha" />
+              <defs>
+                <mask id="wc-veil-mask-zoom" maskUnits="userSpaceOnUse" x="0" y="0" width="375" :height="canvasHeight">
+                  <image :href="maskUrl(styleId)" x="0" y="0" width="375" :height="canvasHeight" />
+                </mask>
+              </defs>
+              <rect
+                x="0" y="0" width="375" :height="canvasHeight"
+                fill="#fff" :fill-opacity="veilAlpha" mask="url(#wc-veil-mask-zoom)"
+              />
               <template v-if="navTitleOnLight">
                 <rect x="126" y="31" width="123" height="32" :fill="veilBgColor" />
                 <text
@@ -272,25 +289,24 @@ const bgGradientStrength = ref(100)
 // 已保存的浓度：与两轴一样，「未保存时不能显示使用中」把浓度也算进去。
 const savedBgGradientStrength = ref(100)
 
-// 预览遮罩：静态 PNG 顶部是 100% 原色，叠白色 alpha=(1-浓度) 混淡到目标浓度。
-// **只盖到名片卡片顶部为止**——真机上卡片是不透明白容器，浮在渐变背景之上，
-// 浓度只改变卡片「背后/周围」的背景，卡片本身与里面的文字完全不受影响。
-// 遮罩若铺满整图，会把卡片内的文字一起冲淡（2026-11-16 用户实测反馈「卡片也被
-// 渲染成白色」），所以必须止于卡片顶部。
+// 预览遮罩：静态 PNG 是 100% 原色出图，按「背景遮罩图」叠白色 alpha=(1-浓度) 混淡。
+// 遮罩图由 scripts/gen_theme_previews.py 与预览图同尺寸出图：白 = 受浓度影响的背景，
+// 黑 = 卡片 / 照片 / 控件（逐像素排除），42~48% 渐隐到黑以免冲淡 48% 的 soft 停靠点。
+// 这样才能同时做到「顶栏与卡片外侧连续」和「卡片内文字完全不被冲淡」。
+// 早期只盖到卡片顶 74px 的矩形遮罩会让卡片外侧仍是深蓝原色，出现硬分界
+// （2026-11-17 用户实测反馈），不能回退。
 //
-// 各风格卡片顶部比例 = 卡片顶 74px（状态栏 26 + 导航 42 + 卡片 margin 6）
-//   ÷ 该风格整图高度（manifest contentBottoms + 呼吸 20 + 底栏 60）。
-//   default 74/1294≈5.7% · ink 74/1182≈6.3% · warm 74/2572≈2.9% · teal 74/1729≈4.3%
-// 该常量由 MpTheme.spec.ts 读 manifest 的 contentBottoms 反算对账，改高度必红。
-// 卡片顶部以上的背景段落在真机渐变 0~12% 区间内（alpha 近似恒为浓度），
-// 故用恒定 alpha 遮罩，与真机误差 <5%。这是一张静态示意图的浓度模拟，非真机截图。
-const CARD_TOP_PCT: Record<string, number> = {
-  default: 5.7,
-  ink: 6.3,
-  warm: 2.9,
-  teal: 4.3,
+// 各风格画布高度 = manifest.contentBottoms + 呼吸 20 + 底栏 60：
+//   default 1294 · ink 1182 · warm 2572 · teal 1729
+// 与遮罩图 viewBox 一一对应；由 MpTheme.spec.ts 读 manifest 反算对账，改高度必红。
+const CANVAS_H: Record<string, number> = {
+  default: 1294,
+  ink: 1182,
+  warm: 2572,
+  teal: 1729,
 }
-const veilHeight = computed(() => `${CARD_TOP_PCT[styleId.value] ?? 6}%`)
+const canvasHeight = computed(() => CANVAS_H[styleId.value] ?? CANVAS_H.default)
+const veilViewBox = computed(() => `0 0 375 ${canvasHeight.value}`)
 const veilAlpha = computed(() => (100 - bgGradientStrength.value) / 100)
 // 预览图里的公司名是烘焙进 PNG 的白字，浓度调低时会被遮罩冲淡到看不见；
 // 真机在 bgGradientStrength<50 时把顶栏文字切成深色。这里在遮罩里按同一阈值重绘
@@ -393,6 +409,10 @@ function previewAssetUrl(id: string, thumb: boolean): string {
 }
 const thumbUrl = (id: string) => previewAssetUrl(id, true)
 const fullUrl = (id: string) => previewAssetUrl(id, false)
+// 背景遮罩按风格共用（布局相同、颜色无关），必须与预览图同版同缓存戳：
+// 换了布局而遮罩还停在旧图，白层会盖到卡片上，正好复现「卡片被冲淡」。
+const maskUrl = (sid: string) =>
+  `${import.meta.env.BASE_URL}theme-previews/masks/${encodeURIComponent(sid)}.png?v=${__APP_BUILD__}`
 
 function onPreviewError(id: string) {
   failedPreviews.value = { ...failedPreviews.value, [id]: true }
@@ -730,9 +750,10 @@ onMounted(load)
   color: #909399;
   line-height: 1.6;
 }
-/* 浓度遮罩（SVG）：只盖到名片卡片顶部，把 100% 原色的背景顶部混淡到当前浓度。
-   卡片是不透明白容器，浓度不该影响它——height 由 veilHeight 按风格内联给出
-   （卡片顶部比例），内部白层 fill-opacity = 1-浓度；浓度<50 时额外重绘深色公司名。
+/* 浓度遮罩（SVG）：铺满整张预览图，但白层按背景遮罩图取区域——白 = 背景（受浓度影响），
+   黑 = 卡片 / 照片 / 控件（完全不动）。高度 100% 与图片同高，白层 fill-opacity = 1-浓度，
+   浓度<50 时额外重绘深色公司名。绝不能退回「只盖到卡片顶的矩形」：那会让卡片外侧
+   仍是原色深蓝，顶部却已混白，两者之间出现硬分界。
    pointer-events:none 让滚轮照常穿透到 .preview-scroll 滚动长图；
    z-index 压在 img 之上、但低于角标/查看大图按钮（它们 z-index 2/3）。 */
 .strength-veil {

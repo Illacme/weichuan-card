@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import MpTheme from './MpTheme.vue'
@@ -11,10 +11,13 @@ const MANIFEST = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../public/theme-previews/manifest.json'
 )
+const MASKS_DIR = resolve(dirname(MANIFEST), 'masks')
 
 // 风格页 P5：核心约束是**只提交 (styleId, brandColorId, bgGradientStrength) 三值**，
 // 4 风格 × 10 色档 = 44 个组合全部可选、全部按自己的组合键寻图；顶部浓度随这三值
-// 一起保存，并在左侧预览图上用白色遮罩即时模拟（0~12% 段与真机 rgba 数学等价）。
+// 一起保存，并在左侧预览图上按「背景遮罩图」叠白层即时模拟（0~12% 段与真机
+// rgba 数学等价）。遮罩图逐像素排除卡片 / 照片 / 控件，所以低浓度时卡片内容
+// 不受影响，顶部与卡片外侧背景连续，不会出现颜色硬分界。
 // 三个页签共用 /admin/home-layout，但各存各的；整份表单回传会把别的页签刚改过
 // 的值一起写回去，所以这里用精确断言钉死 payload，而不是 objectContaining。
 // P4 的「非 default 风格清空并禁用色系」已废止：那会让客户对齐好的 VI 主色
@@ -284,10 +287,14 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
   // ===== 顶部主色浓度（第 3 步）：滑杆 → 遮罩即时预览 → 保存三值 =====
   const veil = (w: any) => w.find('.preview-scroll .strength-veil')
   const veilStyle = (w: any) => veil(w).attributes('style') || ''
-  // 遮罩是 SVG：外层只有 height（卡片顶部比例），白层透明度在第一个 rect 的 fill-opacity。
+  // 遮罩是 SVG：白层透明度在第一个 rect 的 fill-opacity。rect 必须带 mask，
+  // 否则白层铺满整图会把卡片内文字一起冲淡；只盖到卡片顶的矩形又会让卡片外侧
+  // 仍是原色深蓝、与混白后的顶栏割裂。两种回归都由这里的断言钉死。
   const veilAlphaAttr = (w: any) => veil(w).find('rect').attributes('fill-opacity')
+  const veilMaskRef = (w: any) => veil(w).find('rect').attributes('mask')
+  const veilMaskSrc = (w: any) => (veil(w).find('mask image').attributes('href') || '')
 
-  it('第 3 步有浓度滑杆，默认 100% 原色：遮罩 opacity=0（不遮），高度止于卡片顶部', async () => {
+  it('第 3 步有浓度滑杆，默认 100% 原色：遮罩 opacity=0（不遮），白层按背景遮罩取区域', async () => {
     const w = await mountPage()
 
     expect(w.find('.strength-row').exists()).toBe(true)
@@ -295,12 +302,14 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     expect(slider.exists()).toBe(true)
     expect(slider.attributes('value')).toBe('100')
     expect(w.find('.strength-val').text()).toBe('100%')
-    // 100% 时白层 fill-opacity=0，遮罩不显；高度=default 风格卡片顶部 5.7%（不是铺满整图）
+    // 100% 时白层 fill-opacity=0，遮罩不显；但结构必须在：铺满整图 + mask 限定背景区域
     expect(veil(w).exists()).toBe(true)
     expect(veilAlphaAttr(w)).toBe('0')
-    expect(veilStyle(w)).toContain('height: 5.7%')
-    // 卡片不被遮罩覆盖：遮罩高度必须明显小于整图（用户实测反馈「卡片也被变白」）
-    expect(veilStyle(w)).not.toContain('height: 100%')
+    expect(veilStyle(w)).toContain('height: 100%')
+    expect(veil(w).attributes('viewBox')).toBe('0 0 375 1294')
+    expect(veil(w).find('rect').attributes('height')).toBe('1294')
+    expect(veilMaskRef(w)).toBe('url(#wc-veil-mask-preview)')
+    expect(veilMaskSrc(w)).toContain('/theme-previews/masks/default.png')
   })
 
   it('拖低浓度：遮罩 opacity 实时变大、数值联动，保存带上新浓度', async () => {
@@ -312,12 +321,16 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     expect(w.find('.strength-val').text()).toBe('40%')
     // alpha = (100-40)/100 = 0.6，滑杆一动遮罩即时更新，不必重新切图
     expect(veilAlphaAttr(w)).toBe('0.6')
-    expect(veilStyle(w)).toContain('height: 5.7%')
-    // 大图浮层的遮罩必须同步（同一 veilHeight / veilAlpha）
+    expect(veilStyle(w)).toContain('height: 100%')
+    // 大图浮层的遮罩必须同步（同一 viewBox / alpha，但 mask id 不能撞车）
     await w.find('.preview-zoom-btn').trigger('click')
     await flush()
-    expect(w.find('.zoom-scroll .strength-veil').attributes('style')).toBe(veilStyle(w))
-    expect(w.find('.zoom-scroll .strength-veil').find('rect').attributes('fill-opacity')).toBe('0.6')
+    const zoomVeil = w.find('.zoom-scroll .strength-veil')
+    expect(zoomVeil.attributes('style')).toBe(veilStyle(w))
+    expect(zoomVeil.attributes('viewBox')).toBe(veil(w).attributes('viewBox'))
+    expect(zoomVeil.find('rect').attributes('fill-opacity')).toBe('0.6')
+    expect(zoomVeil.find('rect').attributes('mask')).toBe('url(#wc-veil-mask-zoom)')
+    expect(veilMaskRef(w)).toBe('url(#wc-veil-mask-preview)')
 
     await (w.vm as any).save()
     await flush()
@@ -363,21 +376,25 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     expect(veil(w).find('text').exists()).toBe(false)
   })
 
-  it('浓度遮罩高度按风格止于卡片顶部：与 manifest 实测高度对账', async () => {
-    // 卡片顶 = 状态栏 26 + 导航 42 + 卡片 margin 6 = 74px；整图高 = contentBottom + 20 + 60。
-    // 遮罩只覆盖卡片顶部以上的背景，卡片与文字不受浓度影响。
+  it('浓度遮罩按风格与 manifest 对账：画布高度、背景遮罩图四款都不漏不串', async () => {
+    // 整图高 = contentBottom + 呼吸 20 + 底栏 60；遮罩图必须和预览图同尺寸，
+    // 否则白层与背景错位，要么盖到卡片上，要么卡片外侧漏出原色深蓝。
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf-8'))
     // 组件里重绘公司名用的占位文案必须与生成脚本一致，否则遮罩里会叠出两种公司名
     expect(manifest.placeholders?.short_name).toBe('示例企业')
     const bottoms: Record<string, number> = manifest.contentBottoms
     const w = await mountPage()
-    for (let i = 0; i < STYLE_IDS.length; i++) {
-      await styleCards(w)[i].trigger('click')
+    for (const sid of STYLE_IDS) {
+      await styleCards(w)[STYLE_IDS.indexOf(sid)].trigger('click')
       await flush()
-      const h = bottoms[STYLE_IDS[i]] + 20 + 60
-      const pct = Math.round((74 / h) * 1000) / 10
-      expect(veilStyle(w), `${STYLE_IDS[i]} 卡片顶部比例应与 manifest 实测高度一致`)
-        .toContain(`height: ${pct}%`)
+      const h = bottoms[sid] + 20 + 60
+      expect(veil(w).attributes('viewBox'), `${sid} 画布高度应与 manifest 实测一致`)
+        .toBe(`0 0 375 ${h}`)
+      expect(veil(w).find('rect').attributes('height')).toBe(String(h))
+      expect(veilMaskSrc(w), `${sid} 必须用自己风格的遮罩图`).toContain(`/theme-previews/masks/${sid}.png`)
+      expect(existsSync(resolve(MASKS_DIR, `${sid}.png`)), `${sid} 遮罩图必须真实存在`)
+        .toBe(true)
+      expect(veilMaskRef(w)).toBe('url(#wc-veil-mask-preview)')
     }
   })
 

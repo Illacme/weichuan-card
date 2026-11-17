@@ -63,6 +63,9 @@ ACTION_WXML = ROOT / "miniprogram/components/action-bar/index.wxml"
 SEED_DIR = ROOT / "backend/internal/demoseed/seedassets"
 OUT_DIR = ROOT / "frontend/public/theme-previews"
 MANIFEST = OUT_DIR / "manifest.json"
+# 浓度模拟用的「背景遮罩」单独放子目录：--check 扫 OUT_DIR/*.png 找多余图，
+# 把 mask 放进根目录会被当成旧扁平 id 残留直接判红；子目录也让它和组合图一眼分开。
+MASK_DIR = OUT_DIR / "masks"
 
 # 画布按 iPhone 逻辑像素 375pt 设计；小程序 750rpx = 屏宽，故 1rpx = 0.5px。
 # P4 起高度按**风格**收口：HEIGHT 是四风格中的最大画布（短风格用各自更小的高度，
@@ -447,6 +450,34 @@ def css_tokens(tokens: dict[str, str]) -> str:
 #
 # P4：模块节点改用 app.wxss 的真实钩子类名，${style_css} 注入该风格的布局规则原文。
 # 基础样式只给「结构与颜色」，列数 / 间距 / 封面高度 / 圆角等**布局度量一律由注入规则给**，
+# 浓度预览的「背景遮罩」：白 = 真机上会被浓度影响的背景像素，黑 = 内容像素。
+# 与预览图用同一份 HTML、同一尺寸出图，只靠下面这段 CSS 把卡片 / 图片 / 控件涂黑，
+# 所以两张图逐像素对齐。前端把白层按这张遮罩叠上去，只会改背景，卡片与卡片内
+# 文字完全不受影响——这正是「只改卡片背后的背景」的真实语义。
+# 0~12% 背景恒受浓度控制；12~48% 叠白层仍与真机 rgba 插值等价，但 48% 的 soft
+# 停靠点不受浓度影响，所以 42~48% 把遮罩渐隐到黑，避免下半页被冲得过白。
+MASK_MODE_CSS = """
+  .phone {
+    background-color: #fff !important;
+    background-image: linear-gradient(180deg, #fff 0%, #fff 42%, #000 48%, #000 100%) !important;
+  }
+  .card, .section, .bar, .music, .me, .wx-capsule {
+    background: #000 !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border-color: #000 !important;
+    color: transparent !important;
+  }
+  .card *, .section *, .bar *, .me *, .wx-capsule * {
+    background: #000 !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border-color: #000 !important;
+    color: transparent !important;
+  }
+  img { visibility: hidden !important; }
+"""
+
 # 避免这里维护成与端上分叉的第二套版式。
 HTML = Template("""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -636,6 +667,7 @@ ${tokens}
   /* ===== 布局层：由 app.wxss 的 .wc-style-<id> 规则原文注入（已去前缀 / rpx→px） =====
      Default 以外的风格会覆盖上面的尺寸与列宽；这里绝不另写第二套布局。 */
   ${style_css}
+  ${mask_mode_css}
 </style></head><body>
 <div class="phone">
   <div class="status" data-sec="status"><span>09:01</span><span class="sys">▪ ▪ 4G ▮ 21</span></div>
@@ -838,6 +870,7 @@ def build_html(
     style_id: str = DEFAULT_STYLE,
     height: int = HEIGHT,
     style_css: str = "",
+    mask_mode: bool = False,
 ) -> str:
     cat_cards = "\n".join(
         f'<div class="cat-item"><img class="cat-icon" src="assets/cat-{i}.png" alt="">'
@@ -852,6 +885,7 @@ def build_html(
     return HTML.substitute(
         w=WIDTH, h=height, bar_h=BAR_HEIGHT, tail_gap=TAIL_GAP,
         tokens=css_tokens(tokens), style_css=style_css,
+        mask_mode_css=MASK_MODE_CSS if mask_mode else "",
         cat_cards=cat_cards, svc_cards=svc_cards,
         **PLACEHOLDER_TEXT,
     )
@@ -915,8 +949,20 @@ def main() -> int:
             (thumbs if is_thumb else fulls)[cid] = p
         data = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.is_file() else {}
         heights = data.get("canvasByStyle", {})
-        absent = [cid for cid in combos if cid not in fulls]
-        absent_thumb = [cid for cid in combos if cid not in thumbs]
+        # 背景遮罩与组合图分开存放：按风格各一张，前端按 styleId 取。
+        masks: dict[str, Path] = {}
+        for p in MASK_DIR.glob("*.png") if MASK_DIR.is_dir() else []:
+            masks[p.stem] = p
+        absent, absent_thumb = [cid for cid in combos if cid not in fulls], [cid for cid in combos if cid not in thumbs]
+        bad_mask: list[str] = []
+        for sid in STYLE_IDS:
+            p = masks.get(sid)
+            h = heights.get(sid)
+            expected = (WIDTH * SCALE, h * SCALE) if isinstance(h, int) else None
+            size = png_size(p) if p else None
+            if not p or size != expected or p.stat().st_size < 1000:
+                bad_mask.append(f"{sid}({size}, {p.stat().st_size if p else 0}B, 期望 {expected})")
+        extra_masks = sorted(set(masks) - set(STYLE_IDS))
         bad: list[str] = []
         bad_thumb: list[str] = []
         for cid, (sid, _brand) in combos.items():
@@ -944,7 +990,7 @@ def main() -> int:
             elif tbytes > p.stat().st_size * THUMB_MAX_RATIO:
                 bad_thumb.append(f"{cid}({tbytes}B 相对原图 {p.stat().st_size}B 没真缩)")
         print(f"组合 {len(combos)} 个：{len(STYLE_IDS)} 风格 × {1 + len(go_brands)} 色档")
-        print(f"预览图 {len(fulls)} 张 + 缩略图 {len(thumbs)} 张，按风格画布 {heights}")
+        print(f"预览图 {len(fulls)} 张 + 缩略图 {len(thumbs)} 张 + 背景遮罩 {len(masks)} 张，按风格画布 {heights}")
         # --check 不跑浏览器：用上一次出图时记下的实测值做快照对账。
         # 布局规则 / 基础色板 / 36 组合并 token 一旦变了，下面的比对就会判红，
         # 要求重出图（重出图时会重新实测并重写这几个快照）。
@@ -963,13 +1009,17 @@ def main() -> int:
             problems.append(f"原图尺寸/体积异常：{bad}")
         if bad_thumb:
             problems.append(f"缩略图异常：{bad_thumb}")
+        if bad_mask:
+            problems.append(f"背景遮罩缺图 / 尺寸异常（浓度预览会失效）：{bad_mask}")
+        if extra_masks:
+            problems.append(f"多余的遮罩图（旧风格残留？）：{extra_masks}")
         if problems:
             for p in problems:
                 print(f"✗ {p}", file=sys.stderr)
             return 1
         print(
-            f"✓ {len(combos)} 组合原图 + {len(combos)} 张 {THUMB_WIDTH}px 缩略图、四风格布局、组合 token 与模板白名单同版，"
-            "PNG 合法且按风格尺寸一致"
+            f"✓ {len(combos)} 组合原图 + {len(combos)} 张 {THUMB_WIDTH}px 缩略图、{len(STYLE_IDS)} 张背景遮罩，"
+            "四风格布局、组合 token 与模板白名单同版，PNG 合法且按风格尺寸一致"
         )
         return 0
 
@@ -1016,6 +1066,19 @@ def main() -> int:
         thumb_total += thumb.stat().st_size
         print(f"✓ {out.name}  [{sid}]  {png_size(out)}  {out.stat().st_size}B"
               f"  → 缩略 {png_size(thumb)} {thumb.stat().st_size}B")
+
+    # 背景遮罩：只跟布局走，4 风格各一张，与对应组合图同尺寸。浓度滑杆用它在
+    # 前端把白层限制在「背景像素」上——卡片、照片、控件逐像素排除，低浓度时
+    # 卡片内文字不会被冲淡，顶部与卡片外侧也不会出现颜色硬分界。
+    MASK_DIR.mkdir(parents=True, exist_ok=True)
+    for sid in STYLE_IDS:
+        mask_out = MASK_DIR / f"{sid}.png"
+        mask_html = build_html(
+            first, sid, heights[sid], layout_css(layout_rules[sid]), mask_mode=True
+        )
+        render(chrome, mask_html, mask_out, heights[sid])
+        print(f"✓ 遮罩 {mask_out.name}  [{sid}]  {png_size(mask_out)}  {mask_out.stat().st_size}B")
+
     # P5 改了命名；P7 起同目录又多了一组 `.thumb.png`：归属判断一律走
     # split_preview_name，不能直接比 Path.stem——`x.thumb.png` 的 stem 是
     # `x.thumb`，会被当成过期图连图带缩略图一起删掉。
