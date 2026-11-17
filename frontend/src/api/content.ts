@@ -7,6 +7,8 @@ export function getCompanyInfo() {
 export function saveCompanyInfo(p: {
   fullName: string
   shortName: string
+  /** 首页视频下方公司名展示档位：large(基线) / medium / small / hidden(关闭该行) */
+  companyNameScale: string
   address: string
   tel: string
   logo: string
@@ -24,7 +26,7 @@ export function getCompanyProfile() {
 }
 export function saveCompanyProfile(p: {
   introText: string
-  /** 简介文字字号：large(28rpx,当前) / medium(26rpx) / small(24rpx)；缺省按 large */
+  /** 简介文字展示档位：large(基线) / medium / small / hidden(关闭该行)；缺省按 large */
   introFontScale: string
   videoSource: string
   videoChannelId: string

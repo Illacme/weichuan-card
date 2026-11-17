@@ -63,12 +63,15 @@ describe('简介文字三档字号跨层映射', () => {
     expect(WXML).toMatch(/profile\.introFontScale\s*\|\|\s*'large'/)
   })
 
-  it('后端归一函数三档齐全、缺省 large；后台三档单选齐全', () => {
-    expect(MODEL).toMatch(/IntroFontLarge\s*=\s*"large"/)
-    expect(MODEL).toMatch(/IntroFontMedium\s*=\s*"medium"/)
-    expect(MODEL).toMatch(/IntroFontSmall\s*=\s*"small"/)
-    expect(MODEL).toMatch(/DefaultIntroFontScale\s*=\s*IntroFontLarge/)
-    for (const v of ['large', 'medium', 'small']) {
+  it('后端归一函数四档齐全、缺省 large；后台四档单选齐全', () => {
+    // 档位真值源已抽成 TextScale*，IntroFont* 只是别名——两边都要在
+    expect(MODEL).toMatch(/TextScaleLarge\s*=\s*"large"/)
+    expect(MODEL).toMatch(/TextScaleMedium\s*=\s*"medium"/)
+    expect(MODEL).toMatch(/TextScaleSmall\s*=\s*"small"/)
+    expect(MODEL).toMatch(/TextScaleHidden\s*=\s*"hidden"/)
+    expect(MODEL).toMatch(/IntroFontLarge\s*=\s*TextScaleLarge/)
+    expect(MODEL).toMatch(/DefaultIntroFontScale\s*=\s*DefaultTextScale/)
+    for (const v of ['large', 'medium', 'small', 'hidden']) {
       expect(VUE, `后台缺 ${v} 档`).toContain(`value="${v}"`)
     }
   })

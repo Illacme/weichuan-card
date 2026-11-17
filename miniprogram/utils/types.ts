@@ -53,6 +53,8 @@ export interface CompanyInfo {
   fullName: string
   /** 企业简称（小程序顶栏居中展示） */
   shortName: string
+  /** 首页视频下方公司名展示档位：large(基线) / medium / small / hidden(不渲染该行) */
+  companyNameScale: string
   address: string
   tel: string
   logo: string

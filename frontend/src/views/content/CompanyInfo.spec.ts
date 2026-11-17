@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, defineComponent } from 'vue'
+import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import CompanyInfo from './CompanyInfo.vue'
 
 // 公司信息页：六个企业内容页里最简单的一页，价值在「保存到底提交了什么」——
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     id: 1,
     fullName: '朗汇机电设备有限公司',
     shortName: '朗汇机电',
+    companyNameScale: 'large',
     address: '上海市某路 1 号',
     tel: '021-12345678',
     logo: '/uploads/logo.png',
@@ -45,6 +46,28 @@ const ElInput = defineComponent({
   template: `<input class="el-input" :placeholder="placeholder" :value="modelValue"
     @input="$emit('update:modelValue', $event.target.value)" />`,
 })
+// el-radio-group / el-radio：首页公司名四档单选。用 provide/inject 搭最小链路，
+// 让「点了某档真能写回表单」被测到——只渲染不可点的 label 测不出「改了没生效」。
+const ElRadioGroup = defineComponent({
+  name: 'ElRadioGroup',
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  setup(_props, { slots, emit }) {
+    provide('radioGroup', { pick: (v: string) => emit('update:modelValue', v) })
+    return () => h('div', { class: 'el-radio-group' }, slots.default ? slots.default() : [])
+  },
+})
+const ElRadio = defineComponent({
+  name: 'ElRadio',
+  props: ['value'],
+  inheritAttrs: false,
+  setup(props, { slots }) {
+    const g: any = inject('radioGroup')
+    return () =>
+      h('label', { class: 'el-radio', 'data-value': props.value, onClick: () => g?.pick(props.value) },
+        slots.default ? slots.default() : [])
+  },
+})
 // UploadField 是 v-model 组件：点一下就当作「选了图」，用于验证 logo 会随保存提交
 const UploadField = defineComponent({
   name: 'UploadField',
@@ -62,6 +85,8 @@ const mountOpts = {
       'el-form': ElForm,
       'el-form-item': ElFormItem,
       'el-input': ElInput,
+      'el-radio-group': ElRadioGroup,
+      'el-radio': ElRadio,
       UploadField,
     },
     directives: { loading: {} },
@@ -126,7 +151,7 @@ describe('content/CompanyInfo', () => {
     )
   })
 
-  // 只提交 5 个可编辑字段：id 混进 payload 会被后端当主键处理
+  // 只提交 6 个可编辑字段：id 混进 payload 会被后端当主键处理
   it('保存只提交可编辑字段，不带 id', async () => {
     const w = await mountPage()
 
@@ -135,8 +160,44 @@ describe('content/CompanyInfo', () => {
 
     expect(mocks.saveCompanyInfo).toHaveBeenCalledTimes(1)
     const payload = mocks.saveCompanyInfo.mock.calls[0][0]
-    expect(Object.keys(payload).sort()).toEqual(['address', 'fullName', 'logo', 'shortName', 'tel'])
+    expect(Object.keys(payload).sort()).toEqual([
+      'address', 'companyNameScale', 'fullName', 'logo', 'shortName', 'tel',
+    ])
     expect(payload).not.toHaveProperty('id')
+  })
+
+  // ---- 首页公司名四档（大/中/小/关闭）----
+  function scaleRadio(w: any, value: string) {
+    const r = w.find(`.el-radio[data-value="${value}"]`)
+    if (!r.exists()) throw new Error(`找不到首页公司名档位 ${value}`)
+    return r
+  }
+
+  it('首页公司名缺省为「大」，四档都可选且随保存提交', async () => {
+    const w = await mountPage()
+    for (const v of ['large', 'medium', 'small', 'hidden']) {
+      expect(scaleRadio(w, v).exists()).toBe(true)
+    }
+    await w.findAll('.el-button')[1].trigger('click')
+    await flush()
+    expect(mocks.saveCompanyInfo.mock.calls[0][0].companyNameScale).toBe('large')
+  })
+
+  it('首页公司名选中「关闭」随保存提交', async () => {
+    const w = await mountPage()
+    await scaleRadio(w, 'hidden').trigger('click')
+    await flush()
+    await w.findAll('.el-button')[1].trigger('click')
+    await flush()
+    expect(mocks.saveCompanyInfo.mock.calls[0][0].companyNameScale).toBe('hidden')
+  })
+
+  it('首页公司名字段缺失时归一到「大」', async () => {
+    mocks.getCompanyInfo.mockResolvedValueOnce({
+      id: 1, fullName: '无档位公司', shortName: '无', address: '', tel: '', logo: '',
+    })
+    const w = await mountPage()
+    expect((w.vm as any).form.companyNameScale).toBe('large')
   })
 
   it('选中的 LOGO 随保存提交', async () => {

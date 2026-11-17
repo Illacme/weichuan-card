@@ -77,14 +77,20 @@
              （ink）这两种版式，四款风格只剩尺寸差异（用户 2026-11-12 批评的原话：
              「印刷的名片也有很多种布局样式啊，为什么你就没有更多灵活性的考虑呢」）。
              default 款不给 .pf-text 写任何规则，它就是普通块级容器，视觉零变化。 -->
-        <view class="pf-text">
-          <view class="company-name">{{company.fullName}}</view>
-          <!-- 企业名下分隔线：左蓝右灰分段线，与名片卡横线（ec-rows-line）同款 -->
-          <view class="line-split company-name-line"></view>
-          <!-- 简介字号三档：后端 /api/card 保证 introFontScale 是 large/medium/small，
-               端上仍用 || 'large' 兜底（老缓存 / 老后端缺字段时按现状 28rpx 渲染）。
-               只加修饰 class，不覆盖 .intro 本身——风格层的 line-height 覆盖照旧生效。 -->
-          <text class="intro intro-size-{{profile.introFontScale || 'large'}}">{{profile.introText}}</text>
+        <!-- 首页「视频下方文字区」：公司名称与简介文字各有自己的四档展示档位
+             （large/medium/small/hidden，后端 /api/card 已归一）。
+             hidden 用 wx:if **移除节点**，不是 display:none——那一行连高度都不占，
+             客户关掉后下面的板块立刻上移。两者可独立关闭，所以 .pf-text 上按
+             剩余块加 pf-text--only-* 修饰：ink 的双栏 grid 在只剩一块时塌成单栏，
+             否则空出来的 34% 列仍在挤占屏幕。 -->
+        <view class="pf-text{{company.companyNameScale === 'hidden' ? ' pf-text--only-intro' : ''}}{{profile.introFontScale === 'hidden' ? ' pf-text--only-name' : ''}}">
+          <block wx:if="{{company.companyNameScale !== 'hidden'}}">
+            <view class="company-name company-name-size-{{company.companyNameScale || 'large'}}">{{company.fullName}}</view>
+            <!-- 企业名下分隔线：左蓝右灰分段线，与名片卡横线（ec-rows-line）同款 -->
+            <view class="line-split company-name-line"></view>
+          </block>
+          <!-- 只加修饰 class，不覆盖 .intro 本身——风格层的 line-height 覆盖照旧生效 -->
+          <text wx:if="{{profile.introFontScale !== 'hidden'}}" class="intro intro-size-{{profile.introFontScale || 'large'}}">{{profile.introText}}</text>
         </view>
       </view>
       <block wx:for="{{homeOrder}}" wx:key="*this">

@@ -1703,12 +1703,13 @@ func TestCompanyProfileIntroFontScale(t *testing.T) {
 		return b["profile"].(map[string]interface{})["introFontScale"]
 	}
 
-	// 三档逐一往返：保存回包、后台读回、公开出参三处都必须是刚设的值
-	for _, scale := range []string{"large", "medium", "small"} {
+	// 四档逐一往返：保存回包、后台读回、公开出参三处都必须是刚设的值。
+	// hidden 尤其关键：端上完全靠这个值决定要不要渲染简介那一行。
+	for _, scale := range []string{"large", "medium", "small", "hidden"} {
 		require.EqualValues(t, scale, put(scale)["introFontScale"], "保存回包 %s", scale)
 		_, gb := c.do("GET", "/api/admin/company-profile", nil, adminToken)
 		require.EqualValues(t, scale, gb["data"].(map[string]interface{})["introFontScale"], "后台读回 %s", scale)
-		require.EqualValues(t, scale, cardScale(), "/api/card 必须带 %s，否则小程序字号不生效", scale)
+		require.EqualValues(t, scale, cardScale(), "/api/card 必须带 %s，否则小程序字号/关闭不生效", scale)
 	}
 
 	// 老前端不带该字段 / 直接塞脏值：都归一成 large，绝不把非法值下发到端上
@@ -1720,6 +1721,62 @@ func TestCompanyProfileIntroFontScale(t *testing.T) {
 	require.EqualValues(t, "large", cardScale())
 	require.EqualValues(t, "large", put("huge")["introFontScale"], "非法档位归一成 large")
 	require.EqualValues(t, "large", cardScale())
+}
+
+// TestCompanyNameScale 钉死首页视频下方「公司名称」四档展示全链路。
+//
+// 与简介文字是对称的两列：客户常只关其中一个（保留公司名、去掉长简介，或反过来）。
+// 所以必须证明**两列互不串**——改公司名档位不能动简介档位。
+//
+// 覆盖：① PUT 回包新值；② admin GET 读回；③ `/api/card` 的 company 带该字段
+// （端上唯一读取口径，漏了就永远按缺省显示、关不掉）；④ 缺字段/脏值归一 large；
+// ⑤ 改公司名档位时 introFontScale 原样不动。
+func TestCompanyNameScale(t *testing.T) {
+	r := setupSQLiteEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	_, body := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "王五", "phone": "13700000051", "email": "w@a.com", "title": "经理",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"], "响应：%v", body)
+	staffID := int64(body["staffId"].(float64))
+
+	put := func(scale string) map[string]interface{} {
+		_, b := c.do("PUT", "/api/admin/company-info", map[string]interface{}{
+			"fullName": "测试公司", "shortName": "测试", "companyNameScale": scale,
+		}, adminToken)
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["data"].(map[string]interface{})
+	}
+	cardCompany := func() map[string]interface{} {
+		_, b := c.do("GET", fmt.Sprintf("/api/card?staffId=%d", staffID), nil, "")
+		require.EqualValues(t, 0, b["code"], "响应：%v", b)
+		return b["company"].(map[string]interface{})
+	}
+
+	// 先把简介设成 small，后面每轮都断言它没被公司名的写入带跑
+	_, pb := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"introText": "简介", "introFontScale": "small", "videoSource": "none",
+	}, adminToken)
+	require.EqualValues(t, 0, pb["code"])
+
+	for _, scale := range []string{"large", "medium", "small", "hidden"} {
+		require.EqualValues(t, scale, put(scale)["companyNameScale"], "保存回包 %s", scale)
+		_, gb := c.do("GET", "/api/admin/company-info", nil, adminToken)
+		require.EqualValues(t, scale, gb["data"].(map[string]interface{})["companyNameScale"], "后台读回 %s", scale)
+		require.EqualValues(t, scale, cardCompany()["companyNameScale"], "/api/card 必须带 %s，否则端上关不掉/字号不生效", scale)
+		_, cb := c.do("GET", fmt.Sprintf("/api/card?staffId=%d", staffID), nil, "")
+		require.EqualValues(t, "small", cb["profile"].(map[string]interface{})["introFontScale"], "改公司名档位不得影响简介档位")
+	}
+
+	// 缺字段与脏值都归一 large，端上不会收到不认识的值
+	_, b := c.do("PUT", "/api/admin/company-info", map[string]interface{}{"fullName": "测试公司"}, adminToken)
+	require.EqualValues(t, 0, b["code"])
+	require.EqualValues(t, "large", b["data"].(map[string]interface{})["companyNameScale"])
+	require.EqualValues(t, "large", cardCompany()["companyNameScale"])
+	require.EqualValues(t, "large", put("vanished")["companyNameScale"])
+	require.EqualValues(t, "large", cardCompany()["companyNameScale"])
 }
 
 // TestAPIFlowMySQL 生产契约 parity：连真实 MySQL、应用 migrations/*.sql，再跑同一套断言。

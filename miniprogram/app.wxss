@@ -577,6 +577,27 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .intro-size-large { font-size: 28rpx; }
 .intro-size-medium { font-size: 26rpx; }
 .intro-size-small { font-size: 24rpx; }
+
+/* 首页「视频下方公司名称」三档字号（后台「公司信息 → 首页公司名」）。
+   large 刻意**不写规则**：沿用各风格基线（default/warm 34rpx、ink/teal 30rpx），
+   升级存量零视觉突变；中/小用足够高的特异度盖过风格层 .company-name 的字号。 */
+.pf-text .company-name.company-name-size-medium { font-size: 30rpx; }
+.pf-text .company-name.company-name-size-small { font-size: 26rpx; }
+
+/* 两块之一被关闭时，ink 的双栏 grid 必须塌成单栏并撤销子项的 grid-area；
+   否则空出来的 34% 列与「指向第 2 列」的 grid-area 会隐式造列，继续挤占屏幕。
+   wx:if 已把关闭的那块节点整个移除，这里只处理"剩一块"的排版，不用 display:none。
+
+   选择器刻意**不以 .wc-style-ink 开头**：预览图脚本按「行首 .wc-style-<id>」抓
+   布局规则出快照，而这些规则只在关闭某块时才生效、示意图两块都在，不该进那份快照。
+   用 .wc-theme.wc-style-ink 修饰（同一节点同时挂两个类，见 base.wxml 根节点），
+   既保持只在 ink 下生效，又不被快照正则抓走。 */
+.wc-theme.wc-style-ink .pf-text.pf-text--only-name { grid-template-columns: 1fr; }
+.wc-theme.wc-style-ink .pf-text.pf-text--only-intro { grid-template-columns: 1fr; }
+.wc-theme.wc-style-ink .pf-text.pf-text--only-name .company-name { grid-area: auto; }
+.wc-theme.wc-style-ink .pf-text.pf-text--only-name .company-name-line { grid-area: auto; }
+.wc-theme.wc-style-ink .pf-text.pf-text--only-intro .intro { grid-area: auto; }
+
 /* 简介区公司名标题（设计稿：黑色加粗大字 + 下方左蓝右灰分段线）。
    线由 index.wxml 的 .line-split 独立元素绘制（border 只能单色，做不出左蓝右灰），
    padding-bottom 保留作为名称与线的间距 */

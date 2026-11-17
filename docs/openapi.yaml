@@ -5401,6 +5401,15 @@ components:
           type: string
         logo:
           type: string
+        companyNameScale:
+          type: string
+          enum: [large, medium, small, hidden]
+          default: large
+          description: >-
+            首页视频下方「公司名」一行的展示档位。large=沿用各风格基线字号（default/warm 34rpx、
+            ink/teal 30rpx，历史观感，缺省）、medium=30rpx、small=26rpx、hidden=不渲染公司名行
+            （小程序端移除节点，不占屏幕空间）。历史行空串或脏值按 large 处理，升级零视觉突变；
+            `/api/card` 的 company 里同名字段是小程序唯一读取口径。
 
     CompanyInfoInput:
       type: object
@@ -5414,6 +5423,11 @@ components:
           type: string
         logo:
           type: string
+        companyNameScale:
+          type: string
+          enum: [large, medium, small, hidden]
+          description: >-
+            首页公司名展示档位；不传或非法值按 large 处理。hidden=关闭后首页不再渲染公司名行。
 
     CompanyProfile:
       type: object
@@ -5423,12 +5437,13 @@ components:
           description: 富文本
         introFontScale:
           type: string
-          enum: [large, medium, small]
+          enum: [large, medium, small, hidden]
           default: large
           description: >-
-            简介文字字号档位，仅作用于小程序首页「简介文字」一段（不改公司名/联系表）。
-            large=28rpx（历史观感，缺省）、medium=26rpx、small=24rpx。历史行空串按 large 处理，
-            升级零视觉突变；`/api/card` 的 profile 里同名字段是小程序唯一读取口径。
+            首页视频下方「简介文字」的展示档位（不改公司名/联系表）。
+            large=28rpx（历史观感，缺省）、medium=26rpx、small=24rpx、hidden=不渲染简介行
+            （小程序端移除节点，不占屏幕空间）。历史行空串或脏值按 large 处理，升级零视觉突变；
+            `/api/card` 的 profile 里同名字段是小程序唯一读取口径。
         videoSource:
           type: string
           enum: [none, channels, upload, url, tencent]
@@ -5490,8 +5505,10 @@ components:
           type: string
         introFontScale:
           type: string
-          enum: [large, medium, small]
-          description: 简介文字字号；不传或非法值按 large（28rpx，历史观感）处理
+          enum: [large, medium, small, hidden]
+          description: >-
+            简介文字展示档位；不传或非法值按 large（28rpx，历史观感）处理。
+            hidden=关闭后首页不再渲染简介行。
         videoSource:
           type: string
           enum: [none, channels, upload, url, tencent]

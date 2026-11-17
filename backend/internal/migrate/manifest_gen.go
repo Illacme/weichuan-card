@@ -54,4 +54,5 @@ var expectedMigrations = []string{
 	"0045_storage_backfill_refs.sql",
 	"0046_home_gradient_strength.sql",
 	"0047_company_profile_intro_font_scale.sql",
+	"0048_company_name_scale.sql",
 }

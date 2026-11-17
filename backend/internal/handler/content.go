@@ -65,9 +65,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		cid := targetCompanyID(c)
 		var ci model.CompanyInfo
 		if db.First(&ci, "company_id = ?", cid).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 0, "data": model.CompanyInfo{CompanyID: cid}})
+			c.JSON(http.StatusOK, gin.H{"code": 0, "data": model.CompanyInfo{CompanyID: cid, CompanyNameScale: model.DefaultTextScale}})
 			return
 		}
+		// 档位列后加：历史行空串归一成 large（基线字号 + 显示），后台单选才不会落空
+		ci.CompanyNameScale = model.NormalizeCompanyNameScale(ci.CompanyNameScale)
 		// 后台出参也过解析（与公开接口同一口径）：库里是裸键时，编辑页的 logo 预览
 		// 需要一个可访问的 URL。ci 是本次查询的局部变量，解析不会写回库。
 		//
@@ -81,16 +83,20 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.PUT("/api/admin/company-info", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var req struct {
-			FullName  string `json:"fullName"`
-			ShortName string `json:"shortName"`
-			Address   string `json:"address"`
-			Tel       string `json:"tel"`
-			Logo      string `json:"logo"`
+			FullName         string `json:"fullName"`
+			ShortName        string `json:"shortName"`
+			CompanyNameScale string `json:"companyNameScale"`
+			Address          string `json:"address"`
+			Tel              string `json:"tel"`
+			Logo             string `json:"logo"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		// 展示档位归一在写入前做一次：空串/脏值落 large，避免把非法值存进库、
+		// 端上拿到不认识的档位后 class 落空（关不掉也调不小，却查不出原因）。
+		req.CompanyNameScale = model.NormalizeCompanyNameScale(req.CompanyNameScale)
 		// 写入侧归一（第五十九轮）：落库前把资源字段收敛成带归属前缀的裸键。
 		// 失败必须放弃写入——收到的值要么属于别家企业（串号），要么是伪协议 / 穿越。
 		// 归一结果写回 req，下面的新建 / 更新两条分支共用。
@@ -102,13 +108,13 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		var ci model.CompanyInfo
 		if db.First(&ci, "company_id = ?", cid).Error != nil {
-			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
+			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, CompanyNameScale: req.CompanyNameScale, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
 			if err := db.Create(&ci).Error; err != nil {
 				dbWriteFailed(c, "保存公司基础信息（新建）", "保存失败，请稍后重试", err)
 				return
 			}
 		} else {
-			if err := db.Model(&ci).Updates(map[string]interface{}{"full_name": req.FullName, "short_name": req.ShortName, "address": req.Address, "tel": req.Tel, "logo": req.Logo}).Error; err != nil {
+			if err := db.Model(&ci).Updates(map[string]interface{}{"full_name": req.FullName, "short_name": req.ShortName, "company_name_scale": req.CompanyNameScale, "address": req.Address, "tel": req.Tel, "logo": req.Logo}).Error; err != nil {
 				dbWriteFailed(c, "保存公司基础信息（更新）", "保存失败，请稍后重试", err)
 				return
 			}
@@ -116,6 +122,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 界面「保存后立刻刷新」看起来像没生效（与 company-profile 同一处理）。
 			ci.FullName = req.FullName
 			ci.ShortName = req.ShortName
+			ci.CompanyNameScale = req.CompanyNameScale
 			ci.Address = req.Address
 			ci.Tel = req.Tel
 			ci.Logo = req.Logo

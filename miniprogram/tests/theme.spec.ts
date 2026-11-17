@@ -352,10 +352,12 @@ describe('小程序整体风格模板 utils/theme', () => {
     for (const m of rules) {
       expect(m[3], `${m[1]} 用 display:none 藏内容`).not.toMatch(/display\s*:\s*none/)
     }
-    // CSS 里的 .pf-text 必须真的存在于页面结构，否则版式规则是死的
+    // CSS 里的 .pf-text 必须真的存在于页面结构，否则版式规则是死的。
+    // 四档展示改造后它带了条件修饰类（pf-text--only-*），仍以 pf-text 打头即可——
+    // 这里只钉「容器还在」，不钉「没有修饰类」，否则关掉公司名/简介时反而会误红。
     const wxml = readFileSync(resolve(MP, 'pages/index/index.wxml'), 'utf-8')
     expect(wxml, 'index.wxml 缺 .pf-text 分组容器，ink/teal 的简介版式落不下去')
-      .toContain('class="pf-text"')
+      .toMatch(/class="pf-text(?:["{])/)
   })
 
   it('服务卡标题烧在图内：布局规则不得改 .svc-icon 尺寸或 aspect-ratio', () => {

@@ -71,9 +71,13 @@ type CompanyInfo struct {
 	CompanyID int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
 	FullName  string `gorm:"column:full_name" json:"fullName"`
 	ShortName string `gorm:"column:short_name" json:"shortName"` // 企业简称（小程序顶栏居中展示）
-	Address   string `gorm:"column:address" json:"address"`
-	Tel       string `gorm:"column:tel" json:"tel"`
-	Logo      string `gorm:"column:logo" json:"logo"`
+	// CompanyNameScale 首页视频下方「公司名称」的展示档位（见 TextScale* 四档）。
+	// 与简介文字各自独立一列：客户常只关其中一个（例如保留公司名、去掉长简介）。
+	// 历史行空串归一成 large，保持现有字号/显示，升级零视觉突变。
+	CompanyNameScale string `gorm:"column:company_name_scale;size:16;default:large" json:"companyNameScale"`
+	Address          string `gorm:"column:address" json:"address"`
+	Tel              string `gorm:"column:tel" json:"tel"`
+	Logo             string `gorm:"column:logo" json:"logo"`
 
 	// ---- 小程序「默认进入」（0034）：裸启动落到名片墙还是某个员工的名片 ----
 	//
@@ -169,31 +173,58 @@ const (
 	VideoSourceTencent  = "tencent"  // 腾讯视频插件（需 MP_TENCENT_VIDEO=1 才可选）
 )
 
-// 简介文字字号档位（company_profiles.intro_font_scale）。
-// 三档只专门给「简介文字」用，不影响 page 的其它文字；默认 large = 原 28rpx。
-// 新增 / 改档必须同步：后台 CompanyProfile.vue、小程序 app.wxss 的 .intro-size-* 与
-// index.wxml 的 class 绑定、openapi.yaml 两处 schema。
+// 首页「视频下方文字区」（公司名 + 简介文字）共用的四档展示档位。
+// 前三个是字号档；hidden 是关闭——端上用 wx:if **移除节点**，不是 display:none，
+// 所以关闭后那一行连高度都不占，客户能真正腾出屏幕空间。
+//
+// 两处字段各自独立（company_profiles.intro_font_scale / company_infos.company_name_scale），
+// 但共用这一套取值与归一函数：客户常只关其中一个，共用档位语义不会串。
+//
+// large 不写死 rpx：端上沿用各风格基线字号（default 34rpx / ink、teal 30rpx），
+// 升级存量零视觉突变；medium / small 才显式调小。
 const (
-	IntroFontLarge  = "large"  // 28rpx，历史观感（缺省）
-	IntroFontMedium = "medium" // 26rpx
-	IntroFontSmall  = "small"  // 24rpx
+	TextScaleLarge  = "large"  // 基线字号（缺省，历史观感）
+	TextScaleMedium = "medium" // 中
+	TextScaleSmall  = "small"  // 小
+	TextScaleHidden = "hidden" // 关闭：该区域不渲染
 )
 
-// DefaultIntroFontScale 缺省档位。选 large 是因为存量全部按 28rpx 渲染，
-// 升级时改小等于把客户已经认可的字号偷偷改掉（见 0047 迁移注释）。
-const DefaultIntroFontScale = IntroFontLarge
+// DefaultTextScale 缺省档位。选 large 是因为两处存量都按基线渲染，
+// 升级时改小或关掉等于把客户已经认可的首页偷偷改掉（见 0047 / 0048 迁移注释）。
+const DefaultTextScale = TextScaleLarge
 
-// NormalizeIntroFontScale 把外部传入的档位归一；空串与非法值都落回缺省档。
+// IntroFont* 与 CompanyNameScale* 都是 TextScale* 的别名：
+// 保留两套业务命名让调用点一眼看出改的是哪一处，但取值归一只有一份真值源。
+const (
+	IntroFontLarge  = TextScaleLarge
+	IntroFontMedium = TextScaleMedium
+	IntroFontSmall  = TextScaleSmall
+	IntroFontHidden = TextScaleHidden
+
+	CompanyNameScaleLarge  = TextScaleLarge
+	CompanyNameScaleMedium = TextScaleMedium
+	CompanyNameScaleSmall  = TextScaleSmall
+	CompanyNameScaleHidden = TextScaleHidden
+)
+
+// DefaultIntroFontScale 保留旧名，供上一轮的调用点与守门继续引用。
+const DefaultIntroFontScale = DefaultTextScale
+
+// NormalizeTextScale 把外部传入的档位归一；空串与非法值都落回缺省档。
 // 非法值不报错而是归一，是因为这是**纯展示偏好**：直接调接口塞了个脏值，
-// 最坏也只是字大一点，不该让整段简介保存失败（后端契约对展示字段一律宽松）。
-func NormalizeIntroFontScale(v string) string {
+// 最坏也只是字大一点或没关掉，不该让整段内容保存失败（展示字段一律宽松）。
+func NormalizeTextScale(v string) string {
 	switch v {
-	case IntroFontLarge, IntroFontMedium, IntroFontSmall:
+	case TextScaleLarge, TextScaleMedium, TextScaleSmall, TextScaleHidden:
 		return v
 	default:
-		return DefaultIntroFontScale
+		return DefaultTextScale
 	}
 }
+
+// NormalizeIntroFontScale / NormalizeCompanyNameScale 是同一归一函数的两个业务别名。
+func NormalizeIntroFontScale(v string) string   { return NormalizeTextScale(v) }
+func NormalizeCompanyNameScale(v string) string { return NormalizeTextScale(v) }
 
 // IsValidVideoSource 校验 video_source 取值。空串按 none 处理：
 // 该列是后加的，历史行没有值，不能因为缺省就把保存整个拒掉。

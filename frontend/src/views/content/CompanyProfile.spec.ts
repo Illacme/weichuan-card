@@ -283,18 +283,18 @@ describe('content/CompanyProfile', () => {
     expect((w.find('.el-select').element as HTMLSelectElement).value).toBe('none')
   })
 
-  // ---- 简介字号三档（大/中/小）----
+  // ---- 简介展示四档（大/中/小/关闭）----
   // 钉三件事：缺省 large（存量零视觉突变）、后端值能回显、选中档随保存提交。
   // 用 radio 的 data-value 定位，别用第几个 .el-radio——视频档里也有一组 radio。
   function fontScaleRadio(w: any, value: string) {
     const r = w.find(`.el-radio[data-value="${value}"]`)
-    if (!r.exists()) throw new Error(`找不到简介字号档位 ${value}`)
+    if (!r.exists()) throw new Error(`找不到简介展示档位 ${value}`)
     return r
   }
 
-  it('简介字号缺省为「大」，三档都可选', async () => {
+  it('简介展示缺省为「大」，四档都可选', async () => {
     const w = await mountPage()
-    for (const v of ['large', 'medium', 'small']) {
+    for (const v of ['large', 'medium', 'small', 'hidden']) {
       expect(fontScaleRadio(w, v).exists()).toBe(true)
     }
     // 缺省值必须写进保存 payload——漏了就是「后台选了、小程序没变」
@@ -316,6 +316,15 @@ describe('content/CompanyProfile', () => {
     await saveButton(w).trigger('click')
     await flush()
     expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('medium')
+  })
+
+  it('简介选中「关闭」随保存提交', async () => {
+    const w = await mountPage()
+    await fontScaleRadio(w, 'hidden').trigger('click')
+    await flush()
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('hidden')
   })
 
   // 历史行该字段缺失（老后端 / 直接造数据）时也必须落 large，不能落到未选中态
