@@ -635,6 +635,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 无配置行（新租户）时浓度回默认 100（原色），与模型 tag / 迁移默认值一致，
 		// 前端滑杆才不会落在 0（几乎不显主色）却无从解释。
 		bgGradient := 100
+		// 三项展示数量 / 效果缺省取上限与 static：新租户与 0049 之前的存量行
+		// 都按「和加配置前一样」渲染，不会一升级就少显示内容。
+		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
+		featuredEffect := model.DefaultFeaturedEffect
 		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
@@ -645,6 +649,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			bgImage, bgMask = hl.BgImage, hl.BgMask
 			bgGradient = clampMask(hl.BgGradientStrength)
+			categoryLimit = clampInt(hl.CategoryLimit, 0, 20)
+			featuredCount = clampInt(hl.FeaturedCount, 1, 3)
+			featuredEffect = model.NormalizeFeaturedEffect(hl.FeaturedEffect)
 			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
@@ -663,7 +670,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
-			"projectTimeMode":    projectMode, "serviceTimeMode": serviceMode,
+			"categoryLimit":      categoryLimit, "featuredCount": featuredCount,
+			"featuredEffect":  featuredEffect,
+			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
 			"styleId": styleID, "brandColorId": brandColorID,
 			"companyNameScale": nameScale, "introFontScale": introScale,
 			"templates":        mptemplate.All(),
@@ -683,6 +692,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			BgMask  *int    `json:"bgMask"`
 			// 顶部品牌主色浓度 0~100，与背景同属「页面样式」页签；指针语义同上。
 			BgGradientStrength *int `json:"bgGradientStrength"`
+			// 首页业绩分类 / 精选案例的数量与循环效果（0049），同属「名片页面样式」页签。
+			// 指针语义同上：风格页只提交两轴时不能把这三项冲成缺省。
+			CategoryLimit  *int    `json:"categoryLimit"`
+			FeaturedCount  *int    `json:"featuredCount"`
+			FeaturedEffect *string `json:"featuredEffect"`
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
@@ -723,6 +737,25 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "服务时间显示档位无效"})
 				return
 			}
+		}
+		// 循环效果是随包内置的白名单：端上拿到未知 id 会既不是静态也不是轮播，
+		// 整块精选案例消失且后台看不出原因，所以非法值与时间档位一样直接拒绝。
+		featuredEffect := ""
+		if req.FeaturedEffect != nil {
+			if featuredEffect = model.NormalizeFeaturedEffect(*req.FeaturedEffect); featuredEffect == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "循环呈现效果无效"})
+				return
+			}
+		}
+		// 数量钳制后原地写回指针：0（隐藏分类）与 1（只显一张精选）都是合法值，
+		// 不能用局部变量零值当「未提交」标记；nil 才表示本次不带这个字段。
+		if req.CategoryLimit != nil {
+			v := clampInt(*req.CategoryLimit, 0, 20)
+			req.CategoryLimit = &v
+		}
+		if req.FeaturedCount != nil {
+			v := clampInt(*req.FeaturedCount, 1, 3)
+			req.FeaturedCount = &v
 		}
 		// 文字展示档位是纯展示偏好：非法/空值归一成 large，不因此拒掉整次保存。
 		// 与 timeMode（白名单拒绝）不同——端上拿到不认识的字号档只会 class 落空，
@@ -813,6 +846,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				ServiceTimeMode: model.DefaultTimeMode,
 				StyleID:         styleID,
 				BrandColorID:    brandColorID,
+				CategoryLimit:   model.DefaultCategoryLimit,
+				FeaturedCount:   model.DefaultFeaturedCount,
+				FeaturedEffect:  model.DefaultFeaturedEffect,
 			}
 			if req.BgImage != nil {
 				created.BgImage = *req.BgImage
@@ -823,6 +859,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			created.BgGradientStrength = 100
 			if req.BgGradientStrength != nil {
 				created.BgGradientStrength = clampMask(*req.BgGradientStrength)
+			}
+			if req.CategoryLimit != nil {
+				created.CategoryLimit = *req.CategoryLimit
+			}
+			if req.FeaturedCount != nil {
+				created.FeaturedCount = *req.FeaturedCount
+			}
+			if req.FeaturedEffect != nil {
+				created.FeaturedEffect = featuredEffect
 			}
 			if projectMode != "" {
 				created.ProjectTimeMode = projectMode
@@ -847,6 +892,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if req.BgGradientStrength != nil {
 				upd["bg_gradient_strength"] = clampMask(*req.BgGradientStrength)
+			}
+			if req.CategoryLimit != nil {
+				upd["category_limit"] = *req.CategoryLimit
+			}
+			if req.FeaturedCount != nil {
+				upd["featured_count"] = *req.FeaturedCount
+			}
+			if featuredEffect != "" {
+				upd["featured_effect"] = featuredEffect
 			}
 			if projectMode != "" {
 				upd["project_time_mode"] = projectMode
@@ -892,6 +946,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			Detail: map[string]any{
 				"orderTouched": orderJSON != "", "themeTouched": themeTouched,
 				"nameTouched": nameScale != "", "introTouched": introScale != "",
+				"categoryTouched": req.CategoryLimit != nil,
+				"featuredTouched": req.FeaturedCount != nil || req.FeaturedEffect != nil,
 			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})

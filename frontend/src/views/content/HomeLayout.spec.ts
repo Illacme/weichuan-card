@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
     order: ['achievement', 'service'],
     bgImage: '',
     bgMask: 0,
+    categoryLimit: 20,
+    featuredCount: 3,
+    featuredEffect: 'static',
     companyNameScale: 'large',
     introFontScale: 'large',
   })),
@@ -88,6 +91,16 @@ const ElSlider = defineComponent({
     @input="$emit('update:modelValue', Number($event.target.value))" />`,
   inheritAttrs: true,
 })
+// 两个数量输入是 el-input-number：测试里用原生 number input 复刻 v-model，
+// 否则未注册的自定义元素不发射 update:modelValue，回显与保存都测不到。
+const ElInputNumber = defineComponent({
+  name: 'ElInputNumber',
+  props: ['modelValue', 'min', 'max', 'step'],
+  emits: ['update:modelValue'],
+  template: `<input class="el-input-number" type="number" :min="min" :max="max" :value="modelValue"
+    @input="$emit('update:modelValue', Number($event.target.value))" />`,
+  inheritAttrs: true,
+})
 const UploadField = defineComponent({
   name: 'UploadField',
   props: ['modelValue', 'multiple', 'libraryType', 'tip'],
@@ -114,6 +127,7 @@ const mountOpts = {
       'el-radio-group': ElRadioGroup,
       'el-radio': ElRadio,
       'el-slider': ElSlider,
+      'el-input-number': ElInputNumber,
       UploadField,
       ImageViewer,
     },
@@ -176,19 +190,22 @@ describe('content/HomeLayout', () => {
   })
 
   // 只挪表单项、把 divider 留在原地，会出现「标题说首页背景，底下是板块顺序」的错位，
-  // 所以直接钉死四个模块标题在源码里的相对位置。首页文字展示（公司名/简介档位）
-  // 必须夹在「首页背景」与「板块顺序」中间——这是产品约定的插入位置。
-  it('配置模块顺序：首页背景 → 首页文字展示 → 板块顺序 → 详情页时间显示', () => {
+  // 所以直接钉死五个模块标题在源码里的相对位置。首页文字展示（公司名/简介档位）
+  // 必须夹在「首页背景」与「板块顺序」中间——这是产品约定的插入位置；
+  // 业绩与案例展示紧随板块顺序，且在详情页时间显示之前。
+  it('配置模块顺序：首页背景 → 首页文字展示 → 板块顺序 → 业绩与案例展示 → 详情页时间显示', () => {
     const src = readFileSync(PAGE_SRC, 'utf-8')
     const bg = src.indexOf('<el-divider content-position="left">首页背景</el-divider>')
     const text = src.indexOf('<el-divider content-position="left">首页文字展示</el-divider>')
     const order = src.indexOf('<el-divider content-position="left">板块顺序</el-divider>')
+    const display = src.indexOf('<el-divider content-position="left">业绩与案例展示</el-divider>')
     const time = src.indexOf('<el-divider content-position="left">详情页时间显示</el-divider>')
 
     expect(bg).toBeGreaterThan(-1)
     expect(text).toBeGreaterThan(bg)
     expect(order).toBeGreaterThan(text)
-    expect(time).toBeGreaterThan(order)
+    expect(display).toBeGreaterThan(order)
+    expect(time).toBeGreaterThan(display)
   })
 
   // order[0] 决定谁是「在前」的板块
@@ -222,11 +239,40 @@ describe('content/HomeLayout', () => {
       order: ['service', 'achievement'],
       bgImage: '',
       bgMask: 0,
+      categoryLimit: 20,
+      featuredCount: 3,
+      featuredEffect: 'static',
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       companyNameScale: 'large',
       introFontScale: 'large',
     })
+  })
+
+  // 0049 三项展示配置：0 / 1 是合法值，回显不能用 || 兜底；改动要随同一份 payload 提交。
+  it('业绩分类数量 / 精选案例数量 / 循环效果：回显后端值，修改后随保存提交', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'], bgImage: '', bgMask: 0,
+      categoryLimit: 0, featuredCount: 1, featuredEffect: 'scroll',
+    })
+
+    expect(formItemByLabel(w, '业绩分类数量').find('.el-input-number').element.value).toBe('0')
+    expect(formItemByLabel(w, '精选案例数量').find('.el-input-number').element.value).toBe('1')
+
+    await formItemByLabel(w, '业绩分类数量').find('.el-input-number').setValue(6)
+    await formItemByLabel(w, '精选案例数量').find('.el-input-number').setValue(3)
+    const flip = formItemByLabel(w, '循环呈现效果')
+      .findAll('.el-radio')
+      .find((b: any) => b.text() === '立体翻转')
+    expect(flip).toBeDefined()
+    await flip.trigger('click')
+    await flush()
+
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryLimit: 6, featuredCount: 3, featuredEffect: 'flip' })
+    )
   })
 
   // 没有背景图时遮罩没有意义：滑块要禁用，否则用户拖了半天看不到任何变化
@@ -260,6 +306,9 @@ describe('content/HomeLayout', () => {
       order: ['achievement', 'service'],
       bgImage: '/uploads/bg.jpg',
       bgMask: 60,
+      categoryLimit: 20,
+      featuredCount: 3,
+      featuredEffect: 'static',
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       companyNameScale: 'large',

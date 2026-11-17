@@ -1,4 +1,26 @@
-<view class="featured" wx:if="{{featured.length}}">
+<!-- 精选案例：static 平铺 / fade 淡入 / scroll 横移 / flip 立体翻转。
+     轮播只是同一批图的呈现方式，点击仍进同一个案例详情；一张图时走静态分支。 -->
+<view class="featured featured-cycle" wx:if="{{cycleOn}}">
+  <!-- 占位撑高度：四种风格下 .feat-cover 高度不同，借同一份全局样式取真实高度，
+       不在组件里再写死一套 rpx（避免风格层改高度时轮播区错位）。 -->
+  <view class="feat-cycle-sizer" aria-hidden="true">
+    <view class="feat-item"><view class="feat-cover"></view></view>
+  </view>
+  <view class="feat-cycle-item" wx:for="{{featured}}" wx:key="id" style="{{cycleStyles[index]}}"
+    data-id="{{item.id}}" bindtap="onTap">
+    <view class="feat-item">
+      <image class="feat-cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
+        binderror="onImgErr" data-arr="featured" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />
+      <view class="feat-cover" wx:else></view>
+    </view>
+  </view>
+  <view class="feat-dots" wx:if="{{featured.length > 1}}">
+    <view class="feat-dot {{index === current ? 'on' : ''}}" wx:for="{{featured}}" wx:key="id"
+      data-index="{{index}}" bindtap="onDot"></view>
+  </view>
+</view>
+
+<view class="featured" wx:elif="{{featured.length}}">
   <view class="feat-item" wx:for="{{featured}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
     <!-- 等比缩放充满显示区（aspectFill），不放标题文字；项目名在列表/详情页展示 -->
     <image class="feat-cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"

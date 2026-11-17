@@ -546,8 +546,10 @@ paths:
       tags: [公开内容]
       summary: 小程序展示配置（板块顺序 + 首页背景 + 风格模板）
       description: |
-        字段都在**响应根级**，不在 `data` 里。首页 `loadAll` 一次拿到这四组配置，
-        不需要再为详情页时间档位或整体风格多打一次请求。
+        字段都在**响应根级**，不在 `data` 里。首页 `loadAll` 一次拿到全部配置，
+        不需要再为详情页时间档位、展示数量或整体风格多打一次请求。
+        0049 起还下发 `categoryLimit` / `featuredCount` / `featuredEffect`，
+        小程序端据此截取业绩分类与精选案例，并用随包内置的动画播放循环效果。
 
         P5 起主题是两轴全叉乘：`style`「整体风格」按布局特色命名，决定四个模块的列数 /
         间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，10 款色系在 4 个
@@ -590,6 +592,23 @@ paths:
                     maximum: 100
                     default: 100
                     description: 首页顶部品牌主色浓度 0~100（100=原色）；无背景图时注入渐变顶部 alpha，背景图存在时无效
+                  categoryLimit:
+                    type: integer
+                    minimum: 0
+                    maximum: 20
+                    default: 20
+                    description: 首页「经典业绩」最多显示的业绩分类数；0=隐藏分类网格（精选案例不受影响），小程序端按此截取前 N 个
+                  featuredCount:
+                    type: integer
+                    minimum: 1
+                    maximum: 3
+                    default: 3
+                    description: 首页精选案例默认呈现数量；实际精选不足时按实际数量，不补空位
+                  featuredEffect:
+                    type: string
+                    enum: [static, fade, scroll, flip]
+                    default: static
+                    description: 精选案例循环呈现效果（静态平铺 / 淡入淡出 / 横向滚动 / 立体翻转）；只有一张案例时始终静态
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]
@@ -2814,6 +2833,23 @@ paths:
                         maximum: 100
                         default: 100
                         description: 首页顶部品牌主色浓度 0~100（100=原色），无背景图时生效
+                      categoryLimit:
+                        type: integer
+                        minimum: 0
+                        maximum: 20
+                        default: 20
+                        description: 首页业绩分类最多显示数量（控件在「名片页面样式」页签）；0=隐藏分类网格，缺省 20=不截断
+                      featuredCount:
+                        type: integer
+                        minimum: 1
+                        maximum: 3
+                        default: 3
+                        description: 首页精选案例默认呈现数量，不足时按实际数量
+                      featuredEffect:
+                        type: string
+                        enum: [static, fade, scroll, flip]
+                        default: static
+                        description: 精选案例循环效果；非法值写入时拒绝（code=1），不静默兜底
                       projectTimeMode:
                         type: string
                         enum: [hidden, date, minute]
@@ -2880,6 +2916,11 @@ paths:
         控件归本「名片页面样式」页签，随本端点读写；物理列仍在 company_infos /
         company_profiles，用窄更新只碰这两列，不传即保持原值。非法值归一成 large
         （纯展示偏好，不因此拒掉整次保存）。
+        `categoryLimit`（0~20，0=隐藏分类网格）、`featuredCount`（1~3，不足按实际）、
+        `featuredEffect`（static/fade/scroll/flip）同属本页签；        数量越界钳制到边界，
+        效果枚举外的值与时间档位一样直接拒绝（code=1）。缺省取上限与 static：
+        分类 20 即不截断、轮播 static 即原平铺；精选范围只有 1~3、无法表达「不限」，
+        缺省 3 会让原本精选超过 3 张的租户收敛到前 3 张（案例不删，可改精选标记）。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
         `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
@@ -2912,6 +2953,20 @@ paths:
                   minimum: 0
                   maximum: 100
                   description: 首页顶部品牌主色浓度，100=原色（默认）；指针语义，未提供时保持原值
+                categoryLimit:
+                  type: integer
+                  minimum: 0
+                  maximum: 20
+                  description: 首页业绩分类最多显示数量 0~20；0=隐藏分类网格。指针语义，不传保持原值；越界钳制到边界
+                featuredCount:
+                  type: integer
+                  minimum: 1
+                  maximum: 3
+                  description: 首页精选案例呈现数量 1~3；不足按实际。指针语义，不传保持原值；越界钳制
+                featuredEffect:
+                  type: string
+                  enum: [static, fade, scroll, flip]
+                  description: 精选案例循环呈现效果；指针语义，不传保持原值；枚举外的值直接拒绝
                 projectTimeMode:
                   type: string
                   enum: [hidden, date, minute]

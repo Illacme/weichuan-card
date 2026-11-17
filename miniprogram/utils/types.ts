@@ -150,6 +150,12 @@ export type HomeLayoutResp = Envelope & {
   bgMask?: number
   /** 首页顶部品牌主色浓度 0..100（100=原色，缺省）；无背景图时注入渐变顶部 alpha */
   bgGradientStrength?: number
+  /** 首页业绩分类最多显示数量 0..20；0=隐藏分类网格，缺省 20 */
+  categoryLimit?: number
+  /** 首页精选案例默认呈现数量 1..3；不足按实际，缺省 3 */
+  featuredCount?: number
+  /** 精选案例循环效果：static / fade / scroll / flip，缺省 static */
+  featuredEffect?: string
   /** 整体风格（布局族）id；P1 起由后端根级下发，缺省按 default 渲染 */
   styleId?: string
   /** 品牌色系（纯颜色层）id；null / 缺省 = 用风格默认色 */

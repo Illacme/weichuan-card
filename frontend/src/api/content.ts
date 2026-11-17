@@ -170,6 +170,9 @@ export function sortServices(items: { id: number; sort: number }[]) {
 // 详情页「更新于」的展示档位。与后端 model.TimeMode* 三档一一对应。
 export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 
+/** 首页精选案例的循环呈现效果。与后端 model.FeaturedEffect* 白名单一一对应。 */
+export type FeaturedEffect = 'static' | 'fade' | 'scroll' | 'flip'
+
 /** 模板系列：style=整体风格（配色+版式），brand=品牌配色（只换配色）。由服务端下发。 */
 export type ThemeSeries = 'style' | 'brand'
 
@@ -191,6 +194,12 @@ export interface HomeLayoutData {
   bgMask: number
   /** 首页顶部品牌主色浓度 0~100，100=原色（默认）；无背景图时生效 */
   bgGradientStrength: number
+  /** 首页「经典业绩」最多显示的业绩分类数 0~20；0=隐藏分类网格，精选案例不受影响 */
+  categoryLimit: number
+  /** 首页精选案例默认呈现数量 1~3；实际精选不足时按实际数量 */
+  featuredCount: number
+  /** 精选案例循环呈现效果，默认 static 静态平铺 */
+  featuredEffect: FeaturedEffect
   /** 项目案例详情页：不显示 / 只到日 / 到分 */
   projectTimeMode: DetailTimeMode
   /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */
@@ -217,6 +226,9 @@ export function getHomeLayout() {
           bgImage: '',
           bgMask: 0,
           bgGradientStrength: 100,
+          categoryLimit: 20,
+          featuredCount: 3,
+          featuredEffect: 'static',
           projectTimeMode: 'date',
           serviceTimeMode: 'date',
           styleId: 'default',

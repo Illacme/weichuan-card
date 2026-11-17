@@ -1,0 +1,36 @@
+/* 精选案例循环呈现：只负责「怎么动」，卡片尺寸/圆角/列数仍由全局四风格样式决定。
+   组件开了 addGlobalClass，.wc-style-* 下的 .feat-item/.feat-cover 照旧命中。 */
+
+.featured-cycle { position: relative; }
+
+/* 轮播是「一张一张看」，当前图占满整行才是 banner 观感；
+   静态平铺仍由全局样式维持 2 列，互不影响。 */
+/* 全局四风格把 .feat-item 定成 50%/100%/…（平铺两列），这里要盖成整行 banner。
+   组件 wxss 的特异性低于「.wc-style-x .mp-achievements .feat-item」，故用 !important；
+   只改轮播分支的 width，圆角/高度/阴影仍走全局风格。 */
+.featured-cycle .feat-item { width: 100% !important; }
+
+/* 隐藏占位：和一张静态卡同结构，撑出当前风格下正确的高度；
+   四张轮播图绝对定位盖在它上面，不写死高度就不会和风格层分叉。 */
+.feat-cycle-sizer { visibility: hidden; }
+
+.feat-cycle-item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  transform-origin: 50% 50%;
+  transition: transform .6s cubic-bezier(.22, .61, .36, 1), opacity .45s ease;
+  will-change: transform, opacity;
+}
+
+.feat-dots { display: flex; align-items: center; justify-content: center; margin-top: 14rpx; }
+.feat-dot {
+  width: 12rpx;
+  height: 12rpx;
+  margin: 0 8rpx;
+  border-radius: 6rpx;
+  background: rgba(0, 0, 0, .18);
+  transition: width .3s ease, background .3s ease;
+}
+.feat-dot.on { width: 28rpx; background: var(--wc-primary); }

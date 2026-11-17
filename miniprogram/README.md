@@ -269,6 +269,11 @@ miniprogram/
 - **顶部主色浓度滑杆**：后台「风格模板」页签第 3 步的 `bgGradientStrength`（0~100，默认 100=原色）经公开接口下发，`index.ts` 换算成 `bgGradientAlpha=浓度/100`、`bgGradientFadeAlpha=前者×0.9`，由 wxml 在 `.page` 内联 `--top-alpha` / `--fade-alpha` 注入渐变。fallback（1 / 0.9）保证旧端与后台预览仍渲染原色。顶栏公司名随滚动（`navMask`）与浓度（<50 视为浅底）切成深色，避免浅底白字不可读。设了 `bgImage` 时整幅渐变被背景盖住，浓度自然无效。后台预览用 SVG 白色遮罩实时模拟该浓度，遮罩只盖到名片卡片顶部（卡片是不透明白容器，浓度只影响卡片背后的背景），卡片与文字不受影响；浓度 <50 时按真机同一阈值重绘深色顶栏公司名，避免烘焙白字被遮罩冲淡。
 - 背景层与蒙层用 `position: fixed` + 负 `z-index` 铺在最底层，内容按常规流绘制天然在其上方，不会互相遮挡；有背景时顶栏改为半透明白、板块卡片加圆角阴影（`.has-bg`）。
 
+## 首页业绩分类 / 精选案例展示配置（0049）
+- 后台「小程序设置 → 名片页面样式 → 业绩与案例展示」提供三项：`categoryLimit`（业绩分类最多 0~20 个，0=不渲染分类图标墙但保留精选案例与「更多案例」入口）、`featuredCount`（精选案例默认呈现 1~3 张，实际精选不足时按实际数量，不补空位）、`featuredEffect`（循环效果 `static` / `fade` / `scroll` / `flip`）。三者与背景、时间档位共用 `home-layout` 端点，部分更新语义，风格页保存两轴时不会冲掉它们。
+- 公开接口 `/api/home-layout` 在根级下发三字段。`index.ts` 端上再钳一次范围（防旧后端脏值），按 `categoryLimit` / `featuredCount` 截断 `categories` / `featured`，并把效果 id 透传给 `featured-projects` 组件。未知效果回落 `static`；缺省取 20 / 3 / static（分类不截断、效果保持原平铺；精选范围仅 1~3，原本超过 3 张的会收敛到前 3 张）。
+- `components/featured-projects` 内置四套随包动画：静态平铺（原行为）、淡入淡出、横向滚动、立体翻转；多图时 3.6 秒自动循环，点击指示点可手动切换并重新计时，点图仍进案例详情；**只有一张案例时始终静态**。轮播区当前图占满整行（整行 banner 观感），高度借全局四风格的 `.feat-cover` 撑出，不在组件里重复写死 rpx；组件切后台停表、销毁清理定时器。
+
 ## 腾讯视频档（`company-video` 的 txv 分支）
 
 `company-video` 按后端 `videoSource` 选档：`channels` → `<channel-video>`（feedId / feed-token）、

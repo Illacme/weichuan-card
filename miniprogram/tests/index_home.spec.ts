@@ -6,6 +6,9 @@
 //    误读会让卡片页恒走 notFound，扫码进来的访客一律看到「员工不存在」；
 // 2) loadAll 里 reject 直接冒泡出 async 函数会让页面永久停在「加载中…」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   installPageCapture,
   capturedPage,
@@ -84,6 +87,12 @@ const ach = (extra: any = {}) => ({
 
 const services = { code: 0, data: [{ id: 3, title: '维保', icon: '/uploads/s3.png' }] }
 const layout = { code: 0, order: ['achievement', 'service'], bgImage: '/uploads/bg.jpg', bgMask: 60 }
+// 0049 用：数量截断要能看出「取前 N 个」而不是随便砍几个
+const manyAch = {
+  code: 0,
+  categories: [1, 2, 3, 4, 5].map((id) => ({ id, name: '分类' + id, icon: '/uploads/c' + id + '.png' })),
+  featured: [1, 2, 3, 4].map((id) => ({ id, name: '案例' + id, cover: '/uploads/p' + id + '.jpg' })),
+}
 
 // 按 path 分发四次并行请求（loadAll 用 Promise.all 一次性打出去）
 function mockApis(opt: { card?: any; ach?: any; svc?: any; layout?: any; fail?: boolean } = {}) {
@@ -278,6 +287,46 @@ describe('index 首页', () => {
     const p = await page({ staffId: '42' })
     expect(p.data.bgGradientStrength).toBe(100)
     expect(p.data.bgGradientAlpha).toBeCloseTo(1)
+  })
+
+  // 0049：后台三项展示配置必须在首页真正生效，不能只存库不呈现。
+  it('业绩分类按后台数量截断：取前 N 个，0=隐藏分类网格', async () => {
+    mockApis({ ach: manyAch, layout: { ...layout, categoryLimit: 2 } })
+    const p = await page({ staffId: '42' })
+    expect(p.data.categories.map((c: any) => c.id)).toEqual([1, 2])
+    expect(p.data.categoryLimit).toBe(2)
+
+    // 0 是合法的「隐藏」，不能用 || 兜底成 20
+    mockApis({ ach: manyAch, layout: { ...layout, categoryLimit: 0 } })
+    const p0 = await page({ staffId: '42' })
+    expect(p0.data.categories).toEqual([])
+    expect(p0.data.categoryLimit).toBe(0)
+  })
+
+  it('精选案例按后台数量截取，不足按实际；效果 id 透传给组件', async () => {
+    const few = { code: 0, categories: [], featured: manyAch.featured.slice(0, 2) }
+    mockApis({ ach: few, layout: { ...layout, featuredCount: 3, featuredEffect: 'flip' } })
+    const p = await page({ staffId: '42' })
+    expect(p.data.featured.length).toBe(2) // 只有 2 张时配 3 张不能补空位
+    expect(p.data.featuredCount).toBe(3)
+    expect(p.data.featuredEffect).toBe('flip')
+
+    mockApis({ ach: manyAch, layout: { ...layout, featuredCount: 1, featuredEffect: 'fade' } })
+    const p1 = await page({ staffId: '42' })
+    expect(p1.data.featured.map((f: any) => f.id)).toEqual([1])
+  })
+
+  it('展示数量越界钳制、未知效果回落 static（防旧后端脏值）', async () => {
+    mockApis({
+      ach: manyAch,
+      layout: { ...layout, categoryLimit: -5, featuredCount: 99, featuredEffect: 'carousel-3d' },
+    })
+    const p = await page({ staffId: '42' })
+    expect(p.data.categoryLimit).toBe(0)
+    expect(p.data.categories).toEqual([])
+    expect(p.data.featuredCount).toBe(3)
+    expect(p.data.featured.length).toBe(3)
+    expect(p.data.featuredEffect).toBe('static')
   })
 
   // 业绩区在首页 → 箭头朝下（滚过去）；被布局隐藏 → 朝右（跳案例页）
@@ -645,5 +694,91 @@ describe('index 首页 · 默认入口缓存失效的自愈', () => {
 
     expect(wxStub.reLaunch).not.toHaveBeenCalled()
     expect(p.data.employee.name).toBe('张伟')
+  })
+})
+
+// 组件逻辑没有独立的运行时测试桩（小程序 Component 依赖微信运行时），
+// 用源码守门钉死「后台效果 id → 首页 → 组件 → 样式」这条接线，
+// 避免只改了后台枚举、端上却漏接导致设置存了不生效。
+describe('精选案例循环效果的接线守门（源码级）', () => {
+  const read = (p: string) =>
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', p), 'utf-8')
+
+  it('首页把后台效果 id 透传给精选案例组件', () => {
+    expect(read('pages/index/index.wxml')).toMatch(
+      /<featured-projects[^>]*effect="\{\{featuredEffect\}\}"/
+    )
+  })
+
+  it('组件四档效果齐全，且只在多图非静态时启动定时轮播', () => {
+    const ts = read('components/featured-projects/index.ts')
+    for (const effect of ['static', 'fade', 'scroll', 'flip']) expect(ts).toContain(`'${effect}'`)
+    expect(ts).toContain("effect !== 'static' && n > 1")
+    expect(ts).toContain('setInterval')
+    expect(ts).toContain('clearInterval')
+    expect(ts).toContain('hide()') // 页面切后台要停表，不然后台空转
+  })
+
+  it('WXML 保留静态平铺分支（旧租户与单图不被强行轮播）', () => {
+    const wxml = read('components/featured-projects/index.wxml')
+    expect(wxml).toContain('wx:if="{{cycleOn}}"')
+    expect(wxml).toContain('wx:elif="{{featured.length}}"')
+    expect(wxml).toContain('bindtap="onDot"')
+  })
+
+  it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
+    const wxss = read('components/featured-projects/index.wxss')
+    expect(wxss).toContain('.feat-cycle-sizer')
+    expect(wxss).toContain('visibility: hidden')
+    expect(wxss).toContain('transition: transform')
+    expect(wxss).toContain('var(--wc-primary')
+  })
+
+  it('轮播算法：横移走环形最短距离，淡入/翻转只显当前图，末张回第一张', async () => {
+    vi.resetModules()
+    let opts: any = null
+    vi.stubGlobal('Component', (o: any) => {
+      opts = o
+    })
+    await import('../components/featured-projects/index')
+    expect(opts).toBeTruthy()
+
+    const inst: any = {
+      data: {
+        current: 0,
+        cycleOn: true,
+        cycleStyles: [],
+        featured: [{ id: 1 }, { id: 2 }, { id: 3 }],
+        effect: 'scroll',
+      },
+      setData(patch: any) {
+        Object.assign(this.data, patch)
+      },
+    }
+    for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
+
+    inst.applyStyles()
+    expect(inst.data.cycleStyles[0]).toContain('translateX(0%)')
+    expect(inst.data.cycleStyles[1]).toContain('translateX(100%)')
+
+    // 环形最短距离：3 张时从末张回第一张走 +100%（从右侧滑入，保持同向滚动），
+    // 而不是 -200% 横穿整排。
+    inst.setData({ current: 2 })
+    inst.applyStyles()
+    expect(inst.data.cycleStyles[0]).toContain('translateX(100%)')
+    expect(inst.data.cycleStyles[1]).toContain('translateX(-100%)')
+
+    inst.setData({ effect: 'flip' })
+    inst.applyStyles()
+    expect(inst.data.cycleStyles[2]).toContain('rotateY(0deg)')
+    expect(inst.data.cycleStyles[0]).toContain('rotateY(180deg)')
+
+    inst.setData({ effect: 'fade' })
+    inst.applyStyles()
+    expect(inst.data.cycleStyles[2]).toContain('opacity:1')
+    expect(inst.data.cycleStyles[0]).toContain('opacity:0')
+
+    inst.next()
+    expect(inst.data.current).toBe(0) // 末张之后回到第一张，循环不越界
   })
 })

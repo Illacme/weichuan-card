@@ -159,6 +159,13 @@ const ElTabPane = defineComponent({
   },
 })
 
+// 内嵌的 HomeLayout 新增两个数量输入框：这里只渲染不交互，给个桩消除 unresolved 警告。
+const ElInputNumber = defineComponent({
+  name: 'ElInputNumber',
+  props: ['modelValue', 'min', 'max', 'step'],
+  template: `<input class="el-input-number" type="number" :value="modelValue" />`,
+})
+
 const mountOpts = {
   global: {
     stubs: {
@@ -172,6 +179,7 @@ const mountOpts = {
       'el-radio-group': ElRadioGroup,
       'el-radio': ElRadio,
       'el-slider': ElSlider,
+      'el-input-number': ElInputNumber,
       'el-select': ElSelect,
       'el-option': ElOption,
       'el-tabs': ElTabs,
@@ -448,6 +456,9 @@ describe('content/MpSettings', () => {
       order: ['achievement', 'service'],
       bgImage: '',
       bgMask: 0,
+      categoryLimit: 20,
+      featuredCount: 3,
+      featuredEffect: 'static',
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       // 两处文字档位必须随保存提交：漏了就是「后台选了、小程序没变」

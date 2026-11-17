@@ -314,6 +314,45 @@ func NormalizeTimeMode(v string) string {
 	}
 }
 
+// 首页精选案例的循环呈现效果（home_layouts.featured_effect）。
+//
+// 小程序端不能动态加载 WXSS，效果是随包内置的四套动画，后台只下发 id 选择：
+//   - static 静态平铺（升级前行为，存量租户零视觉突变）
+//   - fade   淡入淡出轮播
+//   - scroll 横向滚动轮播
+//   - flip   3D 翻转轮播
+//
+// 非法值归一为空串由调用方拒绝写入，避免端上落到「既不是静态也不是轮播」的空白态。
+const (
+	FeaturedEffectStatic = "static"
+	FeaturedEffectFade   = "fade"
+	FeaturedEffectScroll = "scroll"
+	FeaturedEffectFlip   = "flip"
+)
+
+// DefaultFeaturedEffect 缺省效果：静态平铺，与加配置前完全一致。
+const DefaultFeaturedEffect = FeaturedEffectStatic
+
+// 首页展示数量的缺省值。分类取上限 20 = 不截断，效果取 static = 升级前的平铺；
+// 精选只能取配置上限 3（范围 1~3 无法表达「不限」），超出 3 张的租户会收敛到
+// 排序最前的 3 张——数据不丢，管理员可用案例的「首页精选」开关改选呈现哪几张。
+const (
+	DefaultCategoryLimit = 20
+	DefaultFeaturedCount = 3
+)
+
+// NormalizeFeaturedEffect 归一循环效果；非法值返回空串由调用方拒绝。
+func NormalizeFeaturedEffect(v string) string {
+	switch v {
+	case "":
+		return DefaultFeaturedEffect
+	case FeaturedEffectStatic, FeaturedEffectFade, FeaturedEffectScroll, FeaturedEffectFlip:
+		return v
+	default:
+		return ""
+	}
+}
+
 // HomeLayout 小程序展示配置（按租户隔离，company_id 唯一）。
 //
 // 名字里的 Home 是历史包袱：它最早只装首页板块顺序与首页背景，现在还承载详情页
@@ -334,6 +373,13 @@ type HomeLayout struct {
 	// 页签滑杆自选，100 即 var(--wc-primary) 原色、0 则几乎不显主色。
 	// 与 bgMask 同属「页面样式」页签，和风格两轴分开写，互不冲掉。
 	BgGradientStrength int `gorm:"column:bg_gradient_strength;default:100" json:"bgGradientStrength"`
+	// CategoryLimit 首页「经典业绩」板块最多渲染的业绩分类数量，0~20。
+	// 0 = 不渲染分类网格（精选案例不受影响，只隐藏分类图标墙）；缺省 20 = 不截断。
+	CategoryLimit int `gorm:"column:category_limit;default:20" json:"categoryLimit"`
+	// FeaturedCount 首页精选案例默认呈现数量 1~3；实际精选不足时按实际数量渲染。
+	FeaturedCount int `gorm:"column:featured_count;default:3" json:"featuredCount"`
+	// FeaturedEffect 精选案例的循环呈现效果，取值见 FeaturedEffect* 常量。
+	FeaturedEffect string `gorm:"column:featured_effect;size:16;default:static" json:"featuredEffect"`
 	// ProjectTimeMode / ServiceTimeMode 项目案例与业务服务详情页的「更新于」档位。
 	// 刻意分成两列：案例带「交付年份」的语义、服务更像常青内容，两者该不该显示
 	// 时间往往不是一个答案，共用一个开关会逼客户二选一。

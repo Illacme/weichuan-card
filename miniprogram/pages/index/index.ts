@@ -9,6 +9,15 @@ import { FALLBACK_BRAND } from '../../utils/brand'
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
 import { applyTheme, bindTheme, resolveTheme } from '../../utils/theme'
 
+// 精选案例循环效果的端上白名单，与后端 model.FeaturedEffect* 一一对应。
+// 旧后端 / 脏数据下发未知值时必须回落 static，否则组件既不是静态也不进轮播，
+// 整块精选案例会消失且没有任何报错。
+const FEATURED_EFFECTS = ['static', 'fade', 'scroll', 'flip']
+
+function normalizeFeaturedEffect(v: unknown): string {
+  return typeof v === 'string' && FEATURED_EFFECTS.indexOf(v) >= 0 ? v : 'static'
+}
+
 Page({
   data: {
     themeClass: '',
@@ -37,6 +46,11 @@ Page({
     bgGradientStrength: 100,
     bgGradientAlpha: 1,
     bgGradientFadeAlpha: 0.9,
+    // 0049 首页展示配置：分类数量 0~20（0=隐藏分类网格）、精选 1~3 张、循环效果。
+    // 缺省取上限与 static，兼容旧后端未下发这三字段的情况（精选超过 3 张会收敛到前 3 张）。
+    categoryLimit: 20,
+    featuredCount: 3,
+    featuredEffect: 'static',
     // 加载失败的图片地址（背景图 / 顶栏头像）：WXML 用 `src && xxxFail !== src` 判断，
     // 记 URL 而不是布尔标记——换图或下拉刷新换了地址会自动重试（见 utils/thumb.ts）
     bgFail: '',
@@ -276,12 +290,18 @@ Page({
         // 外链保持原样（assetUrl 只处理相对路径），空值返回空串不会凭空造出地址。
         cardData.profile.videoBackupUrl = assetUrl(cardData.profile.videoBackupUrl)
       }
+      // 0049：先按后台配置钳制数量，再截断列表。0 是合法的「隐藏分类网格」、
+      // 1 是合法的「只显一张精选」，故用 ?? 而不是 || 兜底；精选不足配置值时
+      // slice 自然按实际数量返回，不会补空位。端上再钳一次防旧后端下发脏值。
+      const categoryLimit = Math.max(0, Math.min(20, layout.categoryLimit ?? 20))
+      const featuredCount = Math.max(1, Math.min(3, layout.featuredCount ?? 3))
+      const featuredEffect = normalizeFeaturedEffect(layout.featuredEffect)
       // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
-      const categories = (ach.categories || []).map((c: any) => {
+      const categories = (ach.categories || []).slice(0, categoryLimit).map((c: any) => {
         const icon = assetUrl(c.icon)
         return { ...c, icon, iconThumb: thumbnailURL(icon) }
       })
-      const featured = (ach.featured || []).map((p: any) => {
+      const featured = (ach.featured || []).slice(0, featuredCount).map((p: any) => {
         const cover = assetUrl(p.cover)
         return { ...p, cover, coverThumb: thumbnailURL(cover) }
       })
@@ -317,6 +337,11 @@ Page({
         bgGradientStrength: strength,
         bgGradientAlpha: strength / 100,
         bgGradientFadeAlpha: (strength / 100) * 0.9,
+        // 0049 三项展示配置：端上已按它们截断过 categories / featured，
+        // 同时把效果 id 透传给精选案例组件选动画。
+        categoryLimit,
+        featuredCount,
+        featuredEffect,
         disabled: false,
         notFound: false,
         loading: false,

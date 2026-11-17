@@ -93,6 +93,35 @@
         <el-tag v-for="b in order" :key="b" class="order-tag">{{ blockLabel(b) }}</el-tag>
       </el-form-item>
 
+      <!-- 业绩分类数量 / 精选案例数量与循环效果：都是首页「经典业绩」板块的呈现偏好，
+           紧挨板块顺序放，管理员一次就能配齐「谁在前、各显多少、怎么动」。 -->
+      <el-divider content-position="left">业绩与案例展示</el-divider>
+
+      <p class="desc desc-tight">
+        控制首页「经典业绩」板块的分类图标墙长度、精选案例默认铺几张，以及精选案例的循环呈现方式。
+        实际精选案例少于设置值时按实际数量显示，不会补空位。
+      </p>
+
+      <el-form-item label="业绩分类数量">
+        <el-input-number v-model="categoryLimit" :min="0" :max="20" :step="1" controls-position="right" />
+        <div class="bg-hint">0 = 首页不显示业绩分类图标墙（精选案例与「更多案例」入口照旧）；最多 20 个。</div>
+      </el-form-item>
+
+      <el-form-item label="精选案例数量">
+        <el-input-number v-model="featuredCount" :min="1" :max="3" :step="1" controls-position="right" />
+        <div class="bg-hint">默认显示 1~3 张，按后台案例的排序取前 N 张。</div>
+      </el-form-item>
+
+      <el-form-item label="循环呈现效果">
+        <el-radio-group v-model="featuredEffect">
+          <el-radio value="static">静态平铺</el-radio>
+          <el-radio value="fade">淡入淡出</el-radio>
+          <el-radio value="scroll">横向滚动</el-radio>
+          <el-radio value="flip">立体翻转</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">只有一张精选案例时始终静态显示；轮播自动循环，点图仍进案例详情。</div>
+      </el-form-item>
+
       <el-divider content-position="left">详情页时间显示</el-divider>
 
       <p class="desc desc-tight">
@@ -136,7 +165,7 @@
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
-import { getHomeLayout, saveHomeLayout, type DetailTimeMode } from '@/api/content'
+import { getHomeLayout, saveHomeLayout, type DetailTimeMode, type FeaturedEffect } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
 
@@ -154,6 +183,10 @@ const bgViewer = ref(false)
 const bgMask = ref(0)
 // 顶部品牌主色浓度已移到「风格模板」页签管理（与品牌配色同页，调色即看即时预览）。
 // 本页不读写、不提交该字段；后端 PUT 是部分更新，故保存本页不会冲掉它。
+// 首页业绩分类 / 精选案例的展示配置（0049）。缺省取上限与 static，与升级前一致。
+const categoryLimit = ref(20)
+const featuredCount = ref(3)
+const featuredEffect = ref<FeaturedEffect>('static')
 // 详情页「更新于」档位：案例与服务各一个，互不影响
 const projectTimeMode = ref<DetailTimeMode>('date')
 const serviceTimeMode = ref<DetailTimeMode>('date')
@@ -189,6 +222,10 @@ async function load() {
     if (d && d.order && d.order.length) firstBlock.value = d.order[0]
     bgImage.value = d?.bgImage || ''
     bgMask.value = d?.bgMask || 0
+    // ?? 而非 ||：0（隐藏分类）与 1（只显一张）都是合法值
+    categoryLimit.value = d?.categoryLimit ?? 20
+    featuredCount.value = d?.featuredCount ?? 3
+    featuredEffect.value = d?.featuredEffect || 'static'
     projectTimeMode.value = d?.projectTimeMode || 'date'
     serviceTimeMode.value = d?.serviceTimeMode || 'date'
     companyNameScale.value = d?.companyNameScale || 'large'
@@ -211,6 +248,9 @@ async function save() {
       order: order.value,
       bgImage: bgImage.value,
       bgMask: bgMask.value,
+      categoryLimit: categoryLimit.value,
+      featuredCount: featuredCount.value,
+      featuredEffect: featuredEffect.value,
       projectTimeMode: projectTimeMode.value,
       serviceTimeMode: serviceTimeMode.value,
       companyNameScale: companyNameScale.value,

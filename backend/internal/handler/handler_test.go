@@ -850,12 +850,16 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 这段在任何 PUT 之前读，确保缺省值由 admin GET 兜底而非依赖写过配置。
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 100, body["data"].(map[string]interface{})["bgGradientStrength"])
+		// 0049 三项展示配置缺省：与加配置前一致（分类不截断、精选 3 张、静态平铺）
+		require.EqualValues(t, 20, body["data"].(map[string]interface{})["categoryLimit"])
+		require.EqualValues(t, 3, body["data"].(map[string]interface{})["featuredCount"])
+		require.Equal(t, "static", body["data"].(map[string]interface{})["featuredEffect"])
 
 		// 首页背景：写入 → 后台读回 → 公开接口下发
 		bgURL := "http://127.0.0.1:8080/uploads/library/bg-deepspace.jpg"
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgImage": bgURL, "bgMask": 40,
-			"bgGradientStrength": 75,
+			"bgGradientStrength": 75, "categoryLimit": 5, "featuredCount": 2, "featuredEffect": "flip",
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
@@ -864,6 +868,9 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, bgURL, hl["bgImage"])
 		require.EqualValues(t, 40, hl["bgMask"])
 		require.EqualValues(t, 75, hl["bgGradientStrength"])
+		require.EqualValues(t, 5, hl["categoryLimit"])
+		require.EqualValues(t, 2, hl["featuredCount"])
+		require.Equal(t, "flip", hl["featuredEffect"])
 
 		// 公开接口根级下发（小程序按 order/bgImage/bgMask/bgGradientStrength 读取）
 		_, body = c.do("GET", "/api/home-layout", nil, "")
@@ -871,9 +878,12 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, bgURL, body["bgImage"])
 		require.EqualValues(t, 40, body["bgMask"])
 		require.EqualValues(t, 75, body["bgGradientStrength"])
+		require.EqualValues(t, 5, body["categoryLimit"], "小程序按公开接口的配置截断分类")
+		require.EqualValues(t, 2, body["featuredCount"], "小程序按公开接口的配置截取精选")
+		require.Equal(t, "flip", body["featuredEffect"], "小程序按公开接口的效果播放动画")
 		require.EqualValues(t, []interface{}{"service", "achievement"}, body["order"])
 
-		// 只提交 order（不带背景/浓度）时两者都保持——指针语义区分「未提供」与「清空」
+		// 只提交 order（不带背景/浓度/展示数量）时全部保持——指针语义区分「未提供」与「清空」
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"achievement", "service"},
 		}, adminToken)
@@ -881,15 +891,39 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, bgURL, body["data"].(map[string]interface{})["bgImage"], "未提供 bgImage 不应清空")
 		require.EqualValues(t, 75, body["data"].(map[string]interface{})["bgGradientStrength"], "未提供浓度不应被冲掉")
+		require.EqualValues(t, 5, body["data"].(map[string]interface{})["categoryLimit"], "未提供不应被冲掉")
+		require.EqualValues(t, 2, body["data"].(map[string]interface{})["featuredCount"], "未提供不应被冲掉")
+		require.Equal(t, "flip", body["data"].(map[string]interface{})["featuredEffect"], "未提供不应被冲掉")
 
-		// 遮罩与浓度都钳制到 0~100
+		// categoryLimit 0 是合法的「隐藏分类网格」，不能用 || 兜底成 20
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
-			"order": []string{"achievement", "service"}, "bgMask": 999, "bgGradientStrength": -5,
+			"categoryLimit": 0,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["data"].(map[string]interface{})["categoryLimit"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.EqualValues(t, 0, body["categoryLimit"])
+
+		// 越界钳制：分类 0~20、精选 1~3
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"bgMask": 999, "bgGradientStrength": -5,
+			"categoryLimit": 99, "featuredCount": 0,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 100, body["data"].(map[string]interface{})["bgMask"])
 		require.EqualValues(t, 0, body["data"].(map[string]interface{})["bgGradientStrength"])
+		require.EqualValues(t, 20, body["data"].(map[string]interface{})["categoryLimit"])
+		require.EqualValues(t, 1, body["data"].(map[string]interface{})["featuredCount"])
+
+		// 非法循环效果直接拒绝，不静默兜底成 static（否则后台看着存了、端上没动画）
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredEffect": "carousel-3d",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "flip", body["data"].(map[string]interface{})["featuredEffect"], "被拒请求不应改库")
 
 		// 显式传空串即清除背景（恢复灰底布局）
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
