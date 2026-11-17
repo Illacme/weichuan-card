@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 
 vi.mock('@/api/audit', async (orig) => {
@@ -13,6 +13,12 @@ vi.mock('@element-plus/icons-vue', () => ({ Refresh: {}, Plus: {}, Search: {} })
 
 import { ACTION_LABELS, listAuditLogs, actionLabel } from '@/api/audit'
 import AuditLogs from './AuditLogs.vue'
+
+// 竞态守门会给每次查询传 signal；只断言「aborted 是布尔」，
+// 不钉死具体 signal 实例（每轮都会新建）。
+const SIGNAL = expect.objectContaining({
+  signal: expect.objectContaining({ aborted: expect.any(Boolean) }),
+})
 
 // 夹具：覆盖「成功 / 失败」与「未登录」三种形态
 const page1 = {
@@ -116,7 +122,40 @@ describe('AuditLogs 操作日志', () => {
 
   it('挂载即按默认分页查询一次', async () => {
     await setup()
-    expect(listAuditLogs).toHaveBeenCalledWith({ page: 1, size: 20 })
+    expect(listAuditLogs).toHaveBeenCalledWith({ page: 1, size: 20 }, SIGNAL)
+  })
+
+  it('连续筛选时旧响应后到也不盖掉新结果', async () => {
+    const w = await setup()
+    const pending: Array<(v: unknown) => void> = []
+    vi.mocked(listAuditLogs).mockClear()
+    vi.mocked(listAuditLogs).mockImplementation(
+      () => new Promise((resolve) => { pending.push(resolve) }) as any
+    )
+
+    await w.findAll('select.el-select')[0].setValue('setting.update')
+    await nextTick()
+    await w.findAll('select.el-select')[1].setValue('fail')
+    await nextTick()
+    expect(pending, '两次筛选应各发一次请求，量尺不能空转').toHaveLength(2)
+    // 第二轮真的取消了第一轮（不只是忽略写回）
+    const firstSignal = vi.mocked(listAuditLogs).mock.calls[0][1]?.signal
+    expect(firstSignal?.aborted).toBe(true)
+
+    const paged = (targetId: string) => ({
+      list: [{ ...page1.list[0], id: 1, targetId }],
+      total: 1, page: 1, size: 20,
+    })
+    const rowsOf = () => (w.vm as any).$.setupState.rows as Array<{ targetId: string }>
+    // 新响应先回，旧响应后回：旧的那次必须被 isCurrent 丢弃。
+    // 表格组件在测试里是桩，不渲染插槽，所以直接看页面自己的 rows 状态。
+    pending[1](paged('NEW-TARGET'))
+    await flushPromises()
+    expect(rowsOf()[0]?.targetId).toBe('NEW-TARGET')
+
+    pending[0](paged('OLD-TARGET'))
+    await flushPromises()
+    expect(rowsOf()[0]?.targetId).toBe('NEW-TARGET')
   })
 
   it('按动作筛选：带上 action 并回到第 1 页', async () => {
@@ -126,6 +165,7 @@ describe('AuditLogs 操作日志', () => {
     await nextTick()
     expect(listAuditLogs).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'setting.update', page: 1 }),
+      SIGNAL,
     )
   })
 

@@ -154,6 +154,84 @@ func TestContentUpdateFailureIsReported(t *testing.T) {
 	}
 }
 
+// TestIdempotentUpdatesReportDBError：员工编辑 / 企业更新 / 企业停用这三处
+// 过去只判 RowsAffected：SQL 执行失败时它同样是 0，于是真实错误被吞，
+// 客户端只收到「未找到」。现在存在性单独查、UPDATE 只判 .Error。
+func TestIdempotentUpdatesReportDBError(t *testing.T) {
+	r, db := dbWriteEngine(t)
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+
+	_, created := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "张三", "phone": "13900001234", "title": "工程师",
+	}, tok)
+	require.EqualValues(t, 0, created["code"], "前置建员工失败：%v", created)
+	staffID := int64(created["staffId"].(float64))
+
+	const cbName = "test:inject_update_error_idempotent"
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(cbName, func(tx *gorm.DB) {
+		tx.AddError(errors.New("injected update failure"))
+	}))
+	t.Cleanup(func() { _ = db.Callback().Update().Remove(cbName) })
+
+	cases := []struct {
+		name, method, path string
+		body               map[string]interface{}
+	}{
+		{"员工编辑", "PUT", fmt.Sprintf("/api/admin/employees/%d", staffID),
+			map[string]interface{}{"name": "新名", "phone": "13900001234"}},
+		{"企业更新", "PUT", "/api/admin/companies/1", map[string]interface{}{"name": "新名"}},
+		{"企业停用", "POST", "/api/admin/companies/1/status", map[string]interface{}{"status": "disabled"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := c.do(tc.method, tc.path, tc.body, tok)
+			require.NotEqualValues(t, 0, body["code"], "%s 写库失败却回了 ok", tc.name)
+			msg := fmt.Sprint(body["msg"])
+			require.NotContains(t, msg, "未找到", "%s 把写库失败误报成目标不存在", tc.name)
+			require.NotContains(t, msg, "injected", "%s 回显了底层错误", tc.name)
+			require.Contains(t, msg, "失败", "%s 应给出可理解的失败文案", tc.name)
+		})
+	}
+}
+
+// TestIdempotentUpdatesIgnoreZeroRowsAffected：MySQL 对「值没变」的 UPDATE 返回 0 行。
+// 用回调强制模拟这一形态，证明三处保存不会被误报「未找到」——SQLite 本地跑
+// 相同值仍报 1 行，测不到这个差异，所以必须显式注入。
+func TestIdempotentUpdatesIgnoreZeroRowsAffected(t *testing.T) {
+	r, db := dbWriteEngine(t)
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+
+	_, created := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "李四", "phone": "13900005678", "title": "工程师",
+	}, tok)
+	require.EqualValues(t, 0, created["code"])
+	staffID := int64(created["staffId"].(float64))
+
+	const cbName = "test:force_zero_rows"
+	require.NoError(t, db.Callback().Update().After("gorm:update").Register(cbName, func(tx *gorm.DB) {
+		tx.RowsAffected = 0
+	}))
+	t.Cleanup(func() { _ = db.Callback().Update().Remove(cbName) })
+
+	cases := []struct {
+		name, method, path string
+		body               map[string]interface{}
+	}{
+		{"员工编辑", "PUT", fmt.Sprintf("/api/admin/employees/%d", staffID),
+			map[string]interface{}{"name": "李四", "phone": "13900005678"}},
+		{"企业更新", "PUT", "/api/admin/companies/1", map[string]interface{}{"name": "测试企业"}},
+		{"企业停用", "POST", "/api/admin/companies/1/status", map[string]interface{}{"status": "disabled"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := c.do(tc.method, tc.path, tc.body, tok)
+			require.EqualValues(t, 0, body["code"], "%s 原样保存被 MySQL 的 0 行误报：%v", tc.name, body)
+		})
+	}
+}
+
 // TestEmployeeLoginFailAuditHasNoPlainPII：登录失败审计不得成为 PII 加密的旁路。
 // 员工表 phone/name 是静态加密列，审计表却是只追加的明文表；把手机号或姓名
 // 写进去，等于任何一个能看审计日志的人都能拿到明文 PII。
@@ -233,15 +311,22 @@ func enclosingFuncBody(n ast.Node, parents map[ast.Node]ast.Node) ast.Node {
 // resultChecked 判断一次写调用的结果有没有被消费。
 //
 // 合规形态只有两种：
-//   - 直接取 .Error / .RowsAffected（含 `if err := db.Create(&x).Error; err != nil`）；
-//   - 结果赋给变量，且同一函数体内检查了该变量的 .Error / .RowsAffected。
+//   - 直接取 .Error（含 `if err := db.Create(&x).Error; err != nil`）；
+//   - 结果赋给变量，且同一函数体内检查了该变量的 .Error。
 //
-// 裸语句（db.Create(&x)）、显式丢弃（_ = ...）、赋了值却从不看结果，一律算未检查。
+// **只看 RowsAffected 不算合规**：GORM 的 RowsAffected 在 SQL 执行失败时同样是 0，
+// 只判它就会把「写库失败」误报成「未找到」，真实错误被彻底丢掉（曾出现在
+// 员工编辑与企业更新 / 停用三处）。RowsAffected 仍可额外判，但不能替代 .Error。
+//
+// 裸语句（db.Create(&x)）、显式丢弃（_ = ...）、赋了值却从不看 .Error，一律算未检查。
 func resultChecked(call *ast.CallExpr, parents map[ast.Node]ast.Node) (direct, checked bool) {
 	switch v := parents[call].(type) {
 	case *ast.SelectorExpr:
-		if v.Sel.Name == "Error" || v.Sel.Name == "RowsAffected" {
+		if v.Sel.Name == "Error" {
 			return true, true
+		}
+		if v.Sel.Name == "RowsAffected" {
+			return true, false
 		}
 	case *ast.AssignStmt:
 		if len(v.Lhs) == 0 {
@@ -262,7 +347,7 @@ func resultChecked(call *ast.CallExpr, parents map[ast.Node]ast.Node) (direct, c
 				return true
 			}
 			x, ok := s.X.(*ast.Ident)
-			if ok && x.Name == id.Name && (s.Sel.Name == "Error" || s.Sel.Name == "RowsAffected") {
+			if ok && x.Name == id.Name && s.Sel.Name == "Error" {
 				found = true
 			}
 			return true
@@ -358,7 +443,7 @@ func TestNoIgnoredDBWritesAcrossHandlers(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, direct, 40,
-		"直接取 .Error/.RowsAffected 的合规写法几乎没抓到，守门可能退化成只看赋值分支")
+		"直接取 .Error/.RowsAffected 的写法几乎没抓到，守门可能退化成只看赋值分支")
 	for _, anchor := range []string{"apply.go", "content.go", "companies.go", "admins.go", "tenant_storage.go"} {
 		require.Contains(t, files, anchor, "守门应覆盖 %s", anchor)
 	}
@@ -377,6 +462,9 @@ func TestNoIgnoredDBWritesAcrossHandlers(t *testing.T) {
 // 证明扫描器既能认出项目里真实使用的 `if err := ...Error` 写法，也确实会抓漏判。
 //
 // 少了这一条，只要有人把正则/方法清单改坏，上一条就会退化成「零违规 → 通过」。
+//
+// 夹具里还特意混进「只判 RowsAffected」和「先判 Error 再判 RowsAffected」两种形态：
+// 前者必须红、后者必须绿——这正是本轮修掉的放水口。
 func TestGormWriteGuardCatchesRealWorldShapes(t *testing.T) {
 	const fixture = `package p
 func f(db *gorm.DB, tx *gorm.DB) {
@@ -385,17 +473,24 @@ func f(db *gorm.DB, tx *gorm.DB) {
 	tx.Create(&c)
 	res := db.Delete(&d)
 	_ = res
+	if db.Model(&e).Updates(v).RowsAffected == 0 { return }
+	res2 := db.Model(&f).Updates(v)
+	if res2.Error != nil { return }
+	if res2.RowsAffected == 0 { return }
 }
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "fixture.go", fixture, 0)
 	require.NoError(t, err)
 	writes := writesInFile(fset, f, "fixture.go", []byte(fixture))
-	require.Len(t, writes, 4, "夹具里应有 4 处写调用，少一条说明扫描器漏抓")
+	require.Len(t, writes, 6, "夹具里应有 6 处写调用，少一条说明扫描器漏抓")
 	require.True(t, writes[0].checked, "if err := db.Create(&x).Error 是项目主流合规写法，必须放行")
 	require.True(t, writes[0].direct)
-	for i := 1; i < len(writes); i++ {
+	for i := 1; i <= 4; i++ {
 		require.False(t, writes[i].checked,
 			"第 %d 处是 bad case（%s），守门必须判为未检查", i+1, writes[i].snippet)
 	}
+	require.True(t, writes[5].checked,
+		"先判 .Error 再看 RowsAffected 是完整写法，不能误报")
+	require.False(t, writes[5].direct, "赋给变量的写法应走赋值分支")
 }

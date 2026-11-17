@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http from './request'
 
 // 常用开源素材库（后端内嵌，见 backend/internal/assets）：
@@ -57,7 +58,7 @@ export interface LibraryData {
 }
 
 // 素材清单（分页，管理员登录态）
-export function listLibrary(params: LibraryQuery = {}) {
+export function listLibrary(params: LibraryQuery = {}, config?: AxiosRequestConfig) {
   const q: Record<string, string | number> = {}
   if (params.page) q.page = params.page
   if (params.size) q.size = params.size
@@ -66,6 +67,7 @@ export function listLibrary(params: LibraryQuery = {}) {
   if (params.style && params.style !== 'all') q.style = params.style
   if (params.keyword) q.keyword = params.keyword
   return http.get<{ code: number; data?: LibraryData }>('/admin/assets/library', {
+    ...config,
     params: q,
   })
 }

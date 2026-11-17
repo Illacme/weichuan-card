@@ -85,6 +85,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getMpEntry, saveMpEntry, searchEntryStaff, type MpEntryMode } from '@/api/mpEntry'
+import { isSuperseded, latestOnly } from '@/api/latest'
 
 // embedded=true：被「小程序设置」内嵌在页签里时，不再重复自己的页面标题
 // （页签名已经是「访客先看到谁」）。独立访问（旧链接 /content/mp-entry 重定向前）仍用它。
@@ -129,10 +130,17 @@ const mismatchBody = computed(() => {
   return '访客现在看到的是企业名片墙。'
 })
 
+// 两路查询互不干扰：配置重载与员工远程搜索都可能连续触发，
+// 但它们的旧响应绝不能盖掉各自的新结果。
+const loadGuard = latestOnly()
+const searchGuard = latestOnly()
+
 async function load() {
+  const signal = loadGuard.next()
   loading.value = true
   try {
-    const d = await getMpEntry()
+    const d = await getMpEntry({ signal })
+    if (!loadGuard.isCurrent(signal)) return
     form.mode = d.mode === 'staff' ? 'staff' : 'wall'
     form.staffId = Number(d.staffId) || 0
     snap.effectiveMode = d.effectiveMode === 'staff' ? 'staff' : 'wall'
@@ -145,10 +153,11 @@ async function load() {
     candidates.value = form.staffId > 0 && d.staffName
       ? [{ staffId: form.staffId, name: d.staffName, title: d.staffTitle }]
       : []
-  } catch {
+  } catch (e) {
+    if (isSuperseded(e)) return
     /* 拦截器已提示 */
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(signal)) loading.value = false
   }
 }
 
@@ -158,18 +167,25 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 // 更不该回头写 candidates（那时组件已经没了）。
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
+  loadGuard.cancel()
+  searchGuard.cancel()
 })
 function onSearch(kw: string) {
   if (searchTimer) clearTimeout(searchTimer)
-  // 250ms 防抖：每敲一个字就发一次请求，中文输入法下会打出好几次无效请求
+  // 250ms 防抖：每敲一个字就发一次请求，中文输入法下会打出好几次无效请求。
+  // 防抖只减少请求数，已发出的请求仍可能后到——真正决定谁写回的是 searchGuard。
   searchTimer = setTimeout(async () => {
+    const signal = searchGuard.next()
     searching.value = true
     try {
-      candidates.value = await searchEntryStaff((kw || '').trim())
-    } catch {
+      const list = await searchEntryStaff((kw || '').trim(), { signal })
+      if (!searchGuard.isCurrent(signal)) return
+      candidates.value = list
+    } catch (e) {
+      if (isSuperseded(e)) return
       /* 拦截器已提示；保留旧候选，避免下拉瞬间清空 */
     } finally {
-      searching.value = false
+      if (searchGuard.isCurrent(signal)) searching.value = false
     }
   }, 250)
 }

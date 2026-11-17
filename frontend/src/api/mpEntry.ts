@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http from './request'
 import { listEmployees } from './employees'
 
@@ -27,8 +28,8 @@ export interface MpEntry {
   staffMissing: boolean
 }
 
-export function getMpEntry() {
-  return http.get('/admin/mp-entry').then((r: any) => (r.data ?? {}) as MpEntry)
+export function getMpEntry(config?: AxiosRequestConfig) {
+  return http.get('/admin/mp-entry', config).then((r: any) => (r.data ?? {}) as MpEntry)
 }
 
 // mode=staff 时 staffId 必填，且必须是本企业启用中的员工（服务端校验）
@@ -38,6 +39,6 @@ export function saveMpEntry(p: { mode: MpEntryMode; staffId?: number }) {
 
 // 员工候选：只列启用中的（停用员工不能作为入口），按关键字远程搜索。
 // size 取 20：下拉里再多也翻不动，关键字才是主要检索方式。
-export function searchEntryStaff(keyword: string) {
-  return listEmployees({ keyword, status: 'enabled', size: 20 }).then((p) => p.list as any[])
+export function searchEntryStaff(keyword: string, config?: AxiosRequestConfig) {
+  return listEmployees({ keyword, status: 'enabled', size: 20 }, config).then((p) => p.list as any[])
 }

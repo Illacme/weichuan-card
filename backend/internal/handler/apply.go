@@ -744,9 +744,22 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				return
 			}
 		}
-		if db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
-			Updates(updates).RowsAffected == 0 {
+		// 先确认目标在本租户内存在，再只判 .Error：
+		// MySQL 对「值没变」的 UPDATE 返回 RowsAffected=0，拿它当「未找到」会误报；
+		// 而只看 RowsAffected 又会把真正的写库错误吞掉（连错误文本都不留）。
+		var cnt int64
+		if err := db.Model(&model.Employee{}).Where("staff_id = ?", id).
+			Scopes(scopeCond(c)).Count(&cnt).Error; err != nil {
+			dbWriteFailed(c, "编辑员工（查目标）", "操作失败，请稍后重试", err)
+			return
+		}
+		if cnt == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
+			Updates(updates).Error; err != nil {
+			dbWriteFailed(c, "编辑员工", "保存失败，请稍后重试", err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})

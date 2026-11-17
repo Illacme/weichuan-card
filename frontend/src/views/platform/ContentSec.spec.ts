@@ -22,6 +22,10 @@ import {
 } from '@/api/mediaCheck'
 import ContentSec from './ContentSec.vue'
 
+const SIGNAL = expect.objectContaining({
+  signal: expect.objectContaining({ aborted: expect.any(Boolean) }),
+})
+
 // 夹具：覆盖「违规未处置（可下架）」「违规已下架」「待结论」「通过」四种形态
 function row(p: Partial<MediaCheck>): MediaCheck {
   return {
@@ -150,7 +154,7 @@ describe('ContentSec 内容安全', () => {
       size: 20,
       status: undefined,
       onlyTakedownable: undefined,
-    })
+    }, SIGNAL)
     expect(getMediaCheckConfig).toHaveBeenCalled()
   })
 
@@ -159,7 +163,7 @@ describe('ContentSec 内容安全', () => {
     vi.mocked(listMediaChecks).mockClear()
     await w.find('select.el-select').setValue('risky')
     await nextTick()
-    expect(listMediaChecks).toHaveBeenCalledWith(expect.objectContaining({ status: 'risky', page: 1 }))
+    expect(listMediaChecks).toHaveBeenCalledWith(expect.objectContaining({ status: 'risky', page: 1 }), SIGNAL)
   })
 
   it('勾「只看可下架」时按后端约定的 onlyTakedownable=1 传参', async () => {
@@ -167,7 +171,7 @@ describe('ContentSec 内容安全', () => {
     vi.mocked(listMediaChecks).mockClear()
     await w.find('input[type="checkbox"]').setValue(true)
     await nextTick()
-    expect(listMediaChecks).toHaveBeenCalledWith(expect.objectContaining({ onlyTakedownable: '1' }))
+    expect(listMediaChecks).toHaveBeenCalledWith(expect.objectContaining({ onlyTakedownable: '1' }), SIGNAL)
   })
 
   it('没配推送 Token 时明确提示「不会送检」', async () => {

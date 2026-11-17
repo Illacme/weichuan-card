@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -193,8 +194,12 @@ func TestImageUploadSkipsWithoutPushToken(t *testing.T) {
 
 // 送检失败也要留一条 failed 记录：图确实传上去了、也确实没检过，
 // 只写日志的话日志会被轮转掉，后台看不到「有一批图没检」。
+//
+// 同时钉住凭据泄露：微信 SDK 的网络错里带完整 URL（?access_token=...），
+// note 随整行出后台列表——一旦原样落库就等于把 token 复制进 DB 和接口响应。
 func TestImageUploadRecordsSendFailure(t *testing.T) {
-	stubMediaCheck(t, "", os.ErrDeadlineExceeded)
+	const leakedToken = "SUPER-SECRET-ACCESS-TOKEN-123"
+	stubMediaCheck(t, "", errors.New(`Post "https://api.weixin.qq.com/cgi-bin/wxa/media_check_async?access_token=`+leakedToken+`": dial tcp: i/o timeout`))
 	r, db, _ := setupMediaEngine(t)
 	c := newTestClient(r, t)
 	adminToken := loginAdmin(t, c)
@@ -209,6 +214,15 @@ func TestImageUploadRecordsSendFailure(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond)
 	require.Equal(t, model.MediaCheckFailed, row.Status)
 	require.Contains(t, row.Note, "send_failed")
+	require.NotContains(t, row.Note, leakedToken)
+	require.NotContains(t, row.Note, "access_token=")
+
+	_, body := c.do("GET", "/api/admin/media-checks?status=failed", nil, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "send_failed", "量尺自检：列表里确实回传了 note")
+	require.NotContains(t, string(raw), leakedToken, "后台列表出参不得带出微信 access_token")
 }
 
 // ---- 消息推送回调 ----

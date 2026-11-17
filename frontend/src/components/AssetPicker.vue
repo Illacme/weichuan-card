@@ -94,6 +94,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { isSuperseded, latestOnly } from '@/api/latest'
 import { ElMessage } from 'element-plus'
 import { Check, Loading, Search } from '@element-plus/icons-vue'
 import {
@@ -140,9 +141,14 @@ const batchAdopting = ref(false)
 const visibleStyles = computed(() => styleCounts.value.filter((s) => s.count > 0))
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+// 分类 / 调性 / 关键字 / 翻页都会重查同一个接口；旧响应后到会把新条件的结果
+// 盖掉。防抖只挡「发太多」，谁来写回交给 latestOnly。
+const pageGuard = latestOnly()
+onBeforeUnmount(() => pageGuard.cancel())
 
 // 服务端分页：条件（分类/关键字/页码）变化即重新拉取；分类清单随响应带回，无需单独接口
 async function fetchPage() {
+  const signal = pageGuard.next()
   loading.value = true
   try {
     const resp = await listLibrary({
@@ -151,7 +157,8 @@ async function fetchPage() {
       type: tab.value,
       style: styleKey.value,
       keyword: keyword.value.trim(),
-    })
+    }, { signal })
+    if (!pageGuard.isCurrent(signal)) return
     if (resp.code === 0 && resp.data) {
       categories.value = resp.data.categories || []
       styleCounts.value = resp.data.styleCounts || []
@@ -166,10 +173,11 @@ async function fetchPage() {
         return fetchPage()
       }
     }
-  } catch {
+  } catch (e) {
+    if (isSuperseded(e)) return
     // 拦截器已提示
   } finally {
-    loading.value = false
+    if (pageGuard.isCurrent(signal)) loading.value = false
   }
 }
 

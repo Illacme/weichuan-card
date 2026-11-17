@@ -129,7 +129,8 @@
 <script setup lang="ts">
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { isSuperseded, latestOnly } from '@/api/latest'
 import ImageThumb from '@/components/ImageThumb.vue'
 import {
   SOURCE_LABELS,
@@ -173,12 +174,18 @@ function asCheck(row: unknown): MediaCheck {
   return row as MediaCheck
 }
 
+// 状态 / 可下架 / 翻页 / 每页条数都会重查同一接口：快速连点时旧响应可能后到，
+// 把新筛选的结果盖回旧数据。只让最后一轮写回，并在卸载时取消在途请求。
+const listGuard = latestOnly()
+onUnmounted(() => listGuard.cancel())
+
 function onFilter() {
   page.value = 1
   load()
 }
 
 async function load() {
+  const signal = listGuard.next()
   loading.value = true
   try {
     const p = await listMediaChecks({
@@ -186,13 +193,16 @@ async function load() {
       size: size.value,
       status: status.value || undefined,
       onlyTakedownable: onlyTakedownable.value ? '1' : undefined,
-    })
+    }, { signal })
+    if (!listGuard.isCurrent(signal)) return
     rows.value = p?.list ?? []
     total.value = p?.total ?? 0
-  } catch {
-    // 拦截器已提示
+  } catch (e) {
+    if (!isSuperseded(e)) {
+      // 拦截器已提示
+    }
   } finally {
-    loading.value = false
+    if (listGuard.isCurrent(signal)) loading.value = false
   }
 }
 

@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http, { toPaged, type Paged } from './request'
 
 // 操作审计日志（只读查询）。
@@ -27,8 +28,8 @@ export function listAuditLogs(params: {
   actorType?: string
   actorId?: string
   result?: string
-}): Promise<Paged<AuditLog>> {
-  return http.get('/admin/audit-logs', { params }).then((r) => toPaged<AuditLog>(r))
+}, config?: AxiosRequestConfig): Promise<Paged<AuditLog>> {
+  return http.get('/admin/audit-logs', { ...config, params }).then((r) => toPaged<AuditLog>(r))
 }
 
 // 动作的中文名：界面给运营看，不能把 setting.update 这样的键直接摊开。

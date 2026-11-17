@@ -17,6 +17,10 @@ const RACY_PAGES = [
   'frontend/src/views/Stats.vue',
   'frontend/src/components/StatDetail.vue',
   'frontend/src/components/MPReleaseDialog.vue',
+  'frontend/src/components/AssetPicker.vue',
+  'frontend/src/views/platform/AuditLogs.vue',
+  'frontend/src/views/platform/ContentSec.vue',
+  'frontend/src/views/content/MpEntry.vue',
   'miniprogram/pages/project/list/list.ts',
   'miniprogram/pages/team/all.ts',
   'miniprogram/pages/team/team.ts',
@@ -24,6 +28,9 @@ const RACY_PAGES = [
   'miniprogram/pages/admin/apply/apply.ts',
 ]
 const GUARD_TOOL_FILE = 'frontend/src/api/latest.ts' // 守门工具自身的定义，不算消费方
+// 只判「文件里出现过 isCurrent」不够：finally 里清 loading 也会调用它，
+// 把写回前的那道判删掉照样全绿。必须盯「取反后 return」这种真正的丢弃旧响应写法。
+const HAS_WRITE_GUARD = /!\s*[\w.]*isCurrent\s*\(/
 
 function walk(dir: string): string[] {
   const out: string[] = []
@@ -48,6 +55,33 @@ const PROD_FILES = [
 const SRC = new Map(PROD_FILES.map((p) => [p, stripLineComments(readFileSync(p, 'utf8'))] as const))
 const rel = (p: string) => relative(ROOT, p).split(sep).join('/')
 
+// 「连查」的判据是两块：有会反复触发的检索入口（搜索 / 远程搜索 / 翻页 / 改每页条数），
+// 且页面确实调了 API。旧规则只认 `onSearch(` + 字面 `request(`，
+// 于是 ContentSec / AuditLogs（走 listMediaChecks / listAuditLogs 封装）和
+// MpEntry（:remote-method="onSearch" + searchEntryStaff）全都漏检。
+const REQUERY_TRIGGER = /onSearch\s*\(|onClearSearch\s*\(|:remote-method|@current-change|@size-change/
+const API_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*(?:\/api\/|\/utils\/request)[^'"]*['"]/g
+
+function callsAPI(src: string): boolean {
+  const names: string[] = []
+  for (const m of src.matchAll(API_IMPORT)) {
+    for (const part of m[1].split(',')) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.replace(/^type\s+/, '').trim() || ''
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) names.push(name)
+    }
+  }
+  return names.some((n) => new RegExp(`\\b${n}\\s*\\(`).test(src)) || /request\s*[<(]/.test(src)
+}
+
+function racyCandidates(): string[] {
+  return PROD_FILES.filter((p) => {
+    const s = SRC.get(p) || ''
+    // useServerTable 自带序号守门（请求层之上），不算漏网的裸连查页。
+    if (/\buseServerTable\s*\(/.test(s)) return false
+    return REQUERY_TRIGGER.test(s) && callsAPI(s)
+  })
+}
+
 describe.each(RACY_PAGES)('%s 竞态守门静态检查', (file) => {
   it('接入了守门工具，且响应写回前有 isCurrent 判定', () => {
     const src = readFileSync(resolve(ROOT, file), 'utf8')
@@ -55,35 +89,39 @@ describe.each(RACY_PAGES)('%s 竞态守门静态检查', (file) => {
     // 不判「是否调用了 request」——前端页面走 http / 封装 api，不叫这个名。
     expect(src.length).toBeGreaterThan(100)
     expect(/latestOnly|latestGuard/.test(src)).toBe(true)
-    expect(/isCurrent\(/.test(src)).toBe(true)
+    expect(HAS_WRITE_GUARD.test(src)).toBe(true)
   })
 })
 
 describe('竞态守门清单的完整性（防清单外漏页）', () => {
-  it('量尺自己有读数：扫描确实抓到了生产文件与关键字连查页', () => {
+  it('量尺自己有读数：扫描确实抓到了生产文件与各类连查页', () => {
     // 抓取型守门最坏的坏法是正则写错、一条也抓不到 → 于是「全部通过」。
     expect(PROD_FILES.length).toBeGreaterThan(20)
-    expect(RACY_PAGES.length).toBeGreaterThanOrEqual(7)
-    const keywordPages = PROD_FILES.filter((p) => {
-      const s = SRC.get(p) || ''
-      return /onSearch\s*\(|onClearSearch\s*\(/.test(s) && /request\s*[<(]/.test(s)
-    })
-    expect(keywordPages.length).toBeGreaterThanOrEqual(2)
+    expect(RACY_PAGES.length).toBeGreaterThanOrEqual(10)
+    const discovered = racyCandidates().map(rel)
+    expect(discovered.length).toBeGreaterThanOrEqual(5)
+    // 新判据必须真抓到这三类曾经漏检的形态，否则下面的「双向相等」只是自娱自乐：
+    // 封装 API（listMediaChecks / listAuditLogs）、远程搜索（searchEntryStaff）、
+    // 分页弹窗（listLibrary）。
+    for (const anchor of [
+      'frontend/src/views/platform/ContentSec.vue',
+      'frontend/src/views/platform/AuditLogs.vue',
+      'frontend/src/views/content/MpEntry.vue',
+      'frontend/src/components/AssetPicker.vue',
+    ]) {
+      expect(discovered, `发现规则漏掉了 ${anchor}`).toContain(anchor)
+    }
   })
 
-  it('每个「关键字连查页」都登记在清单里，且真的接了守门', () => {
-    // 换关键字会让同一接口返回完全不同的结果，旧响应盖回来是访客能看见的错误
+  it('每个「连查页」都登记在清单里，且真的接了守门', () => {
+    // 换条件会让同一接口返回完全不同的结果，旧响应盖回来是访客能看见的错误
     // （搜 A 却显示 B 的人）。下拉刷新同一资源不在这一档：文档明确不做全站取消。
-    const keywordPages = PROD_FILES.filter((p) => {
-      const s = SRC.get(p) || ''
-      return /onSearch\s*\(|onClearSearch\s*\(/.test(s) && /request\s*[<(]/.test(s)
-    })
-    for (const p of keywordPages) {
+    for (const p of racyCandidates()) {
       const f = rel(p)
-      expect(RACY_PAGES, `关键字连查页 ${f} 漏登记进 RACY_PAGES`).toContain(f)
+      expect(RACY_PAGES, `连查页 ${f} 漏登记进 RACY_PAGES`).toContain(f)
       const s = SRC.get(p) || ''
       expect(/latestOnly|latestGuard/.test(s), `${f} 未接入守门工具`).toBe(true)
-      expect(/isCurrent\(/.test(s), `${f} 响应写回前没有 isCurrent 判定`).toBe(true)
+      expect(HAS_WRITE_GUARD.test(s), `${f} 响应写回前没有 isCurrent 丢弃判定`).toBe(true)
     }
   })
 
@@ -91,7 +129,7 @@ describe('竞态守门清单的完整性（防清单外漏页）', () => {
     const guarded = PROD_FILES.filter((p) => rel(p) !== GUARD_TOOL_FILE)
       .filter((p) => {
         const s = SRC.get(p) || ''
-        return /isCurrent\(/.test(s) && /(latestGuard|latestOnly)\s*\(/.test(s)
+        return HAS_WRITE_GUARD.test(s) && /(latestGuard|latestOnly)\s*\(/.test(s)
       })
       .map(rel)
       .sort()

@@ -26,6 +26,9 @@ import { ElMessage } from 'element-plus'
 // disabled 不是 ElButton 声明的 prop，会落到 $attrs 上——正是「未选人时不让保存」的断言依据。
 // 属性名用常量拼出来：直接写字面量容易和页面里的状态字段（如 staffStatus）混淆。
 const DISABLED = 'dis' + 'abled'
+const SIGNAL = expect.objectContaining({
+  signal: expect.objectContaining({ aborted: expect.any(Boolean) }),
+})
 
 const wallCfg = {
   mode: 'wall',
@@ -281,7 +284,7 @@ describe('content/MpEntry', () => {
     await flush()
 
     expect(mocks.searchEntryStaff).toHaveBeenCalledTimes(1)
-    expect(mocks.searchEntryStaff).toHaveBeenCalledWith('张三丰')
+    expect(mocks.searchEntryStaff).toHaveBeenCalledWith('张三丰', SIGNAL)
     expect(w.find('.el-select').text()).toContain('李四')
   })
 

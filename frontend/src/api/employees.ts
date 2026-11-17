@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http, { toPaged, type Paged, type ApiResp } from './request'
 import { getCompanyScope } from '@/store/companyScope'
 
@@ -16,9 +17,10 @@ export interface EmployeePayload {
 // keyword 在服务端匹配 姓名/手机/手机2/职位/座机/昵称/openid，与后台搜索框的范围一致；
 // staffIds=1,2,3 用于按 id 精确取少数几条（名片修改申请页回显员工原值）。
 export function listEmployees(
-  params: { page?: number; size?: number; keyword?: string; status?: string; staffIds?: string } = {}
+  params: { page?: number; size?: number; keyword?: string; status?: string; staffIds?: string } = {},
+  config?: AxiosRequestConfig
 ): Promise<Paged<any>> {
-  return http.get('/admin/employees', { params }).then((r) => toPaged(r))
+  return http.get('/admin/employees', { ...config, params }).then((r) => toPaged(r))
 }
 
 // 新增员工 → 返回 staffId + 一次性初始密码

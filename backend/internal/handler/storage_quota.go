@@ -276,7 +276,7 @@ func storageQuotaPutHandler(db *gorm.DB) gin.HandlerFunc {
 			CompanyID: req.CompanyID, QuotaMB: req.QuotaMB, UpdatedAt: now,
 		}).Error
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：" + err.Error()})
+			dbWriteFailed(c, "设置企业存储配额", "保存失败，请稍后重试", err)
 			return
 		}
 		audit.Record(db, c, audit.Entry{

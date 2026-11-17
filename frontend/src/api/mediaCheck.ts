@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import http, { toPaged, type Paged } from './request'
 
 // 图片内容安全检测记录。
@@ -83,12 +84,12 @@ export function listMediaChecks(params: {
   size?: number
   status?: string
   onlyTakedownable?: string
-}): Promise<Paged<MediaCheck>> {
-  return http.get('/admin/media-checks', { params }).then((r) => toPaged<MediaCheck>(r))
+}, config?: AxiosRequestConfig): Promise<Paged<MediaCheck>> {
+  return http.get('/admin/media-checks', { ...config, params }).then((r) => toPaged<MediaCheck>(r))
 }
 
-export function getMediaCheckConfig(): Promise<MediaCheckConfig> {
-  return http.get('/admin/media-checks/config').then((r) => (r.data || {}) as MediaCheckConfig)
+export function getMediaCheckConfig(config?: AxiosRequestConfig): Promise<MediaCheckConfig> {
+  return http.get('/admin/media-checks/config', config).then((r) => (r.data || {}) as MediaCheckConfig)
 }
 
 // 下架 = 把存储里的对象覆盖成「内容不可用」占位图。**不可逆**（原图当场丢失），

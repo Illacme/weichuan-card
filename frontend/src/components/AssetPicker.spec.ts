@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   adoptAsset: vi.fn(),
 }))
 const { listLibrary, adoptAsset } = mocks
+const SIGNAL = expect.objectContaining({
+  signal: expect.objectContaining({ aborted: expect.any(Boolean) }),
+})
 
 vi.mock('@/api/assets', () => ({
   listLibrary: mocks.listLibrary,
@@ -199,7 +202,7 @@ describe('AssetPicker', () => {
     // 首页按 size=15 截断（5 列 × 3 排），footer 显示总数 30
     expect(w.findAll('.asset-card')).toHaveLength(15)
     expect(w.text()).toContain('共 30 项')
-    expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
+    expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), SIGNAL)
   })
 
   it('defaultCategory 定位到对应分类（请求带 type，渲染该分类素材）', async () => {
@@ -210,7 +213,7 @@ describe('AssetPicker', () => {
     await vi.waitFor(() => expect(listLibrary).toHaveBeenCalled())
     await nextTick()
     await nextTick()
-    expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ type: 'background' }))
+    expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ type: 'background' }), SIGNAL)
     expect(w.findAll('.asset-card')).toHaveLength(2)
     expect(w.text()).toContain('深空')
     expect(w.text()).toContain('光晕')
@@ -271,7 +274,7 @@ describe('AssetPicker', () => {
     await nextTick()
     await w.find('.pg-next').trigger('click')
     await vi.waitFor(() =>
-      expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+      expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }), SIGNAL)
     )
     await nextTick()
     await nextTick()
@@ -289,7 +292,8 @@ describe('AssetPicker', () => {
     await vi.waitFor(
       () =>
         expect(listLibrary).toHaveBeenCalledWith(
-          expect.objectContaining({ keyword: '深空', page: 1 })
+          expect.objectContaining({ keyword: '深空', page: 1 }),
+          SIGNAL,
         ),
       { timeout: 2000 }
     )
@@ -327,7 +331,8 @@ describe('AssetPicker', () => {
     await btn!.trigger('click')
     await vi.waitFor(() =>
       expect(listLibrary).toHaveBeenCalledWith(
-        expect.objectContaining({ style: 'vivid', page: 1 })
+        expect.objectContaining({ style: 'vivid', page: 1 }),
+        SIGNAL,
       )
     )
     await nextTick()
@@ -359,7 +364,7 @@ describe('AssetPicker', () => {
     const vividBtn = w.findAll('.el-radio-button').find((b) => b.text().includes('光影流动'))
     await vividBtn!.trigger('click')
     await vi.waitFor(() =>
-      expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ style: 'vivid' }))
+      expect(listLibrary).toHaveBeenCalledWith(expect.objectContaining({ style: 'vivid' }), SIGNAL)
     )
     await nextTick()
     await nextTick()
@@ -368,7 +373,8 @@ describe('AssetPicker', () => {
     await iconBtn!.trigger('click')
     await vi.waitFor(() =>
       expect(listLibrary).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'icon', style: 'all' })
+        expect.objectContaining({ type: 'icon', style: 'all' }),
+        SIGNAL,
       )
     )
     await nextTick()

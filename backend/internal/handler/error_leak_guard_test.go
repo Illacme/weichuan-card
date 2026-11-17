@@ -167,6 +167,183 @@ func f(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error
 	require.Empty(t, violations, "发现底层错误原文回显：%s", strings.Join(violations, ", "))
 }
 
+// nodeParentsOf 给 AST 建父节点索引，供「这个 err 是在哪个函数里赋的值」回溯。
+func nodeParentsOf(f *ast.File) map[ast.Node]ast.Node {
+	parents := map[ast.Node]ast.Node{}
+	var stack []ast.Node
+	ast.Inspect(f, func(n ast.Node) bool {
+		if n == nil {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			return true
+		}
+		if len(stack) > 0 {
+			parents[n] = stack[len(stack)-1]
+		}
+		stack = append(stack, n)
+		return true
+	})
+	return parents
+}
+
+// latestAssignmentIsGORMError 判断「离这次使用最近的那个赋值」是不是来自 db/tx 写结果的 .Error。
+// 只按变量名匹配会误伤：同一个函数里先 err := db.X.Error、后面 err := 存储接口.SaveBytes
+// 再 err.Error()，后者根本不是 SQL 错误。必须按源码位置取最近一次赋值。
+func latestAssignmentIsGORMError(body ast.Node, name string, before token.Pos) bool {
+	latest := token.NoPos
+	isGORM := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, lhs := range as.Lhs {
+			id, ok := lhs.(*ast.Ident)
+			if !ok || id.Name != name || as.Pos() >= before || as.Pos() <= latest {
+				continue
+			}
+			// `base, err := f()` 在 AST 里是「2 个 LHS / 1 个 RHS」，
+			// 按同序号取 RHS 会把 err 漏掉，于是仍拿更早的 GORM 赋值当最近一次。
+			rhsIdx := i
+			if len(as.Rhs) == 1 {
+				rhsIdx = 0
+			}
+			if rhsIdx >= len(as.Rhs) {
+				continue
+			}
+			latest = as.Pos()
+			sel, ok := as.Rhs[rhsIdx].(*ast.SelectorExpr)
+			isGORM = ok && sel.Sel.Name == "Error" &&
+				(rootReceiverName(sel.X) == "db" || rootReceiverName(sel.X) == "tx")
+		}
+		return true
+	})
+	return isGORM
+}
+
+// countGORMErrorEchoInMsg 数 c.JSON 的 msg 里回显「GORM 写库错误」的地方，
+// 两种形态都抓：res.Error.Error() 与 err := db.Create(...).Error + err.Error()。
+// 普通业务错误（微信 API / 配置校验）刻意不扫——那些回显给管理员是有意的。
+func countGORMErrorEchoInMsg(f *ast.File) (jsonCalls, echoes int) {
+	parents := nodeParentsOf(f)
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "JSON" || len(call.Args) < 2 {
+			return true
+		}
+		jsonCalls++
+		ast.Inspect(call.Args[1], func(x ast.Node) bool {
+			kv, ok := x.(*ast.KeyValueExpr)
+			if !ok {
+				return true
+			}
+			key, ok := kv.Key.(*ast.BasicLit)
+			if !ok || key.Kind != token.STRING || strings.Trim(key.Value, `"`) != "msg" {
+				return true
+			}
+			ast.Inspect(kv.Value, func(y ast.Node) bool {
+				inner, ok := y.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				msel, ok := inner.Fun.(*ast.SelectorExpr)
+				if !ok || msel.Sel.Name != "Error" || len(inner.Args) != 0 {
+					return true
+				}
+				switch recv := msel.X.(type) {
+				case *ast.SelectorExpr:
+					if recv.Sel.Name == "Error" {
+						echoes++
+						return false
+					}
+				case *ast.Ident:
+					body := enclosingFuncBody(inner, parents)
+					if body != nil && latestAssignmentIsGORMError(body, recv.Name, inner.Pos()) {
+						echoes++
+						return false
+					}
+				}
+				return true
+			})
+			return true
+		})
+		return true
+	})
+	return
+}
+
+// TestNoGORMErrorEchoViaLocalVar：补上旧守门的盲区——局部 err 承接 GORM 写结果后
+// 再拼进 msg。夹具同时放一条合规的业务错误回显，证明守门没有一刀切误伤。
+func TestNoGORMErrorEchoViaLocalVar(t *testing.T) {
+	const fixture = `package handler
+func f(c *gin.Context, db *gorm.DB) {
+	err := db.Create(&x).Error
+	c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：" + err.Error()})
+	res := db.Model(&y).Updates(v)
+	c.JSON(http.StatusOK, gin.H{"code": 1, "msg": res.Error.Error()})
+	cfgErr := errors.New("bad config")
+	c.JSON(http.StatusOK, gin.H{"code": 1, "msg": cfgErr.Error()})
+	// 多返回值赋值（2 个 LHS / 1 个 RHS）：err 不能被误认成更早那次 GORM 赋值
+	base, cfgErr2 := storage.ValidatePublicOrigin("https://x")
+	_ = base
+	c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数：" + cfgErr2.Error()})
+}
+`
+	ff, err := parser.ParseFile(token.NewFileSet(), "fixture.go", fixture, 0)
+	require.NoError(t, err)
+	jc, fixtureEchoes := countGORMErrorEchoInMsg(ff)
+	require.Equal(t, 4, jc, "夹具里应有 4 处 c.JSON，量尺不能空转")
+	require.Equal(t, 2, fixtureEchoes, "夹具里两条 GORM 错误回显都要抓到，业务错误不能算")
+
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	var violations []string
+	totalJSON := 0
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		require.NoError(t, err, path)
+		jc, echoes := countGORMErrorEchoInMsg(f)
+		totalJSON += jc
+		if echoes > 0 {
+			violations = append(violations, fmt.Sprintf("%s(%d)", path, echoes))
+		}
+	}
+	require.GreaterOrEqual(t, totalJSON, 100, "扫到的 c.JSON 调用明显偏少，解析器可能空转")
+	require.Empty(t, violations, "发现 GORM 写库错误原文回显：%s", strings.Join(violations, ", "))
+}
+
+// TestStorageQuotaWriteFailureDoesNotLeakSQL：配额保存端点曾直接回显 err.Error()，
+// 里面带表名、约束名。这里用真实 GORM Create 回调注入错误，证明客户端只看得到固定文案。
+func TestStorageQuotaWriteFailureDoesNotLeakSQL(t *testing.T) {
+	r, db := dbWriteEngine(t)
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+	body := map[string]interface{}{"companyId": 1, "quotaMb": 100}
+
+	_, okBody := c.do("PUT", "/api/admin/storage/quota", body, tok)
+	require.EqualValues(t, 0, okBody["code"], "前置写入应成功：%v", okBody)
+
+	const cbName = "test:quota_create_error"
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register(cbName, func(tx *gorm.DB) {
+		tx.AddError(errors.New("injected quota sql marker"))
+	}))
+	t.Cleanup(func() { _ = db.Callback().Create().Remove(cbName) })
+
+	_, badBody := c.do("PUT", "/api/admin/storage/quota", body, tok)
+	require.NotEqualValues(t, 0, badBody["code"], "写库失败却回了 code:0")
+	msg := fmt.Sprint(badBody["msg"])
+	require.Contains(t, msg, "保存失败", "应给可理解的固定文案，实际 %q", msg)
+	require.NotContains(t, msg, "injected", "把底层 SQL 错误回显给了客户端")
+}
+
 // 防「同命令里把错误又带回来」：确认统一出口本身不回显 err，只落日志。
 func TestDBWriteFailedKeepsErrorInServerLogOnly(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "db_write.go", nil, 0)

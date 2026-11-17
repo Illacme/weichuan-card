@@ -72,7 +72,8 @@
 
 <script setup lang="ts">
 import { Refresh } from '@element-plus/icons-vue'
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { isSuperseded, latestOnly } from '@/api/latest'
 import { ACTION_LABELS, actionLabel, listAuditLogs, type AuditLog } from '@/api/audit'
 import { formatDateTime } from '@/utils/datetime'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -98,12 +99,18 @@ function actorTypeText(t: string) {
   return { admin: '管理员', employee: '员工', anonymous: '未登录', system: '系统' }[t] || t || '—'
 }
 
+// 三个筛选器 + 翻页 / 每页条数都会重查：旧响应后到会把「筛选后的日志」
+// 盖成上一轮的全量结果。只让最后一轮写回，勿把取消当错误提示。
+const listGuard = latestOnly()
+onUnmounted(() => listGuard.cancel())
+
 function onFilter() {
   page.value = 1
   load()
 }
 
 async function load() {
+  const signal = listGuard.next()
   loading.value = true
   try {
     const p = await listAuditLogs({
@@ -112,13 +119,16 @@ async function load() {
       action: action.value || undefined,
       result: result.value || undefined,
       actorType: actorType.value || undefined,
-    })
+    }, { signal })
+    if (!listGuard.isCurrent(signal)) return
     rows.value = p?.list ?? []
     total.value = p?.total ?? 0
-  } catch {
-    // 拦截器已提示（如非平台超管越权）
+  } catch (e) {
+    if (!isSuperseded(e)) {
+      // 拦截器已提示（如非平台超管越权）
+    }
   } finally {
-    loading.value = false
+    if (listGuard.isCurrent(signal)) loading.value = false
   }
 }
 

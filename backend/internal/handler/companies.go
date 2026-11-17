@@ -389,9 +389,20 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 				return
 			}
 		}
-		if db.Model(&model.Company{}).Where("id = ?", id).
-			Updates(map[string]interface{}{"name": req.Name, "short_name": resolveShortName(req.ShortName), "login_code": req.LoginCode}).RowsAffected == 0 {
+		// 存在性单独查，UPDATE 只判 .Error：MySQL 对「值没变」的更新返回 0 行，
+		// 用 RowsAffected 当「未找到」会误报；只判 RowsAffected 又会吞掉写库错误。
+		var cnt int64
+		if err := db.Model(&model.Company{}).Where("id = ?", id).Count(&cnt).Error; err != nil {
+			dbWriteFailed(c, "更新企业（查目标）", "操作失败，请稍后重试", err)
+			return
+		}
+		if cnt == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&model.Company{}).Where("id = ?", id).
+			Updates(map[string]interface{}{"name": req.Name, "short_name": resolveShortName(req.ShortName), "login_code": req.LoginCode}).Error; err != nil {
+			dbWriteFailed(c, "更新企业", "保存失败，请稍后重试", err)
 			return
 		}
 		audit.Record(db, c, audit.Entry{
@@ -414,9 +425,18 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		if db.Model(&model.Company{}).Where("id = ?", id).
-			Update("status", req.Status).RowsAffected == 0 {
+		var cnt int64
+		if err := db.Model(&model.Company{}).Where("id = ?", id).Count(&cnt).Error; err != nil {
+			dbWriteFailed(c, "更新企业状态（查目标）", "操作失败，请稍后重试", err)
+			return
+		}
+		if cnt == 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&model.Company{}).Where("id = ?", id).
+			Update("status", req.Status).Error; err != nil {
+			dbWriteFailed(c, "更新企业状态", "操作失败，请稍后重试", err)
 			return
 		}
 		audit.Record(db, c, audit.Entry{
