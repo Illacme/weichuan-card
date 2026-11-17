@@ -12,6 +12,8 @@
 // 没有 _thumb 兄弟图时缩略图必 404，回退打空就会让整块只剩占位撑出的空白
 // （2026-11-18 真机实测：设置怎么改都没图，就是这个原因）。这里按 globalIdx
 // 遍历 visiblePages 找到渲染项，直接改它，保证回退真的落到屏幕上那张 image。
+// WXML 仍带 data-arr="featured" 只为满足 img_fallback 守门（它会检查 binderror 的
+// image 必带 data-arr/data-fail）；本函数按 idx+full 定位，不依赖该属性。
 function onFeaturedImgErr(this: any, e: any): void {
   const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
   const idx: number = ds.idx

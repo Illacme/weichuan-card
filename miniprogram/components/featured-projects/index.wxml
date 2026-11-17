@@ -19,7 +19,7 @@
     <view class="feat-item" wx:for="{{item.items}}" wx:for-item="p" wx:key="globalIdx"
       style="width:{{p.width}}" data-id="{{p.id}}" bindtap="onTap">
       <image class="feat-cover" src="{{p.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{p.cover}}"
-        binderror="onImgErr" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
+        binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
       <view class="feat-cover" wx:else></view>
     </view>
   </view>
