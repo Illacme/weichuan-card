@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     order: ['achievement', 'service'],
     bgImage: '',
     bgMask: 0,
+    companyNameScale: 'large',
+    introFontScale: 'large',
   })),
   saveHomeLayout: vi.fn(async (_payload: any) => ({ code: 0 })),
 }))
@@ -144,14 +146,14 @@ function saveButton(w: any) {
 
 // 按表单项 label 定位某一组时间档位控件：页面里有两组（案例 / 服务），
 // 直接 findAll('.el-radio') 会把两组合成一个列表，做不到「只改一组」的断言。
-function timeItem(w: any, label: string) {
+function formItemByLabel(w: any, label: string) {
   const item = w.findAll('.el-form-item').find((i: any) => i.find('label').text() === label)
   if (!item) throw new Error('找不到表单项：' + label)
   return item
 }
 
 async function pickTimeMode(w: any, label: string, optionText: string) {
-  const radio = timeItem(w, label)
+  const radio = formItemByLabel(w, label)
     .findAll('.el-radio')
     .find((r: any) => r.text() === optionText)
   if (!radio) throw new Error(`「${label}」里找不到选项：${optionText}`)
@@ -174,15 +176,18 @@ describe('content/HomeLayout', () => {
   })
 
   // 只挪表单项、把 divider 留在原地，会出现「标题说首页背景，底下是板块顺序」的错位，
-  // 所以直接钉死三个模块标题在源码里的相对位置。
-  it('配置模块顺序：首页背景 → 板块顺序 → 详情页时间显示', () => {
+  // 所以直接钉死四个模块标题在源码里的相对位置。首页文字展示（公司名/简介档位）
+  // 必须夹在「首页背景」与「板块顺序」中间——这是产品约定的插入位置。
+  it('配置模块顺序：首页背景 → 首页文字展示 → 板块顺序 → 详情页时间显示', () => {
     const src = readFileSync(PAGE_SRC, 'utf-8')
     const bg = src.indexOf('<el-divider content-position="left">首页背景</el-divider>')
+    const text = src.indexOf('<el-divider content-position="left">首页文字展示</el-divider>')
     const order = src.indexOf('<el-divider content-position="left">板块顺序</el-divider>')
     const time = src.indexOf('<el-divider content-position="left">详情页时间显示</el-divider>')
 
     expect(bg).toBeGreaterThan(-1)
-    expect(order).toBeGreaterThan(bg)
+    expect(text).toBeGreaterThan(bg)
+    expect(order).toBeGreaterThan(text)
     expect(time).toBeGreaterThan(order)
   })
 
@@ -195,7 +200,9 @@ describe('content/HomeLayout', () => {
 
   it('切换板块顺序：当前顺序实时反过来', async () => {
     const w = await mountPage()
-    const radios = w.findAll('.el-radio')
+    // 页面里有多组 radio（文字档位 / 板块顺序 / 时间档位），按 label 限定到「谁在前」，
+    // 不能用 findAll('.el-radio')[1]——新增控件会让下标漂移。
+    const radios = formItemByLabel(w, '谁在前').findAll('.el-radio')
 
     await radios[1].trigger('click') // 「服务在前，业绩在后」
     await flush()
@@ -205,7 +212,7 @@ describe('content/HomeLayout', () => {
 
   it('保存提交完整顺序数组（只交 firstBlock 后端拼不出顺序）', async () => {
     const w = await mountPage()
-    await w.findAll('.el-radio')[1].trigger('click')
+    await formItemByLabel(w, '谁在前').findAll('.el-radio')[1].trigger('click')
     await flush()
 
     await saveButton(w).trigger('click')
@@ -217,6 +224,8 @@ describe('content/HomeLayout', () => {
       bgMask: 0,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
+      companyNameScale: 'large',
+      introFontScale: 'large',
     })
   })
 
@@ -253,6 +262,8 @@ describe('content/HomeLayout', () => {
       bgMask: 60,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
+      companyNameScale: 'large',
+      introFontScale: 'large',
     })
   })
 
@@ -380,8 +391,63 @@ describe('content/HomeLayout', () => {
       serviceTimeMode: 'date',
     })
 
-    expect(timeItem(w, '项目案例详情').text()).toContain('小程序效果：不显示时间')
-    expect(timeItem(w, '业务服务详情').text()).toMatch(/小程序效果：更新于 \d{4}-\d{2}-\d{2}/)
+    expect(formItemByLabel(w, '项目案例详情').text()).toContain('小程序效果：不显示时间')
+    expect(formItemByLabel(w, '业务服务详情').text()).toMatch(/小程序效果：更新于 \d{4}-\d{2}-\d{2}/)
+  })
+
+  // ---- 首页视频下方文字：公司名称 / 简介文字各四档（大/中/小/关闭）----
+  // 控件从公司信息 / 公司简介页搬来，钉四件事：缺省 large（存量零视觉突变）、
+  // 后端值能回显、选中档随 saveHomeLayout 提交、两处互不串。
+  async function pickScale(w: any, label: string, optionText: string) {
+    const radio = formItemByLabel(w, label)
+      .findAll('.el-radio')
+      .find((r: any) => r.text() === optionText)
+    if (!radio) throw new Error(`「${label}」里找不到选项：${optionText}`)
+    await radio.trigger('click')
+    await flush()
+  }
+
+  it('两处文字档位缺省「大」，四档都可选', async () => {
+    const w = await mountPage()
+    for (const label of ['公司名称', '简介文字']) {
+      const texts = formItemByLabel(w, label).findAll('.el-radio').map((r: any) => r.text())
+      expect(texts).toHaveLength(4)
+      expect(texts[0]).toBe('大（当前）')
+      expect(texts[1]).toBe('中')
+      expect(texts[2]).toBe('小')
+      expect(texts[3]).toContain('关闭')
+    }
+  })
+
+  it('后端回显两处档位，保存时原样提交', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'], bgImage: '', bgMask: 0,
+      companyNameScale: 'small', introFontScale: 'hidden',
+    })
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ companyNameScale: 'small', introFontScale: 'hidden' })
+    )
+  })
+
+  it('只改公司名称档位，简介档位保持原值（两处互不串）', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'], bgImage: '', bgMask: 0,
+      companyNameScale: 'large', introFontScale: 'medium',
+    })
+    await pickScale(w, '公司名称', '关闭（不显示公司名）')
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ companyNameScale: 'hidden', introFontScale: 'medium' })
+    )
+  })
+
+  it('字段缺失时归一到「大」（历史行 / 老后端）', async () => {
+    const w = await mountPage({ order: ['achievement', 'service'], bgImage: '', bgMask: 0 })
+    expect((w.vm as any).companyNameScale).toBe('large')
+    expect((w.vm as any).introFontScale).toBe('large')
   })
 
   it('内嵌在「小程序设置」时，隐藏自身的「保存 / 重新加载」按钮（由父切换栏统一提供）', async () => {

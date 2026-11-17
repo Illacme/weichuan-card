@@ -7,7 +7,7 @@
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
-    <p class="desc">设置小程序首页背景、首页「经典业绩」与「业务服务」的先后顺序，以及两个详情页是否显示「更新于」。</p>
+    <p class="desc">设置小程序首页背景、视频下方公司名称与简介的大小/显示、首页「经典业绩」与「业务服务」的先后顺序，以及两个详情页是否显示「更新于」。</p>
 
     <!-- 表单宽度与「访客先看到谁」对齐（720）：560 时「从素材库选择」按钮的文字会被
          挤成两行，撑满卡片后这个窄表单也显得孤零零 -->
@@ -41,6 +41,43 @@
           <img class="bg-preview-img" :src="bgImage" alt="背景预览" />
           <div class="bg-preview-mask" :style="{ opacity: bgMask / 100 }" />
           <div class="bg-preview-card">白色内容卡片</div>
+        </div>
+      </el-form-item>
+
+      <!-- 首页视频下方「公司名称 / 简介文字」的展示档位：四档 = 大 / 中 / 小 / 关闭。
+           控件从「公司信息」「公司简介」页搬来，是因为客户按呈现效果反复调整这两处，
+           归到「页面样式」页签和背景/顺序/时间档位放一起，改版式时一处就能配齐。
+           物理列仍在 company_infos / company_profiles，本页经 home-layout 端点窄更新，
+           不提交时保持原值（指针语义），不会冲掉别处字段。 -->
+      <el-divider content-position="left">首页文字展示</el-divider>
+
+      <p class="desc desc-tight">
+        控制小程序首页视频下方两行文字的<strong>大小与是否显示</strong>。「关闭」时小程序端会移除该行节点、
+        不再占用屏幕空间，方便随时调整首页留白。默认「大」与升级前一致。
+      </p>
+
+      <el-form-item label="公司名称">
+        <el-radio-group v-model="companyNameScale">
+          <el-radio value="large">大（当前）</el-radio>
+          <el-radio value="medium">中</el-radio>
+          <el-radio value="small">小</el-radio>
+          <el-radio value="hidden">关闭（不显示公司名）</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">
+          只控制首页视频下方的<b>公司名一行</b>（及其分隔线），不影响顶栏简称与后台标识。
+        </div>
+      </el-form-item>
+
+      <el-form-item label="简介文字">
+        <el-radio-group v-model="introFontScale">
+          <el-radio value="large">大（当前）</el-radio>
+          <el-radio value="medium">中</el-radio>
+          <el-radio value="small">小</el-radio>
+          <el-radio value="hidden">关闭（不显示简介）</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">
+          只影响首页的<b>简介文字一段</b>，不改公司名与其它文字。关闭后首页不再渲染简介，
+          腾出的空间给下面的板块。
         </div>
       </el-form-item>
 
@@ -120,6 +157,10 @@ const bgMask = ref(0)
 // 详情页「更新于」档位：案例与服务各一个，互不影响
 const projectTimeMode = ref<DetailTimeMode>('date')
 const serviceTimeMode = ref<DetailTimeMode>('date')
+// 首页视频下方两行文字的展示档位（大/中/小/关闭）。缺省 large 保持存量零视觉突变；
+// 历史行该列可能为空，load 时用 || 'large' 兜底，避免 radio 落到未选中态。
+const companyNameScale = ref<string>('large')
+const introFontScale = ref<string>('large')
 
 // 把档位翻译成「小程序上会看到什么」，比让客户理解 hidden/date/minute 直观。
 // 时间取当下（不是真实内容时间，只演示格式），够用且不会误导成「这是某条内容的时间」。
@@ -150,6 +191,8 @@ async function load() {
     bgMask.value = d?.bgMask || 0
     projectTimeMode.value = d?.projectTimeMode || 'date'
     serviceTimeMode.value = d?.serviceTimeMode || 'date'
+    companyNameScale.value = d?.companyNameScale || 'large'
+    introFontScale.value = d?.introFontScale || 'large'
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -170,6 +213,8 @@ async function save() {
       bgMask: bgMask.value,
       projectTimeMode: projectTimeMode.value,
       serviceTimeMode: serviceTimeMode.value,
+      companyNameScale: companyNameScale.value,
+      introFontScale: introFontScale.value,
     })
     ElMessage.success('已保存小程序展示设置')
   } catch {

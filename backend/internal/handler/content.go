@@ -83,12 +83,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.PUT("/api/admin/company-info", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var req struct {
-			FullName         string `json:"fullName"`
-			ShortName        string `json:"shortName"`
-			CompanyNameScale string `json:"companyNameScale"`
-			Address          string `json:"address"`
-			Tel              string `json:"tel"`
-			Logo             string `json:"logo"`
+			FullName  string `json:"fullName"`
+			ShortName string `json:"shortName"`
+			// 首页公司名展示档位已挪到「小程序设置 → 名片页面样式」页签，走 home-layout PUT 保存。
+			// 这里保留为**可选**指针仅为兼容旧调用：公司信息页不再渲染该控件，提交时不带本字段，
+			// nil 即不写这列——否则会用本页的缺省档位把样式页的设置静默冲掉（半接线比不通更危险）。
+			CompanyNameScale *string `json:"companyNameScale"`
+			Address          string  `json:"address"`
+			Tel              string  `json:"tel"`
+			Logo             string  `json:"logo"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -96,7 +99,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		// 展示档位归一在写入前做一次：空串/脏值落 large，避免把非法值存进库、
 		// 端上拿到不认识的档位后 class 落空（关不掉也调不小，却查不出原因）。
-		req.CompanyNameScale = model.NormalizeCompanyNameScale(req.CompanyNameScale)
+		// 仅当本次显式提交时才归一/写入（nil = 保持原值）。
+		if req.CompanyNameScale != nil {
+			v := model.NormalizeCompanyNameScale(*req.CompanyNameScale)
+			req.CompanyNameScale = &v
+		}
 		// 写入侧归一（第五十九轮）：落库前把资源字段收敛成带归属前缀的裸键。
 		// 失败必须放弃写入——收到的值要么属于别家企业（串号），要么是伪协议 / 穿越。
 		// 归一结果写回 req，下面的新建 / 更新两条分支共用。
@@ -108,13 +115,27 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		var ci model.CompanyInfo
 		if db.First(&ci, "company_id = ?", cid).Error != nil {
-			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, CompanyNameScale: req.CompanyNameScale, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
+			// 新建：档位缺省 large（历史行为），仅当显式提交时用提交值。
+			scale := model.DefaultTextScale
+			if req.CompanyNameScale != nil {
+				scale = *req.CompanyNameScale
+			}
+			ci = model.CompanyInfo{CompanyID: cid, FullName: req.FullName, ShortName: req.ShortName, CompanyNameScale: scale, Address: req.Address, Tel: req.Tel, Logo: req.Logo}
 			if err := db.Create(&ci).Error; err != nil {
 				dbWriteFailed(c, "保存公司基础信息（新建）", "保存失败，请稍后重试", err)
 				return
 			}
 		} else {
-			if err := db.Model(&ci).Updates(map[string]interface{}{"full_name": req.FullName, "short_name": req.ShortName, "company_name_scale": req.CompanyNameScale, "address": req.Address, "tel": req.Tel, "logo": req.Logo}).Error; err != nil {
+			updates := map[string]interface{}{
+				"full_name": req.FullName, "short_name": req.ShortName,
+				"address": req.Address, "tel": req.Tel, "logo": req.Logo,
+			}
+			// 只在显式提交档位时写这列：公司信息页已不渲染该控件，缺省提交会冲掉
+			// 样式页里客户选好的档位。
+			if req.CompanyNameScale != nil {
+				updates["company_name_scale"] = *req.CompanyNameScale
+			}
+			if err := db.Model(&ci).Updates(updates).Error; err != nil {
 				dbWriteFailed(c, "保存公司基础信息（更新）", "保存失败，请稍后重试", err)
 				return
 			}
@@ -122,7 +143,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 界面「保存后立刻刷新」看起来像没生效（与 company-profile 同一处理）。
 			ci.FullName = req.FullName
 			ci.ShortName = req.ShortName
-			ci.CompanyNameScale = req.CompanyNameScale
+			if req.CompanyNameScale != nil {
+				ci.CompanyNameScale = *req.CompanyNameScale
+			}
 			ci.Address = req.Address
 			ci.Tel = req.Tel
 			ci.Logo = req.Logo
@@ -160,15 +183,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.PUT("/api/admin/company-profile", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		cid := targetCompanyID(c)
 		var req struct {
-			IntroText        string `json:"introText"`
-			IntroFontScale   string `json:"introFontScale"`
-			VideoSource      string `json:"videoSource"`
-			VideoChannelID   string `json:"videoChannelId"`
-			VideoFeedID      string `json:"videoFeedId"`
-			VideoFeedToken   string `json:"videoFeedToken"`
-			VideoVid         string `json:"videoVid"`
-			VideoURL         string `json:"videoUrl"`
-			VideoFallbackURL bool   `json:"videoFallbackUrl"`
+			IntroText string `json:"introText"`
+			// 简介展示档位已挪到「小程序设置 → 名片页面样式」页签，走 home-layout PUT 保存。
+			// 可选指针仅为兼容旧调用：公司简介页不再渲染该控件，nil 即不写这列，
+			// 避免缺省值冲掉样式页里客户选好的档位。
+			IntroFontScale   *string `json:"introFontScale"`
+			VideoSource      string  `json:"videoSource"`
+			VideoChannelID   string  `json:"videoChannelId"`
+			VideoFeedID      string  `json:"videoFeedId"`
+			VideoFeedToken   string  `json:"videoFeedToken"`
+			VideoVid         string  `json:"videoVid"`
+			VideoURL         string  `json:"videoUrl"`
+			VideoFallbackURL bool    `json:"videoFallbackUrl"`
 			// 自托管 MP4 档的备用地址（主源失败时切换）。channels / tencent 档不用它，
 			// 那两档仍把 videoUrl 当兜底源——存量行为保持不变。
 			VideoBackupURL string `json:"videoBackupUrl"`
@@ -204,7 +230,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		// 字号是纯展示偏好：非法/空值归一成 large，不因此拒掉整段简介保存。
 		// 归一在写入前做一次，出参直接回归一后的值，避免「存进去的是脏值、读出来是兜底值」。
-		req.IntroFontScale = model.NormalizeIntroFontScale(req.IntroFontScale)
+		// 仅当显式提交时才归一/写入（nil = 保持原值，见 req 字段注释）。
+		if req.IntroFontScale != nil {
+			v := model.NormalizeIntroFontScale(*req.IntroFontScale)
+			req.IntroFontScale = &v
+		}
 		if !model.IsValidVideoSource(req.VideoSource) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "视频来源取值非法"})
 			return
@@ -236,7 +266,13 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		exists := db.First(&cp, "company_id = ?", cid).Error == nil
 		cp.CompanyID = cid
 		cp.IntroText = req.IntroText
-		cp.IntroFontScale = req.IntroFontScale
+		// 档位：显式提交用提交值；未提交时，更新分支保留 First 读到的原值，
+		// 新建分支（cp 为零值）落缺省 large——不能写空串让端上 radio 落空。
+		if req.IntroFontScale != nil {
+			cp.IntroFontScale = *req.IntroFontScale
+		} else if !exists {
+			cp.IntroFontScale = model.DefaultTextScale
+		}
 		cp.VideoSource = req.VideoSource
 		cp.VideoChannelID = req.VideoChannelID
 		cp.VideoFeedID = req.VideoFeedID
@@ -250,7 +286,6 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 		fields := map[string]interface{}{
 			"intro_text":         req.IntroText,
-			"intro_font_scale":   req.IntroFontScale,
 			"video_source":       req.VideoSource,
 			"video_channel_id":   req.VideoChannelID,
 			"video_feed_id":      req.VideoFeedID,
@@ -261,6 +296,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"video_backup_url":   req.VideoBackupURL,
 			"video_autoplay":     req.VideoAutoplay,
 			"cover":              req.Cover,
+		}
+		// 只在显式提交档位时写这列：公司简介页已不渲染该控件，缺省提交会冲掉
+		// 样式页里客户选好的档位。
+		if req.IntroFontScale != nil {
+			fields["intro_font_scale"] = *req.IntroFontScale
 		}
 		if exists {
 			// 不判 RowsAffected==0：重复点保存、值没变时 MySQL 返回 0 行受影响，
@@ -617,11 +657,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 清单与授权态一并下发：后台不必自己硬编码模板，且能直接把「未开通」
 		// 的高级款置灰并说明原因，而不是等保存时才被拒。
 		entitled := license.ResolveFor(c.Request.Context(), cid).HasFeature(mptemplate.FeatureAdvanced)
+		// 首页视频下方「公司名 / 简介」的文字展示档位：控件归本页签，故随本端点回显。
+		// 两列物理上仍在各自表，单独读并归一（新租户缺省 large）。
+		nameScale, introScale := homeTextScales(db, cid)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
 			"projectTimeMode":    projectMode, "serviceTimeMode": serviceMode,
 			"styleId": styleID, "brandColorId": brandColorID,
+			"companyNameScale": nameScale, "introFontScale": introScale,
 			"templates":        mptemplate.All(),
 			"templateEntitled": entitled,
 		}})
@@ -646,6 +690,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// brandColorId 只覆盖颜色（nil = 用该风格默认色）。
 			StyleID      *string `json:"styleId"`
 			BrandColorID *string `json:"brandColorId"`
+			// 首页视频下方「公司名 / 简介」文字展示档位，控件归本「名片页面样式」页签。
+			// 指针语义：nil 表示本次不提交（不动对应列）。
+			CompanyNameScale *string `json:"companyNameScale"`
+			IntroFontScale   *string `json:"introFontScale"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -675,6 +723,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "服务时间显示档位无效"})
 				return
 			}
+		}
+		// 文字展示档位是纯展示偏好：非法/空值归一成 large，不因此拒掉整次保存。
+		// 与 timeMode（白名单拒绝）不同——端上拿到不认识的字号档只会 class 落空，
+		// 归一成 large 保证「关不掉也调不小」不会发生。
+		nameScale, introScale := "", ""
+		if req.CompanyNameScale != nil {
+			nameScale = model.NormalizeCompanyNameScale(*req.CompanyNameScale)
+		}
+		if req.IntroFontScale != nil {
+			introScale = model.NormalizeIntroFontScale(*req.IntroFontScale)
 		}
 
 		// ===== 风格 / 色系（两轴，P5 起全叉乘）=====
@@ -813,12 +871,71 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				}
 			}
 		}
+		// 首页文字两档位：物理列在 company_infos / company_profiles，用窄更新只碰这一列，
+		// 不带全量字段避免误清空公司信息 / 简介视频。任一次写失败即整体报错——
+		// 静默放过会出现「样式页看着存了、端上字号没变」这类无从察觉的失败。
+		if nameScale != "" {
+			if err := saveHomeTextScale(db, "company_infos", cid, "company_name_scale", nameScale); err != nil {
+				dbWriteFailed(c, "保存首页公司名档位", "保存失败，请稍后重试", err)
+				return
+			}
+		}
+		if introScale != "" {
+			if err := saveHomeTextScale(db, "company_profiles", cid, "intro_font_scale", introScale); err != nil {
+				dbWriteFailed(c, "保存首页简介档位", "保存失败，请稍后重试", err)
+				return
+			}
+		}
+
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionContentLayout, TargetType: "company", TargetID: strconv.FormatInt(cid, 10),
-			Detail: map[string]any{"orderTouched": orderJSON != "", "themeTouched": themeTouched},
+			Detail: map[string]any{
+				"orderTouched": orderJSON != "", "themeTouched": themeTouched,
+				"nameTouched": nameScale != "", "introTouched": introScale != "",
+			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
+}
+
+// homeTextScales 读首页视频下方两处文字的展示档位，供「名片页面样式」页签回显。
+// 两列物理上仍在 company_infos / company_profiles，但控件已归 home-layout 端点管，
+// 避免再给这两个字段开一对专门端点（写入口越少越不容易半接线）。
+// 缺省 / 历史空串一律归一成 large——新租户和升级存量都不能让前端 radio 落空。
+func homeTextScales(db *gorm.DB, cid int64) (nameScale, introScale string) {
+	nameScale, introScale = model.DefaultTextScale, model.DefaultTextScale
+	var ci model.CompanyInfo
+	if db.Select("company_name_scale").Limit(1).Find(&ci, "company_id = ?", cid).RowsAffected > 0 {
+		nameScale = model.NormalizeCompanyNameScale(ci.CompanyNameScale)
+	}
+	var cp model.CompanyProfile
+	if db.Select("intro_font_scale").Limit(1).Find(&cp, "company_id = ?", cid).RowsAffected > 0 {
+		introScale = model.NormalizeIntroFontScale(cp.IntroFontScale)
+	}
+	return
+}
+
+// saveHomeTextScale 窄更新单个档位列：行存在只改这一列、不碰其它字段；
+// 不存在则建行带该档位（新租户可能从样式页先配档位，此时基础信息行还没有）。
+// 判「行是否存在」用 Limit(1).Find 而非 RowsAffected——MySQL 原样 UPDATE 返 0，
+// 把 0 当成「没找到」会走建行分支撞唯一键。
+func saveHomeTextScale(db *gorm.DB, table string, cid int64, column, scale string) error {
+	exists := false
+	switch table {
+	case "company_infos":
+		var ci model.CompanyInfo
+		exists = db.Select("id").Limit(1).Find(&ci, "company_id = ?", cid).RowsAffected > 0
+	case "company_profiles":
+		var cp model.CompanyProfile
+		exists = db.Select("id").Limit(1).Find(&cp, "company_id = ?", cid).RowsAffected > 0
+	}
+	if exists {
+		return db.Table(table).Where("company_id = ?", cid).Update(column, scale).Error
+	}
+	if table == "company_profiles" {
+		return db.Create(&model.CompanyProfile{CompanyID: cid, IntroFontScale: scale, VideoSource: model.VideoSourceNone}).Error
+	}
+	return db.Create(&model.CompanyInfo{CompanyID: cid, CompanyNameScale: scale}).Error
 }
 
 // clampMask 把遮罩浓度钳制到 0~100（前端滑块范围一致，服务端兜底防越界写入）。

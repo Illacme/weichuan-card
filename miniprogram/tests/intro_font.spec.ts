@@ -1,8 +1,8 @@
-// 公司简介「简介文字」三档字号——跨层映射守门。
+// 首页「简介文字」四档展示（大/中/小/关闭）——跨层映射守门。
 //
 // 这档配置的链路横跨四层，任何一层漏改都是「后台选了、小程序没变」的静默失败：
 //   后端 model.NormalizeIntroFontScale（缺省/脏值落 large）
-//   → 后台 CompanyProfile.vue 的三档单选 + 提交
+//   → 后台 HomeLayout.vue「名片页面样式」页签的四档单选 + 提交（控件已从公司简介页搬来）
 //   → 小程序 index.wxml 的 class 绑定 + || 'large' 兜底
 //   → app.wxss 的 .intro-size-{large,medium,small} 三条 font-size
 //
@@ -21,7 +21,8 @@ const REPO = resolve(HERE, '../..')
 const WXML = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxml'), 'utf-8')
 const WXSS = readFileSync(resolve(REPO, 'miniprogram/app.wxss'), 'utf-8')
 const MODEL = readFileSync(resolve(REPO, 'backend/internal/model/models.go'), 'utf-8')
-const VUE = readFileSync(resolve(REPO, 'frontend/src/views/content/CompanyProfile.vue'), 'utf-8')
+// 控件已迁到「小程序设置 → 名片页面样式」页签（HomeLayout.vue），不再在公司简介页。
+const VUE = readFileSync(resolve(REPO, 'frontend/src/views/content/HomeLayout.vue'), 'utf-8')
 
 /** 取 .intro-size-<tier> 规则块里的 font-size 值 */
 function introFontSize(src: string, tier: string): string | undefined {

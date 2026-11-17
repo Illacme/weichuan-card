@@ -2766,7 +2766,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CompanyScope"
       tags: [超管-内容管理]
-      summary: 小程序展示配置（首页顺序 + 背景 + 详情页时间档位 + 风格模板）
+      summary: 小程序展示配置（首页顺序 + 背景 + 视频下方文字档位 + 详情页时间档位 + 风格模板）
       security:
         - cookieAuth: []
       responses:
@@ -2786,6 +2786,20 @@ paths:
                         type: array
                         items:
                           type: string
+                      companyNameScale:
+                        type: string
+                        enum: [large, medium, small, hidden]
+                        default: large
+                        description: >-
+                          首页视频下方「公司名称」展示档位（控件在「名片页面样式」页签）。
+                          物理列在 company_infos，经本端点读写；hidden=端上移除该行节点。
+                      introFontScale:
+                        type: string
+                        enum: [large, medium, small, hidden]
+                        default: large
+                        description: >-
+                          首页视频下方「简介文字」展示档位（控件在「名片页面样式」页签）。
+                          物理列在 company_profiles，经本端点读写；hidden=端上移除该行节点。
                       bgImage:
                         type: string
                         description: 首页背景图 URL，空串=不设背景（保持灰底）
@@ -2862,6 +2876,10 @@ paths:
         新建配置行则落缺省顺序。`bgGradientStrength`（顶部主色浓度 0~100）归「风格模板」
         页签，与 `styleId` / `brandColorId` 一起提交；100=原色、缺省保持原值；无背景图时才生效。
         时间档位与主题 id 传枚举外的值一律拒绝（code=1），不做静默兜底。
+        `companyNameScale` / `introFontScale`（首页视频下方公司名 / 简介的四档展示）
+        控件归本「名片页面样式」页签，随本端点读写；物理列仍在 company_infos /
+        company_profiles，用窄更新只碰这两列，不传即保持原值。非法值归一成 large
+        （纯展示偏好，不因此拒掉整次保存）。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
         `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
@@ -2900,6 +2918,16 @@ paths:
                 serviceTimeMode:
                   type: string
                   enum: [hidden, date, minute]
+                companyNameScale:
+                  type: string
+                  enum: [large, medium, small, hidden]
+                  description: >-
+                    首页公司名展示档位（大/中/小/关闭）；控件在本页签，不传即保持原值，非法值归一 large。
+                introFontScale:
+                  type: string
+                  enum: [large, medium, small, hidden]
+                  description: >-
+                    首页简介文字展示档位（大/中/小/关闭）；控件在本页签，不传即保持原值，非法值归一 large。
                 styleId:
                   type: string
                   enum: [default, ink, warm, teal]
@@ -5427,7 +5455,9 @@ components:
           type: string
           enum: [large, medium, small, hidden]
           description: >-
-            首页公司名展示档位；不传或非法值按 large 处理。hidden=关闭后首页不再渲染公司名行。
+            兼容旧调用的可选字段：控件已迁到「名片页面样式」页签，走 home-layout PUT 提交。
+            本接口不传即不写这列（保持原值）；若显式传入，非法值按 large 处理。
+            hidden=关闭后首页不再渲染公司名行。
 
     CompanyProfile:
       type: object
@@ -5507,7 +5537,8 @@ components:
           type: string
           enum: [large, medium, small, hidden]
           description: >-
-            简介文字展示档位；不传或非法值按 large（28rpx，历史观感）处理。
+            兼容旧调用的可选字段：控件已迁到「名片页面样式」页签，走 home-layout PUT 提交。
+            本接口不传即不写这列（保持原值）；若显式传入，非法值按 large（28rpx，历史观感）处理。
             hidden=关闭后首页不再渲染简介行。
         videoSource:
           type: string

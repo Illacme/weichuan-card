@@ -7,8 +7,11 @@ export function getCompanyInfo() {
 export function saveCompanyInfo(p: {
   fullName: string
   shortName: string
-  /** 首页视频下方公司名展示档位：large(基线) / medium / small / hidden(关闭该行) */
-  companyNameScale: string
+  /**
+   * 首页视频下方公司名展示档位已迁到「名片页面样式」页签，走 saveHomeLayout 提交。
+   * 保留为可选仅为兼容旧调用：不传后端即不写这列，不会冲掉样式页的设置。
+   */
+  companyNameScale?: string
   address: string
   tel: string
   logo: string
@@ -26,8 +29,11 @@ export function getCompanyProfile() {
 }
 export function saveCompanyProfile(p: {
   introText: string
-  /** 简介文字展示档位：large(基线) / medium / small / hidden(关闭该行)；缺省按 large */
-  introFontScale: string
+  /**
+   * 简介文字展示档位已迁到「名片页面样式」页签，走 saveHomeLayout 提交。
+   * 保留为可选仅为兼容旧调用：不传后端即不写这列，不会冲掉样式页的设置。
+   */
+  introFontScale?: string
   videoSource: string
   videoChannelId: string
   videoFeedId: string
@@ -193,6 +199,10 @@ export interface HomeLayoutData {
   styleId: string
   /** 品牌色系：叠加在风格之上只换主色；null = 用该风格默认色。P5 起任意风格 × 任意色系都合法（44 组合） */
   brandColorId: string | null
+  /** 首页视频下方「公司名称」展示档位：large(基线) / medium / small / hidden(关闭该行) */
+  companyNameScale: string
+  /** 首页视频下方「简介文字」展示档位：large(基线) / medium / small / hidden(关闭该行) */
+  introFontScale: string
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
   templateEntitled: boolean
@@ -211,6 +221,8 @@ export function getHomeLayout() {
           serviceTimeMode: 'date',
           styleId: 'default',
           brandColorId: null,
+          companyNameScale: 'large',
+          introFontScale: 'large',
           templates: [],
           templateEntitled: true,
         }) as HomeLayoutData

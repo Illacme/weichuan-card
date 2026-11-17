@@ -18,6 +18,9 @@ const REPO = resolve(HERE, '../..')
 const WXML = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxml'), 'utf-8')
 const WXSS = readFileSync(resolve(REPO, 'miniprogram/app.wxss'), 'utf-8')
 const MODEL = readFileSync(resolve(REPO, 'backend/internal/model/models.go'), 'utf-8')
+// 两处档位控件都已迁到「小程序设置 → 名片页面样式」页签（HomeLayout.vue），
+// 与首页背景 / 板块顺序放在一起；原公司信息 / 公司简介页不再渲染它们。
+const LAYOUT_VUE = readFileSync(resolve(REPO, 'frontend/src/views/content/HomeLayout.vue'), 'utf-8')
 const CI_VUE = readFileSync(resolve(REPO, 'frontend/src/views/content/CompanyInfo.vue'), 'utf-8')
 const CP_VUE = readFileSync(resolve(REPO, 'frontend/src/views/content/CompanyProfile.vue'), 'utf-8')
 const OPENAPI = readFileSync(resolve(REPO, 'docs/openapi.yaml'), 'utf-8')
@@ -93,13 +96,25 @@ describe('首页文字区四档展示跨层映射', () => {
     for (const l of collapseLines) expect(l.trim().startsWith('.wc-style-')).toBe(false)
   })
 
-  it('四档共用一套归一与取值，hidden 是真值源；两个后台都有四档单选', () => {
+  it('四档共用一套归一与取值，hidden 是真值源；样式页两组四档单选齐全', () => {
     for (const v of ['large', 'medium', 'small', 'hidden']) {
       expect(MODEL, `模型缺 ${v} 档`).toMatch(new RegExp('TextScale' + v[0].toUpperCase() + v.slice(1) + '\\s*=\\s*"' + v + '"'))
-      expect(CI_VUE, `公司信息页缺 ${v} 档`).toContain(`value="${v}"`)
-      expect(CP_VUE, `公司简介页缺 ${v} 档`).toContain(`value="${v}"`)
+      // 两组单选都在 HomeLayout.vue（同一文件里至少各出现一次，不能用出现总数≥4 糊弄）
+      expect(LAYOUT_VUE, `样式页缺 ${v} 档`).toContain(`value="${v}"`)
     }
     expect(MODEL).toMatch(/case TextScaleLarge, TextScaleMedium, TextScaleSmall, TextScaleHidden:/)
+    // 样式页必须同时绑定 companyNameScale 与 introFontScale 两个 v-model，缺一组就少一处控件
+    expect(LAYOUT_VUE).toMatch(/v-model="companyNameScale"/)
+    expect(LAYOUT_VUE).toMatch(/v-model="introFontScale"/)
+  })
+
+  it('控件只留在样式页：公司信息 / 公司简介页不再渲染四档单选', () => {
+    // 防止搬迁时旧控件没删干净——两处都能改同一档位会造成「改了这页、那页保存又冲掉」。
+    // 剥注释再判：页面里有说明「已迁到样式页」的注释，不能把注释当控件。
+    const ciCode = CI_VUE.replace(/<!--[\s\S]*?-->/g, '')
+    const cpCode = CP_VUE.replace(/<!--[\s\S]*?-->/g, '')
+    expect(ciCode).not.toMatch(/v-model="form\.companyNameScale"/)
+    expect(cpCode).not.toMatch(/v-model="form\.introFontScale"/)
   })
 
   it('OpenAPI 四处契约都齐全四档，hidden 语义不漂移', () => {

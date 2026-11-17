@@ -10,21 +10,8 @@
         <el-input v-model="form.introText" type="textarea" :rows="5" placeholder="首页简介区文字" />
       </el-form-item>
 
-      <!-- 简介展示：只影响小程序首页「简介文字」这一段，不动公司名 / 联系表。
-           四档 = 大(基线，现状) / 中 / 小 / 关闭。默认「大」让升级存量零视觉突变。
-           「关闭」由端上 wx:if 移除整个节点（不是 display:none），那一行连高度都不占。 -->
-      <el-form-item label="简介展示">
-        <el-radio-group v-model="form.introFontScale">
-          <el-radio value="large">大（当前）</el-radio>
-          <el-radio value="medium">中</el-radio>
-          <el-radio value="small">小</el-radio>
-          <el-radio value="hidden">关闭（不显示简介）</el-radio>
-        </el-radio-group>
-        <div class="hint">
-          只影响小程序首页的<b>简介文字</b>，不改公司名与其它文字。想让长简介更紧凑就选小一档；
-          <b>关闭</b>后首页不再渲染简介，腾出的空间给下面的板块。默认「大」与升级前一致。
-        </div>
-      </el-form-item>
+      <!-- 简介展示档位（大/中/小/关闭）已迁到
+           「小程序设置 → 名片页面样式」页签，与首页背景、板块顺序等版式配置放一起。 -->
 
       <el-form-item label="视频来源">
         <el-select v-model="sourceUi" style="width: 280px">
@@ -274,8 +261,6 @@ const saving = ref(false)
 const form = reactive({
   id: 1,
   introText: '',
-  // 简介字号：默认 large 保持存量零视觉突变；后端历史行空串也会归一成 large
-  introFontScale: 'large',
   videoSource: 'none',
   videoChannelId: '',
   videoFeedId: '',
@@ -448,8 +433,6 @@ async function load() {
     Object.assign(
       form,
       {
-        // 后加的字号列：历史行没这一项，必须给默认值，否则 radio 落到未选中态
-        introFontScale: 'large',
         videoSource: 'none',
         videoChannelId: '',
         videoFeedId: '',
@@ -546,9 +529,9 @@ async function save() {
   }
   saving.value = true
   try {
+    // 不提交档位字段：后端为指针部分更新（nil=不写），避免把样式页设置冲掉。
     await saveCompanyProfile({
       introText: form.introText,
-      introFontScale: form.introFontScale,
       videoSource: form.videoSource,
       videoChannelId: form.videoChannelId,
       videoFeedId: form.videoFeedId,

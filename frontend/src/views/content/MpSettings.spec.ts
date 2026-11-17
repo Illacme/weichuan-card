@@ -226,6 +226,10 @@ describe('content/MpSettings', () => {
       bgImage: '',
       bgMask: 0,
       bgGradientStrength: 100,
+      // 首页文字两档位刻意给非缺省值（large 是缺省）：若页面把回显值丢掉、
+      // 只提交缺省，断言就会红——用 large 断言则「没接线」也能过。
+      companyNameScale: 'small',
+      introFontScale: 'hidden',
       styleId: 'default',
       brandColorId: null,
       templateEntitled: true,
@@ -446,6 +450,9 @@ describe('content/MpSettings', () => {
       bgMask: 0,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
+      // 两处文字档位必须随保存提交：漏了就是「后台选了、小程序没变」
+      companyNameScale: 'small',
+      introFontScale: 'hidden',
     })
   })
 

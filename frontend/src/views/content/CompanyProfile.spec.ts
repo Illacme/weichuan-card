@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   getCompanyProfile: vi.fn(async (): Promise<any> => ({
     id: 1,
     introText: '朗汇机电成立于 2003 年',
-    introFontScale: 'large',
     videoSource: 'none',
     videoChannelId: '',
     videoFeedId: '',
@@ -240,7 +239,6 @@ function profile(videoSource: string, videoUrl: string) {
   return {
     id: 1,
     introText: '简介',
-    introFontScale: 'large',
     videoSource,
     videoChannelId: '',
     videoFeedId: '',
@@ -283,57 +281,9 @@ describe('content/CompanyProfile', () => {
     expect((w.find('.el-select').element as HTMLSelectElement).value).toBe('none')
   })
 
-  // ---- 简介展示四档（大/中/小/关闭）----
-  // 钉三件事：缺省 large（存量零视觉突变）、后端值能回显、选中档随保存提交。
-  // 用 radio 的 data-value 定位，别用第几个 .el-radio——视频档里也有一组 radio。
-  function fontScaleRadio(w: any, value: string) {
-    const r = w.find(`.el-radio[data-value="${value}"]`)
-    if (!r.exists()) throw new Error(`找不到简介展示档位 ${value}`)
-    return r
-  }
-
-  it('简介展示缺省为「大」，四档都可选', async () => {
-    const w = await mountPage()
-    for (const v of ['large', 'medium', 'small', 'hidden']) {
-      expect(fontScaleRadio(w, v).exists()).toBe(true)
-    }
-    // 缺省值必须写进保存 payload——漏了就是「后台选了、小程序没变」
-    await saveButton(w).trigger('click')
-    await flush()
-    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('large')
-  })
-
-  it('简介字号能回显后端的档位', async () => {
-    const w = await mountPage({ ...(await mocks.getCompanyProfile()), introFontScale: 'small' })
-    // radio 组把 modelValue 透到 DOM 的 checked 上；这里直接读 setupState 更稳
-    expect((w.vm as any).form.introFontScale).toBe('small')
-  })
-
-  it('简介字号选中「中」随保存提交', async () => {
-    const w = await mountPage()
-    await fontScaleRadio(w, 'medium').trigger('click')
-    await flush()
-    await saveButton(w).trigger('click')
-    await flush()
-    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('medium')
-  })
-
-  it('简介选中「关闭」随保存提交', async () => {
-    const w = await mountPage()
-    await fontScaleRadio(w, 'hidden').trigger('click')
-    await flush()
-    await saveButton(w).trigger('click')
-    await flush()
-    expect(mocks.saveCompanyProfile.mock.calls[0][0].introFontScale).toBe('hidden')
-  })
-
-  // 历史行该字段缺失（老后端 / 直接造数据）时也必须落 large，不能落到未选中态
-  it('简介字号字段缺失时归一到「大」', async () => {
-    const p: any = await mocks.getCompanyProfile()
-    delete p.introFontScale
-    const w = await mountPage(p)
-    expect((w.vm as any).form.introFontScale).toBe('large')
-  })
+  // 简介展示档位（大/中/小/关闭）已迁到「小程序设置 → 名片页面样式」页签，
+  // 经 home-layout 端点读写；本页保存不再提交 introFontScale（后端指针部分更新，
+  // 不传即不写），以免用缺省值冲掉样式页里客户选好的档位。相关断言在 HomeLayout.spec。
 
   it('视频号档：展开 channelId / feedId / feed-token 三项', async () => {
     const w = await mountPage()
@@ -680,7 +630,7 @@ describe('content/CompanyProfile', () => {
 
   // ---- 保存 payload ----
 
-  it('保存提交十二个字段，不带 id', async () => {
+  it('保存提交十一个字段，不带 id 与展示档位', async () => {
     const w = await mountPage()
 
     await saveButton(w).trigger('click')
@@ -689,7 +639,6 @@ describe('content/CompanyProfile', () => {
     const payload = mocks.saveCompanyProfile.mock.calls[0][0]
     expect(Object.keys(payload).sort()).toEqual([
       'cover',
-      'introFontScale',
       'introText',
       'videoAutoplay',
       'videoBackupUrl',
@@ -702,6 +651,7 @@ describe('content/CompanyProfile', () => {
       'videoVid',
     ])
     expect(payload).not.toHaveProperty('id')
+    expect(payload).not.toHaveProperty('introFontScale')
     expect(ElMessage.success).toHaveBeenCalledWith('已保存')
   })
 

@@ -902,9 +902,9 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET  | /api/admin/company-info?companyId= | 公司基础信息（按租户单行；企业管理员固定本企业，平台超管缺省演示租户） |
-| PUT  | /api/admin/company-info | 更新公司信息 |
+| PUT  | /api/admin/company-info | 更新公司信息。`companyNameScale` 为兼容旧调用的可选字段（不传即不写；控件已迁到 home-layout 页签） |
 | GET  | /api/admin/company-profile?companyId= | 公司简介 + 视频号 |
-| PUT  | /api/admin/company-profile | 更新简介 + 视频号 |
+| PUT  | /api/admin/company-profile | 更新简介 + 视频号。`introFontScale` 为兼容旧调用的可选字段（不传即不写；控件已迁到 home-layout 页签） |
 | GET  | /api/admin/categories?companyId= | 业绩分类列表 |
 | POST | /api/admin/categories | 新增分类（租户外键以服务端解析为准） |
 | PUT  | /api/admin/categories/:id | 编辑分类（带租户条件，越权返回未找到） |
@@ -917,8 +917,8 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/services | 新增业务服务 |
 | PUT  | /api/admin/services/:id | 编辑业务服务 |
 | DELETE | /api/admin/services/:id | 删除业务服务 |
-| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 顶部主色浓度 `bgGradientStrength`（0~100，默认 100=原色）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`**、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
-| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`order` 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**PC 后台「风格模板」页只发两轴** `{ styleId, brandColorId }`；仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法 id 回 code=1；**任意风格 × 任意已知色系（含 nil）都合法，4 × 11 = 44 组合**，`IsValidCombo` 只挡未知 id；未开通 `mp_template_advanced` 且「风格与色系任一高级」并「新选」回 code=403 |
+| GET  | /api/admin/home-layout?companyId= | 展示配置：板块顺序 + **背景图** `bgImage` + 遮罩浓度 `bgMask`（0~100）+ 顶部主色浓度 `bgGradientStrength`（0~100，默认 100=原色）+ 首页视频下方文字档位 **`companyNameScale` / `introFontScale`**（大/中/小/关闭，物理列在 `company_infos` / `company_profiles`，经本端点读写）+ 详情页时间档位 `projectTimeMode` / `serviceTimeMode` + 风格两轴 **`styleId` / `brandColorId`**、`templates` 清单（每款带 `series`）与 `templateEntitled` 授权态 |
+| PUT  | /api/admin/home-layout | 更新展示配置。**全部字段可选**，三个页签各存各的：`bgImage`/`bgMask`/时间档位/**`styleId`/`brandColorId`**/`order`/**`companyNameScale`/`introFontScale`** 均用指针语义（未提供=保持原值，传空串=清除背景；`bgMask` 钳制 0~100）。**「名片页面样式」页签**提交首页文字档位时只窄更新那两列、不碰公司信息其它字段；**「风格模板」页只发两轴** `{ styleId, brandColorId }`；仅在请求显式带主题字段时才写（`themeTouched`），避免其它页签保存时静默冲掉客户主题。非法 id 回 code=1；文字档位非法值静默归一 `large`（纯展示偏好）。**任意风格 × 任意已知色系（含 nil）都合法，4 × 11 = 44 组合**，`IsValidCombo` 只挡未知 id；未开通 `mp_template_advanced` 且「风格与色系任一高级」并「新选」回 code=403 |
 
 小程序风格模板的白名单在 `internal/mptemplate`（`All()` 返回副本，14 个扁平 id），按服务端下发的
 `Series` 分两组，后台据此分组渲染、不靠 id 前缀猜：

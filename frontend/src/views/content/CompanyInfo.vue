@@ -13,20 +13,8 @@
         <el-input v-model="form.shortName" placeholder="小程序顶栏居中展示，留空则显示企业全称" />
         <div class="field-tip">仅作为小程序中的显示值使用，和后台左边栏顶部标识没有关联</div>
       </el-form-item>
-      <!-- 首页视频下方「公司名称」的展示档位：与简介文字各自独立。
-           「关闭」端上用 wx:if 移除节点，那一行连高度都不占，真正腾出屏幕空间。 -->
-      <el-form-item label="首页公司名">
-        <el-radio-group v-model="form.companyNameScale">
-          <el-radio value="large">大（当前）</el-radio>
-          <el-radio value="medium">中</el-radio>
-          <el-radio value="small">小</el-radio>
-          <el-radio value="hidden">关闭（不显示公司名）</el-radio>
-        </el-radio-group>
-        <div class="field-tip">
-          只控制小程序首页<b>视频下方的公司名</b>一行（及其分隔线），不影响顶栏简称、后台标识。
-          关闭后首页不再渲染这一行；默认「大」与升级前一致。
-        </div>
-      </el-form-item>
+      <!-- 首页公司名 / 简介文字的展示档位（大/中/小/关闭）已迁到
+           「小程序设置 → 名片页面样式」页签，与首页背景、板块顺序等版式配置放一起。 -->
       <el-form-item label="地址">
         <el-input v-model="form.address" placeholder="名片首页地址" />
       </el-form-item>
@@ -56,8 +44,6 @@ const form = reactive({
   id: 1,
   fullName: '',
   shortName: '',
-  // 后加的展示档位：历史行没这一项，必须给默认值，否则单选落到未选中态
-  companyNameScale: 'large',
   address: '',
   tel: '',
   logo: '',
@@ -78,10 +64,10 @@ async function load() {
 async function save() {
   saving.value = true
   try {
+    // 不提交档位字段：后端为指针部分更新（nil=不写），避免把样式页设置冲掉。
     await saveCompanyInfo({
       fullName: form.fullName,
       shortName: form.shortName,
-      companyNameScale: form.companyNameScale,
       address: form.address,
       tel: form.tel,
       logo: form.logo,
