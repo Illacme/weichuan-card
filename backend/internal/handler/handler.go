@@ -411,7 +411,7 @@ func New(db *gorm.DB) *gin.Engine {
 			bgImage, bgMask = l.BgImage, l.BgMask
 			bgGradient = clampMask(l.BgGradientStrength)
 			categoryLimit = clampInt(l.CategoryLimit, 0, 20)
-			featuredCount = clampInt(l.FeaturedCount, 1, 3)
+			featuredCount = clampInt(l.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(l.FeaturedEffect)
 			// 两轴：优先读 style_id / brand_color_id（0043 已删 template_id 兼容列）。
 			styleID, brandColorID = effectiveStyleBrand(l)

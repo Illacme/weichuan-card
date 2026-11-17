@@ -196,7 +196,7 @@ export interface HomeLayoutData {
   bgGradientStrength: number
   /** 首页「经典业绩」最多显示的业绩分类数 0~20；0=隐藏分类网格，精选案例不受影响 */
   categoryLimit: number
-  /** 首页精选案例默认呈现数量 1~3；实际精选不足时按实际数量 */
+  /** 首页精选案例每页并排张数 0~3（0=不显示、N 张均分整行）；实际不足时按实际数量 */
   featuredCount: number
   /** 精选案例循环呈现效果，默认 static 静态平铺 */
   featuredEffect: FeaturedEffect

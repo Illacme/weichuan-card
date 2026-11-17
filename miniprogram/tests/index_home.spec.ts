@@ -303,17 +303,24 @@ describe('index 首页', () => {
     expect(p0.data.categoryLimit).toBe(0)
   })
 
-  it('精选案例按后台数量截取，不足按实际；效果 id 透传给组件', async () => {
+  it('首页透传完整精选列表 + 每页张数 + 效果；截断交给组件，0 也能下发', async () => {
     const few = { code: 0, categories: [], featured: manyAch.featured.slice(0, 2) }
     mockApis({ ach: few, layout: { ...layout, featuredCount: 3, featuredEffect: 'flip' } })
     const p = await page({ staffId: '42' })
-    expect(p.data.featured.length).toBe(2) // 只有 2 张时配 3 张不能补空位
+    expect(p.data.featured.length).toBe(2) // 首页不截断，组件按 3 分页后只有一页 2 张
     expect(p.data.featuredCount).toBe(3)
     expect(p.data.featuredEffect).toBe('flip')
 
     mockApis({ ach: manyAch, layout: { ...layout, featuredCount: 1, featuredEffect: 'fade' } })
     const p1 = await page({ staffId: '42' })
-    expect(p1.data.featured.map((f: any) => f.id)).toEqual([1])
+    expect(p1.data.featured.map((f: any) => f.id)).toEqual([1, 2, 3, 4])
+    expect(p1.data.featuredCount).toBe(1)
+
+    // 0 是合法的「不显示精选」，不能用 || 兜底成 3；列表仍下发，由组件按 0 不渲染
+    mockApis({ ach: manyAch, layout: { ...layout, featuredCount: 0 } })
+    const p0 = await page({ staffId: '42' })
+    expect(p0.data.featured.map((f: any) => f.id)).toEqual([1, 2, 3, 4])
+    expect(p0.data.featuredCount).toBe(0)
   })
 
   it('展示数量越界钳制、未知效果回落 static（防旧后端脏值）', async () => {
@@ -325,8 +332,15 @@ describe('index 首页', () => {
     expect(p.data.categoryLimit).toBe(0)
     expect(p.data.categories).toEqual([])
     expect(p.data.featuredCount).toBe(3)
-    expect(p.data.featured.length).toBe(3)
+    expect(p.data.featured.map((f: any) => f.id)).toEqual([1, 2, 3, 4])
     expect(p.data.featuredEffect).toBe('static')
+
+    mockApis({
+      ach: manyAch,
+      layout: { ...layout, featuredCount: -1 },
+    })
+    const p2 = await page({ staffId: '42' })
+    expect(p2.data.featuredCount).toBe(0) // 负数钳到 0，而不是被当缺省弹回 3
   })
 
   // 业绩区在首页 → 箭头朝下（滚过去）；被布局隐藏 → 朝右（跳案例页）
@@ -704,37 +718,39 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
   const read = (p: string) =>
     readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', p), 'utf-8')
 
-  it('首页把后台效果 id 透传给精选案例组件', () => {
-    expect(read('pages/index/index.wxml')).toMatch(
-      /<featured-projects[^>]*effect="\{\{featuredEffect\}\}"/
-    )
+  it('首页把后台数量 / 效果 id 都透传给精选案例组件', () => {
+    const wxml = read('pages/index/index.wxml')
+    expect(wxml).toMatch(/<featured-projects[^>]*featuredCount="\{\{featuredCount\}\}"/)
+    expect(wxml).toMatch(/<featured-projects[^>]*effect="\{\{featuredEffect\}\}"/)
   })
 
-  it('组件四档效果齐全，且只在多图非静态时启动定时轮播', () => {
+  it('组件四档效果齐全，且只在多页非静态时启动定时轮播', () => {
     const ts = read('components/featured-projects/index.ts')
     for (const effect of ['static', 'fade', 'scroll', 'flip']) expect(ts).toContain(`'${effect}'`)
-    expect(ts).toContain("effect !== 'static' && n > 1")
+    expect(ts).toContain("pages.length > 1 && this.data.effect !== 'static'")
     expect(ts).toContain('setInterval')
     expect(ts).toContain('clearInterval')
     expect(ts).toContain('hide()') // 页面切后台要停表，不然后台空转
   })
 
-  it('WXML 保留静态平铺分支（旧租户与单图不被强行轮播）', () => {
+  it('WXML 按每页实际张数均分整行；static / 单页只渲染第一页', () => {
     const wxml = read('components/featured-projects/index.wxml')
-    expect(wxml).toContain('wx:if="{{cycleOn}}"')
-    expect(wxml).toContain('wx:elif="{{featured.length}}"')
+    expect(wxml).toContain('wx:if="{{pageCount > 0}}"')
+    expect(wxml).toContain('wx:if="{{cycleOn || pageIdx === 0}}"')
+    expect(wxml).toContain('style="width:{{itemWidths[pageIdx][index]}}"')
     expect(wxml).toContain('bindtap="onDot"')
   })
 
   it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
     const wxss = read('components/featured-projects/index.wxss')
-    expect(wxss).toContain('.feat-cycle-sizer')
+    expect(wxss).toContain('.feat-page-sizer')
     expect(wxss).toContain('visibility: hidden')
+    expect(wxss).toContain('.feat-page-cycle')
     expect(wxss).toContain('transition: transform')
     expect(wxss).toContain('var(--wc-primary')
   })
 
-  it('轮播算法：横移走环形最短距离，淡入/翻转只显当前图，末张回第一张', async () => {
+  it('组件分页：N 决定每页张数与均分宽度，0 不渲染，多页才动画', async () => {
     vi.resetModules()
     let opts: any = null
     vi.stubGlobal('Component', (o: any) => {
@@ -745,10 +761,9 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
 
     const inst: any = {
       data: {
-        current: 0,
-        cycleOn: true,
-        cycleStyles: [],
-        featured: [{ id: 1 }, { id: 2 }, { id: 3 }],
+        ...JSON.parse(JSON.stringify(opts.data)),
+        featured: [1, 2, 3, 4].map((id) => ({ id })),
+        featuredCount: 2,
         effect: 'scroll',
       },
       setData(patch: any) {
@@ -757,28 +772,51 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     }
     for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
 
-    inst.applyStyles()
-    expect(inst.data.cycleStyles[0]).toContain('translateX(0%)')
-    expect(inst.data.cycleStyles[1]).toContain('translateX(100%)')
+    inst.sync()
+    expect(inst.data.pageSize).toBe(2)
+    expect(inst.data.pageCount).toBe(2)
+    expect(inst.data.pages[0].map((x: any) => x.id)).toEqual([1, 2])
+    expect(inst.data.itemWidths[0]).toEqual(['50%', '50%'])
+    expect(inst.data.cycleOn).toBe(true)
 
-    // 环形最短距离：3 张时从末张回第一张走 +100%（从右侧滑入，保持同向滚动），
-    // 而不是 -200% 横穿整排。
-    inst.setData({ current: 2 })
-    inst.applyStyles()
-    expect(inst.data.cycleStyles[0]).toContain('translateX(100%)')
-    expect(inst.data.cycleStyles[1]).toContain('translateX(-100%)')
+    // 末页不足按实际数量，仍铺满整行
+    inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }] })
+    inst.sync()
+    expect(inst.data.itemWidths[1]).toEqual(['100%'])
 
-    inst.setData({ effect: 'flip' })
-    inst.applyStyles()
-    expect(inst.data.cycleStyles[2]).toContain('rotateY(0deg)')
-    expect(inst.data.cycleStyles[0]).toContain('rotateY(180deg)')
+    // 1 张铺满、3 张各三分之一
+    inst.setData({ featuredCount: 1 })
+    inst.sync()
+    expect(inst.data.itemWidths[0]).toEqual(['100%'])
+    expect(inst.data.pageCount).toBe(3)
+    inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }], featuredCount: 3 })
+    inst.sync()
+    expect(inst.data.itemWidths[0][0]).toMatch(/^33\.33/)
+    expect(inst.data.pageCount).toBe(1)
 
-    inst.setData({ effect: 'fade' })
-    inst.applyStyles()
-    expect(inst.data.cycleStyles[2]).toContain('opacity:1')
-    expect(inst.data.cycleStyles[0]).toContain('opacity:0')
+    // 0 = 整块不渲染
+    inst.setData({ featuredCount: 0 })
+    inst.sync()
+    expect(inst.data.pageCount).toBe(0)
+    expect(inst.data.pages).toEqual([])
 
+    // static 多页只显示第一页，不做动画
+    inst.setData({ featured: [1, 2, 3, 4].map((id) => ({ id })), featuredCount: 2, effect: 'static' })
+    inst.sync()
+    expect(inst.data.pageCount).toBe(2)
+    expect(inst.data.cycleOn).toBe(false)
+
+    // 页动画：横移走环形最短距离，末页回首页从右侧滑入；翻转只显当前页
+    inst.setData({ effect: 'scroll' })
+    inst.sync()
+    expect(inst.data.pageStyles[0]).toContain('translateX(0%)')
+    expect(inst.data.pageStyles[1]).toContain('translateX(100%)')
     inst.next()
-    expect(inst.data.current).toBe(0) // 末张之后回到第一张，循环不越界
+    expect(inst.data.current).toBe(1)
+    inst.setData({ effect: 'flip' })
+    inst.sync()
+    expect(inst.data.pageStyles[0]).toContain('rotateY(180deg)')
+    expect(inst.data.pageStyles[1]).toContain('rotateY(0deg)')
+    inst.stopTimer() // 测试里不留定时器
   })
 })

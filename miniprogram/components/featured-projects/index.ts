@@ -1,31 +1,35 @@
 import { onThumbError } from '../../utils/thumb'
 
-// 精选案例循环呈现：static 平铺 / fade 淡入 / scroll 横移 / flip 立体翻转。
-// 小程序不能动态加载 WXSS，四套效果全部随包内置，由首页透传的 effect id 选择；
-// 后台只写下发白名单内的 id（见后端 model.FeaturedEffect*）。
-//
-// 只有一张案例时始终静态：轮播一张图没有意义，还会让人以为卡住了。
-// 定时器在 attached/show 启动、detached/hide 停止，页面切后台不空转。
+// 精选案例：featuredCount 决定「每页并排几张」，不是「总共显示几张」。
+//   0 → 整块不渲染；1 → 一张铺满整行；2 → 两张各半；3 → 三张各三分之一。
+// 精选多于每页张数时按页分组，多页才按 effect 做淡入 / 横移 / 翻转循环；
+// 只有一页（含精选不足）时静态平铺，不做任何动画。
+// 小程序不能动态加载 WXSS，效果全部随包内置，由后台下发的白名单 id 选择。
 Component({
   options: { addGlobalClass: true },
   properties: {
     featured: Array,
+    featuredCount: { type: Number, value: 3 },
     effect: { type: String, value: 'static' },
     staffId: Number, // 从首页透传，子页分享/返回名片用（跳转页文档 §5）
   },
   data: {
+    pageSize: 3, // 钳制后的每页张数，WXML 用它算图片在原始列表里的索引
+    pages: [] as any[][],
+    pageCount: 0,
     current: 0,
     cycleOn: false,
-    cycleStyles: [] as string[],
+    pageStyles: [] as string[],
+    itemWidths: [] as string[][],
   },
   observers: {
-    'effect, featured': function () {
-      ;(this as any).syncCycle()
+    'featured, featuredCount, effect': function () {
+      ;(this as any).sync()
     },
   },
   lifetimes: {
     attached() {
-      ;(this as any).syncCycle()
+      ;(this as any).sync()
     },
     detached() {
       ;(this as any).stopTimer()
@@ -34,47 +38,59 @@ Component({
       ;(this as any).stopTimer()
     },
     show() {
-      ;(this as any).syncCycle()
+      ;(this as any).sync()
     },
   },
   methods: {
     onImgErr: onThumbError,
-    syncCycle() {
-      const n = this.data.featured.length
-      const cycleOn = this.data.effect !== 'static' && n > 1
-      const current = cycleOn && this.data.current >= n ? 0 : this.data.current
-      this.setData({ cycleOn, current })
+    sync() {
+      this.stopTimer()
+      const list = this.data.featured || []
+      const raw = Number(this.data.featuredCount)
+      const pageSize = Math.max(0, Math.min(3, isNaN(raw) ? 3 : raw))
+      if (pageSize === 0 || list.length === 0) {
+        this.setData({
+          pageSize, pages: [], pageCount: 0, current: 0, cycleOn: false,
+          pageStyles: [], itemWidths: [],
+        })
+        return
+      }
+      const pages: any[][] = []
+      for (let i = 0; i < list.length; i += pageSize) pages.push(list.slice(i, i + pageSize))
+      const cycleOn = pages.length > 1 && this.data.effect !== 'static'
+      const current = cycleOn && this.data.current >= pages.length ? 0 : this.data.current
+      // 每张图按「该页实际数量」均分整行：最后一页不足时也会铺满（1 张=100%）
+      const itemWidths = pages.map((page) => page.map(() => `${100 / page.length}%`))
+      this.setData({ pageSize, pages, pageCount: pages.length, current, cycleOn, itemWidths })
       this.applyStyles()
       if (cycleOn) this.startTimer()
-      else this.stopTimer()
     },
-    // 每张图的内联 transform/opacity 由这里算好，WXML 只负责绑。
-    // 横移用「环形最短距离」：最后一张切回第一张时不会横穿整排卡片。
+    // 页容器的内联 transform/opacity 由这里算好，WXML 只负责绑。
+    // 横移用「环形最短距离」：末页回首页保持同向从右侧滑入，不横穿整排。
     applyStyles() {
-      const { featured, current, effect } = this.data as any
-      const n = featured.length
-      const half = n / 2
-      const styles = featured.map((_: any, i: number) => {
+      const { pageCount, current, effect, cycleOn } = this.data as any
+      if (!cycleOn) {
+        this.setData({ pageStyles: Array.from({ length: this.data.pageCount }, () => '') })
+        return
+      }
+      const half = pageCount / 2
+      const styles = Array.from({ length: pageCount }, (_, i: number) => {
         let diff = i - current
-        if (diff > half) diff -= n
-        if (diff < -half) diff += n
+        if (diff > half) diff -= pageCount
+        if (diff < -half) diff += pageCount
         const active = diff === 0
         const layers = `z-index:${active ? 3 : 1};pointer-events:${active ? 'auto' : 'none'};`
-        if (effect === 'fade') {
-          return `opacity:${active ? 1 : 0};${layers}`
-        }
+        if (effect === 'fade') return `opacity:${active ? 1 : 0};${layers}`
         if (effect === 'flip') {
-          // 非当前页翻到背面；scale 让翻转有一点纵深，不会像纸片平移
           return `transform:perspective(600px) rotateY(${active ? 0 : 180}deg) scale(${active ? 1 : 0.96});opacity:${active ? 1 : 0};${layers}`
         }
         if (effect === 'scroll') {
-          const visible = Math.abs(diff) <= 1
-          return `transform:translateX(${diff * 100}%);opacity:${visible ? 1 : 0};z-index:${active ? 3 : 2};pointer-events:${active ? 'auto' : 'none'};`
+          return `transform:translateX(${diff * 100}%);opacity:${Math.abs(diff) <= 1 ? 1 : 0};z-index:${active ? 3 : 2};pointer-events:${active ? 'auto' : 'none'};`
         }
-        // 到这里只可能是 static（首页已把未知值归一），保持内联样式为空即可。
-        return ''
+        // static 或未知效果兜底：不做动画
+        return active ? layers : `opacity:0;${layers}`
       })
-      this.setData({ cycleStyles: styles })
+      this.setData({ pageStyles: styles })
     },
     startTimer() {
       this.stopTimer()
@@ -89,12 +105,12 @@ Component({
       }
     },
     next() {
-      const n = this.data.featured.length
+      const n = this.data.pageCount
       if (n < 2) return
       this.setCurrent((this.data.current + 1) % n)
     },
     setCurrent(current: number) {
-      if (current < 0 || current >= this.data.featured.length) return
+      if (current < 0 || current >= this.data.pageCount) return
       this.setData({ current })
       this.applyStyles()
     },

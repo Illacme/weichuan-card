@@ -249,15 +249,15 @@ describe('content/HomeLayout', () => {
     })
   })
 
-  // 0049 三项展示配置：0 / 1 是合法值，回显不能用 || 兜底；改动要随同一份 payload 提交。
+  // 0049 三项展示配置：0 是合法值（隐藏分类 / 隐藏精选），回显不能用 || 兜底；改动要随同一份 payload 提交。
   it('业绩分类数量 / 精选案例数量 / 循环效果：回显后端值，修改后随保存提交', async () => {
     const w = await mountPage({
       order: ['achievement', 'service'], bgImage: '', bgMask: 0,
-      categoryLimit: 0, featuredCount: 1, featuredEffect: 'scroll',
+      categoryLimit: 0, featuredCount: 0, featuredEffect: 'scroll',
     })
 
     expect(formItemByLabel(w, '业绩分类数量').find('.el-input-number').element.value).toBe('0')
-    expect(formItemByLabel(w, '精选案例数量').find('.el-input-number').element.value).toBe('1')
+    expect(formItemByLabel(w, '精选案例数量').find('.el-input-number').element.value).toBe('0')
 
     await formItemByLabel(w, '业绩分类数量').find('.el-input-number').setValue(6)
     await formItemByLabel(w, '精选案例数量').find('.el-input-number').setValue(3)

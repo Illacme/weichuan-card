@@ -152,7 +152,7 @@ export type HomeLayoutResp = Envelope & {
   bgGradientStrength?: number
   /** 首页业绩分类最多显示数量 0..20；0=隐藏分类网格，缺省 20 */
   categoryLimit?: number
-  /** 首页精选案例默认呈现数量 1..3；不足按实际，缺省 3 */
+  /** 首页精选案例每页并排张数 0..3（0=不显示、N 张均分整行）；不足按实际，缺省 3 */
   featuredCount?: number
   /** 精选案例循环效果：static / fade / scroll / flip，缺省 static */
   featuredEffect?: string

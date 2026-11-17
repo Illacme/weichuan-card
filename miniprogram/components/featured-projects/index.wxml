@@ -1,30 +1,31 @@
-<!-- 精选案例：static 平铺 / fade 淡入 / scroll 横移 / flip 立体翻转。
-     轮播只是同一批图的呈现方式，点击仍进同一个案例详情；一张图时走静态分支。 -->
-<view class="featured featured-cycle" wx:if="{{cycleOn}}">
-  <!-- 占位撑高度：四种风格下 .feat-cover 高度不同，借同一份全局样式取真实高度，
+<!-- 精选案例：featuredCount 决定每页并排几张（0=不显示 / 1 张铺满 / 2 张各半 / 3 张各三分之一）。
+     多页且非 static 时按页淡入 / 横移 / 翻转循环；单页或 static 只渲染第一页。
+     点图仍进对应案例详情，轮播只改变「这一批图怎么看」。 -->
+<view class="featured featured-paged" wx:if="{{pageCount > 0}}">
+  <!-- 隐藏占位撑高度：四种风格下 .feat-cover 高度不同，借同一份全局样式取真实高度，
        不在组件里再写死一套 rpx（避免风格层改高度时轮播区错位）。 -->
-  <view class="feat-cycle-sizer" aria-hidden="true">
-    <view class="feat-item"><view class="feat-cover"></view></view>
+  <view class="feat-page-sizer" aria-hidden="true">
+    <view class="feat-page">
+      <view class="feat-item" wx:for="{{pages[0]}}" wx:key="id" style="width:{{itemWidths[0][index]}}">
+        <view class="feat-cover"></view>
+      </view>
+    </view>
   </view>
-  <view class="feat-cycle-item" wx:for="{{featured}}" wx:key="id" style="{{cycleStyles[index]}}"
-    data-id="{{item.id}}" bindtap="onTap">
-    <view class="feat-item">
+
+  <view class="feat-page {{cycleOn ? 'feat-page-cycle' : ''}}" wx:for="{{pages}}" wx:for-item="page"
+    wx:for-index="pageIdx" wx:key="pageIdx" wx:if="{{cycleOn || pageIdx === 0}}"
+    style="{{pageStyles[pageIdx]}}">
+    <view class="feat-item" wx:for="{{page}}" wx:key="id" style="width:{{itemWidths[pageIdx][index]}}"
+      data-id="{{item.id}}" bindtap="onTap">
       <image class="feat-cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
-        binderror="onImgErr" data-arr="featured" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />
+        binderror="onImgErr" data-arr="featured" data-idx="{{pageIdx * pageSize + index}}"
+        data-key="coverThumb" data-full="{{item.cover}}" />
       <view class="feat-cover" wx:else></view>
     </view>
   </view>
-  <view class="feat-dots" wx:if="{{featured.length > 1}}">
-    <view class="feat-dot {{index === current ? 'on' : ''}}" wx:for="{{featured}}" wx:key="id"
-      data-index="{{index}}" bindtap="onDot"></view>
-  </view>
-</view>
 
-<view class="featured" wx:elif="{{featured.length}}">
-  <view class="feat-item" wx:for="{{featured}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
-    <!-- 等比缩放充满显示区（aspectFill），不放标题文字；项目名在列表/详情页展示 -->
-    <image class="feat-cover" src="{{item.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{item.cover}}"
-      binderror="onImgErr" data-arr="featured" data-idx="{{index}}" data-key="coverThumb" data-full="{{item.cover}}" />
-    <view class="feat-cover" wx:else></view>
+  <view class="feat-dots" wx:if="{{pageCount > 1}}">
+    <view class="feat-dot {{index === current ? 'on' : ''}}" wx:for="{{pages}}" wx:key="index"
+      data-index="{{index}}" bindtap="onDot"></view>
   </view>
 </view>

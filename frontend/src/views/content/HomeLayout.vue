@@ -98,7 +98,7 @@
       <el-divider content-position="left">业绩与案例展示</el-divider>
 
       <p class="desc desc-tight">
-        控制首页「经典业绩」板块的分类图标墙长度、精选案例默认铺几张，以及精选案例的循环呈现方式。
+        控制首页「经典业绩」板块的分类图标墙长度、精选案例每页铺几张（均分整行），以及精选案例的循环呈现方式。
         实际精选案例少于设置值时按实际数量显示，不会补空位。
       </p>
 
@@ -108,8 +108,8 @@
       </el-form-item>
 
       <el-form-item label="精选案例数量">
-        <el-input-number v-model="featuredCount" :min="1" :max="3" :step="1" controls-position="right" />
-        <div class="bg-hint">默认显示 1~3 张，按后台案例的排序取前 N 张。</div>
+        <el-input-number v-model="featuredCount" :min="0" :max="3" :step="1" controls-position="right" />
+        <div class="bg-hint">0 = 不显示精选；1/2/3 = 每页并排 1/2/3 张铺满整行（一张铺满、两张各半、三张各三分之一）。精选多于每页张数时，选轮播效果才能翻看后面的页。</div>
       </el-form-item>
 
       <el-form-item label="循环呈现效果">
@@ -222,7 +222,7 @@ async function load() {
     if (d && d.order && d.order.length) firstBlock.value = d.order[0]
     bgImage.value = d?.bgImage || ''
     bgMask.value = d?.bgMask || 0
-    // ?? 而非 ||：0（隐藏分类）与 1（只显一张）都是合法值
+    // ?? 而非 ||：0（隐藏分类网格 / 隐藏精选案例）都是合法值
     categoryLimit.value = d?.categoryLimit ?? 20
     featuredCount.value = d?.featuredCount ?? 3
     featuredEffect.value = d?.featuredEffect || 'static'

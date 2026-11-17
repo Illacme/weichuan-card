@@ -600,10 +600,10 @@ paths:
                     description: 首页「经典业绩」最多显示的业绩分类数；0=隐藏分类网格（精选案例不受影响），小程序端按此截取前 N 个
                   featuredCount:
                     type: integer
-                    minimum: 1
+                    minimum: 0
                     maximum: 3
                     default: 3
-                    description: 首页精选案例默认呈现数量；实际精选不足时按实际数量，不补空位
+                    description: 首页精选案例每页并排张数 0~3；0=不显示、1=一张铺满整行、2=两张各半、3=三张各三分之一。实际不足时按实际数量仍均分整行；多于每页张数时按页分组，多页且非 static 才轮播
                   featuredEffect:
                     type: string
                     enum: [static, fade, scroll, flip]
@@ -2841,10 +2841,10 @@ paths:
                         description: 首页业绩分类最多显示数量（控件在「名片页面样式」页签）；0=隐藏分类网格，缺省 20=不截断
                       featuredCount:
                         type: integer
-                        minimum: 1
+                        minimum: 0
                         maximum: 3
                         default: 3
-                        description: 首页精选案例默认呈现数量，不足时按实际数量
+                        description: 首页精选案例每页并排张数 0~3（0=不显示、N 张均分整行）；不足按实际，多于每页张数时分页
                       featuredEffect:
                         type: string
                         enum: [static, fade, scroll, flip]
@@ -2916,10 +2916,10 @@ paths:
         控件归本「名片页面样式」页签，随本端点读写；物理列仍在 company_infos /
         company_profiles，用窄更新只碰这两列，不传即保持原值。非法值归一成 large
         （纯展示偏好，不因此拒掉整次保存）。
-        `categoryLimit`（0~20，0=隐藏分类网格）、`featuredCount`（1~3，不足按实际）、
+        `categoryLimit`（0~20，0=隐藏分类网格）、`featuredCount`（0~3，0=不显示精选、不足按实际）、
         `featuredEffect`（static/fade/scroll/flip）同属本页签；        数量越界钳制到边界，
         效果枚举外的值与时间档位一样直接拒绝（code=1）。缺省取上限与 static：
-        分类 20 即不截断、轮播 static 即原平铺；精选范围只有 1~3、无法表达「不限」，
+        分类 20 即不截断、轮播 static 即原平铺；精选范围只有 0~3、无法表达「不限」，
         缺省 3 会让原本精选超过 3 张的租户收敛到前 3 张（案例不删，可改精选标记）。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
@@ -2960,9 +2960,9 @@ paths:
                   description: 首页业绩分类最多显示数量 0~20；0=隐藏分类网格。指针语义，不传保持原值；越界钳制到边界
                 featuredCount:
                   type: integer
-                  minimum: 1
+                  minimum: 0
                   maximum: 3
-                  description: 首页精选案例呈现数量 1~3；不足按实际。指针语义，不传保持原值；越界钳制
+                  description: 首页精选案例每页并排张数 0~3；0=不显示，N 张均分整行、不足按实际。指针语义，不传保持原值；越界钳制
                 featuredEffect:
                   type: string
                   enum: [static, fade, scroll, flip]

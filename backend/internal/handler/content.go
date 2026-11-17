@@ -650,7 +650,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			bgImage, bgMask = hl.BgImage, hl.BgMask
 			bgGradient = clampMask(hl.BgGradientStrength)
 			categoryLimit = clampInt(hl.CategoryLimit, 0, 20)
-			featuredCount = clampInt(hl.FeaturedCount, 1, 3)
+			featuredCount = clampInt(hl.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(hl.FeaturedEffect)
 			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
@@ -747,14 +747,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				return
 			}
 		}
-		// 数量钳制后原地写回指针：0（隐藏分类）与 1（只显一张精选）都是合法值，
-		// 不能用局部变量零值当「未提交」标记；nil 才表示本次不带这个字段。
+		// 数量钳制后原地写回指针：0（隐藏分类网格 / 隐藏精选案例）与 1（只显一张）
+		// 都是合法值，不能用局部变量零值当「未提交」标记；nil 才表示本次不带这个字段。
 		if req.CategoryLimit != nil {
 			v := clampInt(*req.CategoryLimit, 0, 20)
 			req.CategoryLimit = &v
 		}
 		if req.FeaturedCount != nil {
-			v := clampInt(*req.FeaturedCount, 1, 3)
+			v := clampInt(*req.FeaturedCount, 0, 3)
 			req.FeaturedCount = &v
 		}
 		// 文字展示档位是纯展示偏好：非法/空值归一成 large，不因此拒掉整次保存。

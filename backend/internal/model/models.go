@@ -334,8 +334,9 @@ const (
 const DefaultFeaturedEffect = FeaturedEffectStatic
 
 // 首页展示数量的缺省值。分类取上限 20 = 不截断，效果取 static = 升级前的平铺；
-// 精选只能取配置上限 3（范围 1~3 无法表达「不限」），超出 3 张的租户会收敛到
-// 排序最前的 3 张——数据不丢，管理员可用案例的「首页精选」开关改选呈现哪几张。
+// 精选只能取配置上限 3（范围 0~3 仍无法表达「不限」，0 的语义是不显示精选），
+// 超出 3 张的租户会收敛到排序最前的 3 张——数据不丢，管理员可用案例的
+// 「首页精选」开关改选呈现哪几张。
 const (
 	DefaultCategoryLimit = 20
 	DefaultFeaturedCount = 3
@@ -376,7 +377,7 @@ type HomeLayout struct {
 	// CategoryLimit 首页「经典业绩」板块最多渲染的业绩分类数量，0~20。
 	// 0 = 不渲染分类网格（精选案例不受影响，只隐藏分类图标墙）；缺省 20 = 不截断。
 	CategoryLimit int `gorm:"column:category_limit;default:20" json:"categoryLimit"`
-	// FeaturedCount 首页精选案例默认呈现数量 1~3；实际精选不足时按实际数量渲染。
+	// FeaturedCount 首页精选案例默认呈现数量 0~3（0=不显示精选）；实际精选不足时按实际数量渲染。
 	FeaturedCount int `gorm:"column:featured_count;default:3" json:"featuredCount"`
 	// FeaturedEffect 精选案例的循环呈现效果，取值见 FeaturedEffect* 常量。
 	FeaturedEffect string `gorm:"column:featured_effect;size:16;default:static" json:"featuredEffect"`

@@ -905,17 +905,34 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.EqualValues(t, 0, body["categoryLimit"])
 
-		// 越界钳制：分类 0~20、精选 1~3
+		// 越界钳制：分类 0~20、精选 0~3
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"bgMask": 999, "bgGradientStrength": -5,
-			"categoryLimit": 99, "featuredCount": 0,
+			"categoryLimit": 99, "featuredCount": 4,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, 100, body["data"].(map[string]interface{})["bgMask"])
 		require.EqualValues(t, 0, body["data"].(map[string]interface{})["bgGradientStrength"])
 		require.EqualValues(t, 20, body["data"].(map[string]interface{})["categoryLimit"])
-		require.EqualValues(t, 1, body["data"].(map[string]interface{})["featuredCount"])
+		require.EqualValues(t, 3, body["data"].(map[string]interface{})["featuredCount"])
+
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredCount": -1,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["data"].(map[string]interface{})["featuredCount"])
+
+		// 精选 0 是合法的「不显示」，公开接口也要下发 0，端上据此渲染空列表
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredCount": 0,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, 0, body["data"].(map[string]interface{})["featuredCount"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.EqualValues(t, 0, body["featuredCount"])
 
 		// 非法循环效果直接拒绝，不静默兜底成 static（否则后台看着存了、端上没动画）
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{

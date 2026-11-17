@@ -46,7 +46,7 @@ Page({
     bgGradientStrength: 100,
     bgGradientAlpha: 1,
     bgGradientFadeAlpha: 0.9,
-    // 0049 首页展示配置：分类数量 0~20（0=隐藏分类网格）、精选 1~3 张、循环效果。
+    // 0049 首页展示配置：分类数量 0~20（0=隐藏分类网格）、精选 0~3 张（0=不显示精选）、循环效果。
     // 缺省取上限与 static，兼容旧后端未下发这三字段的情况（精选超过 3 张会收敛到前 3 张）。
     categoryLimit: 20,
     featuredCount: 3,
@@ -290,18 +290,19 @@ Page({
         // 外链保持原样（assetUrl 只处理相对路径），空值返回空串不会凭空造出地址。
         cardData.profile.videoBackupUrl = assetUrl(cardData.profile.videoBackupUrl)
       }
-      // 0049：先按后台配置钳制数量，再截断列表。0 是合法的「隐藏分类网格」、
-      // 1 是合法的「只显一张精选」，故用 ?? 而不是 || 兜底；精选不足配置值时
-      // slice 自然按实际数量返回，不会补空位。端上再钳一次防旧后端下发脏值。
+      // 0049：分类按 categoryLimit 截断（0=隐藏分类网格）；featuredCount 决定精选
+      // 「每页并排几张」，不在这里截断列表——组件按它分页，多页时按效果轮播，
+      // 不足一页时按实际数量均分整行宽度。0 是合法值，故用 ?? 而不是 || 兜底；
+      // 端上再钳一次防旧后端 / 脏数据下发越界值。
       const categoryLimit = Math.max(0, Math.min(20, layout.categoryLimit ?? 20))
-      const featuredCount = Math.max(1, Math.min(3, layout.featuredCount ?? 3))
+      const featuredCount = Math.max(0, Math.min(3, layout.featuredCount ?? 3))
       const featuredEffect = normalizeFeaturedEffect(layout.featuredEffect)
       // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
       const categories = (ach.categories || []).slice(0, categoryLimit).map((c: any) => {
         const icon = assetUrl(c.icon)
         return { ...c, icon, iconThumb: thumbnailURL(icon) }
       })
-      const featured = (ach.featured || []).slice(0, featuredCount).map((p: any) => {
+      const featured = (ach.featured || []).map((p: any) => {
         const cover = assetUrl(p.cover)
         return { ...p, cover, coverThumb: thumbnailURL(cover) }
       })
@@ -337,8 +338,8 @@ Page({
         bgGradientStrength: strength,
         bgGradientAlpha: strength / 100,
         bgGradientFadeAlpha: (strength / 100) * 0.9,
-        // 0049 三项展示配置：端上已按它们截断过 categories / featured，
-        // 同时把效果 id 透传给精选案例组件选动画。
+        // 0049 三项展示配置：分类已按 categoryLimit 截断；精选把完整列表 +
+        // 每页张数 + 效果 id 一起透传，由组件分页、均分整行并按效果轮播。
         categoryLimit,
         featuredCount,
         featuredEffect,
