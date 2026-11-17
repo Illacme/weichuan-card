@@ -22,6 +22,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -29,6 +30,7 @@ import (
 	"weichuan/internal/cattemplate"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
+	"weichuan/internal/storage"
 )
 
 // seedAssetFS 内嵌演示占位素材。仅用于演示；正式运营请在 PC 后台上传真实图片替换。
@@ -338,6 +340,13 @@ func randPassword() (string, error) {
 //
 // uploadDir 为空时直接返回空映射（调用方明确表示不落素材文件）。
 // 单个文件写失败只累计错误、不中断——剩下 26 个能写就写。
+//
+// 同时为每个 jpg/jpeg/png 生成 <name>_thumb.<ext> 兄弟图：各端列表/宫格/精选
+// 一律先请求 _thumb（见 miniprogram/utils/thumb.ts 的 thumbnailURL），没有它就会
+// 先吃一次 404 再靠 binderror 回退原图——回退链路一旦有 bug（如精选组件重排数据
+// 后回退打空）就整块空白。种子素材直接从源头带上缩略图，彻底消除这类 404。
+// 缩略图用 storage.Thumbnail（与真实上传同一套尺寸/编码），命名规则与端上派生
+// 完全一致：仅 jpg/jpeg/png、扩展名小写、跳过已是 _thumb 的文件。
 func WriteAssets(uploadDir string) (map[string]string, error) {
 	urls := map[string]string{}
 	if uploadDir == "" {
@@ -355,16 +364,39 @@ func WriteAssets(uploadDir string) (map[string]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		data, err := seedAssetFS.ReadFile("seedassets/" + e.Name())
+		name := e.Name()
+		// 已是缩略图的不再套娃生成 _thumb_thumb
+		if strings.HasSuffix(strings.ToLower(name), "_thumb.jpg") ||
+			strings.HasSuffix(strings.ToLower(name), "_thumb.png") ||
+			strings.HasSuffix(strings.ToLower(name), "_thumb.jpeg") {
+			continue
+		}
+		data, err := seedAssetFS.ReadFile("seedassets/" + name)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("读取 %s：%w", e.Name(), err))
+			errs = append(errs, fmt.Errorf("读取 %s：%w", name, err))
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(uploadDir, e.Name()), data, 0o644); err != nil {
-			errs = append(errs, fmt.Errorf("写入 %s：%w", e.Name(), err))
+		if err := os.WriteFile(filepath.Join(uploadDir, name), data, 0o644); err != nil {
+			errs = append(errs, fmt.Errorf("写入 %s：%w", name, err))
 			continue
 		}
-		urls[e.Name()] = "/uploads/" + e.Name()
+		urls[name] = "/uploads/" + name
+		// 缩略图生成失败不中断 seed：原图已落盘，端上 binderror 回退仍是兜底。
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+			thumb, terr := storage.Thumbnail(ext, data)
+			if terr != nil || len(thumb) == 0 {
+				continue
+			}
+			// 不写比原图更大的「缩略图」（与 storage.ProcessUpload 同口径）
+			if len(thumb) >= len(data) {
+				thumb = data
+			}
+			thumbName := strings.TrimSuffix(name, filepath.Ext(name)) + "_thumb" + ext
+			if werr := os.WriteFile(filepath.Join(uploadDir, thumbName), thumb, 0o644); werr != nil {
+				errs = append(errs, fmt.Errorf("写入缩略图 %s：%w", thumbName, werr))
+			}
+		}
 	}
 	return urls, errors.Join(errs...)
 }

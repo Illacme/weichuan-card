@@ -52,7 +52,8 @@ func TestLoadWritesFullPackage(t *testing.T) {
 	if res.CompanyID != DemoCompanyID {
 		t.Fatalf("演示数据必须落在 1 号企业（小程序公开接口的缺省租户），got %d", res.CompanyID)
 	}
-	// 素材：27 个内嵌文件全部落盘，返回的 URL 是相对路径（各端按源拼绝对）
+	// 素材：27 个内嵌原图全部落盘，返回的 URL 是相对路径（各端按源拼绝对）。
+	// 每个 jpg/jpeg/png 还会额外生成 _thumb 兄弟图，故目录文件数 > 原图数。
 	if res.AssetCount != 27 {
 		t.Fatalf("应写入 27 个素材，实际 %d", res.AssetCount)
 	}
@@ -60,8 +61,19 @@ func TestLoadWritesFullPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取上传目录失败：%v", err)
 	}
-	if len(entries) != 27 {
-		t.Fatalf("上传目录应有 27 个文件，实际 %d", len(entries))
+	if len(entries) <= 27 {
+		t.Fatalf("缩略图应已随种子生成，目录文件数应 > 27，实际 %d", len(entries))
+	}
+	// 精选封面与分类图标的 _thumb 必须真的存在：端上列表先请求缩略图，
+	// 缺它会先吃一次 404 再靠 binderror 回退，回退链路一坏就整块空白。
+	for _, name := range []string{
+		"cover-daxing_thumb.jpg", "cover-hospital_thumb.jpg",
+		"cat-1_thumb.png", "svc-1_thumb.png",
+	} {
+		info, err := os.Stat(filepath.Join(upDir, name))
+		if err != nil || info.Size() == 0 {
+			t.Errorf("种子缩略图 %s 缺失或为空：%v", name, err)
+		}
 	}
 
 	want := []struct {

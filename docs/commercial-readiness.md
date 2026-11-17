@@ -5417,3 +5417,21 @@ include `../miniprogram/tests/**/*.spec.ts`）。
 只提交其它字段不冲掉 / 公开接口下发；前端 `HomeLayout.spec.ts` 钉死模块顺序与完整
 payload（含新三字段）；小程序 `types_contract.spec.ts` 对账 Go 模型 json tag，
 `index_home.spec.ts` 验证截断 / 不足按实际 / 效果透传 / 源码级接线守门。
+
+### 种子素材自带缩略图（2026-11-18）
+
+演示种子此前只把 27 张原图写进 uploads，不生成 `_thumb` 兄弟图——缩略图回填是独立
+手工命令、启动不跑。于是开发者工具/首次安装的演示租户里，精选封面、分类图标、服务
+图标一律先请求 `_thumb` 吃一次 404，再靠端上 `binderror` 回退原图。回退链路本身有
+一处历史回归（精选组件把数据重排进 `visiblePages` 后，通用回退还在改 `featured[idx]`，
+改的数据没被渲染，2026-11-18 已修），两次叠加的表现就是「设置怎么改精选都是空白」。
+
+现在 `demoseed.WriteAssets` 用 `storage.Thumbnail`（与真实上传同一套尺寸/编码）为每个
+jpg/jpeg/png 同步生成 `<name>_thumb.<ext>`，命名与端上 `thumbnailURL` 完全一致：仅
+jpg/jpeg/png、扩展名小写、跳过已是 `_thumb` 的文件，且不写比原图更大的缩略图。
+生成失败只跳过、不中断 seed，端上回退仍是兜底。效果：种子素材的缩略图 URL 直接返回
+200，不再依赖任何回退逻辑；devserver 每次重启重新 seed 立即生效。存量库里的旧演示
+数据仍需按 `docs/deploy-runbook.md` §4.5 跑一次 `cmd/thumbbackfill -force` 回填。
+
+守门：`demoseed_test.go`（精选封面/分类图标/服务图标的 `_thumb` 必须存在且非空）、
+`setup/install_test.go`（安装向导落盘的缩略图校验）。

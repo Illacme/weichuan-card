@@ -722,8 +722,14 @@ func TestInstallWithDemoData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取上传目录失败：%v", err)
 	}
-	if len(entries) != res.Demo.AssetCount || len(entries) == 0 {
-		t.Fatalf("素材应全部落盘：目录 %d 个文件，结果报告 %d", len(entries), res.Demo.AssetCount)
+	// AssetCount 只数内嵌原图；每个 jpg/png 还会生成 _thumb 兄弟图，
+	// 故目录文件数会多于 AssetCount，但至少要覆盖全部原图。
+	if len(entries) < int(res.Demo.AssetCount) || len(entries) == 0 {
+		t.Fatalf("素材应全部落盘：目录 %d 个文件，结果报告原图 %d", len(entries), res.Demo.AssetCount)
+	}
+	// 精选封面缩略图必须存在：小程序列表先请求 _thumb，缺它会先吃一次 404。
+	if info, err := os.Stat(filepath.Join(upDir, "cover-daxing_thumb.jpg")); err != nil || info.Size() == 0 {
+		t.Errorf("精选封面缩略图应随种子生成：%v", err)
 	}
 
 	// ---- 最贵的一条守卫：盲索引必须用「最终写进配置文件的那把密钥」算 ----
