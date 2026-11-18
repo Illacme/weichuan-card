@@ -5419,6 +5419,13 @@ include `../miniprogram/tests/**/*.spec.ts`）。
 空出整整一行，换 fade/scroll/flip 就正常——这不是配置、数据或 HTTP 问题。现在数据层与
 WXML 双重拦截：仅轮播时生成 / 渲染 sizer，静态页自己撑高度。
 
+**图片高度按原图比例（2026-11-18 调整）**：精选封面由固定高度 + `aspectFill` 改为
+`mode="widthFix"` + 模板内联 `height:auto`，宽度仍按「每页张数均分整行」，高度随原图
+比例自适应——一张铺满时不再被裁成扁条。内联是为了压过风格层三段选择器的固定高度，
+又不能用 `!important`（会连 widthFix 运行时算出的高度一起压掉）；风格层只继续负责圆角 /
+内边距 / 阴影。轮播占位也换成同款 image（空 view 撑不出比例高度），切页时同步为当前页
+那批图，缩略图 404 同样回退原图。
+
 **守门**：后端 `handler_test.go` 覆盖缺省 / 读写 / 0 与 1 合法 / 越界钳制 / 非法枚举 /
 只提交其它字段不冲掉 / 公开接口下发；前端 `HomeLayout.spec.ts` 钉死模块顺序与完整
 payload（含新三字段）；小程序 `types_contract.spec.ts` 对账 Go 模型 json tag，

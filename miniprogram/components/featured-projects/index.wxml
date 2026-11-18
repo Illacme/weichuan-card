@@ -10,7 +10,10 @@
   <view class="feat-page-sizer" wx:if="{{cycleOn}}" aria-hidden="true">
     <view class="feat-page">
       <view class="feat-item" wx:for="{{sizerItems}}" wx:key="globalIdx" style="width:{{item.width}}">
-        <view class="feat-cover"></view>
+        <!-- 占位也得用 image + widthFix：改成按原图比例自适应后，空 view 无法撑出真实高度。
+             轮播页 absolute 全靠这里撑容器，缩略图失败同样回退原图，否则高度会塌。 -->
+        <image class="feat-cover" src="{{item.coverThumb}}" mode="widthFix" style="height:auto"
+          binderror="onSizerImgErr" data-fail="sizerFail" data-idx="{{item.globalIdx}}" data-full="{{item.cover}}" />
       </view>
     </view>
   </view>
@@ -19,7 +22,10 @@
     style="{{pageStyles[item.k]}}">
     <view class="feat-item" wx:for="{{item.items}}" wx:for-item="p" wx:key="globalIdx"
       style="width:{{p.width}}" data-id="{{p.id}}" bindtap="onTap">
-      <image class="feat-cover" src="{{p.coverThumb}}" mode="aspectFill" lazy-load wx:if="{{p.cover}}"
+      <!-- widthFix：宽度由均分规则给出，高度按原图比例自适应，不再被风格层固定高度裁成扁条。
+           style="height:auto" 覆盖风格层三段选择器的固定高度；不用 !important，
+           否则会连 widthFix 运行时算出的高度一起压掉。 -->
+      <image class="feat-cover" src="{{p.coverThumb}}" mode="widthFix" style="height:auto" lazy-load wx:if="{{p.cover}}"
         binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
       <view class="feat-cover" wx:else></view>
     </view>

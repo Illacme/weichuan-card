@@ -764,6 +764,56 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(wxml).toContain("{{cycleOn ? 'feat-page-cycle' : ''}}")
   })
 
+  // 固定高度 + aspectFill 会把横版图裁成扁条（一张铺满时尤其明显）。改成 widthFix
+  // 后高度随原图比例走；风格层的固定 height 三段选择器必须用 !important 压过去，
+  // 圆角 / 阴影 / padding 仍归风格层。占位的空 view 也换成 image，否则轮播区没高度。
+  it('精选图按原图比例自适应高度，占位同样用 widthFix image', () => {
+    const wxml = read('components/featured-projects/index.wxml')
+    const wxss = read('components/featured-projects/index.wxss')
+    const images = wxml.match(/<image\b[^>]*>/g) || []
+    expect(images).toHaveLength(2) // 占位 + 真实页
+    for (const tag of images) {
+      expect(tag).toContain('mode="widthFix"')
+      // 覆盖风格层三段选择器的固定高度，但不能写 !important（会压掉 widthFix 算出的高度）
+      expect(tag).toContain('style="height:auto"')
+    }
+    expect(wxml).not.toContain('mode="aspectFill"')
+    expect(wxss).not.toMatch(/height:\s*auto\s*!important/)
+    expect(wxss).toMatch(/\.feat-page \{[^}]*align-items:\s*flex-start/)
+  })
+
+  it('轮播切页时占位跟随当前页比例；占位图失败同样回退原图', async () => {
+    vi.resetModules()
+    let opts: any = null
+    vi.stubGlobal('Component', (o: any) => { opts = o })
+    await import('../components/featured-projects/index')
+    const full = (id: number) => `http://h/uploads/cover-${id}.jpg`
+    const thumb = (id: number) => `http://h/uploads/cover-${id}_thumb.jpg`
+    const inst: any = {
+      data: {
+        ...JSON.parse(JSON.stringify(opts.data)),
+        featured: [1, 2, 3, 4].map((id) => ({ id, cover: full(id), coverThumb: thumb(id) })),
+        featuredCount: 2,
+        effect: 'scroll',
+      },
+      setData(patch: any) { Object.assign(this.data, patch) },
+    }
+    for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
+
+    inst.sync()
+    expect(inst.data.sizerItems.map((x: any) => x.id)).toEqual([1, 2])
+    inst.next()
+    expect(inst.data.current).toBe(1)
+    // 第二页图片比例可能不同，占位必须换成当前页那批图，否则整页会溢出或留白
+    expect(inst.data.sizerItems.map((x: any) => x.id)).toEqual([3, 4])
+
+    inst.onSizerImgErr({ currentTarget: { dataset: { idx: 2, full: full(3) } } })
+    expect(inst.data.sizerItems[0].coverThumb).toBe(full(3))
+    expect(inst.data.visiblePages[1].items[0].coverThumb).toBe(full(3))
+    expect(inst.data.featured[2].coverThumb).toBe(full(3))
+    inst.stopTimer()
+  })
+
   it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
     const wxss = read('components/featured-projects/index.wxss')
     expect(wxss).toContain('.feat-page-sizer')

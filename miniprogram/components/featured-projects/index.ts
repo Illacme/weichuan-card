@@ -46,6 +46,26 @@ function onFeaturedImgErr(this: any, e: any): void {
   this.setData(patch)
 }
 
+// 轮播占位里的 image 用 widthFix 撑高度，它失败时也要回退原图：否则占位高度塌成 0，
+// absolute 的整页轮播区跟着没高度。真实页与源数据同步回退，避免切页后又裂一次。
+function onSizerImgErr(this: any, e: any): void {
+  const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+  const idx: number = ds.idx
+  const full: string = ds.full
+  if (idx == null || !full) return
+  onFeaturedImgErr.call(this, e)
+  const items = Array.isArray(this.data && this.data.sizerItems) ? this.data.sizerItems : []
+  let touched = false
+  const nextItems = items.map((it: any) => {
+    if (it.globalIdx === idx && it.coverThumb !== full) {
+      touched = true
+      return { ...it, coverThumb: full }
+    }
+    return it
+  })
+  if (touched) this.setData({ sizerItems: nextItems })
+}
+
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -84,6 +104,7 @@ Component({
   },
   methods: {
     onImgErr: onFeaturedImgErr,
+    onSizerImgErr,
     sync() {
       this.stopTimer()
       const list = this.data.featured || []
@@ -170,7 +191,15 @@ Component({
     },
     setCurrent(current: number) {
       if (current < 0 || current >= this.data.pageCount) return
-      this.setData({ current })
+      const patch: Record<string, unknown> = { current }
+      // 占位按当前页图片撑高度：各页原图比例不同，一直用第一页占位会让
+      // 切过去的页溢出容器或留下空白。visiblePages 里的 items 已带回退结果。
+      if (this.data.cycleOn) {
+        const pages = Array.isArray(this.data.visiblePages) ? this.data.visiblePages : []
+        const cur = pages.find((pg: any) => pg.k === current)
+        if (cur && Array.isArray(cur.items)) patch.sizerItems = cur.items
+      }
+      this.setData(patch)
       this.applyStyles()
     },
     onDot(e: any) {

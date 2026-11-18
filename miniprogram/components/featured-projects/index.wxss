@@ -13,8 +13,13 @@
    各页绝对定位盖在它上面，页数 / 每页张数变化时高度不会塌。 */
 .feat-page-sizer { visibility: hidden; }
 
-.feat-page { display: flex; flex-wrap: wrap; }
+.feat-page { display: flex; flex-wrap: wrap; align-items: flex-start; }
 
+/* 显示高度按原图比例自适应：风格层各自写死 .feat-cover 高度（150/175/190/260rpx）
+   配 aspectFill 会把横版图裁成扁条（一张铺满时尤其明显）。高度交给 image 的
+   widthFix + 模板内联 height:auto 覆盖（不用 !important，免得压住运行时算出的高度）；
+   圆角 / 内边距 / 阴影仍由风格层给。无 cover 时的空 view 占位仍走风格层固定高度。
+   align-items:flex-start 让同页不同比例的图各自贴顶，不被 flex 拉成同高。 */
 .feat-page-cycle {
   position: absolute;
   left: 0;
