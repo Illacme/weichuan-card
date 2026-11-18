@@ -408,6 +408,32 @@ describe('content/CompanyProfile', () => {
       expect(ElMessage.warning).toHaveBeenCalledWith('跳转播放需要同时填写视频号 ID')
       expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
     })
+
+    // 兜底 MP4 在跳转档永远不会被触发（访客已离开小程序，视频由视频号页加载）。
+    // 摆着这个开关 = 一个「配了也不生效」的入口，客户会以为已经兜住了。
+    it('跳转档不显示兜底开关，并说明为什么没有', async () => {
+      const w = await mountPage(
+        channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+
+      expect(w.find('.el-checkbox').exists()).toBe(false)
+      expect(w.text()).toContain('不再提供兜底 MP4')
+    })
+
+    // 同一批数据改成内嵌后，兜底开关要回来：这是「按播放方式裁剪」，不是把兜底整体删掉
+    it('改回内嵌播放后兜底开关恢复', async () => {
+      const w = await mountPage(
+        channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+      expect(w.find('.el-checkbox').exists()).toBe(false)
+
+      await radio(w, 'embed').trigger('click')
+      await flush()
+
+      expect(w.find('.el-checkbox').exists()).toBe(true)
+    })
   })
 
   // upload 与 url 在小程序端是**同一个分支**（都渲染原生 <video src>），

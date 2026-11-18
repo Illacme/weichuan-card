@@ -81,6 +81,10 @@
             <span v-if="!canRedirect" class="hint-warn">
               当前还缺{{ missingForRedirect }}，补齐后「跳转打开」才可选。
             </span>
+            <span v-if="isChannelsRedirect" class="hint-warn">
+              跳转播放不经过小程序：视频由视频号页面自己加载，主源失败这件事在这里不会发生，
+              所以<b>不再提供兜底 MP4</b>（配了也不会被触发，摆着只会让人以为已经兜住了）。
+            </span>
           </div>
         </el-form-item>
 
@@ -341,11 +345,18 @@ const vcap = ref<VideoCapability>({ tencentVideo: false, tencentReason: '' })
 // 腾讯视频（插件未授权 / vid 未过审）、自托管 MP4（CDN 证书失效、对象被删、域名欠费）。
 // 所以四档都给同样的兜底配置，只有 none（本来就不展示视频）不需要。
 //
+// 例外是「跳转播放」：点封面后访客已经离开小程序，视频由视频号页面自己加载，
+// 主源失败这件事在小程序里根本不会发生，兜底 MP4 永远不会被触发。
+// 摆一个「配了也不生效」的开关比不摆更糟（客户会以为已经做了兜底），所以这一档不给。
+//
 // 但「兜底地址」不是同一个槽：
 //   channels / tencent → form.videoUrl（这两档下它没有别的用途）
 //   upload / url       → form.videoBackupUrl（videoUrl 在主源保存时会被 videoUrlToSave()
 //                        覆盖，复用就等于把用户填的备用地址悄悄丢掉）
-const needFallback = computed(() => form.videoSource !== 'none')
+const isChannelsRedirect = computed(
+  () => form.videoSource === 'channels' && form.videoChannelPlayMode === 'redirect'
+)
+const needFallback = computed(() => form.videoSource !== 'none' && !isChannelsRedirect.value)
 
 // ---- 自托管 MP4：把 upload 与 url 合成一档 ----
 //
