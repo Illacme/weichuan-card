@@ -19,6 +19,9 @@ import { h } from 'snabbdom'
  *   feed-token  跨主体凭证。视频号与小程序不同主体时 feed-id 无效，必须用它（基础库 2.31.1+，
  *               非个人主体），代价是强制不能自动播放
  *   channel-id  视频号 ID（**sph 开头**），只能展示视频号主页；为兼容存量内容保留读写
+ *   play-mode   仅视频号档：embed（缺省）=<channel-video> 原位内嵌；
+ *               redirect=wx.openChannelsActivity 跳转打开视频号视频页（无主体限制，
+ *               但要求 channel-id + feed-id 同时存在，feed-token 在该接口里没有位置）
  *
  * tencent（腾讯视频）：
  *   vid         腾讯视频取片凭证（v.qq.com 播放页 page/ 与 .html 之间那段）。
@@ -121,8 +124,10 @@ export function registerWxVideoModule() {
       const channelId = elem.channelId || ''
       const vid = elem.vid || ''
       const src = elem.src || ''
+      // 播放方式只有视频号档有意义；其余档位一律按内嵌处理（它们本来就只有原位播放）。
+      const playMode = videoType === 'channels' && elem.playMode === 'redirect' ? 'redirect' : 'embed'
       // 各类型的主标识展示；feed-token 往往很长，截断显示避免撑破占位块。
-      let kind = '▶ 视频号'
+      let kind = playMode === 'redirect' ? '▶ 视频号（跳转）' : '▶ 视频号'
       let label = ''
       if (videoType === 'tencent') {
         kind = '▶ 腾讯视频'
@@ -149,6 +154,7 @@ export function registerWxVideoModule() {
             feedId,
             feedToken,
             channelId,
+            playMode,
             vid,
             src,
           },
@@ -179,6 +185,8 @@ export function registerWxVideoModule() {
         if (elem.feedId) attrs.push(`feed-id="${elem.feedId}"`)
         if (elem.feedToken) attrs.push(`feed-token="${elem.feedToken}"`)
         if (elem.channelId) attrs.push(`channel-id="${elem.channelId}"`)
+        // 只在跳转模式输出：embed 是缺省语义，写出来只会让存量内容看起来被改过一遍
+        if (elem.playMode === 'redirect') attrs.push(`play-mode="redirect"`)
       }
       return `<wx-video ${attrs.join(' ')}></wx-video>`
     },
@@ -186,6 +194,7 @@ export function registerWxVideoModule() {
 
   // 解析：<wx-video ...> 还原为元素节点。type 缺省按 channels（存量内容无 type）；
   // 各类型的属性全量读入，不因 type 丢弃——手工改过 HTML 的块属性更可抗。
+  // play-mode 同理：缺省即 embed，脏值也回落 embed（小程序端只认 redirect 这一个非默认值）。
   const parseHtmlConf = {
     selector: 'wx-video',
     parseElemHtml: (dom: any) => {
@@ -196,6 +205,7 @@ export function registerWxVideoModule() {
         feedId: dom.getAttribute('feed-id') || '',
         feedToken: dom.getAttribute('feed-token') || '',
         channelId: dom.getAttribute('channel-id') || '',
+        playMode: dom.getAttribute('play-mode') === 'redirect' ? 'redirect' : 'embed',
         vid: dom.getAttribute('vid') || '',
         src: dom.getAttribute('src') || '',
         children: [{ text: '' }],

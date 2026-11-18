@@ -23,8 +23,8 @@
         <div v-if="form.videoSource === 'channels'" class="hint hint-good">
           视频存微信服务器、播放走微信 CDN，<b>不产生存储与流量费用</b>，且官方声明该组件无视听资质要求。
           <span class="hint-warn">
-            形态说明（微信组件固定行为，均无开关可改）：封面自带<b>视频号名称与推荐角标</b>，无法隐藏；
-            跨主体（feed-token）点击播放会<b>拉起视频号页面</b>播放，只有同主体（feedId）才能在原位自动播放。
+            形态说明（微信组件固定行为，均无开关可改）：内嵌播放时封面自带<b>视频号名称与推荐角标</b>，无法隐藏。
+            播放方式见下方单选：<b>内嵌</b>留在本页，<b>跳转</b>会离开小程序打开视频号视频页。
             要求「原位播放、画面干净」请用<b>自托管 MP4</b>（上传文件，或直接填任意 https mp4 地址）；
             其中「上传到云存储」仅当存储配置为对象存储时可用，本地磁盘存储下只能填直链。
           </span>
@@ -48,18 +48,49 @@
         </div>
       </el-form-item>
 
-      <!-- 视频号档：channelId 仅作留档，真正决定播哪条视频的是 feedId -->
+      <!-- 视频号档：先选播放方式，它决定下面要填哪些凭证。
+           embed 走 <channel-video> 原位内嵌；redirect 走 wx.openChannelsActivity 跳到视频号视频页。 -->
       <template v-if="form.videoSource === 'channels'">
         <el-form-item label="视频号 ID">
           <el-input v-model="form.videoChannelId" placeholder="sph 开头，视频号助手首页可查看" />
+          <div class="hint">
+            内嵌播放时仅作留档；<b>跳转播放必填</b>——它是 <code>wx.openChannelsActivity</code> 的
+            <code>finderUserName</code> 参数。
+          </div>
         </el-form-item>
+
+        <el-form-item label="播放方式">
+          <el-radio-group v-model="form.videoChannelPlayMode">
+            <el-radio value="embed">内嵌播放（留在本页）</el-radio>
+            <el-radio value="redirect" :disabled="!canRedirect">跳转打开视频号</el-radio>
+          </el-radio-group>
+          <div class="hint">
+            <b>内嵌播放</b>：用 <code>&lt;channel-video&gt;</code> 在名片页原位播放，访客不离开小程序；
+            基础库 ≥ 2.25.1，同主体靠 feedId 可自动播放。
+            <span class="hint-warn">
+              跨主体只能靠 feed-token，且官方强制<b>不能自动播放</b>，用户点一下仍会拉起视频号页面。
+            </span>
+          </div>
+          <div class="hint">
+            <b>跳转打开</b>：点封面后用 <code>wx.openChannelsActivity</code> 打开视频号视频页。
+            <b>无主体限制</b>（跨主体也能用），代价是离开小程序、且记不到播放统计。
+            <span class="hint-warn">
+              要求同时填写<b>视频号 ID</b>与<b>feedId</b>：该接口只认这两个参数，<b>feed-token 不能用于跳转</b>。
+              基础库 ≥ 2.19.2。
+            </span>
+            <span v-if="!canRedirect" class="hint-warn">
+              当前还缺{{ missingForRedirect }}，补齐后「跳转打开」才可选。
+            </span>
+          </div>
+        </el-form-item>
+
         <el-form-item label="视频 feedId">
           <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
           <div class="hint">
             <b>同主体用这个</b>（视频号与小程序同一主体）：可自动播放，从视频号助手复制即长期稳定。
           </div>
         </el-form-item>
-        <el-form-item label="feed-token">
+        <el-form-item v-if="form.videoChannelPlayMode === 'embed'" label="feed-token">
           <el-input v-model="form.videoFeedToken" placeholder="跨主体才填：MP 平台开权限后移动端复制" />
           <div class="hint">
             <b>跨主体才需要</b>：官方明确 feed-id「仅同主体时生效」，视频号与我们小程序不同主体时必须改用它。
@@ -263,6 +294,9 @@ const form = reactive({
   introText: '',
   videoSource: 'none',
   videoChannelId: '',
+  // 视频号档播放方式：embed=<channel-video> 原位内嵌（历史行为），
+  // redirect=wx.openChannelsActivity 跳转打开视频号视频页。
+  videoChannelPlayMode: 'embed',
   videoFeedId: '',
   videoFeedToken: '',
   videoVid: '',
@@ -350,6 +384,23 @@ const mp4Mode = computed({
   },
 })
 
+// ---- 视频号播放方式：内嵌播放 vs 跳转打开 ----
+//
+// 两者是官方并列能力，差别不在「效果好坏」，而在「访客是否离开小程序」：
+// embed 用 <channel-video> 原位播放；redirect 用 wx.openChannelsActivity 跳到视频号视频页。
+// 必须由客户显式选择，不能按 feedId / feed-token 自动切换——自动切换会把
+// 「要求原位播放」和「接受跳走播放」混成一件事，出问题也说不清当时走的哪条路。
+//
+// redirect 的硬前提：官方接口只认 finderUserName（视频号 ID）+ feedId，
+// feed-token 在这个接口里没有位置，所以两个字段缺一个就不让选。
+const canRedirect = computed(() => !!form.videoChannelId.trim() && !!form.videoFeedId.trim())
+const missingForRedirect = computed(() => {
+  const missing: string[] = []
+  if (!form.videoChannelId.trim()) missing.push('视频号 ID')
+  if (!form.videoFeedId.trim()) missing.push('feedId')
+  return missing.join(' 和 ')
+})
+
 // 当前会写进库、也最终交给小程序 <video src> 的那个地址。
 // 保存与「最终播放地址」展示必须取同一个值，所以抽成一份：
 // 两处各写一遍三元表达式，改一处漏一处就是「显示的和存的不是一回事」。
@@ -435,6 +486,7 @@ async function load() {
       {
         videoSource: 'none',
         videoChannelId: '',
+        videoChannelPlayMode: 'embed',
         videoFeedId: '',
         videoFeedToken: '',
         videoVid: '',
@@ -448,6 +500,9 @@ async function load() {
     )
     // 该列是后加的，历史行可能为空串
     form.videoSource = d.videoSource || 'none'
+    // 播放方式同为新列：空串 / 脏值一律回落到内嵌播放（= 升级前行为），
+    // 否则单选组会因为值不在枚举里而显示成「两个都没选中」。
+    form.videoChannelPlayMode = d.videoChannelPlayMode === 'redirect' ? 'redirect' : 'embed'
     // 后端只有一个 videoUrl，分不清它当初是「上传得到的」还是「手填的」——
     // 按 videoSource 归位即可：upload / url 是主视频源，其余档位下它是兜底地址
     // （兜底输入框直接绑 form.videoUrl，见模板）。
@@ -506,6 +561,14 @@ async function save() {
     ElMessage.warning('备用地址不能与主视频地址相同，请换用另一个域名或 CDN 的地址')
     return
   }
+  // 跳转打开只认视频号 ID + feedId（wx.openChannelsActivity 没有 feed-token 参数）。
+  // 这一条排在下面「feedId 或 feed-token 二选一」之前：两条都能拦住非法配置，
+  // 但顺序决定用户看到哪句话——先冒「二选一」会让人以为填 feed-token 就能跳转。
+  // 单选项置灰又拦不住「先选跳转、再清空 feedId」和直接调接口，所以保存前再拦一道。
+  if (form.videoSource === 'channels' && form.videoChannelPlayMode === 'redirect' && !canRedirect.value) {
+    ElMessage.warning(`跳转播放需要同时填写${missingForRedirect.value}`)
+    return
+  }
   // feedId（同主体）与 feed-token（跨主体）二选一，feedId 优先；两个都空则播不了任何东西
   if (form.videoSource === 'channels' && !form.videoFeedId.trim() && !form.videoFeedToken.trim()) {
     ElMessage.warning('视频号档需要填写 feedId（同主体）或 feed-token（跨主体）')
@@ -534,6 +597,8 @@ async function save() {
       introText: form.introText,
       videoSource: form.videoSource,
       videoChannelId: form.videoChannelId,
+      // 始终随表单提交：切到别的视频档再切回来时，客户选过的播放方式不会丢。
+      videoChannelPlayMode: form.videoChannelPlayMode,
       videoFeedId: form.videoFeedId,
       videoFeedToken: form.videoFeedToken,
       videoVid: form.videoVid,

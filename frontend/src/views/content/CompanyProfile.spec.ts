@@ -122,9 +122,12 @@ const UploadField = defineComponent({
     @click="$emit('update:modelValue', '/uploads/new-cover.png')" />`,
 })
 
-// el-radio-group / el-radio：「自托管 MP4」档内部的「上传 / 直链」二选一。
+// el-radio-group / el-radio：两处单选都用它——「自托管 MP4」档内部的
+// 「上传 / 直链」，以及视频号档的「内嵌 / 跳转」。
 // 子组件要能真的把选择写回父级，所以用 provide/inject 搭一条最小链路，
 // 而不是只渲染两个不可点的 label（那样「选不了」的 bug 根本测不出来）。
+// data-checked 暴露「哪个被选中」：播放方式必须断言默认落在 embed，
+// 只断言两个选项都在，是测不出「默认值没归一、两个都没选中」的。
 const ElRadioGroup = defineComponent({
   name: 'ElRadioGroup',
   props: ['modelValue'],
@@ -132,6 +135,7 @@ const ElRadioGroup = defineComponent({
   setup(props, { slots, emit }) {
     provide('radioGroup', {
       pick: (v: string) => emit('update:modelValue', v),
+      current: () => props.modelValue,
     })
     return () => h('div', { class: 'el-radio-group' }, slots.default ? slots.default() : [])
   },
@@ -149,6 +153,7 @@ const ElRadio = defineComponent({
           class: ['el-radio', attrs.disabled ? 'is-disabled' : ''],
           'data-value': props.value,
           'data-disabled': attrs.disabled ? '1' : '0',
+          'data-checked': g && g.current && g.current() === props.value ? '1' : '0',
           onClick: () => {
             if (!attrs.disabled && g) g.pick(props.value)
           },
@@ -292,6 +297,117 @@ describe('content/CompanyProfile', () => {
     expect(byPlaceholder(w, 'sph 开头，视频号助手首页可查看').exists()).toBe(true)
     expect(byPlaceholder(w, '视频号助手 → 动态管理 → 复制 feedId').exists()).toBe(true)
     expect(byPlaceholder(w, '跨主体才填：MP 平台开权限后移动端复制').exists()).toBe(true)
+  })
+
+  // ---- 视频号播放方式：内嵌播放 vs 跳转打开 ----
+  //
+  // 这两种是官方并列能力，差别不在「效果好坏」，而在「访客是否离开小程序」：
+  // embed 用 <channel-video> 原位播放，redirect 用 wx.openChannelsActivity 跳视频号视频页。
+  // 所以必须由客户显式选择，不能按 feedId / feed-token 自动切换。
+  //
+  // redirect 的硬前提：官方接口只认 finderUserName（视频号 ID）+ feedId，
+  // feed-token 在那个接口里没有位置——缺字段时必须「选不了 + 说清缺什么」，
+  // 否则客户会在真机上得到一次「点了没反应」。
+  describe('视频号播放方式', () => {
+    const CH_PH = 'sph 开头，视频号助手首页可查看'
+    const FEED_PH = '视频号助手 → 动态管理 → 复制 feedId'
+    const TOKEN_PH = '跨主体才填：MP 平台开权限后移动端复制'
+
+    const channelsProfile = (extra: any = {}) => ({ ...profile('channels', ''), ...extra })
+    const radio = (w: any, value: string) => w.find(`.el-radio[data-value="${value}"]`)
+    // byPlaceholder 找不到就抛错，断言「不存在」必须自己扫一遍
+    const hasInput = (w: any, ph: string) =>
+      w.findAll('.el-input').some((i: any) => i.attributes('placeholder') === ph)
+
+    // 历史行没有这一列（空串）：必须归一到 embed，否则单选组显示成「两个都没选中」，
+    // 客户一保存就把库里的值改成了他没选过的那个
+    it('历史行空串归一到内嵌播放，feed-token 照常可填', async () => {
+      const w = await mountPage(channelsProfile({ videoFeedId: 'feed-1', videoChannelPlayMode: '' }))
+      await flush()
+
+      expect(radio(w, 'embed').attributes('data-checked')).toBe('1')
+      expect(radio(w, 'redirect').attributes('data-checked')).toBe('0')
+      expect(hasInput(w, TOKEN_PH)).toBe(true)
+    })
+
+    // 只有 feed-token 时跳转根本没参数可传：必须置灰并说明缺什么
+    it('只有 feed-token：跳转项禁用，并说明缺 feedId', async () => {
+      const w = await mountPage(channelsProfile({ videoFeedToken: 'token/abc' }))
+      await flush()
+
+      expect(radio(w, 'redirect').attributes('data-disabled')).toBe('1')
+      expect(w.text()).toContain('补齐后「跳转打开」才可选')
+      expect(w.text()).toContain('feedId')
+    })
+
+    // 补齐两项后必须真的能选：只做「缺字段时禁用」，禁用条件写错成恒真也测不出来
+    it('补齐视频号 ID 与 feedId 后可选跳转，选中后隐藏只有内嵌才用的 feed-token', async () => {
+      const w = await mountPage(channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1' }))
+      await flush()
+
+      expect(radio(w, 'redirect').attributes('data-disabled')).toBe('0')
+
+      await radio(w, 'redirect').trigger('click')
+      await flush()
+
+      expect(radio(w, 'redirect').attributes('data-checked')).toBe('1')
+      expect(hasInput(w, TOKEN_PH)).toBe(false)
+    })
+
+    it('跳转模式随保存提交，且 feedId 与视频号 ID 一并带上', async () => {
+      const w = await mountPage(
+        channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(ElMessage.warning).not.toHaveBeenCalled()
+      expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          videoSource: 'channels',
+          videoChannelPlayMode: 'redirect',
+          videoChannelId: 'sphABC',
+          videoFeedId: 'feed-1',
+        })
+      )
+    })
+
+    // 单选项置灰拦不住「先选跳转、再清空 feedId」：保存前必须再拦一道，
+    // 否则库里会留下一个点开就报错的配置（redirect 但缺 finderUserName/feedId）
+    it('已选跳转但清空了 feedId：拦下且不提交', async () => {
+      const w = await mountPage(
+        channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+
+      await byPlaceholder(w, FEED_PH).setValue('')
+      await flush()
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(ElMessage.warning).toHaveBeenCalledWith('跳转播放需要同时填写feedId')
+      expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+    })
+
+    // 视频号 ID 是 redirect 的 finderUserName，单独缺它同样不能用跳转
+    it('已选跳转但清空了视频号 ID：拦下且提示缺视频号 ID', async () => {
+      const w = await mountPage(
+        channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+
+      await byPlaceholder(w, CH_PH).setValue('')
+      await flush()
+
+      await saveButton(w).trigger('click')
+      await flush()
+
+      expect(ElMessage.warning).toHaveBeenCalledWith('跳转播放需要同时填写视频号 ID')
+      expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+    })
   })
 
   // upload 与 url 在小程序端是**同一个分支**（都渲染原生 <video src>），
@@ -630,7 +746,7 @@ describe('content/CompanyProfile', () => {
 
   // ---- 保存 payload ----
 
-  it('保存提交十一个字段，不带 id 与展示档位', async () => {
+  it('保存提交十二个字段，不带 id 与展示档位', async () => {
     const w = await mountPage()
 
     await saveButton(w).trigger('click')
@@ -643,6 +759,7 @@ describe('content/CompanyProfile', () => {
       'videoAutoplay',
       'videoBackupUrl',
       'videoChannelId',
+      'videoChannelPlayMode',
       'videoFallbackUrl',
       'videoFeedId',
       'videoFeedToken',

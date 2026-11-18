@@ -45,6 +45,8 @@ describe('wxVideoModule 视频号块', () => {
       feedId: 'f_1',
       feedToken: 'tok_1',
       channelId: 'sph_1',
+      // 播放方式缺省即 embed（存量内容没有这个属性）
+      playMode: 'embed',
       vid: '',
       src: '',
     })
@@ -66,6 +68,24 @@ describe('wxVideoModule 视频号块', () => {
     const html2 = mod.elemsToHtml[0].elemToHtml({ feedId: 'f_abc' })
     expect(html2).toBe('<wx-video feed-id="f_abc"></wx-video>')
 
+    // ===== 播放方式 play-mode（视频号档专属）=====
+    // 跳转模式必须写进 HTML，否则小程序端只会按内嵌渲染，客户选了「跳转」也不生效。
+    expect(
+      mod.elemsToHtml[0].elemToHtml({ feedId: 'f_1', channelId: 'sph_1', playMode: 'redirect' })
+    ).toBe('<wx-video feed-id="f_1" channel-id="sph_1" play-mode="redirect"></wx-video>')
+    // 显式 embed 不写属性：embed 是缺省语义，写出去等于把存量内容无谓改写一遍
+    expect(mod.elemsToHtml[0].elemToHtml({ feedId: 'f_1', playMode: 'embed' })).toBe(
+      '<wx-video feed-id="f_1"></wx-video>'
+    )
+    // 非视频号档绝不输出 play-mode：腾讯视频 / MP4 只有原位播放，写出去就是给端上一条假分支
+    expect(
+      mod.elemsToHtml[0].elemToHtml({
+        videoType: 'mp4',
+        src: 'https://x/v.mp4',
+        playMode: 'redirect',
+      })
+    ).toBe('<wx-video type="mp4" src="https://x/v.mp4"></wx-video>')
+
     // 存量内容（只有 channel-id）往返不能丢：解析 → 序列化应还原原标签
     const dom1 = {
       getAttribute: (k: string) => (k === 'channel-id' ? 'sph_old' : null),
@@ -77,6 +97,7 @@ describe('wxVideoModule 视频号块', () => {
       feedId: '',
       feedToken: '',
       channelId: 'sph_old',
+      playMode: 'embed',
       vid: '',
       src: '',
       children: [{ text: '' }],
@@ -101,6 +122,7 @@ describe('wxVideoModule 视频号块', () => {
       feedId: 'f_xyz',
       feedToken: 'tok_xyz',
       channelId: 'sph_xyz',
+      playMode: 'embed',
       vid: '',
       src: '',
       children: [{ text: '' }],
@@ -136,6 +158,7 @@ describe('wxVideoModule 视频号块', () => {
       feedId: '',
       feedToken: '',
       channelId: '',
+      playMode: 'embed',
       vid: 'v_9',
       src: '',
       children: [{ text: '' }],
@@ -151,6 +174,23 @@ describe('wxVideoModule 视频号块', () => {
       getAttribute: (k: string) => (k === 'type' ? 'future' : k === 'feed-id' ? 'f_1' : null),
     }
     expect(mod.parseElemsHtml[0].parseElemHtml(domUnknown).videoType).toBe('channels')
+
+    // play-mode 反解析：只有 redirect 认，脏值一律回落 embed（端上只认这一个非默认值）
+    const domRedirect = {
+      getAttribute: (k: string) =>
+        k === 'play-mode'
+          ? 'redirect'
+          : k === 'feed-id'
+            ? 'f_r'
+            : k === 'channel-id'
+              ? 'sph_r'
+              : null,
+    }
+    expect(mod.parseElemsHtml[0].parseElemHtml(domRedirect).playMode).toBe('redirect')
+    const domDirtyMode = {
+      getAttribute: (k: string) => (k === 'play-mode' ? 'future' : null),
+    }
+    expect(mod.parseElemsHtml[0].parseElemHtml(domDirtyMode).playMode).toBe('embed')
 
     // ===== 末尾视频块：光标落点 + 序列化剥尾巴 =====
     // 视频号块是 void，位于文档末尾时光标无处落脚（用户反馈：点不到块后面、没法继续输入）。

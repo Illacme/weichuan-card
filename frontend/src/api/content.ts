@@ -36,6 +36,12 @@ export function saveCompanyProfile(p: {
   introFontScale?: string
   videoSource: string
   videoChannelId: string
+  /**
+   * 视频号档播放方式：embed=<channel-video> 原位内嵌（默认，历史行为）；
+   * redirect=wx.openChannelsActivity 跳转打开视频号视频页（无主体限制，但会离开小程序）。
+   * redirect 要求 videoChannelId 与 feedId 同时非空，feed-token 不能用于跳转。
+   */
+  videoChannelPlayMode: string
   videoFeedId: string
   videoFeedToken: string
   videoVid: string
