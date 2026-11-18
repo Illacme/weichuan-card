@@ -67,6 +67,18 @@ function mockPresign(res: any) {
   return fn
 }
 
+/** 按顺序返回多次响应（直传会先请求 presign、再请求 thumb）。传 Error 表示该次请求抛错。 */
+function mockFetchSeq(...responses: any[]) {
+  let i = 0
+  const fn = vi.fn(async () => {
+    const r = responses[Math.min(i++, responses.length - 1)]
+    if (r instanceof Error) throw r
+    return { json: async () => r }
+  })
+  vi.stubGlobal('fetch', fn)
+  return fn
+}
+
 beforeEach(() => {
   FakeXHR.instances = []
   vi.stubGlobal('XMLHttpRequest', FakeXHR as any)
@@ -201,6 +213,92 @@ describe('uploadFile', () => {
     FakeXHR.instances[0].finish(200, JSON.stringify({ code: 0, data: { urls: [] } }))
 
     await expect(p).rejects.toThrow('未返回文件地址')
+  })
+
+  // ---- 直传后补缩略图 ----
+  //
+  // 普通上传的字节在服务端手上，ProcessUpload 顺手把 _thumb 写出来了；
+  // 直传的字节直接进对象存储，服务端从头到尾没见过——不补这一步，
+  // 端上所有列表（都用「扩展名前插 _thumb」派生地址）每次都要先吃一个 404。
+  describe('直传后补缩略图', () => {
+    const directOk = (key?: string) => ({
+      code: 0,
+      data: { putUrl: 'https://oss/put', url: 'https://cdn/x.png', ...(key ? { key } : {}) },
+    })
+
+    it('直传成功后按 key 请服务端生成 _thumb', async () => {
+      const fetchFn = mockFetchSeq(directOk('t/5/abc.png'), { code: 0, data: { key: 't/5/abc_thumb.png' } })
+
+      const p = uploadFile(file())
+      await flush()
+      FakeXHR.instances[0].finish(200)
+      await expect(p).resolves.toBe('https://cdn/x.png')
+
+      expect(fetchFn).toHaveBeenCalledTimes(2)
+      const [url, init] = fetchFn.mock.calls[1] as any[]
+      expect(url).toBe('/api/admin/upload/thumb')
+      expect(init.method).toBe('POST')
+      expect(JSON.parse(init.body)).toEqual({ key: 't/5/abc.png' })
+    })
+
+    it('action 自带查询串时，补缩略图地址保留同一查询串', async () => {
+      const fetchFn = mockFetchSeq(directOk('t/2/a.png'), { code: 0 })
+
+      const p = uploadFile(file(), { action: '/api/admin/upload?companyId=2' })
+      await flush()
+      FakeXHR.instances[0].finish(200)
+      await p
+
+      expect(String((fetchFn.mock.calls[1] as any[])[0])).toBe('/api/admin/upload/thumb?companyId=2')
+    })
+
+    it('补缩略图返回 code!=0：上传仍成功，只留一条 warn', async () => {
+      mockFetchSeq(directOk('t/5/abc.png'), { code: 403, msg: '无权处理该对象' })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const p = uploadFile(file())
+      await flush()
+      FakeXHR.instances[0].finish(200)
+
+      await expect(p).resolves.toBe('https://cdn/x.png')
+      expect(warn).toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('补缩略图请求抛错（超时/断网）：绝不让上传整体失败', async () => {
+      mockFetchSeq(directOk('t/5/abc.png'), new Error('aborted'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const p = uploadFile(file())
+      await flush()
+      FakeXHR.instances[0].finish(200)
+
+      await expect(p).resolves.toBe('https://cdn/x.png')
+      expect(warn).toHaveBeenCalled()
+      warn.mockRestore()
+    })
+
+    it('预签名响应没带 key（老后端）：跳过补缩略图，不多发一次请求', async () => {
+      const fetchFn = mockFetchSeq(directOk())
+
+      const p = uploadFile(file())
+      await flush()
+      FakeXHR.instances[0].finish(200)
+      await p
+
+      expect(fetchFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('走普通上传（服务端已自行生成 _thumb）时不再调补缩略图接口', async () => {
+      const fetchFn = mockFetchSeq({ code: 1 })
+
+      const p = uploadFile(file())
+      await flush()
+      FakeXHR.instances[0].finish(200, JSON.stringify({ code: 0, data: { urls: ['/uploads/a.png'] } }))
+      await p
+
+      expect(fetchFn).toHaveBeenCalledTimes(1) // 只有 presign 那一次
+    })
   })
 
   // ---- 上传进度 ----

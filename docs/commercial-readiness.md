@@ -5555,3 +5555,51 @@ default 1267 / ink 1157 / teal 1667 / warm 2510（同比例换图不影响内容
 后台上传不自动生成 `_thumb`，端上 `service-grid` 的 `binderror` 会回退原图——
 原图本身只有 24–30KB，这个回退代价可以接受；若要消掉那次 404，需在服务器上跑
 `cmd/thumbbackfill -force` 回填。
+
+### 直传后自动补缩略图（2026-11-18）
+
+客户一句「上传后应该自动生成缩略图才合理吧」戳中一个真实缺口。
+
+**现状澄清**：普通上传（multipart）一直是自动生成的——`Uploader.Save` 里
+`ProcessUpload` 返回 `(full, thumb)`，三个驱动都会写出 `<name>_thumb.<ext>`。
+但**预签名直传**（`UploadField` / 富文本编辑器优先走的那条）是浏览器直接把字节
+PUT 到对象存储，服务端从头到尾没见过这份数据，于是直传出来的图没有 `_thumb`。
+小程序端所有列表都用「原 URL 末位扩展名前插 `_thumb`」派生地址，缺了它每次都要
+先吃一个 404 再回退原图——图能显示，但白白多一次失败请求，首屏也慢。
+
+**补法**：新增 `POST /api/admin/upload/thumb`（+ `/api/employee/upload/thumb`），
+前端在直传成功后带 `key` 调一次，服务端读回原图 → `storage.Thumbnail` → 写回同目录。
+
+| 层 | 改动 |
+| --- | --- |
+| `storage.ObjectStore`（新能力接口） | `ReadObject` / `PutObject`，Local、MinIO、OSS 三驱动各实现 |
+| `handler.thumbEnsureHandler` | 归属校验 + 生成 + 写回；`code=403` 表示 key 不属于当前租户 |
+| `api/uploadFile.ts` | 直传成功后 `await ensureThumb()`，8 秒超时，失败只 `console.warn` |
+
+**三条不能省的性质**：
+
+1. **归属校验**。`key` 来自客户端，不校验前缀时 A 租户可以上报 B 租户的键，
+   让服务端读别人的图、再往别人目录写文件。用 `storage.ParseRef` 还原
+   scope/companyId，与当前登录态（同一个 `uploadCompanyID`）严格比对。
+   校验口径与 `presignHandler` 完全一致，所以 presign 发出的 key 必然能通过，
+   不会出现「自己发的 key 自己被拒」这种自相矛盾。
+2. **读取上限 16MB**（`storage.MaxObjectReadBytes`）。服务端要把对象读进内存
+   再解码成位图，而解码后的 RGBA 通常是原文件的 10~30 倍——不封顶时一个
+   超大对象能直接打死进程。`readLimited` 多读 1 字节区分「刚好等于」与「超了」，
+   拒绝而不是截断（截断会让解码器「成功」解出一条被切掉的图，更难查）。
+3. **失败不阻断上传**。图已经传上去了，缺 `_thumb` 只是多一次回退，
+   让用户重传是不可接受的。前端只记 warn，接口失败码一律不改上传结果。
+
+顺带钉住的语义：非 jpg/png 直接 `skipped`（不算失败）；历史形态的键
+（`/uploads/...`、裸键）一律拒绝——它们由 `cmd/thumbbackfill` 批量回填；
+缩略图不比原图小就复制原图（与 `ProcessUpload` 同口径），省掉端上那次注定
+失败的请求。
+
+**守门**：`handler/upload_thumb_test.go`（成功生成且长边真的缩到 480、跨租户 403
+且一个字节都不写、越权 `p/` 前缀 403、非图片跳过、对象不存在、历史形态拒绝、
+空 key、未登录）、`storage/object_store_test.go`（覆盖写、`fs.ErrNotExist` 语义、
+路径穿越、超限拒绝）、前端 `uploadFile.spec.ts` 新增 6 例（按 key 调用、带查询串、
+code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipart 不重复调用）。
+
+**对运维的影响**：新上传的图不再需要回填。`cmd/thumbbackfill` 仍然只服务
+**存量**（本功能上线前直传产生的图）。

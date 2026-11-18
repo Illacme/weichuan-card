@@ -124,6 +124,35 @@ func (l *LocalUploader) Save(fh *multipart.FileHeader, key string) (string, erro
 	return UploadsPathPrefix + key, nil
 }
 
+// ReadObject 按 key 读回本地文件（ObjectStore 能力，供「直传后补缩略图」用）。
+// 对象不存在时原样透传 os.Open 的错误，调用方可用 errors.Is(err, fs.ErrNotExist) 判定。
+// 走 readLimited 而不是 os.ReadFile：key 来自客户端，必须先封住「大对象吃内存」的口子。
+func (l *LocalUploader) ReadObject(key string) ([]byte, error) {
+	if err := validateObjectKey(key); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(l.Dir, filepath.FromSlash(key)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }() // 只读句柄，关闭错误无后果
+	return readLimited(f)
+}
+
+// PutObject 按 key 写入本地文件（同 key 覆盖），ObjectStore 能力。
+// 与 SaveBytes 的差别：这里只收带归属前缀的对象键，且会做穿越校验，
+// 因为它面向的是「客户端上报的 key」而不是程序内部生成的相对路径。
+func (l *LocalUploader) PutObject(key string, data []byte, _ string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	dst := filepath.Join(l.Dir, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
 // SaveBytes 写入本地并返回相对 URL（relPath 直接作为子路径，如 "wxacode/12.jpg"）。
 // clean 已由下方 TrimPrefix 去首斜杠，拼 /uploads/ 前缀即与 r.Static("/uploads", Dir) 路由匹配。
 func (l *LocalUploader) SaveBytes(relPath string, data []byte, _ string) (string, error) {

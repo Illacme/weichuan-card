@@ -12,8 +12,11 @@
 //        size 是**配额计量**的唯一来源：直传的字节永远不会经过服务端，后端只能靠它记账
 //        （不传 = 这次上传不计用量，配额统计就漏了）。
 //   PUT  <putUrl>（body 为原始文件，Content-Type 同 contentType）→ 2xx 即成功
+//   POST /api/admin/upload/thumb  body { key }
+//        → { code: 0 } 即在同目录写出 <name>_thumb.<ext>；code=403 表示 key 不属于当前租户
+//        直传的字节不经过服务端，_thumb 只能靠这一步补（见 ensureThumb）。失败不影响上传结果。
 //   POST /api/admin/upload（multipart，字段名 file）
-//        → { code: 0, data: { urls: [url] } }
+//        → { code: 0, data: { urls: [url] } }（服务端已自行生成 _thumb，不需要再调 thumb）
 // 鉴权靠同源 httpOnly Cookie，**不拼 Bearer**（localStorage 里没有 token）。
 //
 // 进度：两条 XHR 都接 upload.onprogress，并把「当前走哪条路」一起报出去。
@@ -88,6 +91,10 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
     if (p && p.code === 0 && p.data && p.data.putUrl) {
       await putDirect(p.data.putUrl, file, contentType, onXhrProgress('direct'), onUploaded('direct'))
       report('direct', file.size, file.size, true)
+      // 直传的字节没经过服务端，_thumb 只能事后按 key 补（详见 ensureThumb）。
+      // 放在 return 之前 await：调用方拿到 URL 就立刻保存并可能马上打开小程序，
+      // 晚几百毫秒换取「上传完就一定带缩略图」的确定性，比事后偶发 404 回退划算。
+      await ensureThumb(action, p.data.key)
       return p.data.url
     }
   } catch {
@@ -104,6 +111,45 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
     () => report('server', file.size, file.size, true),
     onUploaded('server')
   )
+}
+
+/**
+ * 直传成功后请服务端补一张缩略图（`<name>_thumb.<ext>` 兄弟对象）。
+ *
+ * 为什么需要：普通上传（multipart）走服务端，ProcessUpload 顺手把 _thumb 一起
+ * 写出来了；而直传是浏览器直接 PUT 到对象存储，服务端没见过这份字节，于是
+ * 直传出来的图没有 _thumb——端上所有列表都用「原 URL 末位扩展名前插 _thumb」
+ * 派生地址，结果每次都要先吃一个 404 再回退原图。
+ *
+ * 失败语义：**绝不影响上传结果**。图已经传上去了，缺缩略图只是多一次回退，
+ * 让用户重传是不可接受的。这里只 console.warn 留痕，不抛错。
+ * 带 8 秒超时：服务端要读回原图再重算，大图可能慢一点，但不能让调用方无限等。
+ */
+const THUMB_ENSURE_TIMEOUT_MS = 8000
+
+async function ensureThumb(action: string, key?: string): Promise<void> {
+  if (!key) return // 老后端不返回 key：无从指定对象，直接跳过
+  const url = action.replace('/upload', '/upload/thumb')
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), THUMB_ENSURE_TIMEOUT_MS) : null
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+      signal: ctrl ? ctrl.signal : undefined,
+    })
+    const body = await resp.json().catch(() => null)
+    if (body && body.code !== 0) {
+      // code=403 说明 key 归属与当前登录态不符（越权或平台/租户口径错位），
+      // 值得在控制台留一条明确的痕迹，否则只会表现为「有的图有缩略图、有的没有」。
+      console.warn('[upload] 补缩略图未成功：', body.msg || body.code)
+    }
+  } catch (e) {
+    console.warn('[upload] 补缩略图请求失败（不影响上传结果）', e)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function presign(url: string, ext: string, contentType: string, size: number): Promise<any> {

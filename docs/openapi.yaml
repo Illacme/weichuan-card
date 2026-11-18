@@ -3162,6 +3162,69 @@ paths:
                       key:
                         type: string
 
+  /api/admin/upload/thumb:
+    post:
+      tags: [存储]
+      summary: 直传后补缩略图
+      description: >-
+        直传的字节不经过服务端，`<name>_thumb.<ext>` 兄弟对象只能事后补：
+        服务端按 key 读回原图、生成缩略图、写回同目录。
+
+
+        为什么需要：普通上传（multipart）由服务端调 ProcessUpload，会顺手写出
+        `_thumb`；而预签名直传是浏览器直接把字节 PUT 到对象存储，服务端从头到尾
+        没见过数据。小程序端所有列表都用「原 URL 末位扩展名前插 `_thumb`」派生地址，
+        缺了它每次都要先吃一个 404 再回退原图。
+
+
+        归属校验：key 来自客户端，服务端用 `storage.ParseRef` 还原 scope/companyId，
+        与当前登录态不一致直接 403（否则 A 租户可上报 B 租户的键，让服务端读别人的图、
+        往别人目录写文件）。校验口径与 `/api/admin/upload/presign` 完全一致，
+        因此 presign 发出的 key 必然能通过这里。
+
+
+        失败不影响上传结果：图已经传上去了，缺 `_thumb` 只是多一次回退，
+        前端只记 warn，不让用户重传。
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+                  description: 带归属前缀的对象键（如 `t/5/abcd1234.png`），由 presign 返回
+                  example: t/5/abcd1234.png
+      responses:
+        "200":
+          description: >-
+            code=0 成功（`skipped:true` 表示非 jpg/png，未生成也不报错）；
+            code=1 参数错误 / 对象键为历史形态 / 读取或写入失败 / 对象超过 16MB 可读上限；
+            code=403 key 归属与当前登录态不符
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  data:
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        description: 生成的缩略图对象键
+                      size:
+                        type: integer
+                      skipped:
+                        type: boolean
+                      reason:
+                        type: string
+
   /api/admin/upload/capability:
     get:
       tags: [存储]
@@ -3218,6 +3281,26 @@ paths:
       responses:
         "200":
           description: 同 /api/admin/upload/presign
+
+  /api/employee/upload/thumb:
+    post:
+      tags: [存储]
+      summary: 直传后补缩略图（员工端）
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        "200":
+          description: 同 /api/admin/upload/thumb（归属按员工所属企业判定）
 
   /api/admin/storage/sign:
     post:

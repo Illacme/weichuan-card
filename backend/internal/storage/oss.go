@@ -83,6 +83,34 @@ func (o *OssUploader) Save(fh *multipart.FileHeader, key string) (string, error)
 	return strings.TrimRight(o.BaseURL, "/") + "/" + key, nil
 }
 
+// ReadObject 按 key 读回对象字节（ObjectStore 能力，供「直传后补缩略图」用）。
+// 对象不存在时 OSS SDK 返回 ServiceError，调用方据此按「跳过」处理。
+func (o *OssUploader) ReadObject(key string) ([]byte, error) {
+	if err := validateObjectKey(key); err != nil {
+		return nil, err
+	}
+	body, err := o.Bucket.GetObject(key)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = body.Close() }() // 只读句柄，关闭错误无后果
+	return readLimited(body)
+}
+
+// PutObject 按 key 写入对象（同 key 覆盖），ObjectStore 能力。
+func (o *OssUploader) PutObject(key string, data []byte, contentType string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if err := o.Bucket.PutObject(key, bytes.NewReader(data), oss.ContentType(contentType)); err != nil {
+		return fmt.Errorf("oss put object: %w", err)
+	}
+	return nil
+}
+
 func (o *OssUploader) SaveBytes(relPath string, data []byte, contentType string) (string, error) {
 	clean := strings.TrimPrefix(relPath, "/")
 	if err := o.Bucket.PutObject(clean, bytes.NewReader(data), oss.ContentType(contentType)); err != nil {

@@ -93,6 +93,38 @@ func (m *MinioUploader) Save(fh *multipart.FileHeader, key string) (string, erro
 	return strings.TrimRight(m.BaseURL, "/") + "/" + key, nil
 }
 
+// ReadObject 按 key 读回对象字节（ObjectStore 能力，供「直传后补缩略图」用）。
+// MinIO 的 GetObject 是惰性的：创建时不校验存在性，真正报错发生在首次 Read，
+// 所以这里必须走完 readLimited 才能把「对象不存在」暴露给调用方。
+func (m *MinioUploader) ReadObject(key string) ([]byte, error) {
+	if err := validateObjectKey(key); err != nil {
+		return nil, err
+	}
+	obj, err := m.Client.GetObject(context.Background(), m.Bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = obj.Close() }() // 只读句柄，关闭错误无后果
+	return readLimited(obj)
+}
+
+// PutObject 按 key 写入对象（同 key 覆盖），ObjectStore 能力。
+func (m *MinioUploader) PutObject(key string, data []byte, contentType string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	_, err := m.Client.PutObject(context.Background(), m.Bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return fmt.Errorf("minio put object: %w", err)
+	}
+	return nil
+}
+
 func (m *MinioUploader) SaveBytes(relPath string, data []byte, contentType string) (string, error) {
 	clean := strings.TrimPrefix(relPath, "/")
 	if _, err := m.Client.PutObject(context.Background(), m.Bucket, clean, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{

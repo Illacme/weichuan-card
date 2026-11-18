@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -26,6 +27,9 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher
 	// 直传预签名（超管 / 员工）：客户端拿 putUrl 后直接 PUT 到对象存储
 	r.GET("/api/admin/upload/presign", middleware.AuthMiddleware(db, "admin"), presignHandler(db, res))
 	r.GET("/api/employee/upload/presign", middleware.AuthMiddleware(db, "employee"), presignHandler(db, res))
+	// 直传后补缩略图（超管 / 员工）：直传的字节不经过服务端，_thumb 只能事后补
+	r.POST("/api/admin/upload/thumb", middleware.AuthMiddleware(db, "admin"), thumbEnsureHandler(res))
+	r.POST("/api/employee/upload/thumb", middleware.AuthMiddleware(db, "employee"), thumbEnsureHandler(res))
 	// 存储能力探测：后台「公司简介 → 视频来源」用它判断「云存储上传」档是否可选
 	r.GET("/api/admin/upload/capability", middleware.AuthMiddleware(db, "admin"), capabilityHandler(res))
 	// 私有桶：已存 URL → 限时签名 URL（超管 / 员工）
@@ -39,6 +43,98 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher
 	if local, ok := res.Platform().(*storage.LocalUploader); ok && !cfg.StoragePublic {
 		r.GET("/api/storage/file", middleware.AuthMiddleware(db, "admin"), localFileHandler(local))
 		r.GET("/api/employee/storage/file", middleware.AuthMiddleware(db, "employee"), localFileHandler(local))
+	}
+}
+
+// thumbEnsureHandler 直传后补缩略图：客户端上报对象键，服务端读回原图、
+// 生成 _thumb 兄弟对象写回同目录。
+//
+// 为什么需要这条接口：普通上传走 Uploader.Save，字节在服务端手上，ProcessUpload
+// 顺手就把 _thumb 一起写出来了。但预签名直传是浏览器直接把字节 PUT 到对象存储，
+// 服务端从头到尾没见过这份数据——于是直传出来的图没有 _thumb，端上每次都要
+// 先吃一个 404 再回退原图（service-grid / achievement-grid 等列表都用 _thumb 派生）。
+// 补的办法只能是事后按 key 读回来重算。
+//
+// 归属校验不可省：key 来自客户端，若不校验前缀，A 租户可以上报 B 租户的键，
+// 让服务端读别人的图、再往别人目录里写文件。这里用 ParseRef 还原归属，
+// 与当前登录态算出的 scope/cid 严格比对，不一致直接 403。
+// 校验口径与 presignHandler 完全一致（同一个 uploadCompanyID），
+// 因此「presign 发出去的 key」必然能通过这里，不会出现自相矛盾的拒绝。
+//
+// 语义约定：
+//   - 非 jpg/png（gif/webp/mp4 等）不生成缩略图，直接返回 skipped，不算失败；
+//   - 缩略图生成失败、写回失败都返回 code=1，但**前端只记日志不阻断上传**——
+//     图已经传上去了，缺 _thumb 只是多一次回退，不该让用户重传；
+//   - 绝不写出比原图更大的 _thumb（与 ProcessUpload 同口径），此时直接复制原图，
+//     省掉端上那次注定失败的请求。
+func thumbEnsureHandler(res storage.Resolver) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Key string `json:"key"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "请求体非法"})
+			return
+		}
+		key := strings.TrimSpace(req.Key)
+		ref, perr := storage.ParseRef(key)
+		if perr != nil {
+			// 历史形态（/uploads/xxx、裸键）不走这条接口：它们由 cmd/thumbbackfill 批量回填。
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "对象键非法或为历史形态"})
+			return
+		}
+		cid := uploadCompanyID(c)
+		wantScope := storage.ScopeTenant
+		if cid == 0 {
+			wantScope = storage.ScopePlatform
+		}
+		if ref.Scope != wantScope || ref.CompanyID != cid {
+			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "无权处理该对象"})
+			return
+		}
+		up, uerr := res.For(cid)
+		if uerr != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
+			return
+		}
+		obj, ok := up.(storage.ObjectStore)
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "当前存储驱动不支持补缩略图"})
+			return
+		}
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(key), "."))
+		if ext != "jpg" && ext != "jpeg" && ext != "png" {
+			c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"skipped": true, "reason": "非 jpg/png，不生成缩略图"}})
+			return
+		}
+		raw, rerr := obj.ReadObject(key)
+		if rerr != nil {
+			// 底层错误里有服务器绝对路径（本地驱动是 os.Open 的 *PathError），
+			// 原样回给客户端等于把内部目录结构报出去。日志留全量，响应只给结论。
+			log.Printf("[WARN] 补缩略图读取失败 key=%s: %v", key, rerr)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取原图失败（对象不存在或不可读）"})
+			return
+		}
+		thumb, terr := storage.Thumbnail(ext, raw)
+		if terr != nil {
+			log.Printf("[WARN] 补缩略图生成失败 key=%s: %v", key, terr)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "生成缩略图失败（图片可能已损坏）"})
+			return
+		}
+		if len(thumb) >= len(raw) {
+			thumb = raw
+		}
+		thumbKey := strings.TrimSuffix(key, filepath.Ext(key)) + "_thumb" + filepath.Ext(key)
+		contentType := "image/png"
+		if ext == "jpg" || ext == "jpeg" {
+			contentType = "image/jpeg"
+		}
+		if werr := obj.PutObject(thumbKey, thumb, contentType); werr != nil {
+			log.Printf("[WARN] 补缩略图写入失败 key=%s: %v", thumbKey, werr)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "写入缩略图失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"key": thumbKey, "size": len(thumb)}})
 	}
 }
 
