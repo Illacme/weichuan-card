@@ -759,6 +759,10 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(wxss).toContain('.feat-page-cycle')
     expect(wxss).toContain('transition: transform')
     expect(wxss).toContain('var(--wc-primary')
+    // 全局 .featured 是 display:flex（给旧的直接 .feat-item 横排用）。分页后容器直接
+    // 子项是纵向堆叠的 sizer/页/dots，组件必须显式改回 block，否则图片被 flex 挤成
+    // 窄缝→视觉空白但图片其实 200（2026-11-18 真机实测的隐藏根因）。
+    expect(wxss).toMatch(/\.featured-paged\s*\{[^}]*display:\s*block/)
   })
 
   it('组件分页：N 决定每页张数与均分宽度，0 不渲染，多页才动画', async () => {

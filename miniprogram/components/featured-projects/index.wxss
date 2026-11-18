@@ -2,7 +2,12 @@
    高度来源、叠放与动画，不在组件里另写一套列宽 / rpx 与风格层分叉。
    圆角 / 高度 / 阴影仍由 .wc-style-x .mp-achievements .feat-cover 决定。 */
 
-.featured-paged { position: relative; }
+/* 全局 .featured 是 display:flex（旧结构：直接子元素就是 .feat-item，横排均分）。
+   分页重构后 .featured 的直接子项变成 sizer / 各页 / dots 三个**纵向**堆叠的块，
+   必须改回 block，否则它们被 flex 横排：sizer 与真实页并排挤在一行，
+   每页只拿到一小格宽度、图片被压成一条窄缝看起来就是空白（2026-11-18 真机实测，
+   Network 显示图片 200 但视觉空白，就是 flex 塌陷）。组件 wxss 后加载覆盖全局。 */
+.featured-paged { position: relative; display: block; }
 
 /* 隐藏占位：与一页同结构，撑出当前风格下正确的高度；
    各页绝对定位盖在它上面，页数 / 每页张数变化时高度不会塌。 */
