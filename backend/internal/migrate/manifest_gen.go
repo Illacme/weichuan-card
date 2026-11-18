@@ -57,4 +57,5 @@ var expectedMigrations = []string{
 	"0048_company_name_scale.sql",
 	"0049_home_display_limits.sql",
 	"0050_home_show_names.sql",
+	"0051_pii_blind_index.sql",
 }

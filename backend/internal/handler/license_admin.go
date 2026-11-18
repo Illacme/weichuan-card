@@ -155,8 +155,13 @@ func companyLicensePut(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
 			return
 		}
+		// 写库失败统一走 dbWriteFailed：跨包 SetTenantLicense 返回的可能是原始
+		// GORM 错误（Unknown column 'features' in 'field list'），拼进 msg 会把
+		// 表名/列名送到前端。日志里照常留原文供排障，用户只看到通用提示。
+		// 错误回显 AST 守门只认「直接 db.Error 赋值」，这类跨包调用它看不到，
+		// 所以这里显式按统一出口处理，不能靠守门兜底。
 		if err := license.SetTenantLicense(db, id, req.Edition, req.Seats, exp, req.Features); err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：" + err.Error()})
+			dbWriteFailed(c, "设置企业授权", "保存失败，请稍后重试", err)
 			return
 		}
 		expStr := ""

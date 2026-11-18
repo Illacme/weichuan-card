@@ -1981,6 +1981,10 @@ func TestMySQLMigrations(t *testing.T) {
 		).Scan(&cnt).Error)
 		require.EqualValues(t, 1, cnt, "table %s should exist after migrations", tbl)
 	}
+
+	// 盲索引列存在 ≠ 查询用得上索引：直接查 information_schema 验证 0051 建出了索引，
+	// 且 bidx 列在最左（登录按 phone_bidx 单列查，必须命中最左前缀）。
+	assertPIIBlindIndexes(t, db)
 }
 
 // applyMigrations 顺序应用 migrations 下的建表 SQL。

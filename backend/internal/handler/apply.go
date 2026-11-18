@@ -699,6 +699,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "新建员工账号", "创建员工账号失败，请稍后重试", err)
 			return
 		}
+		// 新建员工是写入 PII 的特权动作，必须留痕：否则谁在什么时候为哪家企业
+		// 建了账号（姓名/手机/邮箱都从这里进去）无从查起。Detail 只记编号与
+		// 租户，绝不记明文 PII——审计日志的保留期比业务表长，记进去等于多存一份。
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeCreate,
+			TargetType: "employee",
+			TargetID:   strconv.FormatInt(emp.StaffID, 10),
+			Detail:     map[string]any{"companyId": cid},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "staffId": emp.StaffID, "initialPassword": pwd})
 	})
 
@@ -762,6 +771,14 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			dbWriteFailed(c, "编辑员工", "保存失败，请稍后重试", err)
 			return
 		}
+		// 与新建对称：改姓名/手机/邮箱同样是 PII 写操作，必须能追到操作者。
+		// 只记 staffId + 租户，字段值不进审计（含明文 PII）。
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeUpdate,
+			TargetType: "employee",
+			TargetID:   strconv.FormatInt(id, 10),
+			Detail:     map[string]any{"companyId": targetCompanyID(c)},
+		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
