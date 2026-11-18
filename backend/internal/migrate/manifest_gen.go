@@ -58,4 +58,5 @@ var expectedMigrations = []string{
 	"0049_home_display_limits.sql",
 	"0050_home_show_names.sql",
 	"0051_pii_blind_index.sql",
+	"0052_video_channel_play_mode.sql",
 }

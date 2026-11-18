@@ -166,7 +166,11 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		cid := targetCompanyID(c)
 		var cp model.CompanyProfile
 		if db.First(&cp, "company_id = ?", cid).Error != nil {
-			cp = model.CompanyProfile{CompanyID: cid, VideoSource: model.VideoSourceNone}
+			cp = model.CompanyProfile{
+				CompanyID:            cid,
+				VideoSource:          model.VideoSourceNone,
+				VideoChannelPlayMode: model.DefaultVideoChannelPlayMode,
+			}
 			c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
 			return
 		}
@@ -176,6 +180,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		// 字号列后加，历史行空串归一成 large（= 现状 30rpx），后台下拉框才不会落到未选中态
 		cp.IntroFontScale = model.NormalizeIntroFontScale(cp.IntroFontScale)
+		// 播放方式列后加，历史行空串归一成 embed，保证升级前后都是原位内嵌播放。
+		cp.VideoChannelPlayMode = model.NormalizeVideoChannelPlayMode(cp.VideoChannelPlayMode)
 		// cover / videoUrl / videoBackupUrl 三处都可能来自上传，后台预览要用可访问 URL
 		cp.ResolveRefs(model.PlatformOrigin())
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": cp})
@@ -187,14 +193,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 简介展示档位已挪到「小程序设置 → 名片页面样式」页签，走 home-layout PUT 保存。
 			// 可选指针仅为兼容旧调用：公司简介页不再渲染该控件，nil 即不写这列，
 			// 避免缺省值冲掉样式页里客户选好的档位。
-			IntroFontScale   *string `json:"introFontScale"`
-			VideoSource      string  `json:"videoSource"`
-			VideoChannelID   string  `json:"videoChannelId"`
-			VideoFeedID      string  `json:"videoFeedId"`
-			VideoFeedToken   string  `json:"videoFeedToken"`
-			VideoVid         string  `json:"videoVid"`
-			VideoURL         string  `json:"videoUrl"`
-			VideoFallbackURL bool    `json:"videoFallbackUrl"`
+			IntroFontScale       *string `json:"introFontScale"`
+			VideoSource          string  `json:"videoSource"`
+			VideoChannelID       string  `json:"videoChannelId"`
+			VideoChannelPlayMode string  `json:"videoChannelPlayMode"`
+			VideoFeedID          string  `json:"videoFeedId"`
+			VideoFeedToken       string  `json:"videoFeedToken"`
+			VideoVid             string  `json:"videoVid"`
+			VideoURL             string  `json:"videoUrl"`
+			VideoFallbackURL     bool    `json:"videoFallbackUrl"`
 			// 自托管 MP4 档的备用地址（主源失败时切换）。channels / tencent 档不用它，
 			// 那两档仍把 videoUrl 当兜底源——存量行为保持不变。
 			VideoBackupURL string `json:"videoBackupUrl"`
@@ -242,6 +249,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if req.VideoSource == "" {
 			req.VideoSource = model.VideoSourceNone
 		}
+		// 播放方式空串/脏值收敛到 embed，老调用方不传也保持历史行为。
+		req.VideoChannelPlayMode = model.NormalizeVideoChannelPlayMode(req.VideoChannelPlayMode)
+		// 跳转打开走 wx.openChannelsActivity，官方要求 finderUserName（sph...）+ feedId，
+		// feed-token 不能用于这个接口。前端置灰拦不住直接调接口，服务端必须复核。
+		if req.VideoSource == model.VideoSourceChannels && req.VideoChannelPlayMode == model.VideoChannelPlayModeRedirect {
+			req.VideoChannelID = strings.TrimSpace(req.VideoChannelID)
+			req.VideoFeedID = strings.TrimSpace(req.VideoFeedID)
+			if req.VideoChannelID == "" || req.VideoFeedID == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "跳转播放需要同时填写视频号 ID 和 feedId"})
+				return
+			}
+		}
 		// 腾讯视频档：插件须在 app.json 静态声明，未授权会让整个小程序编译失败，
 		// 故默认关闭、由运维在系统设置（或部署环境变量 MP_TENCENT_VIDEO）显式开启。
 		// 服务端必须拦——前端只是把选项置灰，直接调接口照样能绕过。
@@ -275,6 +294,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		cp.VideoSource = req.VideoSource
 		cp.VideoChannelID = req.VideoChannelID
+		cp.VideoChannelPlayMode = req.VideoChannelPlayMode
 		cp.VideoFeedID = req.VideoFeedID
 		cp.VideoFeedToken = req.VideoFeedToken
 		cp.VideoVid = req.VideoVid
@@ -285,17 +305,18 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		cp.Cover = req.Cover
 
 		fields := map[string]interface{}{
-			"intro_text":         req.IntroText,
-			"video_source":       req.VideoSource,
-			"video_channel_id":   req.VideoChannelID,
-			"video_feed_id":      req.VideoFeedID,
-			"video_feed_token":   req.VideoFeedToken,
-			"video_vid":          req.VideoVid,
-			"video_url":          req.VideoURL,
-			"video_fallback_url": req.VideoFallbackURL,
-			"video_backup_url":   req.VideoBackupURL,
-			"video_autoplay":     req.VideoAutoplay,
-			"cover":              req.Cover,
+			"intro_text":              req.IntroText,
+			"video_source":            req.VideoSource,
+			"video_channel_id":        req.VideoChannelID,
+			"video_channel_play_mode": req.VideoChannelPlayMode,
+			"video_feed_id":           req.VideoFeedID,
+			"video_feed_token":        req.VideoFeedToken,
+			"video_vid":               req.VideoVid,
+			"video_url":               req.VideoURL,
+			"video_fallback_url":      req.VideoFallbackURL,
+			"video_backup_url":        req.VideoBackupURL,
+			"video_autoplay":          req.VideoAutoplay,
+			"cover":                   req.Cover,
 		}
 		// 只在显式提交档位时写这列：公司简介页已不渲染该控件，缺省提交会冲掉
 		// 样式页里客户选好的档位。
@@ -326,7 +347,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// videoFeedToken 是取片凭证，绝不能进审计表；只记档位便于回答「谁把视频源换掉了」
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionContentProfile, TargetType: "company", TargetID: strconv.FormatInt(cid, 10),
-			Detail: map[string]any{"videoSource": req.VideoSource},
+			Detail: map[string]any{
+				"videoSource":          req.VideoSource,
+				"videoChannelPlayMode": req.VideoChannelPlayMode,
+			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": resp})
 	})

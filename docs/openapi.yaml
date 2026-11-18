@@ -5666,10 +5666,20 @@ components:
             仍分别提交 upload / url，本枚举不接受 mp4。
         videoChannelId:
           type: string
-          description: 视频号 ID，sph 开头（留档用；定位具体视频靠 videoFeedId）
+          description: >-
+            视频号 ID，sph 开头。内嵌模式仅留档；跳转模式作为 wx.openChannelsActivity
+            的 finderUserName 必填。
+        videoChannelPlayMode:
+          type: string
+          enum: [embed, redirect]
+          default: embed
+          description: >-
+            视频号档播放方式。embed=<channel-video> 原位内嵌（默认，历史行为）；
+            redirect=wx.openChannelsActivity 跳转到视频号视频页（无主体限制，但会离开当前页）。
+            redirect 要求 videoChannelId 与 videoFeedId 同时非空，feed-token 不能用于跳转。
         videoFeedId:
           type: string
-          description: 视频号视频 feedId，**仅同主体生效**（可自动播放，优先）
+          description: 视频号视频 feedId，**仅同主体内嵌时生效**（可自动播放，优先）；跳转模式必填
         videoFeedToken:
           type: string
           description: >-
@@ -5721,6 +5731,13 @@ components:
           enum: [none, channels, upload, url, tencent]
         videoChannelId:
           type: string
+        videoChannelPlayMode:
+          type: string
+          enum: [embed, redirect]
+          default: embed
+          description: >-
+            不传或非法值按 embed 处理；redirect 时 videoChannelId 与 videoFeedId 必填，
+            否则服务端拒绝保存（前端置灰拦不住直接调接口）。
         videoFeedId:
           type: string
         videoFeedToken:

@@ -139,7 +139,10 @@ type CompanyProfile struct {
 	IntroFontScale string `gorm:"column:intro_font_scale;size:16;default:large" json:"introFontScale"`
 	VideoSource    string `gorm:"column:video_source" json:"videoSource"`
 	VideoChannelID string `gorm:"column:video_channel_id" json:"videoChannelId"`
-	VideoFeedID    string `gorm:"column:video_feed_id" json:"videoFeedId"`
+	// VideoChannelPlayMode 决定视频号档在小程序里是内嵌播放还是跳转打开（见下方常量）。
+	// 该列后加，历史行空串归一成 embed，升级前后视觉一致。
+	VideoChannelPlayMode string `gorm:"column:video_channel_play_mode;size:16;default:embed" json:"videoChannelPlayMode"`
+	VideoFeedID          string `gorm:"column:video_feed_id" json:"videoFeedId"`
 	// 跨主体兜底：视频号与我们小程序不同主体时，feed-id 无效，必须改用 feed-token。
 	// 二者二选一，feedId 优先（同主体可自动播放，体验更好）。
 	VideoFeedToken   string `gorm:"column:video_feed_token" json:"videoFeedToken"`
@@ -173,6 +176,24 @@ const (
 	VideoSourceURL      = "url"      // 外部 MP4 直链
 	VideoSourceTencent  = "tencent"  // 腾讯视频插件（需 MP_TENCENT_VIDEO=1 才可选）
 )
+
+// 视频号档的播放方式。embed 是历史行为（<channel-video> 内嵌），redirect 走
+// wx.openChannelsActivity 跳到视频号视频页（无主体限制，但会离开小程序页）。
+// 新增取值必须同步后端归一、后台单选、小程序组件与 OpenAPI enum。
+const (
+	VideoChannelPlayModeEmbed    = "embed"
+	VideoChannelPlayModeRedirect = "redirect"
+	DefaultVideoChannelPlayMode  = VideoChannelPlayModeEmbed
+)
+
+// NormalizeVideoChannelPlayMode 把空串与非法值收敛到 embed：
+// 老数据没有这一列，且展示偏好不该因为一个脏值让整段简介保存失败。
+func NormalizeVideoChannelPlayMode(v string) string {
+	if v == VideoChannelPlayModeRedirect {
+		return VideoChannelPlayModeRedirect
+	}
+	return DefaultVideoChannelPlayMode
+}
 
 // 首页「视频下方文字区」（公司名 + 简介文字）共用的四档展示档位。
 // 前三个是字号档；hidden 是关闭——端上用 wx:if **移除节点**，不是 display:none，

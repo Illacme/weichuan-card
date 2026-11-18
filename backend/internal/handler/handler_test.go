@@ -1550,6 +1550,8 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	require.Equal(t, "feed_1", d["videoFeedId"])
 	require.Equal(t, "tok_1", d["videoFeedToken"])
 	require.EqualValues(t, true, d["videoFallbackUrl"])
+	// 播放方式列后加：老调用方不传时读回 embed，升级前后都是原位内嵌播放
+	require.Equal(t, "embed", d["videoChannelPlayMode"])
 
 	// 3.1) 只填 feed-token 也必须能保存：平台模式下客户视频号与我们小程序不同主体，
 	//      feed-id 官方明确「仅同主体生效」，跨主体只能靠 feed-token
@@ -1559,6 +1561,34 @@ func TestCompanyProfileVideoSource(t *testing.T) {
 	d = get()
 	require.Equal(t, "", d["videoFeedId"])
 	require.Equal(t, "tok_cross", d["videoFeedToken"])
+
+	// 3.2) 跳转打开：wx.openChannelsActivity 要 finderUserName + feedId，读写必须往返
+	require.EqualValues(t, 0, put(map[string]interface{}{
+		"videoSource": "channels", "videoChannelId": " sph_jump ", "videoFeedId": " feed_jump ",
+		"videoChannelPlayMode": "redirect",
+	})["code"])
+	d = get()
+	require.Equal(t, "redirect", d["videoChannelPlayMode"])
+	require.Equal(t, "sph_jump", d["videoChannelId"])
+	require.Equal(t, "feed_jump", d["videoFeedId"])
+
+	// 3.3) 前端置灰拦不住直接调接口：缺视频号 ID / feedId / 只有 feed-token 都要拒
+	require.EqualValues(t, 1, put(map[string]interface{}{
+		"videoSource": "channels", "videoFeedId": "feed_x", "videoChannelPlayMode": "redirect",
+	})["code"])
+	require.EqualValues(t, 1, put(map[string]interface{}{
+		"videoSource": "channels", "videoChannelId": "sph_x", "videoChannelPlayMode": "redirect",
+	})["code"])
+	require.EqualValues(t, 1, put(map[string]interface{}{
+		"videoSource": "channels", "videoChannelId": "sph_x", "videoFeedToken": "tok_x",
+		"videoChannelPlayMode": "redirect",
+	})["code"])
+
+	// 3.4) 脏值收敛到 embed，不让一个展示偏好把整段简介保存拒掉
+	require.EqualValues(t, 0, put(map[string]interface{}{
+		"videoSource": "channels", "videoFeedId": "feed_1", "videoChannelPlayMode": "bogus",
+	})["code"])
+	require.Equal(t, "embed", get()["videoChannelPlayMode"])
 
 	// 4) 外部直链档：videoUrl 是主源而非兜底
 	require.EqualValues(t, 0, put(map[string]interface{}{
