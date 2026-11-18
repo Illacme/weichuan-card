@@ -230,11 +230,20 @@ fi
 # 两者都不具备时明确报错——绝不能静默退化成交互提示，让人以为脚本卡死了。
 SSH_BIN=ssh
 ASKPASS_FILE=""
-cleanup_askpass() {
+cleanup_ssh() {
     if [ -n "$ASKPASS_FILE" ]; then rm -f "$ASKPASS_FILE" || true; fi
+    # ControlMaster 的 socket 留在 /tmp 里，脚本退出后 OpenSSH 还会保活
+    # ControlPersist=180 秒：既占一条连接，也让同名的旧 socket 挡住下次发布。
+    # 先发 -O exit 优雅关掉主连接，再无条件删 socket 文件（连接已断/本机模式下 -O 会失败，
+    # 但删文件仍要做）——清理失败绝不能改变发布结果，所以全程 || true。
+    if [ -n "${SSH_CTL:-}" ] && [ -n "${DEPLOY_HOST:-}" ]; then
+        "$SSH_BIN" -O exit -o BatchMode=yes -o ConnectTimeout=3 \
+            -o "ControlPath=$SSH_CTL" "$DEPLOY_HOST" </dev/null >/dev/null 2>&1 || true
+    fi
+    if [ -n "${SSH_CTL:-}" ]; then rm -f "$SSH_CTL" || true; fi
     return 0
 }
-trap cleanup_askpass EXIT
+trap cleanup_ssh EXIT
 
 if [ -n "$DEPLOY_PASSWORD" ]; then
     if [ -z "$DEPLOY_HOST" ]; then

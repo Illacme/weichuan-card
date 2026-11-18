@@ -87,6 +87,39 @@ jobs:
             | sh -s -- -b "$(go env GOPATH)/bin" v2.15.0
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m
 
+  # ───────── 审计动作中文名对账：本地脚本同时进 CI（门禁） ─────────
+  # 原先本地 pre-push 跑的 check_audit_labels.mjs 在 CI 里没有对应 job，
+  # 等于「本地守门是否还有效」无人验证。现在 CI 先跑 --selftest（喂双空/锚点漂移/
+  # 读文件失败等坏样本，确认守门会红），再用同一脚本对真文件做对账。
+  # 脚本零依赖，不需要 setup-node / npm ci。
+  audit-labels:
+    name: 审计动作 ↔ 中文名对账
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 守门自检（证明会红）
+        run: node scripts/check_audit_labels.mjs --selftest
+
+      - name: 真文件对账
+        run: node scripts/check_audit_labels.mjs
+
+  # ───────── OpenAPI 契约守门（新增接口与文档必须同步） ─────────
+  # 之前 openapi.yaml 没有任何通用校验，路径数从 106 涨到 108 也没人发现。
+  # 用 venv 装 PyYAML：真解析而不是数正则，避免「文档坏成空文件也全绿」；
+  # 不污染 runner 的 Python，也不依赖系统发行版是否预装 yaml。
+  openapi-contract:
+    name: OpenAPI 契约对账
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析并校验契约
+        run: |
+          python3 -m venv /tmp/weichuan-openapi-venv
+          /tmp/weichuan-openapi-venv/bin/pip install -q pyyaml
+          /tmp/weichuan-openapi-venv/bin/python scripts/check_openapi.py
+
   # ───────── 后端：MySQL 生产契约 parity（**正式门禁**，2026-11-09 起必跑） ─────────
   # 演进：原先靠仓库变量 TEST_MYSQL_DSN 门控，没配就整个 job skipped。实测最近 12 次
   # CI 里它**全部 skipped**，等于这条 parity 从没在 CI 上真跑过；2026-11-09 本地起

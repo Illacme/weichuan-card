@@ -220,6 +220,16 @@ docker exec weichuan-backend date 2>/dev/null || date
 `PII_ENC_KEY` 备份是否真的可还原、`LICENSE_PUB` 切换窗口是否与客户约好、真机上三类域名相关功能是否真通。
 这些没有任何脚本能替你确认——**「界面上勾了」不等于「生效了」**，判据一律以上表为准。
 
+另外两条属于**运营决策而非脚本可判**（2026-11-18 复核，仍成立）：
+
+| 决策 | 为什么不能自动放行 | 判据 |
+|---|---|---|
+| 是否翻 `TENANT_STORAGE_ROUTE=on` | 默认 off 是刻意的安全默认值；库里 `tenant_storage_configs` 为 0 行时翻了也没有可路由对象，且翻开关后新上传才进客户桶 | 先按 `docs/tenant-storage-r1-golive.md` 生成并 `check` snippet、确认至少一条 `location`，再由运维手动翻开关 |
+| 是否启用客户自有域名 / 自有 CDN（R1-b） | 缺客户 CDN 刷新接口/凭据与「谁 Purge 客户边缘」的责任归属；未回答前翻用会让下架违规图在客户边缘留一年 | 由客户与运营评审 `docs/tenant-storage-r1-feasibility.md` §4，未评审前保持 R1（平台域名托管） |
+
+业务 PII（员工/申请人姓名手机、修改快照）换 `PII_ENC_KEY` **没有 re-key**，密钥备份可还原性仍是人工必检项；
+`server tenant-storage-rekey` 只覆盖租户存储凭据，别把它当成全库换钥。
+
 ## 关联文档
 - 生产上线 Runbook：`docs/deploy-runbook.md`
 - 部署与联调：`部署与联调.md`

@@ -87,6 +87,15 @@ if [ "$need_audit" = "1" ]; then
     echo "[pre-push] 本机没有 node，跳过审计动作中文名对账（CI 仍会拦）。"
   else
     echo "[pre-push] 检测到审计埋点/中文名变更，正在核对跨端一致性……"
+    if ! node scripts/check_audit_labels.mjs --selftest; then
+      cat <<'MSG'
+
+[pre-push] 审计守门自检失败：喂进坏样本后它没能判红，说明这道守门已经空转。
+           请检查 scripts/check_audit_labels.mjs 的抓取规则/锚点，修好后再推送。
+
+MSG
+      exit 1
+    fi
     if node scripts/check_audit_labels.mjs; then
       echo "[pre-push] 审计动作与前端中文名一一对应。"
     else

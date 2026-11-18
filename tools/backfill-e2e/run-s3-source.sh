@@ -17,6 +17,7 @@
 # 依赖：docker（wc-mysql-ci，mysql:8.0）、go、curl、shasum、19000 上的 versitygw。
 # 起服务端的方法见 tools/s3-e2e/README.md。
 set -uo pipefail
+. "$(dirname "$0")/../../scripts/require_go.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"

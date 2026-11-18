@@ -11,6 +11,7 @@
 # 依赖：docker（nginx:alpine）、go、curl；一个能听 19000 端口的 S3 服务端。
 # 服务端怎么起见 README.md（本期用 versitygw，POSIX 后端）。
 set -uo pipefail
+. "$(dirname "$0")/../../scripts/require_go.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"

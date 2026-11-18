@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # 与 docs/branch-protection.md 的口径一致：周级 npm / gomod / actions 更新。
+  # 漏洞扫描由 CI 的 govulncheck + npm audit 负责；这里只管「依赖版本别长期停摆」。
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

@@ -2,6 +2,7 @@
 # R1 一键验证：生成 snippet（Go 生成器）+ 生成桩对象 → 起容器 → 三组检查 → 关容器。
 # 前置：docker（nginx:alpine）、go、openssl、python3、curl。
 set -uo pipefail
+. "$(dirname "$0")/../../scripts/require_go.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"

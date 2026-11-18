@@ -166,6 +166,10 @@ TENANT_STORAGE_ROUTE=on
   `cdnRefreshHandler`/`CdnRefresh.vue` 无租户维度，平台 refresher 够不到客户边缘
   （`docs/tenant-storage-r1-feasibility.md` §4 R1-b 标「未闭环」）。
 - 这两件是「客户自有域名出图」的前置，与 R1（平台托管）解耦，需单独决策与开发。
+- **2026-11-18 复核：仍未实施，且不建议顺手做。** R1-b 缺两样外部输入：客户 CDN 的
+  刷新接口/凭据，以及「下架违规图时谁 Purge 客户边缘」的责任归属（否则 `/uploads/`
+  的 immutable 缓存会让下架在客户边缘静默失效，见 `docs/tenant-storage-r1-feasibility.md` §4）。
+  这些不是代码能单方面补出来的，必须与具体客户一起评审后再排期；本手册的 R1 步骤不依赖它们。
 
 ---
 

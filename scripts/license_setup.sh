@@ -17,6 +17,7 @@
 #   - 换公钥 ⇒ 旧私钥签的**所有**许可证立刻失效，必须给每个客户重签；
 #   - 覆盖私钥文件 ⇒ 更彻底：那把私钥签过的许可证从此无法再续签/重签同样的内容。
 set -euo pipefail
+. "$(dirname "$0")/require_go.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"

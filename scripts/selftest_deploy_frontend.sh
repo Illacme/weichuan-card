@@ -81,12 +81,13 @@ if [ -n "${SSH_ASKPASS-}" ] && [ -f "$SSH_ASKPASS" ]; then
     "$SSH_ASKPASS" > "$ASKPASS_OUTPUT" 2>/dev/null || true
 fi
 
-# 让脚本的「等 ControlPath socket 就绪」立刻通过
+# 造一个会被清理的 ControlPath 占位文件，让「退出后无 socket 残留」有读数。
+# 不真 bind UNIX socket：macOS 的 sun_path 上限 104 字节，CI 那种长 TMPDIR 下
+# bind 会静默失败，残留检查就恒绿——正是项目反复踩的「量尺自己没读数」。
 for a in "$@"; do
     case "$a" in
         ControlPath=*)
-            python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' \
-                "${a#ControlPath=}" 2>/dev/null || true
+            : > "${a#ControlPath=}" 2>/dev/null || true
             ;;
     esac
 done
@@ -171,9 +172,10 @@ reset_probe() {
 }
 
 no_stale_tmp() {
-    # 脚本退出后不能留下 askpass / ssh wrapper（口令虽不在里面，但_tmp_ 不该堆垃圾）
+    # 脚本退出后不能留下 askpass / ssh wrapper / ControlMaster socket（口令虽不在里面，
+    # 但 _tmp_ 不该堆垃圾；旧 socket 还会挡下次发布的复用连接）
     local left
-    left=$(ls "$ROOT"/tmp/weichuan-askpass-* "$ROOT"/tmp/weichuan-sshwrap-* 2>/dev/null)
+    left=$(ls "$ROOT"/tmp/weichuan-askpass-* "$ROOT"/tmp/weichuan-sshwrap-* "$ROOT"/tmp/weichuan-deploy-* 2>/dev/null)
     [ -z "$left" ]
 }
 
@@ -233,7 +235,7 @@ if [ -f "$ASKPASS_OUTPUT" ] && [ "$(cat "$ASKPASS_OUTPUT")" = "$FAKE_PW" ]; then
 else
     bad "askpass 执行结果不对（实际 $(cat "$ASKPASS_OUTPUT" 2>/dev/null)）"
 fi
-if no_stale_tmp; then ok "脚本退出后临时 askpass 已清理"; else bad "临时 askpass 没清掉"; fi
+if no_stale_tmp; then ok "脚本退出后 askpass 与 ControlMaster socket 均已清理"; else bad "临时 askpass 或 ssh socket 没清掉"; fi
 
 # ─────────────────────────────────────────────────────────────
 head_ "2. --password= 与 DEPLOY_PASSWORD 入口"

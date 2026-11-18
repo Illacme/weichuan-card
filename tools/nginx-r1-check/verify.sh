@@ -6,6 +6,7 @@
 #   E 对照探针（证明某条指令必需）/ F 生成器对账（含双向反向验证）
 # G 组（DNS 两道防线）在 run.sh 里，因为它要跑容器外的 go/nginx -t。
 set -uo pipefail
+. "$(dirname "$0")/../../scripts/require_go.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
