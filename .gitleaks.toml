@@ -25,6 +25,9 @@ regexes = [
     '''middleware-test-key-''',
     # config/file_test.go 里模拟「从环境变量读到的密钥」占位
     '''from-env-key-9876543210''',
+    # 微信公开端点安全测试里的假 AppSecret：形状像密钥但只是断言用的哨兵值，
+    # 测试会断言它绝不出现在公开接口出参里（见 wechat_public_security_test.go）。
+    '''SENSITIVE-WX-SECRET-123''',
     # 接口字段映射文档里的 JWT 占位示例（eyJhbGci... 是公开的 JWT 头，后面跟 .... 占位）
     '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.+''',
 ]
