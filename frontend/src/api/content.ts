@@ -200,6 +200,13 @@ export interface HomeLayoutData {
   featuredCount: number
   /** 精选案例循环呈现效果，默认 static 静态平铺 */
   featuredEffect: FeaturedEffect
+  /**
+   * 业绩分类封面图**下方**是否再显示名称，默认 false。
+   * 设计稿把名称画进了封面图（带字方图），再渲染就重复；换成素图后打开此开关补回。
+   */
+  showCategoryName: boolean
+  /** 业务服务封面图**下方**是否再显示标题，默认 false（竖版卡标题烧在图内） */
+  showServiceName: boolean
   /** 项目案例详情页：不显示 / 只到日 / 到分 */
   projectTimeMode: DetailTimeMode
   /** 业务服务详情页：与案例分开控制（两者的「该不该显示时间」往往不是一个答案） */

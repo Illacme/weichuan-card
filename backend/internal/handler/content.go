@@ -639,6 +639,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 都按「和加配置前一样」渲染，不会一升级就少显示内容。
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
 		featuredEffect := model.DefaultFeaturedEffect
+		// 封面图下方是否再显示名称：缺省 false（名称已画进封面图，再渲染就重复）。
+		// 零值 false 与缺省一致，所以新租户 / 存量行不写这两列也是对的。
+		showCategoryName, showServiceName := false, false
 		// 没有配置行（新租户 / 从未保存过）时回缺省档位，而不是空串——
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
@@ -652,6 +655,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			categoryLimit = clampInt(hl.CategoryLimit, 0, 20)
 			featuredCount = clampInt(hl.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(hl.FeaturedEffect)
+			showCategoryName, showServiceName = hl.ShowCategoryName, hl.ShowServiceName
 			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
@@ -671,7 +675,8 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"order": order, "bgImage": bgImage, "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
 			"categoryLimit":      categoryLimit, "featuredCount": featuredCount,
-			"featuredEffect":  featuredEffect,
+			"featuredEffect":   featuredEffect,
+			"showCategoryName": showCategoryName, "showServiceName": showServiceName,
 			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
 			"styleId": styleID, "brandColorId": brandColorID,
 			"companyNameScale": nameScale, "introFontScale": introScale,
@@ -697,6 +702,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			CategoryLimit  *int    `json:"categoryLimit"`
 			FeaturedCount  *int    `json:"featuredCount"`
 			FeaturedEffect *string `json:"featuredEffect"`
+			// 封面图下方是否再显示名称（0050）。指针语义同上：只改数量的请求不能把
+			// 这两个开关冲回 false——那会让客户刚打开的「显示名称」莫名失效。
+			ShowCategoryName *bool `json:"showCategoryName"`
+			ShowServiceName  *bool `json:"showServiceName"`
 			// 两个时间档位同理用指针：后台可能只改案例那一栏，不能把服务刷成缺省。
 			ProjectTimeMode *string `json:"projectTimeMode"`
 			ServiceTimeMode *string `json:"serviceTimeMode"`
@@ -869,6 +878,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if req.FeaturedEffect != nil {
 				created.FeaturedEffect = featuredEffect
 			}
+			if req.ShowCategoryName != nil {
+				created.ShowCategoryName = *req.ShowCategoryName
+			}
+			if req.ShowServiceName != nil {
+				created.ShowServiceName = *req.ShowServiceName
+			}
 			if projectMode != "" {
 				created.ProjectTimeMode = projectMode
 			}
@@ -901,6 +916,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if featuredEffect != "" {
 				upd["featured_effect"] = featuredEffect
+			}
+			// 两个开关只在本次显式提交时写：指针区分「未提供」与「传 false」，
+			// 前者保持原值——否则后台只改分类数量的那次保存会把刚打开的名称开关关掉。
+			if req.ShowCategoryName != nil {
+				upd["show_category_name"] = *req.ShowCategoryName
+			}
+			if req.ShowServiceName != nil {
+				upd["show_service_name"] = *req.ShowServiceName
 			}
 			if projectMode != "" {
 				upd["project_time_mode"] = projectMode

@@ -854,12 +854,17 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 20, body["data"].(map[string]interface{})["categoryLimit"])
 		require.EqualValues(t, 3, body["data"].(map[string]interface{})["featuredCount"])
 		require.Equal(t, "static", body["data"].(map[string]interface{})["featuredEffect"])
+		// 0050 两个名称开关缺省 false：封面图里已经画了名称，再渲染一行就是重复。
+		// 这条必须钉住——若默认变成 true，所有存量租户的首页会立刻多出一行重复文字。
+		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"])
+		require.EqualValues(t, false, body["data"].(map[string]interface{})["showServiceName"])
 
 		// 首页背景：写入 → 后台读回 → 公开接口下发
 		bgURL := "http://127.0.0.1:8080/uploads/library/bg-deepspace.jpg"
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgImage": bgURL, "bgMask": 40,
 			"bgGradientStrength": 75, "categoryLimit": 5, "featuredCount": 2, "featuredEffect": "flip",
+			"showCategoryName": true, "showServiceName": true,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
@@ -871,6 +876,8 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, hl["categoryLimit"])
 		require.EqualValues(t, 2, hl["featuredCount"])
 		require.Equal(t, "flip", hl["featuredEffect"])
+		require.EqualValues(t, true, hl["showCategoryName"])
+		require.EqualValues(t, true, hl["showServiceName"])
 
 		// 公开接口根级下发（小程序按 order/bgImage/bgMask/bgGradientStrength 读取）
 		_, body = c.do("GET", "/api/home-layout", nil, "")
@@ -881,6 +888,8 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, body["categoryLimit"], "小程序按公开接口的配置截断分类")
 		require.EqualValues(t, 2, body["featuredCount"], "小程序按公开接口的配置截取精选")
 		require.Equal(t, "flip", body["featuredEffect"], "小程序按公开接口的效果播放动画")
+		require.EqualValues(t, true, body["showCategoryName"], "小程序按公开接口决定是否在图下写分类名")
+		require.EqualValues(t, true, body["showServiceName"], "小程序按公开接口决定是否在图下写服务名")
 		require.EqualValues(t, []interface{}{"service", "achievement"}, body["order"])
 
 		// 只提交 order（不带背景/浓度/展示数量）时全部保持——指针语义区分「未提供」与「清空」
@@ -894,6 +903,22 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, body["data"].(map[string]interface{})["categoryLimit"], "未提供不应被冲掉")
 		require.EqualValues(t, 2, body["data"].(map[string]interface{})["featuredCount"], "未提供不应被冲掉")
 		require.Equal(t, "flip", body["data"].(map[string]interface{})["featuredEffect"], "未提供不应被冲掉")
+		// 只提交 order 时两个名称开关必须保持 true——否则「改一下板块顺序」
+		// 就会把客户刚打开的「显示名称」悄悄关掉，而界面上看不出来。
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["showCategoryName"], "未提供不应被关掉")
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["showServiceName"], "未提供不应被关掉")
+
+		// 显式传 false 才是「关闭」：布尔指针的经典坑——若用零值判断「未提交」，
+		// 客户永远关不掉已经打开的开关。这里同时验证只关一个不影响另一个。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"showCategoryName": false,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"], "显式 false 应能关掉")
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["showServiceName"], "只关分类不应连带关掉服务")
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.EqualValues(t, false, body["showCategoryName"], "公开接口同步反映关闭状态")
 
 		// categoryLimit 0 是合法的「隐藏分类网格」，不能用 || 兜底成 20
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{

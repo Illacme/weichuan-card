@@ -641,7 +641,6 @@ ${tokens}
   .cat-icon, .feat-cover, .svc-icon { width: 100%; display: block;
     border-radius: var(--wc-r-card-bg); }
   .feat-cover { object-fit: cover; }
-  .cat-name { font-size: 10px; color: #6b7a89; text-align: center; margin-top: 3px; }
   .featured { margin-top: 10px; }
   .svc-title { font-size: 11px; color: #333; text-align: center; margin-top: 4px; }
   /* 真机右缘有个悬浮音乐开关。长图只有一帧，放在右缘中段最贴近真机；
@@ -872,12 +871,14 @@ def build_html(
     style_css: str = "",
     mask_mode: bool = False,
 ) -> str:
+    # 业绩分类的封面图本身就把名称画在图内（如「居住住宅」带字方图），
+    # 真机默认**不**在图下再渲染一行（见 0050 showCategoryName，缺省 false）。
+    # 这里同步不画，否则预览图会比真机多一行文字，属于「示意图与真机不一致」。
     cat_cards = "\n".join(
-        f'<div class="cat-item"><img class="cat-icon" src="assets/cat-{i}.png" alt="">'
-        f'<div class="cat-name">示例分类</div></div>'
+        f'<div class="cat-item"><img class="cat-icon" src="assets/cat-{i}.png" alt=""></div>'
         for i in range(1, 9)
     )
-    # 服务卡标题已烧在图内（与 service-grid/index.wxml 一致），不重复渲染文字标题
+    # 服务卡标题同样已烧在图内（与 service-grid/index.wxml 一致），不重复渲染文字标题
     svc_cards = "\n".join(
         f'<div class="svc-item"><img class="svc-icon" src="assets/svc-{i}.png" alt=""></div>'
         for i in range(1, 5)

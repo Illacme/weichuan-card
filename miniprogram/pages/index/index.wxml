@@ -103,13 +103,13 @@
           </view>
           <!-- 板块标题装饰线：一小段左蓝右灰（用户 2026-10-20 要求，与企业名下同款语言） -->
           <view class="line-split sec-title-line"></view>
-          <achievement-grid categories="{{categories}}" staffId="{{staffId}}" />
+          <achievement-grid categories="{{categories}}" staffId="{{staffId}}" showName="{{showCategoryName}}" />
           <featured-projects featured="{{featured}}" featuredCount="{{featuredCount}}" effect="{{featuredEffect}}" staffId="{{staffId}}" />
         </view>
         <view wx:if="{{item === 'service'}}" class="section mp-services">
           <view class="sec-title">业务服务</view>
           <view class="line-split sec-title-line"></view>
-          <service-grid services="{{services}}" staffId="{{staffId}}" wx:if="{{services.length}}" />
+          <service-grid services="{{services}}" staffId="{{staffId}}" showName="{{showServiceName}}" wx:if="{{services.length}}" />
           <view class="empty" wx:else>暂无服务内容</view>
         </view>
       </block>

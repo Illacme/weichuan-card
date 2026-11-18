@@ -550,6 +550,8 @@ paths:
         不需要再为详情页时间档位、展示数量或整体风格多打一次请求。
         0049 起还下发 `categoryLimit` / `featuredCount` / `featuredEffect`，
         小程序端据此截取业绩分类与精选案例，并用随包内置的动画播放循环效果。
+        0050 起下发 `showCategoryName` / `showServiceName`：封面图下方是否再渲染名称，
+        两者缺省 false——设计稿把名称画进了封面图，再渲染就是重复。
 
         P5 起主题是两轴全叉乘：`style`「整体风格」按布局特色命名，决定四个模块的列数 /
         间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，10 款色系在 4 个
@@ -609,6 +611,21 @@ paths:
                     enum: [static, fade, scroll, flip]
                     default: static
                     description: 精选案例循环呈现效果（静态平铺 / 淡入淡出 / 横向滚动 / 立体翻转）；只有一张案例时始终静态
+                  showCategoryName:
+                    type: boolean
+                    default: false
+                    description: >-
+                      业绩分类封面图**下方**是否再渲染一行名称，缺省 false。
+                      设计稿把名称画进了封面图（「居住住宅」这类带字方图），再渲染就是重复；
+                      客户换成不带字的素图后打开此开关，端上在图下补回名称。
+                      没有封面图时**始终**显示名称（占位块里没有名称信息，不显示就彻底丢了）。
+                  showServiceName:
+                    type: boolean
+                    default: false
+                    description: >-
+                      业务服务封面图**下方**是否再渲染一行标题，缺省 false（竖版卡标题烧在图内）。
+                      与 showCategoryName 分开控制：分类图与服务卡常常不是同一批素材风格，
+                      典型情况是「分类换了素图、服务卡仍是带字卡」。无封面图时始终显示标题。
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]
@@ -2850,6 +2867,18 @@ paths:
                         enum: [static, fade, scroll, flip]
                         default: static
                         description: 精选案例循环效果；非法值写入时拒绝（code=1），不静默兜底
+                      showCategoryName:
+                        type: boolean
+                        default: false
+                        description: >-
+                          业绩分类封面图下方是否再显示名称（0050）。缺省 false——设计稿把名称画进了
+                          封面图，再渲染就重复；客户换成不带字的素图后打开此开关补回。无封面图时始终显示。
+                      showServiceName:
+                        type: boolean
+                        default: false
+                        description: >-
+                          业务服务封面图下方是否再显示标题（0050）。缺省 false（竖版卡标题烧在图内）。
+                          与 showCategoryName 分开控制，两者常常不是同一批素材风格。
                       projectTimeMode:
                         type: string
                         enum: [hidden, date, minute]
@@ -2967,6 +2996,14 @@ paths:
                   type: string
                   enum: [static, fade, scroll, flip]
                   description: 精选案例循环呈现效果；指针语义，不传保持原值；枚举外的值直接拒绝
+                showCategoryName:
+                  type: boolean
+                  description: >-
+                    业绩分类封面图下方是否再显示名称（0050）。指针语义：不传保持原值，
+                    传 false 才是显式关闭——否则只改分类数量的那次保存会把刚打开的开关关掉。
+                showServiceName:
+                  type: boolean
+                  description: 业务服务封面图下方是否再显示标题（0050）；指针语义同上。
                 projectTimeMode:
                   type: string
                   enum: [hidden, date, minute]

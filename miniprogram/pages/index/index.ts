@@ -51,6 +51,10 @@ Page({
     categoryLimit: 20,
     featuredCount: 3,
     featuredEffect: 'static',
+    // 0050 封面图下方是否再显示名称：缺省 false —— 设计稿把名称画进了封面图，
+    // 再渲染一行就是重复。客户换成不带字的素图后在后台打开即可补回。
+    showCategoryName: false,
+    showServiceName: false,
     // 加载失败的图片地址（背景图 / 顶栏头像）：WXML 用 `src && xxxFail !== src` 判断，
     // 记 URL 而不是布尔标记——换图或下拉刷新换了地址会自动重试（见 utils/thumb.ts）
     bgFail: '',
@@ -297,6 +301,10 @@ Page({
       const categoryLimit = Math.max(0, Math.min(20, layout.categoryLimit ?? 20))
       const featuredCount = Math.max(0, Math.min(3, layout.featuredCount ?? 3))
       const featuredEffect = normalizeFeaturedEffect(layout.featuredEffect)
+      // 0050：封面图下方是否再显示名称。用 === true 而不是 ||，避免后端下发字符串
+      // "false"（某些序列化会这样）被当真值，把重复的名称又渲染出来。
+      const showCategoryName = layout.showCategoryName === true
+      const showServiceName = layout.showServiceName === true
       // 列表/宫格用缩略图降低带宽与首屏耗时；缩略图缺失时由 image binderror 回退原图。
       const categories = (ach.categories || []).slice(0, categoryLimit).map((c: any) => {
         const icon = assetUrl(c.icon)
@@ -343,6 +351,9 @@ Page({
         categoryLimit,
         featuredCount,
         featuredEffect,
+        // 0050：名称是否显示在封面图下方（默认 false = 名称已在图内，不重复渲染）
+        showCategoryName,
+        showServiceName,
         disabled: false,
         notFound: false,
         loading: false,

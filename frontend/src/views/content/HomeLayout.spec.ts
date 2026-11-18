@@ -101,6 +101,15 @@ const ElInputNumber = defineComponent({
     @input="$emit('update:modelValue', Number($event.target.value))" />`,
   inheritAttrs: true,
 })
+// el-switch（0050 两个名称开关）：同样必须复刻 v-model，否则未注册的自定义元素
+// 不发射 update:modelValue——开关点了没反应、保存永远是 false，测试还会「绿」。
+const ElSwitch = defineComponent({
+  name: 'ElSwitch',
+  props: ['modelValue', 'activeText', 'inactiveText'],
+  emits: ['update:modelValue'],
+  template: `<button class="el-switch" :data-on="String(!!modelValue)"
+    @click="$emit('update:modelValue', !modelValue)">{{ modelValue ? activeText : inactiveText }}</button>`,
+})
 const UploadField = defineComponent({
   name: 'UploadField',
   props: ['modelValue', 'multiple', 'libraryType', 'tip'],
@@ -128,6 +137,7 @@ const mountOpts = {
       'el-radio': ElRadio,
       'el-slider': ElSlider,
       'el-input-number': ElInputNumber,
+      'el-switch': ElSwitch,
       UploadField,
       ImageViewer,
     },
@@ -242,6 +252,8 @@ describe('content/HomeLayout', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      showCategoryName: false,
+      showServiceName: false,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       companyNameScale: 'large',
@@ -273,6 +285,42 @@ describe('content/HomeLayout', () => {
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
       expect.objectContaining({ categoryLimit: 6, featuredCount: 3, featuredEffect: 'flip' })
     )
+  })
+
+  // 0050：封面图里已经画了名称（业绩是带字方图、服务是带字竖版卡），
+  // 所以默认关闭；客户换成素图后打开开关，端上才在图下补一行。
+  // 两个开关必须独立——分类图与服务卡常常不是同一批素材风格。
+  it('封面图名称开关：缺省关闭，打开后随保存提交 true，且互不影响', async () => {
+    const w = await mountPage()
+
+    const catSwitch = () => formItemByLabel(w, '业绩分类名称').find('.el-switch')
+    const svcSwitch = () => formItemByLabel(w, '业务服务名称').find('.el-switch')
+
+    // 缺省 false —— 若这里变成 true，所有存量租户的首页会立刻多出一行重复文字
+    expect(catSwitch().attributes('data-on')).toBe('false')
+    expect(svcSwitch().attributes('data-on')).toBe('false')
+
+    // 只打开业绩分类：服务必须保持关闭（两列独立，不是同一个总开关）
+    await catSwitch().trigger('click')
+    expect(catSwitch().attributes('data-on')).toBe('true')
+    expect(svcSwitch().attributes('data-on')).toBe('false')
+
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ showCategoryName: true, showServiceName: false })
+    )
+  })
+
+  it('封面图名称开关：回显后端值（打开过的开关刷新后仍是打开的）', async () => {
+    const w = await mountPage({
+      order: ['achievement', 'service'],
+      showCategoryName: false,
+      showServiceName: true,
+    })
+
+    expect(formItemByLabel(w, '业绩分类名称').find('.el-switch').attributes('data-on')).toBe('false')
+    expect(formItemByLabel(w, '业务服务名称').find('.el-switch').attributes('data-on')).toBe('true')
   })
 
   // 没有背景图时遮罩没有意义：滑块要禁用，否则用户拖了半天看不到任何变化
@@ -309,6 +357,8 @@ describe('content/HomeLayout', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      showCategoryName: false,
+      showServiceName: false,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       companyNameScale: 'large',

@@ -122,6 +122,25 @@
         <div class="bg-hint">只有一张精选案例时始终静态显示；轮播自动循环，点图仍进案例详情。</div>
       </el-form-item>
 
+      <el-divider content-position="left">封面图名称</el-divider>
+
+      <p class="desc desc-tight">
+        当前的封面图（业绩分类方图、业务服务竖版卡）**已经把名称画在图片里**，所以默认不在图下再写一遍。
+        如果你换成了不带文字的封面图，打开对应开关，名称就会显示在图片下方。
+      </p>
+
+      <!-- 两个开关分开：分类图与服务卡常常不是同一批素材风格，
+           典型情况是「分类换了素图、服务卡仍是带字卡」，共用一个开关会逼客户二选一。 -->
+      <el-form-item label="业绩分类名称">
+        <el-switch v-model="showCategoryName" active-text="显示" inactive-text="不显示" />
+        <div class="bg-hint">打开后，每个业绩分类的封面图下方显示该分类名称；没有封面图时始终显示名称。</div>
+      </el-form-item>
+
+      <el-form-item label="业务服务名称">
+        <el-switch v-model="showServiceName" active-text="显示" inactive-text="不显示" />
+        <div class="bg-hint">打开后，每张业务服务卡片下方显示该服务标题；没有封面图时始终显示标题。</div>
+      </el-form-item>
+
       <el-divider content-position="left">详情页时间显示</el-divider>
 
       <p class="desc desc-tight">
@@ -187,6 +206,10 @@ const bgMask = ref(0)
 const categoryLimit = ref(20)
 const featuredCount = ref(3)
 const featuredEffect = ref<FeaturedEffect>('static')
+// 封面图下方是否再显示名称（0050）。缺省 false = 名称已在图内，与升级前完全一致。
+// 两个开关分开：分类图与服务卡常常不是同一批素材风格。
+const showCategoryName = ref(false)
+const showServiceName = ref(false)
 // 详情页「更新于」档位：案例与服务各一个，互不影响
 const projectTimeMode = ref<DetailTimeMode>('date')
 const serviceTimeMode = ref<DetailTimeMode>('date')
@@ -226,6 +249,10 @@ async function load() {
     categoryLimit.value = d?.categoryLimit ?? 20
     featuredCount.value = d?.featuredCount ?? 3
     featuredEffect.value = d?.featuredEffect || 'static'
+    // 用 === true 而不是 ||：后端可能下发 false，|| 会把它当假值再兜一遍虽然结果相同，
+    // 但显式比较能挡住字符串 "false" 被当真值的情况。
+    showCategoryName.value = d?.showCategoryName === true
+    showServiceName.value = d?.showServiceName === true
     projectTimeMode.value = d?.projectTimeMode || 'date'
     serviceTimeMode.value = d?.serviceTimeMode || 'date'
     companyNameScale.value = d?.companyNameScale || 'large'
@@ -251,6 +278,8 @@ async function save() {
       categoryLimit: categoryLimit.value,
       featuredCount: featuredCount.value,
       featuredEffect: featuredEffect.value,
+      showCategoryName: showCategoryName.value,
+      showServiceName: showServiceName.value,
       projectTimeMode: projectTimeMode.value,
       serviceTimeMode: serviceTimeMode.value,
       companyNameScale: companyNameScale.value,

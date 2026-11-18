@@ -1,11 +1,15 @@
 <view class="cat-grid">
   <view class="cat-item" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
-    <!-- 有图：按设计稿正方形卡片整图展示（标题已绘制在图内，不重复渲染文字名称） -->
+    <!-- 有图：按设计稿正方形卡片整图展示 -->
     <image class="cat-icon" src="{{item.iconThumb}}" mode="widthFix" lazy-load wx:if="{{item.icon}}"
       binderror="onImgErr" data-arr="categories" data-idx="{{index}}" data-key="iconThumb" data-full="{{item.icon}}" />
     <block wx:else>
       <view class="cat-placeholder">图</view>
-      <view class="cat-name">{{item.name}}</view>
     </block>
+    <!-- 名称：无图时必显示（占位块里没有名称信息，不显示就彻底丢了）；
+         有图时默认**不显示**——标题已绘制在图内（设计稿的带字方图），再渲染一行就是重复。
+         客户换成不带字的素图后，后台「名片页面样式 → 业绩分类名称」打开即补回此行。
+         刻意放在 image / placeholder 之后，而不是继续塞在 wx:else 里：它要同时服务两种情况。 -->
+    <view class="cat-name" wx:if="{{!item.icon || (showName && item.name)}}">{{item.name}}</view>
   </view>
 </view>

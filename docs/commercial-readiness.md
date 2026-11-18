@@ -5552,9 +5552,10 @@ default 1267 / ink 1157 / teal 1667 / warm 2510（同比例换图不影响内容
 不会改动任何存量租户。线上已有租户的图标是 `biz_services.icon` 里指向
 `/uploads/...` 的独立文件，必须由管理员在后台「内容管理 → 业务服务 → 编辑」
 逐个重新上传（`UploadField` 直传对象存储，落盘名带 hash，不能靠覆盖同名文件）。
-后台上传不自动生成 `_thumb`，端上 `service-grid` 的 `binderror` 会回退原图——
-原图本身只有 24–30KB，这个回退代价可以接受；若要消掉那次 404，需在服务器上跑
-`cmd/thumbbackfill -force` 回填。
+后台上传走的是 `UploadField` 的**预签名直传**，服务端不接触字节，`_thumb` 由
+前端直传成功后调 `/api/admin/upload/thumb` 补（见下一节）；补失败时端上
+`service-grid` 的 `binderror` 会回退原图——原图本身只有 24–30KB，这个回退代价
+可以接受。**存量**（该接口上线前直传产生的图）仍需 `cmd/thumbbackfill -force` 回填。
 
 ### 直传后自动补缩略图（2026-11-18）
 
@@ -5603,3 +5604,35 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 
 **对运维的影响**：新上传的图不再需要回填。`cmd/thumbbackfill` 仍然只服务
 **存量**（本功能上线前直传产生的图）。
+
+### 业绩分类 / 业务服务名称显示开关（0050，2026-11-18）
+
+客户把名称直接设计进了封面图里，端上再渲染一遍标题就是重复。但换图是常态，
+一旦换成不带文字的纯图标，标题又必须能回来——所以做成**开关**，而不是删掉标题。
+
+| 层 | 改动 |
+| --- | --- |
+| 迁移 `0050_home_show_names.sql` | `home_layouts` 增 `show_category_name`、`show_service_name`，均 `NOT NULL DEFAULT 0` |
+| `model.HomeLayout` | `ShowCategoryName` / `ShowServiceName`（`json:"showCategoryName"` / `"showServiceName"`） |
+| admin GET/PUT + 公开 GET | 三个接口都读写；PUT 用 `*bool` 指针语义 |
+| `pages/index/index.ts` | 初值 `false`，`=== true` 解析（防止 `null`/缺字段被当成真） |
+| `achievement-grid` / `service-grid` | 新增 `showName` 属性，默认 `false` |
+| `HomeLayout.vue` | 「封面图名称」分组下两个 `el-switch` |
+
+**默认关闭**（`false`）是这一轮的核心语义：现有租户升级后视觉**零突变**，
+因为它们的图里本来就带名称。`DEFAULT 0` 让存量行不需要回填。
+
+**`*bool` 不能省**。PUT 是部分更新，若用 `bool`，前端不提交这两个字段时会被
+反序列化成 `false`，把管理员刚打开的开关悄悄关掉——正是「两个页签互相冲掉」
+那类事故。指针的 `nil` = 未提交 = 保持原值，只有显式 `false` 才写库。
+`handler_test.go` 为此钉了四条：缺省为 false、显式 true 能存能读、
+只提交其他字段时不冲掉、显式 false 能把 true 关掉。
+
+**WXML 的兜底条件**是 `wx:if="{{!item.icon || (showName && item.name)}}"`——
+没有封面图时**始终显示名称**。否则新租户还没配图、开关又是默认关，
+分类格子里会是一排空白方块，比重复标题更糟。`service-grid` 同构，
+字段名换成 `item.title`。
+
+预览脚本同步去掉「示例分类」文字（与真机默认一致），并删掉对应的
+`.cat-name` 样式；`home_names.spec.ts` 8 例覆盖两个组件的开关组合、
+无图兜底、默认值，以及首页 `setData` 的透传。

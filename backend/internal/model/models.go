@@ -383,6 +383,16 @@ type HomeLayout struct {
 	FeaturedCount int `gorm:"column:featured_count;default:3" json:"featuredCount"`
 	// FeaturedEffect 精选案例的循环呈现效果，取值见 FeaturedEffect* 常量。
 	FeaturedEffect string `gorm:"column:featured_effect;size:16;default:static" json:"featuredEffect"`
+	// ShowCategoryName / ShowServiceName 是否在封面图**下方**再渲染一行文字名称（0050）。
+	//
+	// 缺省一律 false，因为设计稿把名称直接画进了封面图（业绩分类是「居住住宅」这类
+	// 带字方图，业务服务是竖版卡），再渲染一行就是重复。客户换成不带字的封面图时，
+	// 打开这两个开关即可让端上补回名称。
+	//
+	// 拆成两列而不是一个总开关：业绩分类与业务服务往往不是同一批素材风格，
+	// 常见情况是「分类图换了素图、服务卡仍是带字卡」，共用一列会逼客户二选一。
+	ShowCategoryName bool `gorm:"column:show_category_name;default:false" json:"showCategoryName"`
+	ShowServiceName  bool `gorm:"column:show_service_name;default:false" json:"showServiceName"`
 	// ProjectTimeMode / ServiceTimeMode 项目案例与业务服务详情页的「更新于」档位。
 	// 刻意分成两列：案例带「交付年份」的语义、服务更像常青内容，两者该不该显示
 	// 时间往往不是一个答案，共用一个开关会逼客户二选一。

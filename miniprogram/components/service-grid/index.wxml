@@ -1,11 +1,14 @@
 <view class="svc-grid">
   <view class="svc-item" wx:for="{{services}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
-    <!-- 有图：整卡按原比例展示（设计稿竖版卡片，标题已绘制在图内，不重复渲染文字标题） -->
+    <!-- 有图：整卡按原比例展示 -->
     <image class="svc-icon" src="{{item.iconThumb}}" mode="widthFix" lazy-load wx:if="{{item.icon}}"
       binderror="onImgErr" data-arr="services" data-idx="{{index}}" data-key="iconThumb" data-full="{{item.icon}}" />
     <block wx:else>
       <view class="svc-icon-ph">{{item.title ? item.title.slice(0,1) : '服'}}</view>
-      <view class="svc-title">{{item.title}}</view>
     </block>
+    <!-- 标题：无图时必显示（占位块只有一个首字，不显示标题就认不出是什么服务）；
+         有图时默认**不显示**——标题已绘制在图内（设计稿的竖版卡），再渲染一行就是重复。
+         客户换成不带字的素图后，后台「名片页面样式 → 业务服务名称」打开即补回此行。 -->
+    <view class="svc-title" wx:if="{{!item.icon || (showName && item.title)}}">{{item.title}}</view>
   </view>
 </view>

@@ -403,6 +403,8 @@ func New(db *gorm.DB) *gin.Engine {
 		// 保证升级后存量租户看到的条数与效果不变。
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
 		featuredEffect := model.DefaultFeaturedEffect
+		// 封面图下方是否再显示名称：缺省 false（名称已画进封面图）。
+		showCategoryName, showServiceName := false, false
 		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
 		if l, err := repository.GetHomeLayout(db, cid); err == nil {
 			if l.Order != "" {
@@ -413,6 +415,7 @@ func New(db *gorm.DB) *gin.Engine {
 			categoryLimit = clampInt(l.CategoryLimit, 0, 20)
 			featuredCount = clampInt(l.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(l.FeaturedEffect)
+			showCategoryName, showServiceName = l.ShowCategoryName, l.ShowServiceName
 			// 两轴：优先读 style_id / brand_color_id（0043 已删 template_id 兼容列）。
 			styleID, brandColorID = effectiveStyleBrand(l)
 			// 授权到期 / 未开通高级款时访客回落默认配色，但不抹库里的值。
@@ -427,6 +430,8 @@ func New(db *gorm.DB) *gin.Engine {
 			"categoryLimit":      categoryLimit,
 			"featuredCount":      featuredCount,
 			"featuredEffect":     featuredEffect,
+			"showCategoryName":   showCategoryName,
+			"showServiceName":    showServiceName,
 			"styleId":            styleID, "brandColorId": brandColorID,
 		})
 	})

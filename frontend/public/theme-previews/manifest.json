@@ -4,10 +4,10 @@
     2580
   ],
   "canvasByStyle": {
-    "default": 1267,
-    "ink": 1157,
-    "teal": 1667,
-    "warm": 2510
+    "default": 1231,
+    "ink": 1121,
+    "teal": 1613,
+    "warm": 2400
   },
   "comboTokens": {
     "default--brand-amber": {
@@ -1070,10 +1070,10 @@
     }
   },
   "contentBottoms": {
-    "default": 1187,
-    "ink": 1077,
-    "teal": 1587,
-    "warm": 2430
+    "default": 1151,
+    "ink": 1041,
+    "teal": 1533,
+    "warm": 2320
   },
   "layouts": {
     "default": ".emp-card { border-radius: var(--wc-r-card); }\n  .emp-card .ec-avatar { width: 56px; height: 56px; }\n  .mp-profile .cv { height: 220px; border-radius: 6px; }\n  .mp-profile .intro { line-height: 1.7; }\n  .mp-achievements .cat-item { width: 25%; }\n  .mp-achievements .feat-item { width: 50%; }\n  .mp-achievements .feat-cover { height: 87.5px; border-radius: 6px; }\n  .mp-services .svc-item { width: 25%; }",

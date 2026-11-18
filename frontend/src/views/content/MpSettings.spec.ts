@@ -166,6 +166,16 @@ const ElInputNumber = defineComponent({
   template: `<input class="el-input-number" type="number" :value="modelValue" />`,
 })
 
+// 0050 两个名称开关：必须注册，否则 Vue 只会 warn「Failed to resolve component」，
+// v-model 静默失效、保存永远是 false，测试却全绿。
+const ElSwitch = defineComponent({
+  name: 'ElSwitch',
+  props: ['modelValue', 'activeText', 'inactiveText'],
+  emits: ['update:modelValue'],
+  template: `<button class="el-switch" :data-on="String(!!modelValue)"
+    @click="$emit('update:modelValue', !modelValue)">{{ modelValue ? activeText : inactiveText }}</button>`,
+})
+
 const mountOpts = {
   global: {
     stubs: {
@@ -180,6 +190,7 @@ const mountOpts = {
       'el-radio': ElRadio,
       'el-slider': ElSlider,
       'el-input-number': ElInputNumber,
+      'el-switch': ElSwitch,
       'el-select': ElSelect,
       'el-option': ElOption,
       'el-tabs': ElTabs,
@@ -459,6 +470,9 @@ describe('content/MpSettings', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      // 0050 两个名称开关缺省 false：封面图里已经画了名称，再渲染一行就是重复
+      showCategoryName: false,
+      showServiceName: false,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
       // 两处文字档位必须随保存提交：漏了就是「后台选了、小程序没变」

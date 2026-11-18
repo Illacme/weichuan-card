@@ -56,4 +56,5 @@ var expectedMigrations = []string{
 	"0047_company_profile_intro_font_scale.sql",
 	"0048_company_name_scale.sql",
 	"0049_home_display_limits.sql",
+	"0050_home_show_names.sql",
 }
