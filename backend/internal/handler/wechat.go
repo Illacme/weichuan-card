@@ -97,6 +97,10 @@ func wxacodeEvictLocked() {
 // 「固定对象名覆盖写 → CDN 刷新」这条支线（见 TestCDNRefreshOnOverwritePaths）。
 var getWXACode = wechat.GetWXACode
 
+// code2Session 的间接层定义在 login_wechat.go（登录链路先引入），本文件的公开
+// openid 端点复用同一个变量：两处都必须在单测里注入，拆成两个反而会出现
+// 「测了登录那条、公开这条仍打真接口」的盲区。
+
 // wxacodeParams 组装出码参数：page 默认首页，环境版本取后台设置。
 //
 // check_path 与 env_version 必须联动：微信的 check_path 语义是「page 是否存在于
@@ -139,8 +143,21 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 	}
 
 	// 微信身份换取（公开）：小程序 wx.login 的 code → openid。
+	//
+	// 限流：这个端点**无鉴权**且 companyId 由客户端自填（可枚举）。虽然伪造
+	// companyId 只会让 code2session 失败（微信校验 appid 与 code 同属一个小程序），
+	// 但一个脚本照样能拿随机 code 打爆微信的 jscode2session 配额，耗尽后所有
+	// 正常用户的微信登录一起失败——这是公开的免费外部资源，必须有闸门。
+	// 阈值复用 wxacode_rate_limit_per_min：两个端点都是「每 IP 每分钟调用微信
+	// 公开接口」的同类保护，管理员只需调一个旋钮；但**各自独立计数**，
+	// 打开小程序码不会吃掉身份换取的配额（反之亦然）。
+	openidLimiter := middleware.NewRateLimiter(func() int {
+		return setting.GetInt("wxacode_rate_limit_per_min", 30)
+	}, 30, time.Minute).
+		WithMessage("微信身份验证过于频繁，请稍后再试")
+
 	// 无论是否配置小程序码凭据都注册；未配置时返回明确错误，前端据此降级（不影响账号密码登录/申请）。
-	r.POST("/api/wechat/openid", func(c *gin.Context) {
+	r.POST("/api/wechat/openid", openidLimiter.Handler(), func(c *gin.Context) {
 		var req struct {
 			Code string `json:"code"`
 			// 客户端按自己所属租户填（企业独立版固定、平台模式粘滞，见 miniprogram/utils/tenant.ts）。
@@ -158,9 +175,9 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未配置小程序 AppID / WX_APPSECRET"})
 			return
 		}
-		openid, _, err := wechat.Code2Session(wc, req.Code)
+		openid, _, err := code2Session(wc, req.Code)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "openid": openid})
@@ -237,7 +254,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 		if ok && time.Now().Before(e.expAt) && e.env == p.EnvVersion {
 			url, err := resolveWxacodeURL(e, cfg, up)
 			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"url": url}})
@@ -247,7 +264,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 		// 2) 重新生成：调微信 -> 写入当前存储驱动 -> 缓存
 		b, err := getWXACode(wc, p)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 			return
 		}
 		// 对象名：默认码与海报码**必须分开命名**。
@@ -261,12 +278,12 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 		// 端上契约不变（仍是 <origin>/uploads/<key>），私有桶签名按 p/ 前缀 key 走。
 		key, kerr := storage.ObjectKeyFor(storage.ScopePlatform, 0, rel)
 		if kerr != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": kerr.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(kerr.Error())})
 			return
 		}
 		publicURL, err := up.SaveBytes(key, b, "image/jpeg")
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 			return
 		}
 		e = wxacodeEntry{key: key, publicURL: publicURL, expAt: time.Now().Add(wxacodeTTL(cfg)), env: p.EnvVersion}
@@ -277,7 +294,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 
 		url, err := resolveWxacodeURL(e, cfg, up)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"url": url}})

@@ -58,6 +58,34 @@ func TestRedactWXSecretText(t *testing.T) {
 			want: `a?access_token=***&b=1 body={"access_token":"***"}`,
 		},
 		{
+			// P0：公开 /api/wechat/openid 的失败路径就是这条 URL
+			name: "code2session 的错误同时带 secret 与 js_code",
+			in:   `Get "https://api.weixin.qq.com/sns/jscode2session?appid=wx1&secret=APPSECRET-123&js_code=CODE-456&grant_type=authorization_code": dial tcp: i/o timeout`,
+			want: `Get "https://api.weixin.qq.com/sns/jscode2session?appid=wx1&secret=***&js_code=***&grant_type=authorization_code": dial tcp: i/o timeout`,
+		},
+		{
+			// P0：GetAccessToken 失败时会走到这里，且 /api/wechat/wxacode 会把它回显给访客
+			name: "获取 access_token 的 URL 里 secret 也要打掉",
+			in:   `Get "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=wx1&secret=TOPSECRET": EOF`,
+			want: `Get "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=wx1&secret=***": EOF`,
+		},
+		{
+			name: "secret 大小写不敏感",
+			in:   `SECRET=AbCdE`,
+			want: `SECRET=***`,
+		},
+		{
+			name: "JSON 形态的 secret 也打码",
+			in:   `body={"app_secret":"tk-json"} err=x`,
+			want: `body={"app_secret":"***"} err=x`,
+		},
+		{
+			// 量尺自检：appid 不是凭据（公开值），打掉它只会妨碍排障
+			name: "appid 保留不误伤",
+			in:   `appid=wx123&secret=s1&js_code=c1`,
+			want: `appid=wx123&secret=***&js_code=***`,
+		},
+		{
 			name: "普通错误原样保留",
 			in:   `微信未返回 trace_id，无法追踪检测结论`,
 			want: `微信未返回 trace_id，无法追踪检测结论`,

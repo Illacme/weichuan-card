@@ -49,7 +49,7 @@ const items: SettingItem[] = [
   { key: 'wx_appsecret', name: '小程序 AppSecret', group: 'wechat', type: 'string', value: '******', description: 'AppSecret（敏感）', secret: true, restart: false, readOnly: false, envVar: 'WX_APPSECRET', configured: true },
   { key: 'wxacode_ttl_hours', name: '小程序码缓存时长', group: 'wechat', type: 'int', value: '720', description: '小程序码 TTL', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'wxacode_sign_ttl_minutes', name: '小程序码签名链接有效期', group: 'wechat', type: 'int', value: '60', description: '小程序码签名时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  { key: 'wxacode_rate_limit_per_min', name: '小程序码生成频率限制', group: 'wechat', type: 'int', value: '30', description: '小程序码限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'wxacode_rate_limit_per_min', name: '微信公开接口频率限制', group: 'wechat', type: 'int', value: '30', description: '小程序码限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   // pathKind 三项：界面在文本框旁渲染「浏览…」按钮，点击弹出服务端目录选择器
   { key: 'mp_node_bin', name: 'Node 可执行文件', group: 'mpupload', type: 'string', value: '', description: 'Node 路径', secret: false, restart: false, readOnly: false, envVar: 'MP_NODE_BIN', pathKind: 'node_bin', configured: false },
   { key: 'mp_ci_module_dir', name: 'miniprogram-ci 安装目录', group: 'mpupload', type: 'string', value: '', description: 'ci 模块目录', secret: false, restart: false, readOnly: false, envVar: 'MP_CI_MODULE_DIR', pathKind: 'module_dir', configured: false },
