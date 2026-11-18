@@ -7,7 +7,10 @@
    必须改回 block，否则它们被 flex 横排：sizer 与真实页并排挤在一行，
    每页只拿到一小格宽度、图片被压成一条窄缝看起来就是空白（2026-11-18 真机实测，
    Network 显示图片 200 但视觉空白，就是 flex 塌陷）。组件 wxss 后加载覆盖全局。 */
-.featured-paged { position: relative; display: block; }
+/* scroll 效果下相邻页 translateX(±100%) 移到主区域外，但容器不裁切的话
+   （2026-11-18 真机截图：滚动时主图两侧各露出一条相邻页的图，甚至溢出白色卡片）。
+   这里把超出主区域的页裁掉，滚动动画照旧，只是不再看见两边的图。 */
+.featured-paged { position: relative; display: block; overflow: hidden; }
 
 /* 隐藏占位：与一页同结构，撑出当前风格下正确的高度；
    各页绝对定位盖在它上面，页数 / 每页张数变化时高度不会塌。 */
