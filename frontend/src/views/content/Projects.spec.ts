@@ -249,6 +249,10 @@ describe('content/Projects', () => {
     mocks.listCategories.mockClear()
     mocks.createProject.mockClear()
     mocks.updateProject.mockClear()
+    // 行内切换用例会用 mockRejectedValueOnce / mockImplementationOnce 模拟失败与挂起，
+    // 这里恢复默认实现，避免一次性桩在用例间泄漏（mockClear 只清调用记录、不清实现）。
+    mocks.updateProject.mockReset()
+    mocks.updateProject.mockImplementation(async () => ({ code: 0 }))
     mocks.deleteProject.mockClear()
     mocks.sortProjects.mockClear()
     ;(ElMessage.success as any).mockClear()
@@ -279,6 +283,63 @@ describe('content/Projects', () => {
     expect(columnTexts(w, 0)).toContain('上架')
     expect(columnTexts(w, 1)).toContain('普通')
     expect(columnTexts(w, 1)).toContain('下架')
+  })
+
+  // 行内直接切换精选：运营最常见的高频操作，不该每次都开编辑弹窗改开关再保存。
+  // 三个要点：① 点标签立即翻转文案（乐观更新，不等请求）；② 回传整行九字段
+  // （后端 PUT 要求 name/categoryId，只发 isHomeFeatured 会被参数错误拒绝）；
+  // ③ 失败回滚到原值，不能让界面和库里不一致。
+  it('点精选列直接切换：乐观更新 + 回传整行 + 成功提示', async () => {
+    const w = await mountPage()
+    const toggle = () => w.findAll('.featured-toggle')[0]
+
+    expect(toggle().text()).toContain('精选') // 初始为精选
+    await toggle().trigger('click')
+    await flush()
+
+    expect(toggle().text()).toContain('普通') // 立即翻转为普通
+    expect(mocks.updateProject).toHaveBeenCalledWith(1, expect.objectContaining({
+      categoryId: 1,
+      name: '厂房配电改造',
+      isHomeFeatured: false,
+      enabled: true,
+      sort: 1,
+    }))
+    // 整行九字段齐全，不能用 {...row} 把 createdAt/id 之类也当业务字段依赖
+    const payload = mocks.updateProject.mock.calls[0][1]
+    expect(Object.keys(payload).sort()).toEqual([
+      'album', 'categoryId', 'cover', 'detail', 'enabled',
+      'isHomeFeatured', 'name', 'sort', 'summary',
+    ])
+    expect(ElMessage.success).toHaveBeenCalledWith('已取消精选')
+  })
+
+  it('切换失败时精选文案回滚到原值', async () => {
+    mocks.updateProject.mockRejectedValueOnce(new Error('network'))
+    const w = await mountPage()
+    const toggle = () => w.findAll('.featured-toggle')[1] // 第 2 行初始为普通
+
+    await toggle().trigger('click')
+    await flush()
+
+    expect(toggle().text()).toContain('普通') // 回滚
+  })
+
+  it('连点同一行只发一次请求（进行中禁用防覆盖）', async () => {
+    let resolveFirst: (() => void) | undefined
+    mocks.updateProject.mockImplementationOnce(() =>
+      new Promise((r) => { resolveFirst = () => r({ code: 0 }) })
+    )
+    const w = await mountPage()
+    const toggle = () => w.findAll('.featured-toggle')[0]
+
+    await toggle().trigger('click')
+    await toggle().trigger('click')
+    await flush()
+
+    expect(mocks.updateProject).toHaveBeenCalledTimes(1)
+    resolveFirst?.()
+    await flush()
   })
 
   // 更新时间列（第 5 列，上架之后）：运营靠它判断「哪些案例内容旧了该翻新」。

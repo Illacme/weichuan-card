@@ -30,11 +30,20 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
+        <!-- 精选列支持行内直接切换：点「精选/普通」即改，不必进编辑弹窗改完再保存。
+             可点击标签 + title 提示；切换中禁用防连点，失败回滚到原值。 -->
         <el-table-column label="精选" width="80" align="center" v-if="!isPhone">
           <template #default="{ row }">
-            <el-tag :type="row.isHomeFeatured ? 'danger' : 'info'" effect="plain">
-              {{ row.isHomeFeatured ? '精选' : '普通' }}
-            </el-tag>
+            <span
+              class="featured-toggle"
+              :class="{ busy: togglingIds.includes(row.id) }"
+              :title="row.isHomeFeatured ? '点击取消首页精选' : '点击设为首页精选'"
+              @click.stop="toggleFeatured(row)"
+            >
+              <el-tag :type="row.isHomeFeatured ? 'danger' : 'info'" effect="plain">
+                {{ row.isHomeFeatured ? '精选' : '普通' }}
+              </el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="上架" width="80" align="center">
@@ -304,6 +313,37 @@ async function remove(row: any) {
   }
 }
 
+// 行内切换精选：后端 PUT /projects/:id 是全字段更新（bindProject 要求 name/categoryId），
+// 所以回传整行 + 翻转后的 isHomeFeatured，而不是只发一个字段。乐观更新让点击即变，
+// 失败回滚；togglingIds 防连点，避免两次快速点击发出互相覆盖的请求。
+const togglingIds = ref<number[]>([])
+async function toggleFeatured(row: any) {
+  if (togglingIds.value.includes(row.id)) return
+  const before = !!row.isHomeFeatured
+  const after = !before
+  row.isHomeFeatured = after // 乐观更新
+  togglingIds.value.push(row.id)
+  try {
+    await updateProject(row.id, {
+      categoryId: row.categoryId,
+      name: row.name,
+      summary: row.summary || '',
+      detail: row.detail || '',
+      cover: row.cover || '',
+      album: Array.isArray(row.album) ? row.album : [],
+      isHomeFeatured: after,
+      enabled: !!row.enabled,
+      sort: row.sort,
+    })
+    ElMessage.success(after ? '已设为精选' : '已取消精选')
+  } catch {
+    row.isHomeFeatured = before // 回滚
+    /* 拦截器已提示 */
+  } finally {
+    togglingIds.value = togglingIds.value.filter((id) => id !== row.id)
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -327,6 +367,18 @@ onMounted(load)
 }
 .muted {
   color: #c0c4cc;
+}
+/* 精选列行内切换：整块可点，鼠标手型 + hover 提亮；进行中降透明度防连点观感。 */
+.featured-toggle {
+  display: inline-block;
+  cursor: pointer;
+}
+.featured-toggle:hover {
+  opacity: 0.75;
+}
+.featured-toggle.busy {
+  opacity: 0.5;
+  cursor: wait;
 }
 /* 排序操作区样式见全局 src/styles/admin.css（.sort-cell / .drag-handle）。 */
 </style>
