@@ -752,6 +752,18 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(both).toEqual([])
   })
 
+  // 静态平铺 + 2 张时真机在分类下方空出一大块，其他循环效果却正常：
+  // sizer 是隐藏占位（仍在文档流里），只有 cycleOn 的页才 absolute 盖上去；
+  // static 的页没加 cycle class，被 sizer 顶到下面。数据层与 WXML 都要拦住。
+  it('静态平铺不渲染隐藏占位，只有轮播页才用 sizer 撑高度', () => {
+    const wxml = read('components/featured-projects/index.wxml')
+    const ts = read('components/featured-projects/index.ts')
+    expect(wxml).toMatch(/<view class="feat-page-sizer" wx:if="\{\{cycleOn\}\}"/)
+    expect(ts).toMatch(/const sizerItems = cycleOn \? decorated\[0\] : \[\]/)
+    expect(wxml.match(/class="feat-page /g)).toHaveLength(1) // 真实页始终一个模板
+    expect(wxml).toContain("{{cycleOn ? 'feat-page-cycle' : ''}}")
+  })
+
   it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
     const wxss = read('components/featured-projects/index.wxss')
     expect(wxss).toContain('.feat-page-sizer')
@@ -809,7 +821,7 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(inst.data.pageCount).toBe(3)
     inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }], featuredCount: 3 })
     inst.sync()
-    expect(inst.data.sizerItems[0].width).toMatch(/^33\.33/)
+    expect(inst.data.visiblePages[0].items[0].width).toMatch(/^33\.33/)
     expect(inst.data.pageCount).toBe(1)
 
     // 0 = 整块不渲染（连占位一起清掉，不能留下空白）
@@ -826,6 +838,15 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(inst.data.cycleOn).toBe(false)
     expect(inst.data.visiblePages.length).toBe(1)
     expect(inst.data.visiblePages[0].items.map((x: any) => x.id)).toEqual([1, 2])
+    // 静态页在文档流里自己撑高度，sizer 必须清空：否则隐藏占位排在真实页
+    // 上方，撑出一行空白（static + 2 张真机实测，其他轮播效果因页 absolute 无此问题）
+    expect(inst.data.sizerItems).toEqual([])
+
+    // 切回轮播后占位恢复，绝对定位的页仍有高度来源
+    inst.setData({ effect: 'fade' })
+    inst.sync()
+    expect(inst.data.cycleOn).toBe(true)
+    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['50%', '50%'])
 
     // 页动画：横移走环形最短距离，末页回首页从右侧滑入；翻转只显当前页
     inst.setData({ effect: 'scroll' })

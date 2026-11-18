@@ -112,9 +112,15 @@ Component({
       const visiblePages = cycleOn
         ? decorated.map((items, k) => ({ k, items }))
         : [{ k: 0, items: decorated[0] }]
+      // 隐藏占位只服务于「轮播页」：轮播页 position:absolute 脱离文档流，
+      // 需要同结构的隐藏副本撑出风格层真实高度。静态平铺的真实页本身就在
+      // 文档流里，若再渲染 sizer，就会在图片上方多出整整一行空白
+      // （2026-11-18 实测：static + 2 张时分类下方空一大块，换成 fade/scroll/
+      // flip 就消失——那几种效果 cycleOn=true，页绝对定位盖在 sizer 上）。
+      const sizerItems = cycleOn ? decorated[0] : []
       this.setData({
         pageSize, pageCount: pages.length, current, cycleOn,
-        sizerItems: decorated[0], visiblePages,
+        sizerItems, visiblePages,
       })
       this.applyStyles()
       if (cycleOn) this.startTimer()

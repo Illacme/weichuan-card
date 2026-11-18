@@ -5413,6 +5413,12 @@ include `../miniprogram/tests/**/*.spec.ts`）。
 代码包），动画作用于整页、3.6 秒自动循环、指示点可手切并重新计时、切后台停表；
 高度借全局四风格样式取真实值，不在组件里另写一套 rpx 与风格层分叉。未知效果 id 端上回落 static。
 
+**静态平铺上方空白（2026-11-18 修复）**：组件为轮播页保留一份 `visibility:hidden` 的
+同结构占位（sizer）撑高度，但只有 `cycleOn` 的页才带 `.feat-page-cycle`、绝对定位盖在
+占位上。static 的页留在文档流里，被占位顶到下一行，于是「2 张 + 静态平铺」在分类下方
+空出整整一行，换 fade/scroll/flip 就正常——这不是配置、数据或 HTTP 问题。现在数据层与
+WXML 双重拦截：仅轮播时生成 / 渲染 sizer，静态页自己撑高度。
+
 **守门**：后端 `handler_test.go` 覆盖缺省 / 读写 / 0 与 1 合法 / 越界钳制 / 非法枚举 /
 只提交其它字段不冲掉 / 公开接口下发；前端 `HomeLayout.spec.ts` 钉死模块顺序与完整
 payload（含新三字段）；小程序 `types_contract.spec.ts` 对账 Go 模型 json tag，
