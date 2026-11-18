@@ -58,7 +58,7 @@
 
       <el-form-item label="公司名称">
         <el-radio-group v-model="companyNameScale">
-          <el-radio value="large">大（当前）</el-radio>
+          <el-radio value="large">大</el-radio>
           <el-radio value="medium">中</el-radio>
           <el-radio value="small">小</el-radio>
           <el-radio value="hidden">关闭（不显示公司名）</el-radio>
@@ -70,7 +70,7 @@
 
       <el-form-item label="简介文字">
         <el-radio-group v-model="introFontScale">
-          <el-radio value="large">大（当前）</el-radio>
+          <el-radio value="large">大</el-radio>
           <el-radio value="medium">中</el-radio>
           <el-radio value="small">小</el-radio>
           <el-radio value="hidden">关闭（不显示简介）</el-radio>

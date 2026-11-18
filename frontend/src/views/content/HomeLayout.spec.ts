@@ -461,10 +461,13 @@ describe('content/HomeLayout', () => {
     for (const label of ['公司名称', '简介文字']) {
       const texts = formItemByLabel(w, label).findAll('.el-radio').map((r: any) => r.text())
       expect(texts).toHaveLength(4)
-      expect(texts[0]).toBe('大（当前）')
+      expect(texts[0]).toBe('大')
       expect(texts[1]).toBe('中')
       expect(texts[2]).toBe('小')
       expect(texts[3]).toContain('关闭')
+      // 选项文案不能带「当前」之类动态语义：它曾硬编码在「大」上，实际选中「小」时
+      // 会自相矛盾（2026-11-18 用户截图）。当前值由单选选中态表达，默认值在说明里写。
+      expect(texts.join('')).not.toContain('当前')
     }
   })
 
