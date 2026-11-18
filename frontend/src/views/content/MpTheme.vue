@@ -267,6 +267,9 @@
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
 import { getHomeLayout, saveHomeLayout, type ThemeTemplate } from '@/api/content'
+// 画布高度直接读生成脚本的产物：换素材 / 改布局后 manifest 会重写，
+// 组件跟着变，不必再手工同步一份硬编码常量（2026-11-18 换服务图时踩过）。
+import previewManifest from '../../../public/theme-previews/manifest.json'
 
 // embedded=true：被「小程序设置」页签内嵌时不再重复自己的标题（当前仅用于约定，
 // 标题行与操作按钮已上移到父组件「小程序设置」的页签切换栏，本组件不再自行渲染）。
@@ -296,15 +299,10 @@ const savedBgGradientStrength = ref(100)
 // 早期只盖到卡片顶 74px 的矩形遮罩会让卡片外侧仍是深蓝原色，出现硬分界
 // （2026-11-17 用户实测反馈），不能回退。
 //
-// 各风格画布高度 = manifest.contentBottoms + 呼吸 20 + 底栏 60：
-//   default 1294 · ink 1182 · warm 2572 · teal 1729
-// 与遮罩图 viewBox 一一对应；由 MpTheme.spec.ts 读 manifest 反算对账，改高度必红。
-const CANVAS_H: Record<string, number> = {
-  default: 1294,
-  ink: 1182,
-  warm: 2572,
-  teal: 1729,
-}
+// 各风格画布高度 = manifest.contentBottoms + 呼吸 20 + 底栏 60，
+// 与预览图 / 遮罩图同尺寸，直接取生成脚本的 canvasByStyle（manifest 已按风格收口）。
+// 由 MpTheme.spec.ts 读 manifest 反算对账，改高度必红。
+const CANVAS_H: Record<string, number> = previewManifest.canvasByStyle
 const canvasHeight = computed(() => CANVAS_H[styleId.value] ?? CANVAS_H.default)
 const veilViewBox = computed(() => `0 0 375 ${canvasHeight.value}`)
 const veilAlpha = computed(() => (100 - bgGradientStrength.value) / 100)

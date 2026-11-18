@@ -306,8 +306,11 @@ describe('content/MpTheme（P5 固定预览区 + 两轴组合三步选择 + 顶�
     expect(veil(w).exists()).toBe(true)
     expect(veilAlphaAttr(w)).toBe('0')
     expect(veilStyle(w)).toContain('height: 100%')
-    expect(veil(w).attributes('viewBox')).toBe('0 0 375 1294')
-    expect(veil(w).find('rect').attributes('height')).toBe('1294')
+    // 高度从 manifest 反算，不写死数字：换服务图会让内容底部整体变矮，
+    // 硬编码会像 2026-11-18 那样悄悄红掉。
+    const defaultH = JSON.parse(readFileSync(MANIFEST, 'utf-8')).contentBottoms.default + 80
+    expect(veil(w).attributes('viewBox')).toBe(`0 0 375 ${defaultH}`)
+    expect(veil(w).find('rect').attributes('height')).toBe(String(defaultH))
     expect(veilMaskRef(w)).toBe('url(#wc-veil-mask-preview)')
     expect(veilMaskSrc(w)).toContain('/theme-previews/masks/default.png')
   })
