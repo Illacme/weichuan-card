@@ -62,11 +62,13 @@ describe('首页文字区四档展示跨层映射', () => {
       .toContain('font-size: 24rpx')
     // ink/teal 基线本身是 30rpx：若中档也写 30，大与中会同字号（旧实现缺陷）。
     // 两款必须单独覆盖到 26 / 22，档差才成立。
+    // 前缀是 `.wc-theme.wc-style-*`：纯字号覆盖不是「风格布局规则」，写成 `.wc-style-*`
+    // 会被 theme.spec 判成越界（必须落在四个模块钩子内），也会被预览脚本抽进快照。
     for (const style of ['ink', 'teal']) {
-      expect(ruleBody(WXSS, `.wc-style-${style} .pf-text .company-name.company-name-size-medium`),
+      expect(ruleBody(WXSS, `.wc-theme.wc-style-${style} .pf-text .company-name.company-name-size-medium`),
         `${style} 中档未覆盖`)
         .toContain('font-size: 26rpx')
-      expect(ruleBody(WXSS, `.wc-style-${style} .pf-text .company-name.company-name-size-small`),
+      expect(ruleBody(WXSS, `.wc-theme.wc-style-${style} .pf-text .company-name.company-name-size-small`),
         `${style} 小档未覆盖`)
         .toContain('font-size: 22rpx')
     }

@@ -591,11 +591,14 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .pf-text .company-name.company-name-size-small { font-size: 24rpx; }
 /* 两条 ink/teal 覆盖刻意**各写一条独立规则**，不合并成分组选择器：
    app.wxss 的守门（home_text_display.spec 的 ruleBody）按「选择器紧跟 {」取规则体，
-   分组写法下第一条选择器后面是逗号，抓不到 → 断言直接抛错。拆开也更易读。 */
-.wc-style-ink .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
-.wc-style-teal .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
-.wc-style-ink .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
-.wc-style-teal .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
+   分组写法下第一条选择器后面是逗号，抓不到 → 断言直接抛错。拆开也更易读。
+   前缀用 `.wc-theme.wc-style-*`（与本文件 ink 单栏塌陷那几条一致）而非 `.wc-style-*`：
+   后者会被 theme.spec 当成「风格布局规则」校验必须落在四个模块钩子内，也会被
+   gen_theme_previews.py 抽进预览快照——纯字号覆盖不是布局规则，不该触发重出图。 */
+.wc-theme.wc-style-ink .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
+.wc-theme.wc-style-teal .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
+.wc-theme.wc-style-ink .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
+.wc-theme.wc-style-teal .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
 
 /* 两块之一被关闭时，ink 的双栏 grid 必须塌成单栏并撤销子项的 grid-area；
    否则空出来的 34% 列与「指向第 2 列」的 grid-area 会隐式造列，继续挤占屏幕。

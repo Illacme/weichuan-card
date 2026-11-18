@@ -5510,10 +5510,18 @@ ink/teal 4rpx（15/13/11px）。小档 11px 已是微信正文的可读下限，
 用 `.wc-style-ink .pf-text .company-name.company-name-size-*` 三段+类的特异度单独覆盖，
 否则会被 30rpx 基线吃掉。
 
-**踩坑**：两条 ink/teal 覆盖最初写成分组选择器（`ink..., teal... { }`），而
+**踩坑一**：两条 ink/teal 覆盖最初写成分组选择器（`ink..., teal... { }`），而
 `home_text_display.spec.ts` 的 `ruleBody` 按「选择器紧跟 `{`」取规则体，分组下第一条
-选择器后面是逗号，抓不到 → 断言直接抛错。已拆成四条独立规则，并在 WXSS 里留注释
-说明为什么不能合并。
+选择器后面是逗号，抓不到 → 断言直接抛错。已拆成四条独立规则。
+
+**踩坑二**：前缀不能写 `.wc-style-ink`。`theme.spec.ts` 会把所有 `^.wc-style-<id>`
+规则当成「风格布局规则」，要求选择器必须落在 `.emp-card` / `.mp-profile` /
+`.mp-achievements` / `.mp-services` 四个模块钩子内，否则判「布局规则越界」；同时
+`gen_theme_previews.py` 的 `read_layout_rules()` 会把它们抽进 44 组合的布局快照，
+改了却没重出图就判快照漂移。纯字号覆盖不是布局规则，前缀改用
+`.wc-theme.wc-style-*`（与本文件 ink 单栏塌陷那几条同款写法），既保留足够的
+特异度（0,5,0 压过风格层 `.wc-style-x .mp-profile .company-name` 的 0,3,0），
+又不进那两个守门的视野。`--check` 复核：44 组合产物与快照仍同版，无需重出图。
 
 守门：`intro_font.spec.ts`（三档 30/26/22 + 只写 font-size 不碰 line-height/margin）、
 `home_text_display.spec.ts`（默认档 30/24、ink/teal 覆盖 26/22、large 不得写死
