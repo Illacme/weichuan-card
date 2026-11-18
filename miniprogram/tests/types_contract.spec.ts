@@ -98,18 +98,22 @@ describe('小程序类型契约与 Go 模型对账', () => {
     expect(tsFields('AchievementsResp')).toEqual(['categories', 'featured'])
     expect(tsFields('HomeLayoutResp')).toEqual([
       'bgGradientStrength', 'bgImage', 'bgMask', 'brandColorId', 'categoryLimit',
-      'featuredCount', 'featuredEffect', 'order', 'styleId', 'templateId',
+      'featuredCount', 'featuredEffect', 'order', 'showCategoryName', 'showServiceName',
+      'styleId', 'templateId',
     ])
     // HomeLayoutResp 是根级信封：主题两轴 (styleId / brandColorId) 必须真实存在于
     // Go 模型的 json tag 里，否则端上会读到后端根本不下发的字段，主题功能静默失效。
     // bgGradientStrength（顶部主色浓度）同属后端真实下发的展示配置，一并强约束。
     // 0049 三项（categoryLimit / featuredCount / featuredEffect）也必须真实存在于
     // Go 模型 json tag 且由公开接口下发，否则后台改了小程序却收不到，静默失效。
+    // 0050 两个名称开关同理：端上按 showName 决定渲不渲染标题，后端不下发就永远是
+    // undefined → 开关看起来「没反应」，而图片与版式完全正常，最难查的一类。
     // templateId 是端上兼容旧后端 / 旧缓存的可选字段（resolveTheme 仍按它拆两轴），
     // 后端 0043 已删除该列、不再下发，故不进「后端必须 emit」的强约束。
     for (const key of [
       'styleId', 'brandColorId', 'bgGradientStrength',
       'categoryLimit', 'featuredCount', 'featuredEffect',
+      'showCategoryName', 'showServiceName',
     ]) {
       expect(goJSONFields('HomeLayout'), key).toContain(key)
     }
