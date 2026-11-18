@@ -39,6 +39,20 @@
     binderror="onVideoError"
   />
 
+  <!-- 跳转播放（视频号档 + play-mode="redirect"）：wx.openChannelsActivity 打开视频号视频页。
+       必须排在 feed-id / feed-token / channel-id 三个内嵌分支**之前**——否则选了跳转的块
+       仍会被 channel-video 内嵌播放，客户在后台选的播放方式等于没生效（不报错、只违背配置）。
+       块里没有封面可用（富文本块不配封面），所以画一张「在视频号中播放」的卡片当可点区域。 -->
+  <view
+    wx:elif="{{videoType === 'channels' && playMode === 'redirect' && channelId && feedId}}"
+    class="rich-video-jump"
+    hover-class="rich-video-jump-down"
+    bindtap="onOpenChannels"
+  >
+    <view class="rich-video-jump-btn"></view>
+    <view class="rich-video-jump-tip">在视频号中播放</view>
+  </view>
+
   <!-- 视频号块（无 type / type="channels"，存量内容兼容）：三凭证优先级递减 -->
   <channel-video wx:elif="{{feedId}}" feed-id="{{feedId}}" class="rich-video" />
 

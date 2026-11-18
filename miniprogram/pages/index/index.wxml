@@ -63,6 +63,8 @@
           videoSource="{{profile.videoSource}}"
           feedId="{{profile.videoFeedId}}"
           feedToken="{{profile.videoFeedToken}}"
+          channelId="{{profile.videoChannelId}}"
+          playMode="{{profile.videoChannelPlayMode}}"
           vid="{{profile.videoVid}}"
           videoUrl="{{profile.videoUrl}}"
           backupUrl="{{profile.videoBackupUrl}}"

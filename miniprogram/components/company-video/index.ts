@@ -26,8 +26,15 @@
 //               代价是强制 autoplay=false。平台模式下客户的视频号与我们小程序必然不同主体，
 //               走的就是这条。feed-id 优先：两个都填时只认 feed-id。
 //
-// 渲染档位：channels / channels-token 用 channel-video；txv 用插件的 txv-video；
-// mp4 用 video；none 回封面占位。
+// 渲染档位：channels / channels-token 用 channel-video；channels-redirect 用封面 + 跳转；
+// txv 用插件的 txv-video；mp4 用 video；none 回封面占位。
+//
+// 播放方式（playMode）只对视频号档有意义，由后台显式选择，不按凭证自动切换：
+//   embed（缺省） <channel-video> 原位内嵌
+//   redirect      wx.openChannelsActivity 跳转打开视频号视频页——无主体限制（跨主体也能用），
+//                 代价是离开小程序，且播放发生在我们观测不到的地方。
+// redirect 需要 channelId（finderUserName）+ feedId 同时存在：官方这个接口**没有**
+// feed-token 参数，所以跨主体「只想看就行」的场景只要客户能提供这两个值就能用。
 //
 // 播放埋点（video_play）覆盖 mp4 与 txv 两档：官方 channel-video 组件只开放 binderror
 // 一个事件，没有播放回调（video 组件自 1.0.0 起有 bindplay）——视频号档的播放
@@ -39,6 +46,7 @@
 import { track } from '../../utils/track'
 import { onImgFail } from '../../utils/thumb'
 import { mp4BoxStyleFor as boxStyleFor } from '../../utils/mp4box'
+import { openChannelsVideo } from '../../utils/channels'
 
 // 腾讯视频插件注入到小程序的全局函数。本项目 tsconfig 没引 wx 的 typings，
 // 就近声明一次，免得 tsc 报 Cannot find name（模块内声明，不污染全局）。
@@ -98,6 +106,8 @@ function pickMode(
   source: string,
   feedId: string,
   feedToken: string,
+  channelId: string,
+  playMode: string,
   vid: string,
   videoUrl: string,
   fallback: boolean,
@@ -105,6 +115,13 @@ function pickMode(
 ): string {
   const url = (videoUrl || '').trim()
   if (source === 'channels' && !failed) {
+    // 跳转播放优先：它只认 channelId + feedId，不受主体限制。
+    // 后台保存时会校验这两个值，所以走不到「选了跳转但缺参数」；
+    // 真缺了（历史数据被手工改过）就继续往下走内嵌分支——
+    // 让视频还能看，比摆一块点不动的封面强。
+    if (playMode === 'redirect' && (channelId || '').trim() && (feedId || '').trim()) {
+      return 'channels-redirect'
+    }
     if ((feedId || '').trim()) return 'channels'
     if ((feedToken || '').trim()) return 'channels-token'
   }
@@ -126,6 +143,12 @@ Component({
     feedId: String,
     // 跨主体凭证：feed-token（feedId 为空时启用）
     feedToken: String,
+    // 视频号 ID（sph 开头）。跳转播放时作为 wx.openChannelsActivity 的 finderUserName，
+    // 内嵌模式只作留档——所以它只在 channels-redirect 档位下被消费。
+    channelId: String,
+    // 视频号档播放方式：embed（缺省）/ redirect。只认 redirect 这一个非默认值，
+    // 脏值等同 embed（与后端 NormalizeVideoChannelPlayMode、编辑器解析同一口径）。
+    playMode: String,
     // 腾讯视频 vid（tencent 档唯一凭证）。插件须在 app.json 静态声明，
     // 未声明时 txv-video 是未注册组件，渲染不出来——故默认由部署方关闭该档，
     // 声明插件并开启开关后这里才会收到非空 vid。
@@ -190,10 +213,12 @@ Component({
     // backupUrl 也进监听列表：后台改了备用地址就该把「已切过备用」的标记复位，
     // 否则刷新后仍是旧状态，主源一失败直接显示失败态，新配置的备用地址根本没机会用。
     // 回调不声明它——JS 允许少接参数，取值一律在 onVideoError 里读 this.data。
-    'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl': function (
+    'videoSource, feedId, feedToken, channelId, playMode, vid, videoUrl, fallback, backupUrl': function (
       videoSource: string,
       feedId: string,
       feedToken: string,
+      channelId: string,
+      playMode: string,
       vid: string,
       videoUrl: string,
       fallback: boolean
@@ -211,6 +236,8 @@ Component({
           videoSource || '',
           feedId || '',
           feedToken || '',
+          channelId || '',
+          playMode || '',
           vid || '',
           videoUrl || '',
           !!fallback,
@@ -275,6 +302,21 @@ Component({
         if (this.data.txvPlaying) return
         this.setData({ txvMaskOff: true, txvStarting: false })
       }, TXV_START_TIMEOUT_MS)
+    },
+    // 跳转播放：点封面用 wx.openChannelsActivity 打开视频号视频页。
+    //
+    // 参数校验、低版本兜底与失败提示都在 utils/channels.ts 里，与富文本视频块共用：
+    // 这一档最容易踩的坑是「视频被删 / 设为私密 / 参数不属于该视频号」时界面毫无反应，
+    // 两处各写一遍必然会有一处漏掉提示。
+    //
+    // 不计 video_play：跳转之后播放发生在视频号里，我们观测不到；
+    // 把「点了一下」记成播放会让统计口径变浑（与内嵌档没有播放事件的处理一致）。
+    onOpenChannels() {
+      openChannelsVideo(
+        (this.data as any).channelId || '',
+        (this.data as any).feedId || '',
+        'company-video'
+      )
     },
     // video_play 埋点（mp4 / txv 档；channel-video 无播放事件，见文件头说明）。
     // 组件实例级去重：暂停恢复再播不重复计。
@@ -380,6 +422,8 @@ Component({
         src,
         s.feedId || '',
         s.feedToken || '',
+        s.channelId || '',
+        s.playMode || '',
         s.vid || '',
         s.videoUrl || '',
         !!s.fallback,

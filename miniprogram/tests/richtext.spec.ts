@@ -24,6 +24,7 @@ describe('parseRich', () => {
         feedId: 'feed_1',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
@@ -41,6 +42,7 @@ describe('parseRich', () => {
         feedId: '',
         feedToken: 'tok_1',
         channelId: '',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
@@ -57,6 +59,7 @@ describe('parseRich', () => {
         feedId: '',
         feedToken: '',
         channelId: 'sph_1',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
@@ -74,6 +77,7 @@ describe('parseRich', () => {
         feedId: '',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'tencent',
         vid: 'v_abc',
         src: '',
@@ -91,6 +95,7 @@ describe('parseRich', () => {
         feedId: '',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'mp4',
         vid: '',
         src: 'https://cdn.example.com/v.mp4',
@@ -117,6 +122,7 @@ describe('parseRich', () => {
         feedId: 'f_1',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
@@ -172,6 +178,7 @@ describe('parseRich', () => {
         feedId: 'feed_2',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
@@ -297,10 +304,53 @@ describe('buildWxVideo', () => {
         feedId: 'f_roundtrip',
         feedToken: '',
         channelId: '',
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',
       },
     ])
+  })
+
+  // 跳转模式才写出 play-mode：embed 是缺省语义，写出来等于把存量内容无谓改写一遍
+  it('跳转模式输出 play-mode="redirect"，内嵌不输出', () => {
+    expect(buildWxVideo('f_1', 'sph_1', '', 'redirect')).toBe(
+      '<wx-video feed-id="f_1" channel-id="sph_1" play-mode="redirect"></wx-video>'
+    )
+    expect(buildWxVideo('f_1', 'sph_1', '', 'embed')).toBe(
+      '<wx-video feed-id="f_1" channel-id="sph_1"></wx-video>'
+    )
+  })
+})
+
+describe('parseRich 的 play-mode（视频号跳转播放）', () => {
+  // 视频号 ID + feedId 齐全是跳转的硬前提：wx.openChannelsActivity 只接这两个参数，
+  // 缺一个就回落内嵌——否则端上会渲染一张点了必然失败的卡片。
+  it('channel-id + feed-id + play-mode=redirect：解析为 redirect', () => {
+    const [seg] = parseRich(
+      '<wx-video feed-id="f_1" channel-id="sph_1" play-mode="redirect"></wx-video>'
+    )
+    expect(seg.playMode).toBe('redirect')
+  })
+
+  it('缺 feed-id：即使写了 play-mode 也回落 embed', () => {
+    const [seg] = parseRich('<wx-video channel-id="sph_1" play-mode="redirect"></wx-video>')
+    expect(seg.playMode).toBe('embed')
+  })
+
+  it('缺 channel-id：回落 embed（只有 feed-token 时接口没有 finderUserName）', () => {
+    const [seg] = parseRich('<wx-video feed-token="tok_1" play-mode="redirect"></wx-video>')
+    expect(seg.playMode).toBe('embed')
+  })
+
+  it('脏值与非视频号块一律按 embed', () => {
+    expect(
+      parseRich('<wx-video feed-id="f_1" channel-id="sph_1" play-mode="future"></wx-video>')[0]
+        .playMode
+    ).toBe('embed')
+    // mp4 / tencent 档没有播放方式可选项，属性即便残留也不该生效
+    expect(parseRich('<wx-video type="mp4" src="https://x/a.mp4" play-mode="redirect"></wx-video>')[0].playMode).toBe(
+      'embed'
+    )
   })
 })

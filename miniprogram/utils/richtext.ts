@@ -8,6 +8,8 @@
 //                 （基础库 2.31.1+，非个人主体），代价是强制不能自动播放。
 //     channel-id  视频号 ID，**sph 开头**（`gh_` 是公众号 ID，早期注释写错，勿沿用）。
 //                 只能映射到 finder-user-name 展示视频号主页，播不了指定视频。
+//     play-mode   仅视频号块：redirect=wx.openChannelsActivity 跳转打开（需要 channel-id +
+//                 feed-id，无主体限制）；缺省 embed=<channel-video> 原位内嵌。
 //     优先级 feed-id > feed-token > channel-id。后两者是兼容与跨主体通道，
 //     直接丢弃存量内容里的 channel-id 会让这些片段整块消失。
 //   type="tencent" 腾讯视频块——vid 是唯一取片凭证（v.qq.com 播放页 page/ 与 .html 之间那段）。
@@ -23,6 +25,12 @@ export interface RichSegment {
   feedId?: string
   feedToken?: string
   channelId?: string
+  /**
+   * 视频号档播放方式：embed（缺省）/ redirect。
+   * redirect 走 wx.openChannelsActivity 跳转打开，需要 channelId + feedId 同时存在；
+   * 脏值与其他类型一律按 embed 处理（只认 redirect 这一个非默认值）。
+   */
+  playMode?: 'embed' | 'redirect'
   videoType?: 'channels' | 'tencent' | 'mp4'
   vid?: string
   src?: string
@@ -92,6 +100,14 @@ export function parseRich(html: string): RichSegment[] {
     const channelId = attr(m[1], 'channel-id')
     const vid = attr(m[1], 'vid')
     const src = attr(m[1], 'src')
+    // 播放方式只对视频号块有意义；缺省/脏值都归到 embed（存量内容没有这个属性）。
+    // 跳转需要 channel-id + feed-id 两个参数，缺一个就回落内嵌——让视频还能看，
+    // 比摆一张点不动的卡片强（后台保存时已校验，这里只防手工改过的数据）。
+    const rawPlayMode = (attr(m[1], 'play-mode') || '').toLowerCase()
+    const playMode: 'embed' | 'redirect' =
+      videoType === 'channels' && rawPlayMode === 'redirect' && channelId && feedId
+        ? 'redirect'
+        : 'embed'
     // 各类型取片凭证齐全才构成视频块；否则标签是空的、渲染不出任何东西——
     // 当作普通文本留给 rich-text，否则会切出一个空白 video 段，把前后 html 无谓地割裂开。
     const playable =
@@ -107,6 +123,7 @@ export function parseRich(html: string): RichSegment[] {
       feedId,
       feedToken,
       channelId,
+      playMode,
       videoType,
       vid,
       src,
@@ -121,10 +138,17 @@ export function parseRich(html: string): RichSegment[] {
 
 // 供 PC 管理端富文本编辑器插入视频号块时生成标准标记。
 // channelId 可省略：只填 feed-id 就能播指定视频，视频号 ID 只是留档。
-export function buildWxVideo(feedId: string, channelId = '', feedToken = ''): string {
+// playMode 只在跳转时输出属性：embed 是缺省语义，写出来等于把存量内容无谓改写一遍。
+export function buildWxVideo(
+  feedId: string,
+  channelId = '',
+  feedToken = '',
+  playMode: 'embed' | 'redirect' = 'embed'
+): string {
   const attrs: string[] = []
   if (feedId) attrs.push(`feed-id="${feedId}"`)
   if (feedToken) attrs.push(`feed-token="${feedToken}"`)
   if (channelId) attrs.push(`channel-id="${channelId}"`)
+  if (playMode === 'redirect') attrs.push(`play-mode="redirect"`)
   return `<wx-video ${attrs.join(' ')}></wx-video>`
 }

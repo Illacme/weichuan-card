@@ -18,6 +18,36 @@
     bind:error="onVideoError"
   />
 
+  <!-- 跳转播放：wx.openChannelsActivity 打开视频号视频页（基础库 2.19.2+，**无主体限制**）。
+       与上面两档的差别是「访客会离开小程序」，所以由后台显式选择（playMode=redirect），
+       不能按凭证自动切换——客户要的是「原位播放」还是「能看就行」，只有他知道。
+
+       这一档没有播放器可用（视频号视频页在小程序外），所以用封面 + 播放角标做可点区域；
+       封面缺失时退到同风格占位，仍然可点（否则客户换了封面就点不动）。
+       **不计 video_play**：播放发生在视频号里，我们观测不到；把「点了一下」记成播放
+       会让统计口径变浑（与视频号内嵌档同样没有播放事件，处理一致）。 -->
+  <view
+    wx:elif="{{mode === 'channels-redirect'}}"
+    class="cv-wrap cv-jump"
+    hover-class="cv-jump-down"
+    bindtap="onOpenChannels"
+  >
+    <image
+      wx:if="{{cover && coverFail !== cover}}"
+      src="{{cover}}"
+      class="cv"
+      mode="aspectFill"
+      binderror="onImgFail"
+      data-fail="coverFail"
+      data-src="{{cover}}"
+    />
+    <view wx:else class="cv cv-ph"></view>
+    <view class="cv-jump-mask">
+      <view class="cv-jump-btn"></view>
+      <view class="cv-jump-tip">在视频号中播放</view>
+    </view>
+  </view>
+
   <!-- 腾讯视频插件：vid 取片，原位播放，画面不带视频号角标。
        playerid 需全局唯一（插件用它取 TxvContext 手动控制播放）；use-poster 让加载期
        显示腾讯视频按 vid 取到的默认海报，避免一块黑底。

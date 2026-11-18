@@ -79,6 +79,12 @@ export interface CompanyProfile {
   introFontScale: string
   videoSource: string
   videoChannelId: string
+  /**
+   * 视频号档播放方式：embed（缺省）=<channel-video> 原位内嵌；
+   * redirect=wx.openChannelsActivity 跳转打开视频号视频页（无主体限制，会离开小程序）。
+   * redirect 需要 videoChannelId + videoFeedId 同时存在（接口不收 feed-token）。
+   */
+  videoChannelPlayMode: string
   /** feedId（同主体，可自动播放）与 feedToken（跨主体，强制不能自动播放）二选一 */
   videoFeedId: string
   videoFeedToken: string

@@ -92,6 +92,8 @@ describe('project/detail 页', () => {
         feedId: 'f1',
         feedToken: '',
         channelId: '',
+        // 存量内容没有 play-mode 属性，归一为 embed（原位内嵌，与升级前一致）
+        playMode: 'embed',
         videoType: 'channels',
         vid: '',
         src: '',

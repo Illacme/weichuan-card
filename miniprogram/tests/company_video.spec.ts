@@ -27,6 +27,10 @@ let playSpy: any
 // 默认 360px（约等于 iPhone 上带左右内边距的卡片），置 null 模拟量不到。
 let mp4BoxWidth: number | null = 360
 let querySelectors: string[] = []
+// 跳转播放的调用记录：wx.openChannelsActivity 收到什么参数、给了什么提示，
+// 都只能从这里看——「点了没反应」的坏形态光看 mode 是发现不了的。
+let openCalls: any[] = []
+let toastCalls: any[] = []
 
 beforeEach(() => {
   captured = null
@@ -34,6 +38,8 @@ beforeEach(() => {
   requirePluginImpl = () => ({ getTxvContext: () => ({ play: playSpy }) })
   mp4BoxWidth = 360
   querySelectors = []
+  openCalls = []
+  toastCalls = []
   vi.resetModules()
   vi.stubGlobal('Component', (opts: any) => {
     captured = opts
@@ -57,6 +63,14 @@ beforeEach(() => {
         },
       }
       return q
+    },
+    // 跳转播放（playMode=redirect）用的两个接口。默认都在，个别用例可以删掉
+    // openChannelsActivity 来模拟「基础库 < 2.19.2」。
+    openChannelsActivity: (o: any) => {
+      openCalls.push(o)
+    },
+    showToast: (o: any) => {
+      toastCalls.push(o)
     },
   })
   mocks.request.mockClear()
@@ -99,12 +113,13 @@ function instance(opts: any) {
     }
   }
   inst.observers = {}
-  const observerKey = 'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl'
+  const observerKey =
+    'videoSource, feedId, feedToken, channelId, playMode, vid, videoUrl, fallback, backupUrl'
   inst.observers[observerKey] = opts.observers[observerKey].bind(inst)
   // 简写：按真机入参顺序触发观察者。先把 properties 写进 data——
   // 真机框架会自动同步（组件的 properties 变化即落到 this.data），
   // 测试里手工补上，否则 onVideoError 读 this.data.videoSource 是 undefined。
-  // vid / backupUrl 放最后：既有用例都用不到它们，加在末尾不用改一堆调用点。
+  // channelId / playMode 放最后：旧用例都用不到它们，加在末尾不用改一堆调用点。
   inst.repick = (
     source: string,
     feedId: string,
@@ -112,10 +127,31 @@ function instance(opts: any) {
     videoUrl: string,
     fallback = false,
     vid = '',
-    backupUrl = ''
+    backupUrl = '',
+    channelId = '',
+    playMode = ''
   ) => {
-    inst.setData({ videoSource: source, feedId, feedToken, vid, videoUrl, fallback, backupUrl })
-    inst.observers[observerKey](source, feedId, feedToken, vid, videoUrl, fallback)
+    inst.setData({
+      videoSource: source,
+      feedId,
+      feedToken,
+      channelId,
+      playMode,
+      vid,
+      videoUrl,
+      fallback,
+      backupUrl,
+    })
+    inst.observers[observerKey](
+      source,
+      feedId,
+      feedToken,
+      channelId,
+      playMode,
+      vid,
+      videoUrl,
+      fallback
+    )
   }
   return inst
 }
@@ -153,6 +189,86 @@ describe('company-video 组件', () => {
     c.repick('channels', '', 'tok_1', '', false)
 
     expect(c.data.mode).toBe('channels-token')
+  })
+
+  // ---- 跳转播放（playMode=redirect）----
+  //
+  // 由后台显式选择，不按凭证自动切换：客户要「原位播放」还是「跳出去能看就行」，
+  // 只有他知道。两种方式的差别不是效果好坏，而是访客会不会离开小程序。
+  // redirect 的硬前提是 channelId（finderUserName）+ feedId：
+  // wx.openChannelsActivity 没有 feed-token 参数，缺一个就退回内嵌。
+
+  it('channels + redirect 且 channelId/feedId 齐全：走 channels-redirect', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', 'redirect')
+
+    expect(c.data.mode).toBe('channels-redirect')
+  })
+
+  // 缺 finderUserName 时不能给出这一档：那一档的点击必然失败（接口两个参数都要）。
+  // 退回内嵌至少视频还能看——比摆一块点不动的封面强。
+  it('channels + redirect 但缺 channelId：回落内嵌', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('channels', 'feed_1', '', '', false, '', '', '', 'redirect')
+
+    expect(c.data.mode).toBe('channels')
+  })
+
+  it('channels + redirect 但只有 feedToken：回落 channels-token', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('channels', '', 'tok_1', '', false, '', '', 'sph_1', 'redirect')
+
+    expect(c.data.mode).toBe('channels-token')
+  })
+
+  it('embed（空串/脏值）仍走内嵌：只认 redirect 这一个非默认值', async () => {
+    const c = instance(await loadComponent())
+
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', '')
+    expect(c.data.mode).toBe('channels')
+
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', 'REDIRECT')
+    expect(c.data.mode).toBe('channels')
+  })
+
+  it('点击封面：把 finderUserName / feedId 交给 wx.openChannelsActivity', async () => {
+    const c = instance(await loadComponent())
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', 'redirect')
+
+    c.onOpenChannels()
+
+    expect(openCalls).toHaveLength(1)
+    expect(openCalls[0]).toMatchObject({ finderUserName: 'sph_1', feedId: 'feed_1' })
+  })
+
+  // 低版本微信在真实用户里仍有存量：不提示的话表现就是「封面怎么点都没反应」
+  it('基础库没有 openChannelsActivity：提示升级，不发请求', async () => {
+    const c = instance(await loadComponent())
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', 'redirect')
+    delete (globalThis as any).wx.openChannelsActivity
+
+    c.onOpenChannels()
+
+    expect(openCalls).toHaveLength(0)
+    expect(toastCalls.some((t) => String(t.title).includes('升级'))).toBe(true)
+  })
+
+  // 视频被删 / 设私密 / feedId 不属于该视频号：微信只回调 fail。
+  // 不提示就等于「点了没反应」，这是这一档最难被发现的坏形态。
+  it('openChannelsActivity 失败：给出可读提示', async () => {
+    const c = instance(await loadComponent())
+    c.repick('channels', 'feed_1', '', '', false, '', '', 'sph_1', 'redirect')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    c.onOpenChannels()
+    openCalls[0].fail({ errMsg: 'openChannelsActivity:fail' })
+
+    expect(toastCalls.some((t) => String(t.title).includes('无法打开'))).toBe(true)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('none 档：回封面占位，不渲染播放器', async () => {
@@ -1097,7 +1213,27 @@ describe('自托管 MP4 备用地址的静态守门', () => {
 
   it('组件声明 backupUrl，并把它放进 observer 的监听列表', () => {
     expect(compTs).toContain('backupUrl: String')
-    expect(compTs).toContain("'videoSource, feedId, feedToken, vid, videoUrl, fallback, backupUrl'")
+    // 监听列表里 backupUrl 不能少：换了备用地址要复位「已切过备用」标记，否则新配置没机会用。
+    // channelId / playMode 同样要监听：后台把播放方式从内嵌改成跳转，刷新就该生效，
+    // 不能要求访客重进页面（这一档改的正是「点封面会发生什么」）。
+    expect(compTs).toContain(
+      "'videoSource, feedId, feedToken, channelId, playMode, vid, videoUrl, fallback, backupUrl'"
+    )
+  })
+
+  // 跳转档要两个入参 + 一条 WXML 分支，缺一条就整档不生效（且不报错）：
+  // 只传 playMode 不传 channelId → 组件判定参数不足、回落内嵌；
+  // 传了参数但没有分支 → mode 已是 channels-redirect，界面却什么都不渲染。
+  it('首页把 channelId / playMode 传给组件', () => {
+    const tag = /<company-video\b[^>]*\/?>/.exec(indexWxml)?.[0] || ''
+    expect(tag).toContain('channelId="{{profile.videoChannelId}}"')
+    expect(tag).toContain('playMode="{{profile.videoChannelPlayMode}}"')
+  })
+
+  it('组件有跳转档分支，且绑定了点击处理', () => {
+    const branch = /<view[^>]*mode === 'channels-redirect'[\s\S]*?>/.exec(compWxml)?.[0] || ''
+    expect(branch).toContain('bindtap="onOpenChannels"')
+    expect(compTs).toContain('onOpenChannels(')
   })
 
   it('首页把备用地址也过 assetUrl（相对路径喂给 video 只会黑屏）', () => {

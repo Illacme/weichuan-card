@@ -28,12 +28,17 @@ let captured: any = null
 let boxWidth: number | null = 360
 let querySelectors: string[] = []
 let queryThrows = false
+// 跳转播放（playMode=redirect）的调用记录
+let openCalls: any[] = []
+let toastCalls: any[] = []
 
 beforeEach(() => {
   captured = null
   boxWidth = 360
   querySelectors = []
   queryThrows = false
+  openCalls = []
+  toastCalls = []
   vi.resetModules()
   vi.stubGlobal('Component', (opts: any) => {
     captured = opts
@@ -57,6 +62,12 @@ beforeEach(() => {
         },
       }
       return q
+    },
+    openChannelsActivity: (o: any) => {
+      openCalls.push(o)
+    },
+    showToast: (o: any) => {
+      toastCalls.push(o)
     },
   })
   mocks.track.mockClear()
@@ -90,7 +101,7 @@ function instance(opts: any) {
       }
     }
   }
-  const observerKey = 'videoType, vid, src, feedId, feedToken, channelId'
+  const observerKey = 'videoType, vid, src, feedId, feedToken, channelId, playMode'
   inst.observers = {}
   inst.observers[observerKey] = opts.observers[observerKey].bind(inst)
   // 模拟真机「属性变化 → observers 触发」：properties 变化落到 data 后调观察者
@@ -146,6 +157,39 @@ describe('rich-video 组件', () => {
     c.onVideoPlay()
 
     expect(mocks.track).toHaveBeenCalledTimes(2)
+  })
+
+  // ---- 跳转播放（play-mode="redirect"）----
+  // 与首页公司视频共用 utils/channels.ts：参数校验、低版本兜底、失败提示都在那里，
+  // 两处各写一遍必然会有一处漏提示，而这里的坏形态就是「点了什么都不发生」。
+
+  it('点击跳转卡片：把 finderUserName / feedId 交给 wx.openChannelsActivity', async () => {
+    const c = instance(await loadComponent())
+    c.repick({
+      videoType: 'channels',
+      feedId: 'f_1',
+      channelId: 'sph_1',
+      playMode: 'redirect',
+    })
+
+    c.onOpenChannels()
+
+    expect(openCalls).toHaveLength(1)
+    expect(openCalls[0]).toMatchObject({ finderUserName: 'sph_1', feedId: 'f_1' })
+    // 不报 video_play：播放发生在视频号里，观测不到（把点击算成播放会让口径变浑）
+    expect(mocks.track).not.toHaveBeenCalled()
+  })
+
+  it('缺 channelId 时点不动也不静默：给配置错误提示，不发请求', async () => {
+    const c = instance(await loadComponent())
+    c.repick({ videoType: 'channels', feedId: 'f_1', playMode: 'redirect' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    c.onOpenChannels()
+
+    expect(openCalls).toHaveLength(0)
+    expect(toastCalls.some((t) => String(t.title).includes('配置不完整'))).toBe(true)
+    warn.mockRestore()
   })
 
   it('onVideoError 只打日志不抛错（块渲染失败的排查线索不能吞）', async () => {
@@ -345,6 +389,30 @@ describe('详情页视频块的静态守门', () => {
       const page = strip(readFileSync(resolve(root, rel), 'utf8'))
       expect(page).toContain('<rich-video')
       expect(page).toContain('src="{{item.src}}"')
+    }
+  })
+
+  // 顺序当承诺守：redirect 分支若排到 feed-id / feed-token 之后，选了跳转的块
+  // 仍会被 channel-video 内嵌播放——后台显示「跳转」、端上完全不照做，且不报任何错。
+  it('redirect 分支排在 feed-id / feed-token / channel-id 三个内嵌分支之前', () => {
+    const redirectIdx = wxml.indexOf("playMode === 'redirect'")
+    expect(redirectIdx).toBeGreaterThan(-1)
+
+    for (const anchor of ['{{feedId}}', '{{feedToken}}', '{{channelId}}']) {
+      const idx = wxml.indexOf(anchor)
+      // 量尺：锚点必须在场。锚点改名时这里先红，而不是让下面的比较恒真。
+      expect(idx, `锚点 ${anchor} 不在 WXML 里，顺序断言会空转`).toBeGreaterThan(-1)
+      expect(redirectIdx).toBeLessThan(idx)
+    }
+  })
+
+  it('两个详情页把 playMode 透传给视频块（跳转方式需要它才生效）', () => {
+    for (const rel of [
+      'pages/project/detail/detail.wxml',
+      'pages/service/detail/detail.wxml',
+    ]) {
+      const page = strip(readFileSync(resolve(root, rel), 'utf8'))
+      expect(page).toContain('playMode="{{item.playMode}}"')
     }
   })
 })

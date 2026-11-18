@@ -25,6 +25,7 @@
 // 归属 staffId 由页面透传。组件实例级去重：暂停恢复再播不重复计。
 import { track } from '../../utils/track'
 import { mp4BoxStyleFor } from '../../utils/mp4box'
+import { openChannelsVideo } from '../../utils/channels'
 
 // 真机上 wx 由小程序框架注入；单测里用 vi.stubGlobal 顶替。
 // 本项目 tsconfig 没引 wx 的 typings，就近声明一次（不污染全局）。
@@ -45,8 +46,12 @@ Component({
     feedId: String,
     // 跨主体：feed-token（feedId 为空时启用，强制不能自动播放）
     feedToken: String,
-    // 视频号 ID（sph 开头）：前两者都缺失时的兼容回退，只展示视频号主页
+    // 视频号 ID（sph 开头）：跳转播放时是 wx.openChannelsActivity 的 finderUserName；
+    // 内嵌且前两者都缺失时的兼容回退，只展示视频号主页
     channelId: String,
+    // 视频号档播放方式：embed（缺省）/ redirect。只认 redirect 这一个非默认值，
+    // 脏值等同 embed（与后台编辑器、company-video、后端归一同一口径）。
+    playMode: String,
     // ---- tencent：腾讯视频 vid（插件取片唯一凭证）----
     vid: String,
     // ---- mp4：直链地址 ----
@@ -72,11 +77,23 @@ Component({
   observers: {
     // 换块（详情页复用组件实例切内容）时重置去重：换了视频应允许再计一次。
     // 同时清掉上一段视频算出的画幅高度，等新视频的 metadata 重算。
-    'videoType, vid, src, feedId, feedToken, channelId': function () {
+    // playMode 也进监听：同一条内容切了播放方式，去重与画幅都该重新开始。
+    'videoType, vid, src, feedId, feedToken, channelId, playMode': function () {
       this.setData({ playTracked: false, mp4BoxStyle: '' })
     },
   },
   methods: {
+    // 跳转播放：点卡片用 wx.openChannelsActivity 打开视频号视频页。
+    // 参数校验 / 低版本兜底 / 失败提示统一走 utils/channels.ts（与首页公司视频共用）——
+    // 两处各写一遍必然会有一处漏掉提示，而这里的坏形态就是「点了什么都不发生」。
+    // 不计 video_play：播放发生在视频号里，观测不到（见文件头边界说明）。
+    onOpenChannels() {
+      openChannelsVideo(
+        (this.data as any).channelId || '',
+        (this.data as any).feedId || '',
+        'rich-video'
+      )
+    },
     // video_play 埋点（mp4 / tencent 档；channels 档无播放事件，见文件头）
     onVideoPlay() {
       if (this.data.playTracked) return
