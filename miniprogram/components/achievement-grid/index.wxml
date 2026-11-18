@@ -1,4 +1,6 @@
-<view class="cat-grid">
+<!-- categoryLimit=0（后台可配）时 categories 是空数组；ink 风格的 .cat-grid 带
+     一条底部分隔线，空数组仍会画出一条悬空横线。整块不渲染，连 flex 容器也不留。 -->
+<view class="cat-grid" wx:if="{{categories.length}}">
   <view class="cat-item" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="onTap">
     <!-- 有图：按设计稿正方形卡片整图展示 -->
     <image class="cat-icon" src="{{item.iconThumb}}" mode="widthFix" lazy-load wx:if="{{item.icon}}"

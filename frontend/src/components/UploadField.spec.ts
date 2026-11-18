@@ -249,6 +249,23 @@ describe('UploadField', () => {
       w.unmount()
     })
 
+    it('补缩略图阶段：100% 保留，文案说明在等缩略图而不是卡死', async () => {
+      const w = mountField()
+      const u = startUpload(w)
+
+      u.progress({ phase: 'thumb', percent: 100, loaded: 100, total: 100 })
+      await nextTick()
+
+      expect(w.find('.uf-progress').text()).toContain('正在生成缩略图')
+      expect(w.find('.uf-progress-pct').text()).toContain('100%')
+      expect(w.find('.uf-progress-bar.is-waiting').exists()).toBe(true)
+      expect(w.find('.uf-progress-bar').attributes('style')).toContain('100%')
+
+      u.done('https://cdn/x.png')
+      await flushPromises()
+      w.unmount()
+    })
+
     it('中转路径的 finishing：保留警示配色并说明「正在写入云存储」', async () => {
       const w = mountField()
       const u = startUpload(w)

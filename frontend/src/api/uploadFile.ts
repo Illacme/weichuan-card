@@ -28,6 +28,7 @@ export type UploadPhase =
   | 'direct' // 浏览器直接 PUT 到对象存储
   | 'server' // 直传不可用，改走应用服务器中转
   | 'finishing' // 请求体已全部发出，正在等对方确认/落盘（没有任何进度事件）
+  | 'thumb' // 字节已 100% 传完，服务端正在补 _thumb（直传专属，最多 8 秒）
 
 export type UploadVia = 'direct' | 'server'
 
@@ -94,7 +95,9 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
       // 直传的字节没经过服务端，_thumb 只能事后按 key 补（详见 ensureThumb）。
       // 放在 return 之前 await：调用方拿到 URL 就立刻保存并可能马上打开小程序，
       // 晚几百毫秒换取「上传完就一定带缩略图」的确定性，比事后偶发 404 回退划算。
-      await ensureThumb(action, p.data.key)
+      // 这一步已有 100% 但没有网络进度事件；不报独立阶段，用户看到的就是
+      // 「100% 后僵住最多 8 秒」，既有过据此误判上传失败的反馈。
+      await ensureThumb(action, p.data.key, () => report('thumb', file.size, file.size, true))
       return p.data.url
     }
   } catch {
@@ -124,11 +127,14 @@ export async function uploadFile(file: File, opts: UploadFileOptions = {}): Prom
  * 失败语义：**绝不影响上传结果**。图已经传上去了，缺缩略图只是多一次回退，
  * 让用户重传是不可接受的。这里只 console.warn 留痕，不抛错。
  * 带 8 秒超时：服务端要读回原图再重算，大图可能慢一点，但不能让调用方无限等。
+ * 等待期间通过 onStart 上报 phase='thumb'：字节已是 100%，UI 要说清在补缩略图，
+ * 不能只让进度条停在 100% 沉默等待。
  */
 const THUMB_ENSURE_TIMEOUT_MS = 8000
 
-async function ensureThumb(action: string, key?: string): Promise<void> {
+async function ensureThumb(action: string, key?: string, onStart?: () => void): Promise<void> {
   if (!key) return // 老后端不返回 key：无从指定对象，直接跳过
+  onStart?.() // 100% 之后的等待必须有阶段名，否则 UI 只能干等 8 秒
   const url = action.replace('/upload', '/upload/thumb')
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
   const timer = ctrl ? setTimeout(() => ctrl.abort(), THUMB_ENSURE_TIMEOUT_MS) : null

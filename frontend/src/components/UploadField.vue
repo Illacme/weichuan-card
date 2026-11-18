@@ -49,7 +49,7 @@
       <div class="uf-progress-track">
         <div
           class="uf-progress-bar"
-          :class="{ 'is-waiting': progress.phase === 'presign' || progress.phase === 'finishing' }"
+          :class="{ 'is-waiting': progress.phase === 'presign' || progress.phase === 'finishing' || progress.phase === 'thumb' }"
           :style="{ width: barWidth }"
         ></div>
       </div>
@@ -171,6 +171,8 @@ const phaseLabel = computed(() => {
   if (!p) return ''
   if (p.phase === 'presign') return '正在申请上传链接…'
   if (p.phase === 'direct') return '正在直传到云存储（不经应用服务器）…'
+  // 100% 之后还有一段补缩略图的等待（直传专属）。不说清楚就会被当成「传完了却没反应」。
+  if (p.phase === 'thumb') return '图片已上传，正在生成缩略图…（通常几秒）'
   if (p.phase === 'finishing') {
     // 中转路径下服务端还要把文件再写一次对象存储，这段最慢，必须说清原因
     return p.via === 'server'

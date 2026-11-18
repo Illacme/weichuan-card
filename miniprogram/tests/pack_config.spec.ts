@@ -43,10 +43,10 @@ function runtimeFiles(dir: string): string[] {
 describe('小程序打包配置', () => {
   // 量尺自己有读数：下面多条 not.toContain / toEqual([]) 型断言，若 packIgnore()
   // 解析失败返回空数组会全部恒绿（项目里踩过「抓取型守门一条都抓不到于是全绿」）。
-  // 先证明规则真的被读到了，且至少 4 条（tests / scripts / README / .DS_Store）。
+  // 先证明规则真的被读到了，且至少 6 条（tests / scripts / README / 两挡 .DS_Store / 私有配置）。
   it('能读到 ignore 规则本身（守门不空转）', () => {
     const rules = packIgnore()
-    expect(rules.length).toBeGreaterThanOrEqual(4)
+    expect(rules.length).toBeGreaterThanOrEqual(6)
     expect(rules).toContainEqual({ type: 'folder', value: 'tests' })
     expect(rules).toContainEqual({ type: 'folder', value: 'scripts' })
   })
@@ -65,6 +65,11 @@ describe('小程序打包配置', () => {
     // .gitignore 早就忽略 .DS_Store（第 2 行），但那只管入库、管不到「本地文件
     // 是否进小程序包」。miniprogram 根目录那个 6 KB 的 .DS_Store 要靠这条挡。
     expect(vals).toContain('file:.DS_Store')
+    // 子目录里的 .DS_Store 同样进包；官方文档确认 packOptions.ignore 的 type
+    // 支持 glob（工具 1.02.1809260+），所以用 **/ 递归匹配而不是逐层加 file 规则。
+    expect(vals).toContain('glob:**/.DS_Store')
+    // 开发者工具的个人配置：每台机器不同，不该随包发给客户。
+    expect(vals).toContain('file:project.private.config.json')
   })
 
   // sitemap.json 是微信搜索索引配置，app.* 是入口，pages/utils/components 是全部运行时代码。

@@ -218,6 +218,16 @@ describe('content/HomeLayout', () => {
     expect(time).toBeGreaterThan(display)
   })
 
+  // 顶部说明漏写分区时，运营只看第一眼会以为这个页签只有背景和顺序——
+  // 后来加的「业绩与案例展示」「封面图名称」正是这样被漏掉的（2026-11-18 盘点）。
+  it('顶部说明覆盖所有分区，不只列首页背景与板块顺序', async () => {
+    const w = await mountPage()
+    const desc = w.find('p.desc').text()
+    for (const kw of ['首页背景', '公司名称与简介', '先后顺序', '业绩分类', '精选案例', '封面图名称', '更新于']) {
+      expect(desc, `顶部说明漏了「${kw}」`).toContain(kw)
+    }
+  })
+
   // order[0] 决定谁是「在前」的板块
   it('后端 order 以 service 开头时，「当前顺序」与选中项同步', async () => {
     const w = await mountPage({ order: ['service', 'achievement'], bgImage: '', bgMask: 0 })

@@ -49,6 +49,14 @@
       {
         "type": "file",
         "value": ".DS_Store"
+      },
+      {
+        "type": "glob",
+        "value": "**/.DS_Store"
+      },
+      {
+        "type": "file",
+        "value": "project.private.config.json"
       }
     ],
     "include": []

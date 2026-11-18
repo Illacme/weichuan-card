@@ -252,6 +252,41 @@ describe('uploadFile', () => {
       expect(String((fetchFn.mock.calls[1] as any[])[0])).toBe('/api/admin/upload/thumb?companyId=2')
     })
 
+    it('补缩略图等待期上报 thumb 阶段：100% 之后不再静默卡住', async () => {
+      let releaseThumb: (v: any) => void = () => {}
+      const pending = new Promise<any>((resolve) => { releaseThumb = resolve })
+      const fn = vi.fn()
+        .mockResolvedValueOnce({ json: async () => directOk('t/5/abc.png') })
+        .mockImplementationOnce(() => pending)
+      vi.stubGlobal('fetch', fn)
+      const seen: any[] = []
+
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+      await flush()
+      FakeXHR.instances[0].finish(200)
+      await flush()
+
+      // 字节已 100%，但补缩略图还没回来：必须有独立阶段，不能让用户对着 100% 干等 8 秒
+      expect(seen.at(-1)).toMatchObject({ phase: 'thumb', percent: 100 })
+      expect(seen.filter((x) => x.phase === 'thumb')).toHaveLength(1)
+
+      releaseThumb({ json: async () => ({ code: 0 }) })
+      await expect(p).resolves.toBe('https://cdn/x.png')
+    })
+
+    it('老后端没返回 key：不进入 thumb 阶段', async () => {
+      mockFetchSeq(directOk())
+      const seen: any[] = []
+
+      const p = uploadFile(file(), { onProgress: (x) => seen.push(x) })
+      await flush()
+      FakeXHR.instances[0].finish(200)
+      await p
+
+      expect(seen.some((x) => x.phase === 'thumb')).toBe(false)
+      expect(seen.at(-1)).toMatchObject({ phase: 'direct', percent: 100 })
+    })
+
     it('补缩略图返回 code!=0：上传仍成功，只留一条 warn', async () => {
       mockFetchSeq(directOk('t/5/abc.png'), { code: 403, msg: '无权处理该对象' })
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
