@@ -7,7 +7,8 @@
 //   → app.wxss 的 .intro-size-{large,medium,small} 三条 font-size
 //
 // 字号只在小程序首页「简介文字」这一段生效；公司名、联系表、章节标题都不受影响。
-// large=28rpx 是历史观感（page 默认字号），所以升级存量零视觉突变。
+// large 从历史的 28rpx 提到 30rpx（+1px），是为了把三档区间拉开——旧档差只有 2rpx
+// （每档 1px，真机几乎看不出），2026-11-18 用户反馈「调整幅度偏小」后改为 30/26/22。
 //
 // 这里有「量尺自检」：先钉死一个写死的黄金片段（fixture），证明正则真能抓到东西，
 // 再断言真实源码。否则正则一旦写错，抓不到任何东西也会全绿（本项目栽过多次）。
@@ -35,19 +36,19 @@ function introFontSize(src: string, tier: string): string | undefined {
 describe('简介文字三档字号跨层映射', () => {
   it('量尺自检：黄金 fixture 能被解析出三档，防止正则空转', () => {
     const fixture = [
-      '.intro-size-large { font-size: 28rpx; }',
+      '.intro-size-large { font-size: 30rpx; }',
       '.intro-size-medium { font-size: 26rpx; }',
-      '.intro-size-small { font-size: 24rpx; }',
+      '.intro-size-small { font-size: 22rpx; }',
     ].join('\n')
-    expect(introFontSize(fixture, 'large')).toBe('28rpx')
+    expect(introFontSize(fixture, 'large')).toBe('30rpx')
     expect(introFontSize(fixture, 'medium')).toBe('26rpx')
-    expect(introFontSize(fixture, 'small')).toBe('24rpx')
+    expect(introFontSize(fixture, 'small')).toBe('22rpx')
   })
 
-  it('WXSS 定义三档字号，large 保持历史 28rpx', () => {
-    expect(introFontSize(WXSS, 'large'), '缺 large 档').toBe('28rpx')
+  it('WXSS 定义三档字号，档差 4rpx（大 30 / 中 26 / 小 22）', () => {
+    expect(introFontSize(WXSS, 'large'), '缺 large 档').toBe('30rpx')
     expect(introFontSize(WXSS, 'medium'), '缺 medium 档').toBe('26rpx')
-    expect(introFontSize(WXSS, 'small'), '缺 small 档').toBe('24rpx')
+    expect(introFontSize(WXSS, 'small'), '缺 small 档').toBe('22rpx')
   })
 
   it('字号规则只写 font-size，不碰 line-height / margin（风格层覆盖要照旧生效）', () => {

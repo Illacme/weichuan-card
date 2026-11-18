@@ -570,19 +570,32 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 }
 .company-video .cv-ph { background: linear-gradient(180deg, var(--wc-primary), var(--wc-primary-grad)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 36rpx; }
 .intro { display: block; margin-top: 20rpx; color: #666; line-height: 1.7; }
-/* 简介文字三档字号（后台「内容 → 公司简介 → 简介字号」选择）。
+/* 简介文字三档字号（后台「名片页面样式 → 首页文字展示」选择）。
    只覆盖 font-size：line-height / margin-top 交给 .intro 与四款风格层继续管，
    所以换字号不会把 ink/warm/teal 的排版覆盖冲掉。
-   large=28rpx 是历史值（page 的默认字号），选它 = 升级前观感，存量零突变。 */
-.intro-size-large { font-size: 28rpx; }
+   档差从 2rpx 拉到 4rpx（2026-11-18 用户反馈「调整幅度偏小」）：28/26/24 在真机上
+   每档只差 1px，几乎看不出来；现为 30/26/22，大中小分别是 15/13/11px，肉眼可辨，
+   小档 11px 已是微信正文的可读下限，再小不建议。large 由 28 提到 30（+1px），
+   是为了在不动小档可读性的前提下把整段区间拉开。 */
+.intro-size-large { font-size: 30rpx; }
 .intro-size-medium { font-size: 26rpx; }
-.intro-size-small { font-size: 24rpx; }
+.intro-size-small { font-size: 22rpx; }
 
-/* 首页「视频下方公司名称」三档字号（后台「公司信息 → 首页公司名」）。
-   large 刻意**不写规则**：沿用各风格基线（default/warm 34rpx、ink/teal 30rpx），
-   升级存量零视觉突变；中/小用足够高的特异度盖过风格层 .company-name 的字号。 */
+/* 首页「视频下方公司名称」三档字号（后台「名片页面样式 → 首页文字展示」）。
+   large 刻意**不写规则**：沿用各风格基线（default/warm 36rpx、ink/teal 30rpx），
+   升级存量零视觉突变；中/小用足够高的特异度盖过风格层 .company-name 的字号。
+   2026-11-18 拉开档差：default/warm 36→30→24（18/15/12px），ink/teal 30→26→22
+   （15/13/11px）。ink/teal 必须单独覆盖——它们的基线是 30rpx，若沿用全局中档 30rpx，
+   「大」与「中」会完全同字号（旧实现的真实缺陷）。 */
 .pf-text .company-name.company-name-size-medium { font-size: 30rpx; }
-.pf-text .company-name.company-name-size-small { font-size: 26rpx; }
+.pf-text .company-name.company-name-size-small { font-size: 24rpx; }
+/* 两条 ink/teal 覆盖刻意**各写一条独立规则**，不合并成分组选择器：
+   app.wxss 的守门（home_text_display.spec 的 ruleBody）按「选择器紧跟 {」取规则体，
+   分组写法下第一条选择器后面是逗号，抓不到 → 断言直接抛错。拆开也更易读。 */
+.wc-style-ink .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
+.wc-style-teal .pf-text .company-name.company-name-size-medium { font-size: 26rpx; }
+.wc-style-ink .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
+.wc-style-teal .pf-text .company-name.company-name-size-small { font-size: 22rpx; }
 
 /* 两块之一被关闭时，ink 的双栏 grid 必须塌成单栏并撤销子项的 grid-area；
    否则空出来的 34% 列与「指向第 2 列」的 grid-area 会隐式造列，继续挤占屏幕。

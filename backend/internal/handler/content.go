@@ -174,7 +174,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if cp.VideoSource == "" {
 			cp.VideoSource = model.VideoSourceNone
 		}
-		// 字号列后加，历史行空串归一成 large（= 现状 28rpx），后台下拉框才不会落到未选中态
+		// 字号列后加，历史行空串归一成 large（= 现状 30rpx），后台下拉框才不会落到未选中态
 		cp.IntroFontScale = model.NormalizeIntroFontScale(cp.IntroFontScale)
 		// cover / videoUrl / videoBackupUrl 三处都可能来自上传，后台预览要用可访问 URL
 		cp.ResolveRefs(model.PlatformOrigin())

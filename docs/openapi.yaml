@@ -5489,8 +5489,9 @@ components:
           enum: [large, medium, small, hidden]
           default: large
           description: >-
-            首页视频下方「公司名」一行的展示档位。large=沿用各风格基线字号（default/warm 34rpx、
-            ink/teal 30rpx，历史观感，缺省）、medium=30rpx、small=26rpx、hidden=不渲染公司名行
+            首页视频下方「公司名」一行的展示档位。large=沿用各风格基线字号（default/warm 36rpx、
+            ink/teal 30rpx，历史观感，缺省）、medium=30rpx（ink/teal 26rpx）、
+            small=24rpx（ink/teal 22rpx）、hidden=不渲染公司名行
             （小程序端移除节点，不占屏幕空间）。历史行空串或脏值按 large 处理，升级零视觉突变；
             `/api/card` 的 company 里同名字段是小程序唯一读取口径。
 
@@ -5526,7 +5527,7 @@ components:
           default: large
           description: >-
             首页视频下方「简介文字」的展示档位（不改公司名/联系表）。
-            large=28rpx（历史观感，缺省）、medium=26rpx、small=24rpx、hidden=不渲染简介行
+            large=30rpx（缺省）、medium=26rpx、small=22rpx、hidden=不渲染简介行
             （小程序端移除节点，不占屏幕空间）。历史行空串或脏值按 large 处理，升级零视觉突变；
             `/api/card` 的 profile 里同名字段是小程序唯一读取口径。
         videoSource:
@@ -5593,7 +5594,7 @@ components:
           enum: [large, medium, small, hidden]
           description: >-
             兼容旧调用的可选字段：控件已迁到「名片页面样式」页签，走 home-layout PUT 提交。
-            本接口不传即不写这列（保持原值）；若显式传入，非法值按 large（28rpx，历史观感）处理。
+            本接口不传即不写这列（保持原值）；若显式传入，非法值按 large（30rpx）处理。
             hidden=关闭后首页不再渲染简介行。
         videoSource:
           type: string

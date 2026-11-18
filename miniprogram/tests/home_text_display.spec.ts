@@ -45,8 +45,8 @@ function schemaBlock(src: string, name: string): string {
 
 describe('首页文字区四档展示跨层映射', () => {
   it('量尺自检：黄金 fixture 能被解析，证明正则不是空转', () => {
-    const fixture = '.pf-text .company-name.company-name-size-small { font-size: 26rpx; }'
-    expect(ruleBody(fixture, '.pf-text .company-name.company-name-size-small')).toContain('26rpx')
+    const fixture = '.pf-text .company-name.company-name-size-small { font-size: 24rpx; }'
+    expect(ruleBody(fixture, '.pf-text .company-name.company-name-size-small')).toContain('24rpx')
     expect(ruleBody(fixture, '.not-present')).toBeUndefined()
     // schemaBlock 也要自证：切得对、不越界串到下一个 schema
     const yamlFixture = '    CompanyInfo:\n      fullName:\n        type: string\n    Next:\n      other: 1'
@@ -59,8 +59,18 @@ describe('首页文字区四档展示跨层映射', () => {
     expect(ruleBody(WXSS, '.pf-text .company-name.company-name-size-medium'), '缺中档')
       .toContain('font-size: 30rpx')
     expect(ruleBody(WXSS, '.pf-text .company-name.company-name-size-small'), '缺小档')
-      .toContain('font-size: 26rpx')
-    // large 若也写死 font-size，ink/teal 的 30rpx 基线会被改成 34rpx——升级即突变
+      .toContain('font-size: 24rpx')
+    // ink/teal 基线本身是 30rpx：若中档也写 30，大与中会同字号（旧实现缺陷）。
+    // 两款必须单独覆盖到 26 / 22，档差才成立。
+    for (const style of ['ink', 'teal']) {
+      expect(ruleBody(WXSS, `.wc-style-${style} .pf-text .company-name.company-name-size-medium`),
+        `${style} 中档未覆盖`)
+        .toContain('font-size: 26rpx')
+      expect(ruleBody(WXSS, `.wc-style-${style} .pf-text .company-name.company-name-size-small`),
+        `${style} 小档未覆盖`)
+        .toContain('font-size: 22rpx')
+    }
+    // large 若也写死 font-size，ink/teal 的 30rpx 基线会被改成 36rpx——升级即突变
     expect(WXSS).not.toMatch(/\.company-name-size-large\s*\{[^}]*font-size/)
   })
 

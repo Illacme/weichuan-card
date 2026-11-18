@@ -5489,3 +5489,33 @@ jpg/jpeg/png、扩展名小写、跳过已是 `_thumb` 的文件，且不写比�
 没有新增后端接口：与编辑弹窗、拖拽排序共用同一套写入与审计，`updated_at` 的刷新口径
 也与排序一致。守门 `Projects.spec.ts`：乐观更新文案、payload 恰好九字段、失败回滚、
 连点只发一次。
+
+### 首页文字字号档差拉开（2026-11-18）
+
+客户反馈「大/中/小调整幅度偏小」——旧档差只有 2rpx（真机每档 1px），选完几乎看不出
+区别；更糟的是公司名在 ink/teal 两款风格下「大」与「中」**完全同字号**：这两款的基线
+本身就是 30rpx，而全局中档也写 30rpx，覆盖后等于没变。
+
+| 项目 | 风格 | 大 | 中 | 小 |
+| --- | --- | --- | --- | --- |
+| 简介文字 | 全风格 | 28 → **30rpx** | 26rpx | 24 → **22rpx** |
+| 公司名 | default / warm | 36rpx（基线，不写规则） | 30rpx | 24rpx |
+| 公司名 | ink / teal | 30rpx（基线，不写规则） | 26rpx | 22rpx |
+
+简介档差 2rpx → 4rpx（15/13/11px），公司名 default/warm 档差 6rpx（18/15/12px）、
+ink/teal 4rpx（15/13/11px）。小档 11px 已是微信正文的可读下限，不再往下压。
+
+**为什么 large 一律不写规则**：`large` 必须等于各风格基线，存量客户升级后才不会
+突然变字号（与 0040 默认 date、0046 默认 100 同一条原则）。ink/teal 的中/小档必须
+用 `.wc-style-ink .pf-text .company-name.company-name-size-*` 三段+类的特异度单独覆盖，
+否则会被 30rpx 基线吃掉。
+
+**踩坑**：两条 ink/teal 覆盖最初写成分组选择器（`ink..., teal... { }`），而
+`home_text_display.spec.ts` 的 `ruleBody` 按「选择器紧跟 `{`」取规则体，分组下第一条
+选择器后面是逗号，抓不到 → 断言直接抛错。已拆成四条独立规则，并在 WXSS 里留注释
+说明为什么不能合并。
+
+守门：`intro_font.spec.ts`（三档 30/26/22 + 只写 font-size 不碰 line-height/margin）、
+`home_text_display.spec.ts`（默认档 30/24、ink/teal 覆盖 26/22、large 不得写死
+font-size）、`types.ts` 注释与 `docs/openapi.yaml` 四处契约描述同步。字号不影响
+预览图（`gen_theme_previews.py` 用自己的一套 px，不读 app.wxss），故未重跑。

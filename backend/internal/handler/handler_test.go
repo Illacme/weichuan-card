@@ -1756,7 +1756,7 @@ func TestCompanyProfileVideoAutoplay(t *testing.T) {
 //	① home-layout PUT 保存 → company-info/profile 两处 GET 读回一致；
 //	② `/api/card` 的 profile 带该字段——这是小程序唯一读取口径；
 //	③ company-profile PUT 不带档位字段时**不冲掉**样式页设的值（指针部分更新）；
-//	④ 非法值归一成 large（现状 28rpx），脏值不落到端上。
+//	④ 非法值归一成 large（现状 30rpx），脏值不落到端上。
 func TestCompanyProfileIntroFontScale(t *testing.T) {
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)

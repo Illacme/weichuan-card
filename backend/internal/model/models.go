@@ -133,8 +133,9 @@ type CompanyProfile struct {
 	CompanyID int64  `gorm:"column:company_id;uniqueIndex" json:"companyId"`
 	IntroText string `gorm:"column:intro_text;type:text" json:"introText"`
 	// IntroFontScale 简介文字字号档位（见下方 IntroFont* 常量）。空串等同 large：
-	// 该列后加，历史行的简介一直按 page 的 28rpx 渲染（客户说的「当前最大值」），
-	// 归一成 large 让升级前后零视觉突变，也免得每个消费端各写一遍兜底。
+	// 该列后加，历史行的简介按 large 渲染；large 现为 30rpx（2026-11-18 从 28rpx
+	// 上调，把三档区间从 2rpx 拉到 4rpx，否则真机几乎看不出差别）。
+	// 归一成 large 让升级前后档位语义一致，也免得每个消费端各写一遍兜底。
 	IntroFontScale string `gorm:"column:intro_font_scale;size:16;default:large" json:"introFontScale"`
 	VideoSource    string `gorm:"column:video_source" json:"videoSource"`
 	VideoChannelID string `gorm:"column:video_channel_id" json:"videoChannelId"`
@@ -180,8 +181,9 @@ const (
 // 两处字段各自独立（company_profiles.intro_font_scale / company_infos.company_name_scale），
 // 但共用这一套取值与归一函数：客户常只关其中一个，共用档位语义不会串。
 //
-// large 不写死 rpx：端上沿用各风格基线字号（default 34rpx / ink、teal 30rpx），
-// 升级存量零视觉突变；medium / small 才显式调小。
+// large 不写死 rpx：端上沿用各风格基线字号（default/warm 36rpx、ink/teal 30rpx），
+// 升级存量零视觉突变；medium / small 才显式调小。ink/teal 的基线是 30rpx，
+// 中/小档必须再单独覆盖（26/22），否则「大」与「中」会同字号。
 const (
 	TextScaleLarge  = "large"  // 基线字号（缺省，历史观感）
 	TextScaleMedium = "medium" // 中
