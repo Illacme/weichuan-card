@@ -718,6 +718,17 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
   const read = (p: string) =>
     readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', p), 'utf-8')
 
+  // 2026-11-18 截图：业务服务卡下方空出一大块——WXML 末尾的 120rpx spacer
+  // 与 .page 的 padding-bottom（已含底栏避让 + 呼吸 + 安全区）叠加，重复留白。
+  // 底部避让必须只有一处负责，且保留 env() 安全区，否则底栏会盖住最后一张卡。
+  it('首页底部留白只由 .page 的 padding-bottom 负责，不叠加写死 spacer', () => {
+    const wxml = read('pages/index/index.wxml')
+    const wxss = read('pages/index/index.wxss')
+    expect(wxml).not.toMatch(/<view style="height:\s*120rpx/)
+    expect(wxml).toContain('<action-bar')
+    expect(wxss).toMatch(/\.page\s*\{[^}]*padding-bottom:\s*calc\(123rpx \+ env\(safe-area-inset-bottom\)\)/)
+  })
+
   it('首页把后台数量 / 效果 id 都透传给精选案例组件', () => {
     const wxml = read('pages/index/index.wxml')
     expect(wxml).toMatch(/<featured-projects[^>]*featuredCount="\{\{featuredCount\}\}"/)

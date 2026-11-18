@@ -113,7 +113,9 @@
           <view class="empty" wx:else>暂无服务内容</view>
         </view>
       </block>
-      <view style="height: 120rpx;" />
+      <!-- 底部留白只由 .page 的 padding-bottom 统一负责（含底栏避让 + 呼吸 + 安全区）。
+           曾在这里额外写死 120rpx spacer，与 padding-bottom 叠加成大块空白
+           （2026-11-18 用户截图实测），已移除，避免底栏挡内容只需那一处。 -->
       <action-bar employee="{{employee}}" company="{{company}}" staffId="{{staffId}}" />
     </block>
   </view>
