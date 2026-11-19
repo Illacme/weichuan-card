@@ -4,9 +4,9 @@
 // 只有一页（含精选不足）时静态平铺，不做任何动画。
 //
 // WXML 只做纯渲染：要显示哪几页、每张图的宽度、图片在原始列表里的下标，
-// 全部在 JS 里算好塞进 visiblePages / sizerItems。
+// 全部在 JS 里算好塞进 visiblePages。
 // **不要把 wx:if 和 wx:for 写在同一个标签上**——小程序 wx:if 阶段拿不到
-// wx:for-index 的变量，条件恒假会让整页被跳过，只剩隐藏占位撑出一块空白。
+// wx:for-index 的变量，条件恒假会让整页被跳过，只剩一块空白。
 // 精选案例专用回退：通用 onThumbError 按 data-arr 改的是外层同名数组，但本组件
 // 真正渲染的是重排后的 visiblePages[].items[]，两者不是一份数据——种子/存量素材
 // 没有 _thumb 兄弟图时缩略图必 404，回退打空就会让整块只剩占位撑出的空白
@@ -46,26 +46,6 @@ function onFeaturedImgErr(this: any, e: any): void {
   this.setData(patch)
 }
 
-// 轮播占位里的 image 用 widthFix 撑高度，它失败时也要回退原图：否则占位高度塌成 0，
-// absolute 的整页轮播区跟着没高度。真实页与源数据同步回退，避免切页后又裂一次。
-function onSizerImgErr(this: any, e: any): void {
-  const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
-  const idx: number = ds.idx
-  const full: string = ds.full
-  if (idx == null || !full) return
-  onFeaturedImgErr.call(this, e)
-  const items = Array.isArray(this.data && this.data.sizerItems) ? this.data.sizerItems : []
-  let touched = false
-  const nextItems = items.map((it: any) => {
-    if (it.globalIdx === idx && it.coverThumb !== full) {
-      touched = true
-      return { ...it, coverThumb: full }
-    }
-    return it
-  })
-  if (touched) this.setData({ sizerItems: nextItems })
-}
-
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -79,7 +59,6 @@ Component({
     pageCount: 0,
     current: 0,
     cycleOn: false,
-    sizerItems: [] as any[], // 第一页的副本，仅用于撑高度（visibility:hidden）
     visiblePages: [] as any[], // [{ k: 原页码, items: [{...图, width, globalIdx}] }]
     pageStyles: [] as string[], // 按原页码索引的整页动画样式
   },
@@ -104,7 +83,6 @@ Component({
   },
   methods: {
     onImgErr: onFeaturedImgErr,
-    onSizerImgErr,
     sync() {
       this.stopTimer()
       const list = this.data.featured || []
@@ -113,7 +91,7 @@ Component({
       if (pageSize === 0 || list.length === 0) {
         this.setData({
           pageSize, pageCount: 0, current: 0, cycleOn: false,
-          sizerItems: [], visiblePages: [], pageStyles: [],
+          visiblePages: [], pageStyles: [],
         })
         return
       }
@@ -133,15 +111,13 @@ Component({
       const visiblePages = cycleOn
         ? decorated.map((items, k) => ({ k, items }))
         : [{ k: 0, items: decorated[0] }]
-      // 隐藏占位只服务于「轮播页」：轮播页 position:absolute 脱离文档流，
-      // 需要同结构的隐藏副本撑出风格层真实高度。静态平铺的真实页本身就在
-      // 文档流里，若再渲染 sizer，就会在图片上方多出整整一行空白
-      // （2026-11-18 实测：static + 2 张时分类下方空一大块，换成 fade/scroll/
-      // flip 就消失——那几种效果 cycleOn=true，页绝对定位盖在 sizer 上）。
-      const sizerItems = cycleOn ? decorated[0] : []
+      // 高度由 grid 里最高的页自然撑出，不再有隐藏占位。
+      // 切页只改 transform / opacity，不碰 visiblePages 里的任何 src——iOS 上
+      // widthFix 换 src 会让图片高度在加载间隙塌成 0，整页高度骤减后 WebView
+      // 把 scrollTop 钳回 0（用户实测「切下一张就滚回页面顶部」，华为未复现）。
       this.setData({
         pageSize, pageCount: pages.length, current, cycleOn,
-        sizerItems, visiblePages,
+        visiblePages,
       })
       this.applyStyles()
       if (cycleOn) this.startTimer()
@@ -191,15 +167,9 @@ Component({
     },
     setCurrent(current: number) {
       if (current < 0 || current >= this.data.pageCount) return
-      const patch: Record<string, unknown> = { current }
-      // 占位按当前页图片撑高度：各页原图比例不同，一直用第一页占位会让
-      // 切过去的页溢出容器或留下空白。visiblePages 里的 items 已带回退结果。
-      if (this.data.cycleOn) {
-        const pages = Array.isArray(this.data.visiblePages) ? this.data.visiblePages : []
-        const cur = pages.find((pg: any) => pg.k === current)
-        if (cur && Array.isArray(cur.items)) patch.sizerItems = cur.items
-      }
-      this.setData(patch)
+      // 只改页码与动画样式。绝不在这里 setData 图片数组 / src：iOS 的 WebView
+      // 在 widthFix 图片换 src 时会先丢掉旧高度，页面高度骤减会把滚动位置钳回顶部。
+      this.setData({ current })
       this.applyStyles()
     },
     onDot(e: any) {

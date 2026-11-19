@@ -763,26 +763,29 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(both).toEqual([])
   })
 
-  // 静态平铺 + 2 张时真机在分类下方空出一大块，其他循环效果却正常：
-  // sizer 是隐藏占位（仍在文档流里），只有 cycleOn 的页才 absolute 盖上去；
-  // static 的页没加 cycle class，被 sizer 顶到下面。数据层与 WXML 都要拦住。
-  it('静态平铺不渲染隐藏占位，只有轮播页才用 sizer 撑高度', () => {
+  // 所有页重叠在同一 grid 单元格，容器高度取最高那页；静态只渲染第一页。
+  // 旧做法用隐藏 sizer + absolute 页，切页要换 sizer 的图片 src——iOS 上 widthFix
+  // 换 src 的加载间隙高度塌成 0，整页缩短后 WebView 把滚动位置钳回顶部。
+  it('所有页 grid 重叠、静态只渲染第一页，不再有隐藏 sizer 占位', () => {
     const wxml = read('components/featured-projects/index.wxml')
     const ts = read('components/featured-projects/index.ts')
-    expect(wxml).toMatch(/<view class="feat-page-sizer" wx:if="\{\{cycleOn\}\}"/)
-    expect(ts).toMatch(/const sizerItems = cycleOn \? decorated\[0\] : \[\]/)
-    expect(wxml.match(/class="feat-page /g)).toHaveLength(1) // 真实页始终一个模板
+    const wxss = read('components/featured-projects/index.wxss')
+    expect(wxml).not.toContain('feat-page-sizer')
+    expect(ts).not.toContain('sizerItems')
     expect(wxml).toContain("{{cycleOn ? 'feat-page-cycle' : ''}}")
+    expect(wxss).toMatch(/\.featured-paged\s*\{[^}]*display:\s*grid/)
+    expect(wxss).toMatch(/\.feat-page\s*\{[^}]*grid-area:\s*1\s*\/\s*1/)
+    expect(wxml.match(/class="feat-page /g)).toHaveLength(1) // 真实页始终一个模板
   })
 
   // 固定高度 + aspectFill 会把横版图裁成扁条（一张铺满时尤其明显）。改成 widthFix
-  // 后高度随原图比例走；风格层的固定 height 三段选择器必须用 !important 压过去，
-  // 圆角 / 阴影 / padding 仍归风格层。占位的空 view 也换成 image，否则轮播区没高度。
-  it('精选图按原图比例自适应高度，占位同样用 widthFix image', () => {
+  // 后高度随原图比例走；风格层的固定 height 三段选择器用内联 height:auto 覆盖，
+  // 圆角 / 阴影 / padding 仍归风格层。高度由 grid 里最高的页撑出，不再需要占位图。
+  it('精选图按原图比例自适应高度，不写死高度也不压掉 widthFix', () => {
     const wxml = read('components/featured-projects/index.wxml')
     const wxss = read('components/featured-projects/index.wxss')
     const images = wxml.match(/<image\b[^>]*>/g) || []
-    expect(images).toHaveLength(2) // 占位 + 真实页
+    expect(images).toHaveLength(1) // 只有真实页，没有隐藏占位
     for (const tag of images) {
       expect(tag).toContain('mode="widthFix"')
       // 覆盖风格层三段选择器的固定高度，但不能写 !important（会压掉 widthFix 算出的高度）
@@ -793,7 +796,7 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(wxss).toMatch(/\.feat-page \{[^}]*align-items:\s*flex-start/)
   })
 
-  it('轮播切页时占位跟随当前页比例；占位图失败同样回退原图', async () => {
+  it('轮播切页不换图片 src（iOS 滚动不再归零），回退仍同步到源数据', async () => {
     vi.resetModules()
     let opts: any = null
     vi.stubGlobal('Component', (o: any) => { opts = o })
@@ -807,35 +810,37 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
         featuredCount: 2,
         effect: 'scroll',
       },
-      setData(patch: any) { Object.assign(this.data, patch) },
+      setData(patch: any) { patches.push(patch); Object.assign(this.data, patch) },
     }
     for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
 
+    const patches: any[] = []
     inst.sync()
-    expect(inst.data.sizerItems.map((x: any) => x.id)).toEqual([1, 2])
+    patches.length = 0 // 只数切页那一次，sync 的初始化不算
+    const before = JSON.stringify(inst.data.visiblePages)
     inst.next()
     expect(inst.data.current).toBe(1)
-    // 第二页图片比例可能不同，占位必须换成当前页那批图，否则整页会溢出或留白
-    expect(inst.data.sizerItems.map((x: any) => x.id)).toEqual([3, 4])
+    // 关键：切页只改 current / transform，绝不重建图片数组。iOS 上换 src 会让
+    // widthFix 图片在加载间隙失去高度，整页缩短 → WebView 把滚动位置钳回 0。
+    expect(JSON.stringify(inst.data.visiblePages)).toBe(before)
+    expect(patches.some((p: any) => 'visiblePages' in p), '切页不能重建图片数组：iOS 会因高度重排把页面滚回顶部').toBe(false)
 
-    inst.onSizerImgErr({ currentTarget: { dataset: { idx: 2, full: full(3) } } })
-    expect(inst.data.sizerItems[0].coverThumb).toBe(full(3))
+    inst.onImgErr({ currentTarget: { dataset: { idx: 2, full: full(3) } } })
     expect(inst.data.visiblePages[1].items[0].coverThumb).toBe(full(3))
     expect(inst.data.featured[2].coverThumb).toBe(full(3))
     inst.stopTimer()
   })
 
-  it('轮播样式不写死高度，借全局风格撑出真实高度；指示点跟随主题主色', () => {
+  it('轮播高度由 grid 中最高页撑出，不写死高度；指示点跟随主题主色', () => {
     const wxss = read('components/featured-projects/index.wxss')
-    expect(wxss).toContain('.feat-page-sizer')
-    expect(wxss).toContain('visibility: hidden')
     expect(wxss).toContain('.feat-page-cycle')
     expect(wxss).toContain('transition: transform')
     expect(wxss).toContain('var(--wc-primary')
-    // 全局 .featured 是 display:flex（给旧的直接 .feat-item 横排用）。分页后容器直接
-    // 子项是纵向堆叠的 sizer/页/dots，组件必须显式改回 block，否则图片被 flex 挤成
-    // 窄缝→视觉空白但图片其实 200（2026-11-18 真机实测的隐藏根因）。
-    expect(wxss).toMatch(/\.featured-paged\s*\{[^}]*display:\s*block/)
+    // 所有页挤在同一网格单元重叠，容器高度自然取最高页；不再靠隐藏 sizer + absolute，
+    // 也就没有「切页换 src 导致 iOS 滚动归零」的路径。
+    expect(wxss).toMatch(/\.featured-paged\s*\{[^}]*display:\s*grid/)
+    expect(wxss).toMatch(/\.feat-page\s*\{[^}]*grid-area:\s*1\s*\/\s*1/)
+    expect(wxss).not.toContain('feat-page-sizer')
     // scroll 时相邻页 translateX(±100%) 滑出主区，容器必须裁切，否则两侧露出别页的图
     expect(wxss).toMatch(/\.featured-paged\s*\{[^}]*overflow:\s*hidden/)
   })
@@ -867,7 +872,7 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(inst.data.pageCount).toBe(2)
     expect(inst.data.visiblePages.length).toBe(2)
     expect(inst.data.visiblePages[0].items.map((x: any) => x.id)).toEqual([1, 2])
-    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['50%', '50%'])
+    expect(inst.data.visiblePages[0].items.map((x: any) => x.width)).toEqual(['50%', '50%'])
     expect(inst.data.visiblePages[0].items.map((x: any) => x.globalIdx)).toEqual([0, 1])
     expect(inst.data.cycleOn).toBe(true)
 
@@ -880,7 +885,7 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     // 1 张铺满、3 张各三分之一
     inst.setData({ featuredCount: 1 })
     inst.sync()
-    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['100%'])
+    expect(inst.data.visiblePages[1].items.map((x: any) => x.width)).toEqual(['100%'])
     expect(inst.data.pageCount).toBe(3)
     inst.setData({ featured: [{ id: 1 }, { id: 2 }, { id: 3 }], featuredCount: 3 })
     inst.sync()
@@ -892,7 +897,6 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     inst.sync()
     expect(inst.data.pageCount).toBe(0)
     expect(inst.data.visiblePages).toEqual([])
-    expect(inst.data.sizerItems).toEqual([])
 
     // static 多页只显示第一页，不做动画
     inst.setData({ featured: [1, 2, 3, 4].map((id) => ({ id })), featuredCount: 2, effect: 'static' })
@@ -901,15 +905,13 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(inst.data.cycleOn).toBe(false)
     expect(inst.data.visiblePages.length).toBe(1)
     expect(inst.data.visiblePages[0].items.map((x: any) => x.id)).toEqual([1, 2])
-    // 静态页在文档流里自己撑高度，sizer 必须清空：否则隐藏占位排在真实页
-    // 上方，撑出一行空白（static + 2 张真机实测，其他轮播效果因页 absolute 无此问题）
-    expect(inst.data.sizerItems).toEqual([])
+    // static 多页只渲染第一页：grid 里只有一页，容器高度就是这一页自己的高度
 
     // 切回轮播后占位恢复，绝对定位的页仍有高度来源
     inst.setData({ effect: 'fade' })
     inst.sync()
     expect(inst.data.cycleOn).toBe(true)
-    expect(inst.data.sizerItems.map((x: any) => x.width)).toEqual(['50%', '50%'])
+    expect(inst.data.visiblePages[0].items.map((x: any) => x.width)).toEqual(['50%', '50%'])
 
     // 页动画：横移走环形最短距离，末页回首页从右侧滑入；翻转只显当前页
     inst.setData({ effect: 'scroll' })

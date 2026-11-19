@@ -3,20 +3,19 @@
    圆角 / 高度 / 阴影仍由 .wc-style-x .mp-achievements .feat-cover 决定。 */
 
 /* 全局 .featured 是 display:flex（旧结构：直接子元素就是 .feat-item，横排均分）。
-   分页重构后 .featured 的直接子项变成 sizer / 各页 / dots 三个**纵向**堆叠的块，
-   必须改回 block，否则它们被 flex 横排：sizer 与真实页并排挤在一行，
-   每页只拿到一小格宽度、图片被压成一条窄缝看起来就是空白（2026-11-18 真机实测，
-   Network 显示图片 200 但视觉空白，就是 flex 塌陷）。组件 wxss 后加载覆盖全局。 */
-/* scroll 效果下相邻页 translateX(±100%) 移到主区域外，但容器不裁切的话
-   （2026-11-18 真机截图：滚动时主图两侧各露出一条相邻页的图，甚至溢出白色卡片）。
-   这里把超出主区域的页裁掉，滚动动画照旧，只是不再看见两边的图。 */
-.featured-paged { position: relative; display: block; overflow: hidden; }
+   分页重构后 .featured 的直接子项变成「各页 + dots」纵向堆叠，必须改布局；
+   用 grid 而不是 block + absolute：所有页挤在同一个网格单元里自然重叠，
+   容器高度 = 最高那页的高度，不需要隐藏占位，也不需要切页换占位的图片 src。
+   （旧做法每次切页都 setData 换 sizerItems，iOS 上 widthFix 换 src 时高度
+   短暂塌成 0 → 整页高度骤减 → WebView 把滚动位置钳回 0；华为未复现。） */
+.featured-paged { position: relative; display: grid; overflow: hidden; }
 
-/* 隐藏占位：与一页同结构，撑出当前风格下正确的高度；
-   各页绝对定位盖在它上面，页数 / 每页张数变化时高度不会塌。 */
-.feat-page-sizer { visibility: hidden; }
-
-.feat-page { display: flex; flex-wrap: wrap; align-items: flex-start; }
+/* 所有页重叠在同一格：容器按最高的页撑高，矮页留白但不裁切高页。
+   scroll 时相邻页 translateX(±100%) 移到主区域外，overflow:hidden 负责裁掉。 */
+.feat-page {
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  grid-area: 1 / 1;
+}
 
 /* 显示高度按原图比例自适应：风格层各自写死 .feat-cover 高度（150/175/190/260rpx）
    配 aspectFill 会把横版图裁成扁条（一张铺满时尤其明显）。高度交给 image 的
@@ -24,16 +23,11 @@
    圆角 / 内边距 / 阴影仍由风格层给。无 cover 时的空 view 占位仍走风格层固定高度。
    align-items:flex-start 让同页不同比例的图各自贴顶，不被 flex 拉成同高。 */
 .feat-page-cycle {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
   transform-origin: 50% 50%;
   transition: transform .6s cubic-bezier(.22, .61, .36, 1), opacity .45s ease;
-  will-change: transform, opacity;
 }
 
-.feat-dots { display: flex; align-items: center; justify-content: center; margin-top: 14rpx; }
+.feat-dots { grid-area: 2 / 1; display: flex; align-items: center; justify-content: center; margin-top: 14rpx; }
 .feat-dot {
   width: 12rpx;
   height: 12rpx;

@@ -284,7 +284,7 @@ miniprogram/
 - 后台「小程序设置 → 名片页面样式 → 业绩与案例展示」提供三项：`categoryLimit`（业绩分类最多 0~20 个，0=不渲染分类图标墙但保留精选案例与「更多案例」入口）、`featuredCount`（精选案例**每页并排张数** 0~3）、`featuredEffect`（循环效果 `static` / `fade` / `scroll` / `flip`）。三者与背景、时间档位共用 `home-layout` 端点，部分更新语义，风格页保存两轴时不会冲掉它们。
 - `featuredCount` 的呈现规则：**0=整块不显示；1=一张铺满整行；2=两张各占一半；3=三张各占三分之一**。每张图宽度按「100% / 该页实际张数」内联给出，最后一页不足时同样铺满（例如每页 3 张但只剩 1 张时，那一张占满整行）。精选总数多于每页张数时按页分组：`static` 只显示第一页，非 static 才按效果循环翻页。
 - 公开接口 `/api/home-layout` 在根级下发三字段。`index.ts` 端上再钳一次范围（防旧后端脏值），按 `categoryLimit` 截断分类；精选**不在页面截断**，而是把完整列表 + 每页张数 + 效果 id 一起透传给 `featured-projects` 组件，由组件分页。未知效果回落 `static`；缺省 20 / 3 / static（分类不截断、精选每页 3 张、原平铺行为）。
-- `components/featured-projects` 内置四套随包动画：静态平铺（原行为）、淡入淡出、横向滚动、立体翻转；**多页且非 static** 时 3.6 秒自动循环（动画作用于整页），点击指示点可手动切换并重新计时，点图仍进案例详情；单页 / static 不做任何动画。高度借全局四风格的 `.feat-cover` 撑出，不在组件里重复写死 rpx；组件切后台停表、销毁清理定时器。
+- `components/featured-projects` 内置四套随包动画：静态平铺（原行为）、淡入淡出、横向滚动、立体翻转；**多页且非 static** 时 3.6 秒自动循环（动画作用于整页），点击指示点可手动切换并重新计时，点图仍进案例详情；单页 / static 不做任何动画。高度由 `widthFix` 按原图比例自适应、再由 grid 取所有页中最高的那页撑出，不在组件里重复写死 rpx；组件切后台停表、销毁清理定时器。**切页只改 `current` 与 transform/opacity，不重建图片数组、不换 src**——iOS 上 `widthFix` 换 src 会在加载间隙丢掉旧高度，整页缩短后 WebView 把 `scrollTop` 钳回 0，表现为「切下一张就滚回页面顶部」（华为未复现）。旧方案的隐藏 sizer 占位已删除，改由 `.featured-paged` 的 `display:grid` + `.feat-page` 的 `grid-area:1/1` 重叠实现。
 
 ## 腾讯视频档（`company-video` 的 txv 分支）
 

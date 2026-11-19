@@ -1,23 +1,13 @@
 <!-- 精选案例：featuredCount 决定每页并排几张（0=不显示 / 1 张铺满 / 2 张各半 / 3 张各三分之一）。
      多页且非 static 时按页淡入 / 横移 / 翻转循环；单页或 static 只渲染第一页。
      **wx:if 与 wx:for 绝不写在同一标签**（小程序取不到 for-index，条件恒假会让
-     整页被跳过、只剩隐藏占位撑出空白）——该显示哪几页由 JS 算好放进 visiblePages。
+     整页被跳过、只剩空白）——该显示哪几页由 JS 算好放进 visiblePages。
      点图仍进对应案例详情，轮播只改变「这一批图怎么看」。 -->
 <view class="featured featured-paged" wx:if="{{pageCount > 0}}">
-  <!-- 隐藏占位只给轮播页用：轮播页 absolute 脱离文档流，靠它撑高度。
-       静态平铺的真实页本身就在文档流里，若也渲染 sizer 会在图片上方
-       多出一整行空白（static+2 张真机实测），故 wx:if 与数据层双重拦截。 -->
-  <view class="feat-page-sizer" wx:if="{{cycleOn}}" aria-hidden="true">
-    <view class="feat-page">
-      <view class="feat-item" wx:for="{{sizerItems}}" wx:key="globalIdx" style="width:{{item.width}}">
-        <!-- 占位也得用 image + widthFix：改成按原图比例自适应后，空 view 无法撑出真实高度。
-             轮播页 absolute 全靠这里撑容器，缩略图失败同样回退原图，否则高度会塌。 -->
-        <image class="feat-cover" src="{{item.coverThumb}}" mode="widthFix" style="height:auto"
-          binderror="onSizerImgErr" data-fail="sizerFail" data-idx="{{item.globalIdx}}" data-full="{{item.cover}}" />
-      </view>
-    </view>
-  </view>
-
+  <!-- 所有页重叠在同一个 grid 单元格（见 index.wxss 的 grid-area），容器高度由
+       最高的那页自然撑出。切页只改 transform / opacity，不再替换隐藏占位的图片 src：
+       iOS 上换 src 会让 widthFix 图片在加载间隙高度塌成 0，整页高度骤减后 WebView
+       把 scrollTop 钳回 0——表现为「一切下一张图就滚回页面顶部」（华为未复现）。 -->
   <view class="feat-page {{cycleOn ? 'feat-page-cycle' : ''}}" wx:for="{{visiblePages}}" wx:key="k"
     style="{{pageStyles[item.k]}}">
     <view class="feat-item" wx:for="{{item.items}}" wx:for-item="p" wx:key="globalIdx"
