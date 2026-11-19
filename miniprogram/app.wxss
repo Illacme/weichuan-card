@@ -301,6 +301,19 @@ page {
    两条都只覆盖 default；座机 / 邮箱列没写 padding，位置与上一版逐像素一致。 */
 .wc-style-default .emp-card .ec-head { margin-top: 24rpx; }
 .wc-style-default .emp-card .ec-contact .ec-col:not(.ec-col-r) { padding-left: 24rpx; }
+/* 客户反馈：默认款联系方式字体偏小，三处各 +2rpx（24→26rpx）。
+   三条分开写而不是选择器组，方便逐条核对有没有漏掉邮箱那一档。 */
+.wc-style-default .emp-card .ec-label { font-size: 26rpx; }
+.wc-style-default .emp-card .ec-val { font-size: 26rpx; }
+.wc-style-default .emp-card .ec-val-email { font-size: 26rpx; }
+/* 原设计稿：视频封面与下方公司名称之间有一条贯穿的浅灰阴影带。
+   放在 .cv-wrap 的伪元素上，top:100% 落在视频下方空隙——不占布局高度，
+   公司名称不会被往下推；pointer-events:none 也不挡「跳转打开」的点击。 */
+.wc-style-default .mp-profile .company-video .cv-wrap::after {
+  content: ""; position: absolute; left: 8rpx; right: 8rpx; top: 100%;
+  height: 18rpx; pointer-events: none;
+  background: linear-gradient(180deg, rgba(30, 42, 53, 0.22), rgba(30, 42, 53, 0));
+}
 
 /* 紧凑信息 · 工牌单栏款：方角小头像、整卡去圆角；联系表由「两列」改成**单列四行**，
    行间用 1rpx 细线分隔（像贴在工牌背面的通讯录）；公司简介封面压成通栏窄条，

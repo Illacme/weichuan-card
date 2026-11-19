@@ -597,6 +597,10 @@ ${tokens}
 
   /* ---- 公司简介：真实封面图 + 视频控件 + 黑色粗体公司名 + 4 行简介 ----
      .cv / .cv-video / .company-name / .intro 的高度与行距由布局规则注入。 */
+  /* 真机 .cv-wrap 是视频四种来源（腾讯 / 跳转 / MP4 / 封面）共用的定位容器，
+     标准款的阴影分割条加在它的 ::after 上（由 ${style_css} 注入），
+     这里必须同构，否则预览图看不到那条阴影。 */
+  .company-video .cv-wrap { position: relative; }
   .cv { position: relative; height: 220px; border-radius: var(--wc-r-card-bg);
         overflow: hidden; box-shadow: var(--wc-card-shadow-bg);
         /* 封面宽度不再恒等于卡片宽：teal 的「左图右文」把它压到 42%。
@@ -713,12 +717,14 @@ ${tokens}
 
   <div class="section mp-profile" data-sec="company">
     <div class="company-video">
+      <div class="cv-wrap">
       <div class="cv cover">
         <img src="assets/cover-company.jpg" alt="">
         <div class="cover-shade"></div>
         <div class="cover-word"><span>走进</span><span>${short_name}</span></div>
         <div class="play"></div>
         <div class="video-bar"><span>▶</span><span>00:00</span><span class="v-track"></span><span>01:15</span><span>⛶</span></div>
+      </div>
       </div>
     </div>
     <div class="pf-text">
