@@ -377,6 +377,67 @@ func NormalizeFeaturedEffect(v string) string {
 	}
 }
 
+// 名片卡右上角企业 LOGO 的显示档位（home_layouts.logo_size / logo_align）。
+//
+// 为什么需要它：LOGO 原来是写死的 150×44rpx + aspectFit。aspectFit 会把图片
+// **按比例缩到框内并居中**，所以一张正方形 LOGO 只占 44rpx 宽，左右各留约 53rpx
+// 空白——在右上角看起来「浮在偏左的位置」，小尺寸图尤其明显。客户换图后只能接受
+// 这个观感，没有可调的地方。
+//
+// 两端的分工：后端只存两个档位字符串，不做任何像素计算；具体 rpx 尺寸、对齐方式
+// 全在 miniprogram/app.wxss 与 employee-card 组件里（小程序不能动态加载 WXSS，
+// 与精选案例的循环效果同一套路）。
+//
+// 升级零视觉突变：缺省 Size=medium（= 原来的 150×44）、Align=center
+// （= aspectFit 原本的居中行为），存量租户看到的画面一字不变。
+const (
+	LogoSizeSmall  = "small"  // 小：36rpx 高，区块宽 110rpx
+	LogoSizeMedium = "medium" // 中：44rpx 高，区块宽 150rpx（原值，缺省）
+	LogoSizeLarge  = "large"  // 大：52rpx 高，区块宽 190rpx
+)
+
+// LOGO 在「右上角区块」内的水平对齐。语义边界必须先说清，否则客户会以为
+// 「靠左」是把 LOGO 挪到姓名旁边：
+//   - 只影响**内容宽度小于区块宽度**的图（方块 / 竖版 LOGO）；
+//   - 横版长条 LOGO 会撑满整个区块，三档看起来完全一样。
+//
+// 之所以只在这个小区块内对齐、而不是整行：整行对齐会让 LOGO 跑到姓名旁边或屏幕正中，
+// 那就不是「右上角 LOGO」了。客户要的是几像素级的微调，不是换版式。
+const (
+	LogoAlignLeft   = "left"   // 靠区块左缘
+	LogoAlignCenter = "center" // 居中（缺省，= 原 aspectFit 的观感）
+	LogoAlignRight  = "right"  // 靠区块右缘（= 贴卡片右边缘）
+)
+
+// 缺省档位：两者都取「加配置前」的表现。
+const (
+	DefaultLogoSize  = LogoSizeMedium
+	DefaultLogoAlign = LogoAlignCenter
+)
+
+// NormalizeLogoSize 归一尺寸档；空串与非法值都落回缺省档。
+//
+// 与时间档位（非法即拒）不同：这是纯展示偏好，端上拿到不认识的档只会让 class 落空、
+// 退回基线尺寸，不会「东西不见了」。归一成 medium 保证语义一致。
+func NormalizeLogoSize(v string) string {
+	switch v {
+	case LogoSizeSmall, LogoSizeMedium, LogoSizeLarge:
+		return v
+	default:
+		return DefaultLogoSize
+	}
+}
+
+// NormalizeLogoAlign 归一位置档；空串与非法值都落回 center（原观感）。
+func NormalizeLogoAlign(v string) string {
+	switch v {
+	case LogoAlignLeft, LogoAlignCenter, LogoAlignRight:
+		return v
+	default:
+		return DefaultLogoAlign
+	}
+}
+
 // HomeLayout 小程序展示配置（按租户隔离，company_id 唯一）。
 //
 // 名字里的 Home 是历史包袱：它最早只装首页板块顺序与首页背景，现在还承载详情页
@@ -427,6 +488,12 @@ type HomeLayout struct {
 	// BrandColorID 品牌色系（颜色层），叠加在所选风格之上；nil = 用该风格默认色。
 	// 两轴模型第二轴；P5 起全叉乘，全部品牌色系可叠加在任意风格上。
 	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
+	// LogoSize / LogoAlign 名片卡右上角企业 LOGO 的显示档位（见 LogoSize* / LogoAlign*）。
+	// 为什么不跟 company_infos.logo 放一起：那一列答的是「用哪张图」（公司信息），
+	// 这两列答的是「这张图怎么摆」（页面样式），与其它展示偏好同属本表，改版式时一处配齐。
+	// 历史行空串由 Normalize 归一成 medium / center，升级前后观感一致。
+	LogoSize  string `gorm:"column:logo_size;size:16;default:medium" json:"logoSize"`
+	LogoAlign string `gorm:"column:logo_align;size:16;default:center" json:"logoAlign"`
 }
 
 // StatEvent 埋点原始事件

@@ -858,6 +858,10 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 这条必须钉住——若默认变成 true，所有存量租户的首页会立刻多出一行重复文字。
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"])
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showServiceName"])
+		// 0053 LOGO 两档缺省 medium / center = 加配置前写死的 150×44 + aspectFit 居中。
+		// 若这里变成 small / left，所有存量租户的名片 LOGO 会在升级当天莫名变小变位。
+		require.Equal(t, "medium", body["data"].(map[string]interface{})["logoSize"])
+		require.Equal(t, "center", body["data"].(map[string]interface{})["logoAlign"])
 
 		// 首页背景：写入 → 后台读回 → 公开接口下发
 		bgURL := "http://127.0.0.1:8080/uploads/library/bg-deepspace.jpg"
@@ -892,6 +896,19 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, true, body["showServiceName"], "小程序按公开接口决定是否在图下写服务名")
 		require.EqualValues(t, []interface{}{"service", "achievement"}, body["order"])
 
+		// 0053 LOGO 尺寸 / 位置：写入 → 后台读回 → 公开接口下发（三处都要）。
+		// 只测后台读回不够：小程序读的是公开接口，漏一处就是「后台配了、端上没变」。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"logoSize": "large", "logoAlign": "right",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "large", body["data"].(map[string]interface{})["logoSize"])
+		require.Equal(t, "right", body["data"].(map[string]interface{})["logoAlign"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "large", body["logoSize"], "小程序按公开接口的档位定 LOGO 尺寸")
+		require.Equal(t, "right", body["logoAlign"], "小程序按公开接口的档位定 LOGO 位置")
+
 		// 只提交 order（不带背景/浓度/展示数量）时全部保持——指针语义区分「未提供」与「清空」
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"achievement", "service"},
@@ -907,6 +924,20 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 就会把客户刚打开的「显示名称」悄悄关掉，而界面上看不出来。
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showCategoryName"], "未提供不应被关掉")
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showServiceName"], "未提供不应被关掉")
+		// LOGO 两档同理：上面刚写成 large / right，这里只提交 order 不能把它们冲回缺省。
+		// 断言「等于刚写的值」而不是「等于缺省」——后者无法区分「保留」与「被重置成缺省」。
+		require.Equal(t, "large", body["data"].(map[string]interface{})["logoSize"], "未提供不应被冲回缺省")
+		require.Equal(t, "right", body["data"].(map[string]interface{})["logoAlign"], "未提供不应被冲回缺省")
+
+		// 非法档位归一成缺省而不是拒掉整次保存：纯展示偏好，最坏只是尺寸回到基线，
+		// 不该让客户连同背景、顺序一起存不进去。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"logoSize": "huge", "logoAlign": "diagonal",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"], "非法档位不该拒掉整次保存：%v", body)
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "medium", body["data"].(map[string]interface{})["logoSize"])
+		require.Equal(t, "center", body["data"].(map[string]interface{})["logoAlign"])
 
 		// 显式传 false 才是「关闭」：布尔指针的经典坑——若用零值判断「未提交」，
 		// 客户永远关不掉已经打开的开关。这里同时验证只关一个不影响另一个。

@@ -552,6 +552,8 @@ paths:
         小程序端据此截取业绩分类与精选案例，并用随包内置的动画播放循环效果。
         0050 起下发 `showCategoryName` / `showServiceName`：封面图下方是否再渲染名称，
         两者缺省 false——设计稿把名称画进了封面图，再渲染就是重复。
+        0053 起下发 `logoSize` / `logoAlign`：名片卡右上角企业 LOGO 的尺寸与位置档位，
+        缺省 `medium` / `center` = 加配置前写死的 150×44rpx + aspectFit 居中，零视觉突变。
 
         P5 起主题是两轴全叉乘：`style`「整体风格」按布局特色命名，决定四个模块的列数 /
         间距 / 圆角 / 封面高度；`brand`「品牌配色预设色板」是纯颜色层，10 款色系在 4 个
@@ -626,6 +628,22 @@ paths:
                       业务服务封面图**下方**是否再渲染一行标题，缺省 false（竖版卡标题烧在图内）。
                       与 showCategoryName 分开控制：分类图与服务卡常常不是同一批素材风格，
                       典型情况是「分类换了素图、服务卡仍是带字卡」。无封面图时始终显示标题。
+                  logoSize:
+                    type: string
+                    enum: [small, medium, large]
+                    default: medium
+                    description: >-
+                      名片卡右上角企业 LOGO 的尺寸档（0053）。缺省 medium = 加配置前写死的
+                      150×44rpx，所以旧端 / 存量租户看到的画面不变。具体 rpx 由 app.wxss 的
+                      `.ec-logo-slot-*` / `.ec-logo-*` 决定（小程序不能动态加载 WXSS）。
+                  logoAlign:
+                    type: string
+                    enum: [left, center, right]
+                    default: center
+                    description: >-
+                      名片卡右上角 LOGO 在其「右上角区块」内的水平对齐（0053）。缺省 center =
+                      aspectFit 原本的居中观感。只影响内容宽度小于区块宽度的图（方块 / 竖版 LOGO）；
+                      横版长条 LOGO 会撑满整个区块，三档看不出差别。
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]
@@ -2889,6 +2907,22 @@ paths:
                         type: string
                         enum: [hidden, date, minute]
                         description: 业务服务详情页的档位，与案例**分开控制**，互不影响。
+                      logoSize:
+                        type: string
+                        enum: [small, medium, large]
+                        default: medium
+                        description: >-
+                          名片卡右上角企业 LOGO 的尺寸档（0053）。medium = 加配置前写死的
+                          150×44rpx，缺省；small/large 才显式改变大小。非法值写入时归一成
+                          medium（纯展示偏好，不拒整次保存）。具体 rpx 在 app.wxss 里。
+                      logoAlign:
+                        type: string
+                        enum: [left, center, right]
+                        default: center
+                        description: >-
+                          名片卡右上角 LOGO 在「区块内」的水平对齐（0053）。center = aspectFit
+                          原本的居中观感，缺省。只影响内容宽度小于区块宽度的图（方块 / 竖版）；
+                          横版长条 LOGO 会撑满区块，三档看不出差别。
                       styleId:
                         type: string
                         enum: [default, ink, warm, teal]
@@ -2945,6 +2979,8 @@ paths:
         控件归本「名片页面样式」页签，随本端点读写；物理列仍在 company_infos /
         company_profiles，用窄更新只碰这两列，不传即保持原值。非法值归一成 large
         （纯展示偏好，不因此拒掉整次保存）。
+        `logoSize` / `logoAlign`（0053，名片卡右上角企业 LOGO 的三档尺寸 / 三档位置）
+        同属本页签，也是纯展示偏好：枚举外的值归一成 `medium` / `center`，不拒整次保存。
         `categoryLimit`（0~20，0=隐藏分类网格）、`featuredCount`（0~3，0=不显示精选、不足按实际）、
         `featuredEffect`（static/fade/scroll/flip）同属本页签；        数量越界钳制到边界，
         效果枚举外的值与时间档位一样直接拒绝（code=1）。缺省取上限与 static：
@@ -3020,6 +3056,18 @@ paths:
                   enum: [large, medium, small, hidden]
                   description: >-
                     首页简介文字展示档位（大/中/小/关闭）；控件在本页签，不传即保持原值，非法值归一 large。
+                logoSize:
+                  type: string
+                  enum: [small, medium, large]
+                  description: >-
+                    名片卡右上角 LOGO 尺寸档（0053）；指针语义，不传保持原值。
+                    medium = 改造前的 150×44rpx。非法值归一 medium 而不是拒绝整次保存。
+                logoAlign:
+                  type: string
+                  enum: [left, center, right]
+                  description: >-
+                    名片卡右上角 LOGO 在其区块内的水平对齐（0053）；指针语义，不传保持原值。
+                    center = 改造前 aspectFit 的居中观感。非法值归一 center。
                 styleId:
                   type: string
                   enum: [default, ink, warm, teal]

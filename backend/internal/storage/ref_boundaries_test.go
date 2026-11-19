@@ -140,7 +140,7 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 
 // TestP0bResourceJSONFieldsMatchBoundaryList 钉住 §2 的字段集合。
 // 名字里带 url/image/logo/cover/avatar/icon/bg/file/album 的 json 字段，
-// 必须是「8 个资源字段 + 6 个已写明理由的非资源字段」——新增同类字段必红。
+// 必须是「8 个资源字段 + 8 个已写明理由的非资源字段」——新增同类字段必红。
 //
 // 这条守门在第五十八轮真拦下过一次：新增 model.TenantStorageConfig 时带了
 // publicBaseUrl，没人会主动想到「配置表里的基址算不算资源引用」。红一次，
@@ -180,12 +180,17 @@ func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 		// 8 个真资源字段
 		"avatar": true, "logo": true, "videoUrl": true, "videoBackupUrl": true,
 		"cover": true, "icon": true, "bgImage": true, "url": true,
-		// 6 个同名但不是「资源引用」的白名单（理由见清单 §2）
+		// 8 个同名但不是「资源引用」的白名单（理由见清单 §2）
 		"videoFallbackUrl":   true, // bool 开关
 		"bgMask":             true, // int 蒙层浓度
 		"bgGradientStrength": true, // int 顶部主色浓度（含 bg 前缀但非 URL，与 bgMask 同类）
 		"bgId":               true, // 内置背景 id
 		"files":              true, // 存储用量累计文件数
+		// logoSize / logoAlign（0053）是「档位枚举」，带 logo 前缀但值是 small|medium|large
+		// 与 left|center|right，不是地址。真正的地址字段是不带后缀的 logo 本身。
+		// 第七十轮新增时被这条守门抓到，登记在案。
+		"logoSize":  true,
+		"logoAlign": true,
 		// publicBaseUrl 是唯一「确实是 URL、但角色相反」的一条：它是租户自有访问域名，
 		// 也就是 ResolveRef(raw, origin) 里 origin 的候选值——解析器的**输入**，不是输出。
 		// 对它调 ResolveRef 不会裂图，只会把配置页显示的基址悄悄改形，而且要到客户

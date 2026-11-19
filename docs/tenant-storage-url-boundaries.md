@@ -109,7 +109,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 - `MediaCheck.ObjectKey`（`media_check.go:31`，`json:"objectKey"`）是从 URL 反推的裸键；
   P0 之后 `mediachk.ObjectKey`（`mediachk.go:159`）那段反推逻辑应退休。
 
-**同名但不是 URL、不要误接**的 6 个字段（守门白名单，逐条写明理由）：
+**同名但不是 URL、不要误接**的 8 个字段（守门白名单，逐条写明理由）：
 
 | json 字段 | 为什么不算 |
 | --- | --- |
@@ -118,9 +118,12 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `bgGradientStrength` | `int` 首页顶部主色浓度（`models.go:271`），带 `bg` 前缀但与 `bgMask` 同类，是滑杆数值不是地址 |
 | `bgId` | 内置背景 id（`models.go:446`），值是 `poster-*` / `c-*` 标识 |
 | `files` | 存储用量累计文件数（`model/storage_usage.go:26`），`int64` |
+| `logoSize` | 名片 LOGO 尺寸档（`models.go:495`，0053），值是 `small` / `medium` / `large`；带 `logo` 前缀但是档位不是地址 |
+| `logoAlign` | 名片 LOGO 位置档（`models.go:496`，0053），值是 `left` / `center` / `right`；真正的地址是不带后缀的 `logo` |
+| `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第六十八轮订正：此前「第一阶段恒为空、连回显都还没有」已不成立——现在它会回显 `publicBaseUrl`，并附 `publicBaseUrlActive=false` / `publicBaseUrlNote` 如实说明实况。**第六十九轮再订正**：出参侧按租户选 origin 已接入，`public_base_url` 经 `publicOriginState` 判定后成为 `model.Origin.Base`，确实作为 origin 进了 `storage.ResolveRefForTenant`；但它在配置接口里**仍是原样回显的输入**，不是资源字段的输出，白名单理由与「不许对它调 `ResolveRef`」的边界都不变 |
 | `publicBaseUrl` | **确实是 URL，但角色相反**：租户自有访问域名（`model/tenant_storage.go`，列 `public_base_url`）。它是 `ResolveRef(raw, origin)` 里那个 **origin 的候选值**——解析器的**输入**，不是输出。对它调 `ResolveRef` 只会得到荒谬结果（`https://img.c7.com` 会被当成「存量绝对 URL」原样返回，或更糟：被当相对路径拼上 `/uploads/`）。它的出参处理是**原样回显**给平台超管的配置界面。第六十八轮订正：此前「第一阶段恒为空、连回显都还没有」已不成立——现在它会回显 `publicBaseUrl`，并附 `publicBaseUrlActive=false` / `publicBaseUrlNote` 如实说明实况。**第六十九轮再订正**：出参侧按租户选 origin 已接入，`public_base_url` 经 `publicOriginState` 判定后成为 `model.Origin.Base`，确实作为 origin 进了 `storage.ResolveRefForTenant`；但它在配置接口里**仍是原样回显的输入**，不是资源字段的输出，白名单理由与「不许对它调 `ResolveRef`」的边界都不变 |
 
-> `publicBaseUrl` 是这五条里唯一「长得像资源字段、语义却是解析器输入」的一条。
+> `publicBaseUrl` 是这八条里唯一「长得像资源字段、语义却是解析器输入」的一条。
 > 将来若真有人把它接进 `ResolveRefs`，症状不是裂图，而是**配置页显示的基址被悄悄改形**，
 > 而且只在客户启用自有域名后才暴露——所以它进白名单时单独写了理由，不留「同类合并」的余地。
 

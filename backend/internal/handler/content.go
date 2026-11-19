@@ -676,6 +676,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 前端 radio 拿到空串会一个都不选中，看起来像配置丢了。
 		projectMode, serviceMode := model.DefaultTimeMode, model.DefaultTimeMode
 		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
+		// 名片卡右上角 LOGO 的尺寸 / 位置档位（0053）。缺省 medium / center =
+		// 加配置前写死的 150×44 + aspectFit 居中，存量租户回显也不会突变。
+		logoSize, logoAlign := model.DefaultLogoSize, model.DefaultLogoAlign
 		if db.First(&hl, "company_id = ?", cid).Error == nil {
 			if hl.Order != "" {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
@@ -690,6 +693,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
 			projectMode = model.NormalizeTimeMode(hl.ProjectTimeMode)
 			serviceMode = model.NormalizeTimeMode(hl.ServiceTimeMode)
+			// 0053 两列同理：空串（历史行）一律归一成缺省档，否则前端 radio 会一个都不选中。
+			logoSize = model.NormalizeLogoSize(hl.LogoSize)
+			logoAlign = model.NormalizeLogoAlign(hl.LogoAlign)
 			// 两轴：优先读 style_id / brand_color_id；0042 已回填存量行，
 			// style_id 在 MySQL 端与 SQLite AutoMigrate 均有 DEFAULT 'default'，
 			// 空串兜底见 effectiveStyleBrand。
@@ -708,6 +714,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"featuredEffect":   featuredEffect,
 			"showCategoryName": showCategoryName, "showServiceName": showServiceName,
 			"projectTimeMode": projectMode, "serviceTimeMode": serviceMode,
+			"logoSize": logoSize, "logoAlign": logoAlign,
 			"styleId": styleID, "brandColorId": brandColorID,
 			"companyNameScale": nameScale, "introFontScale": introScale,
 			"templates":        mptemplate.All(),
@@ -747,6 +754,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 指针语义：nil 表示本次不提交（不动对应列）。
 			CompanyNameScale *string `json:"companyNameScale"`
 			IntroFontScale   *string `json:"introFontScale"`
+			// 名片卡右上角 LOGO 的尺寸 / 位置档位（0053）。指针语义同上：
+			// 风格页只提交两轴时，不能把客户调好的 LOGO 档位冲回缺省。
+			LogoSize  *string `json:"logoSize"`
+			LogoAlign *string `json:"logoAlign"`
 		}
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -805,6 +816,16 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		if req.IntroFontScale != nil {
 			introScale = model.NormalizeIntroFontScale(*req.IntroFontScale)
+		}
+		// LOGO 尺寸 / 位置同理：纯展示偏好，非法值归一成缺省档而不是拒掉整次保存。
+		// 与 timeMode（非法即拒）的差别在于后果——端上拿到不认识的档只让 class 落空、
+		// 退回基线尺寸，不会出现「东西不见了」这种需要客服介入的形态。
+		logoSize, logoAlign := "", ""
+		if req.LogoSize != nil {
+			logoSize = model.NormalizeLogoSize(*req.LogoSize)
+		}
+		if req.LogoAlign != nil {
+			logoAlign = model.NormalizeLogoAlign(*req.LogoAlign)
 		}
 
 		// ===== 风格 / 色系（两轴，P5 起全叉乘）=====
@@ -888,6 +909,10 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				CategoryLimit:   model.DefaultCategoryLimit,
 				FeaturedCount:   model.DefaultFeaturedCount,
 				FeaturedEffect:  model.DefaultFeaturedEffect,
+				// 0053：新行必须显式带上两个缺省档。GORM 的 default tag 只在
+				// 零值字段上生效，但这里显式写出来更抗「有人改了 tag」。
+				LogoSize:  model.DefaultLogoSize,
+				LogoAlign: model.DefaultLogoAlign,
 			}
 			if req.BgImage != nil {
 				created.BgImage = *req.BgImage
@@ -919,6 +944,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if serviceMode != "" {
 				created.ServiceTimeMode = serviceMode
+			}
+			if logoSize != "" {
+				created.LogoSize = logoSize
+			}
+			if logoAlign != "" {
+				created.LogoAlign = logoAlign
 			}
 			if err := db.Create(&created).Error; err != nil {
 				dbWriteFailed(c, "新建首页布局", "保存失败，请稍后重试", err)
@@ -961,6 +992,14 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if serviceMode != "" {
 				upd["service_time_mode"] = serviceMode
 			}
+			// LOGO 两档只在本次显式提交时写：否则背景页签的保存会把客户调好的档位
+			// 静默冲回缺省（与上面两个开关同一类静默丢失）。
+			if logoSize != "" {
+				upd["logo_size"] = logoSize
+			}
+			if logoAlign != "" {
+				upd["logo_align"] = logoAlign
+			}
 			// 只在本次显式提交了风格字段时才写风格两列：否则只提交 order / 背景 /
 			// 时间档位的页签会把客户选好的模板静默冲回 default（见 themeTouched 注释）。
 			// style_id / brand_color_id 是存储真值；brand_color_id 是 *string，
@@ -1001,6 +1040,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				"nameTouched": nameScale != "", "introTouched": introScale != "",
 				"categoryTouched": req.CategoryLimit != nil,
 				"featuredTouched": req.FeaturedCount != nil || req.FeaturedEffect != nil,
+				"logoTouched":     logoSize != "" || logoAlign != "",
 			},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
