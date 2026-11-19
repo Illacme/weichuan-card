@@ -741,7 +741,11 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .svc-title { text-align: center; font-size: 26rpx; color: #333; margin-top: 12rpx; }
 
 /* 底部操作栏 */
-.action-bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1rpx solid #eee; padding: 16rpx 24rpx; padding-bottom: calc(16rpx + env(safe-area-inset-bottom)); }
+/* 底部操作栏必须压在正文之上：精选案例的切页动画带 transform，会创建层叠
+   上下文，iOS 上滚动时它的合成层可能盖住没有 z-index 的 fixed 按钮。
+   z-index 取 8：高于正文 / .pcat-bar 的 5，低于弹窗 .mask 的 10、
+   .pwd-dialog 的 11 与顶栏 .custom-nav 的 100，弹窗仍能正常盖住按钮。 */
+.action-bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: #fff; border-top: 1rpx solid #eee; padding: 16rpx 24rpx; padding-bottom: calc(16rpx + env(safe-area-inset-bottom)); z-index: 8; }
 .ab-btn { flex: 1; margin: 0 12rpx; border-radius: var(--wc-r-control); font-size: 30rpx; }
 .ab-btn.call { background: var(--wc-primary); color: #fff; }
 .ab-btn.save { background: #fff; color: var(--wc-primary); border: 1rpx solid var(--wc-primary); }

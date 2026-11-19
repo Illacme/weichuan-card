@@ -8,7 +8,9 @@
    容器高度 = 最高那页的高度，不需要隐藏占位，也不需要切页换占位的图片 src。
    （旧做法每次切页都 setData 换 sizerItems，iOS 上 widthFix 换 src 时高度
    短暂塌成 0 → 整页高度骤减 → WebView 把滚动位置钳回 0；华为未复现。） */
-.featured-paged { position: relative; display: grid; overflow: hidden; }
+/* z-index:0 把整个精选区显式钉在正文层：下面的 .feat-page-cycle 带 transform
+   会创建层叠上下文，不钉住的话 iOS 滚动时可能盖住底部 fixed 的操作栏。 */
+.featured-paged { position: relative; display: grid; overflow: hidden; z-index: 0; }
 
 /* 所有页重叠在同一格：容器按最高的页撑高，矮页留白但不裁切高页。
    scroll 时相邻页 translateX(±100%) 移到主区域外，overflow:hidden 负责裁掉。 */
