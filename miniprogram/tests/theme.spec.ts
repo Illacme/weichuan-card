@@ -1594,3 +1594,19 @@ describe('小程序风格模板 固定预览区与组合说明区的视觉分隔
     expect(bar).toContain('height: ${bar_h}px')
   })
 })
+
+// manifest 迁到 src 后，发版脚本不能再从 dist/theme-previews 找它：Vite 把 JSON
+// 打进 bundle，dist 下只剩 PNG / 遮罩。改回去的话 deploy_frontend.sh --build
+// 会在发版当天 die（2026-11-19 本地实测踩过一次）。
+describe('发版脚本与 manifest 新位置对齐', () => {
+  const DEPLOY = readFileSync(resolve(REPO, 'scripts/deploy_frontend.sh'), 'utf-8')
+
+  it('对账清单读源码 manifest，而不是 dist 里的', () => {
+    expect(DEPLOY).toContain(
+      'PREVIEW_MANIFEST="$SCRIPT_DIR/../frontend/src/assets/theme-previews/manifest.json"'
+    )
+    expect(DEPLOY, 'dist 下已没有 manifest，读回去会让 --build 在发版当天失败').not.toContain(
+      '"$PREVIEW_DIR/manifest.json"'
+    )
+  })
+})

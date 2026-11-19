@@ -176,14 +176,18 @@ echo "  index.html 引用的资源全部存在"
 # （缺图会被 SPA 兜底成 index.html + 200，<img> 解码失败后静默降级）。
 # 这里按 manifest 的 combos 键逐张对账，缺一张就不发版。
 PREVIEW_DIR="$DIST_DIR/theme-previews"
+# manifest 是构建期数据：Vite 从 src 直接 import 进 bundle（Vite 不允许 JS 导入 public
+# 下的资源），不再随 PNG 发到 dist。对账清单因此读源码那份——它与本次 build 打进
+# bundle 的内容天然同版；PNG / 遮罩仍按 URL 取，照旧在 dist 下逐张查。
+PREVIEW_MANIFEST="$SCRIPT_DIR/../frontend/src/assets/theme-previews/manifest.json"
 if [ ! -d "$PREVIEW_DIR" ]; then
     warn "  产物里没有 theme-previews/：后台「整体风格」页只会显示降级示意图"
-elif [ ! -f "$PREVIEW_DIR/manifest.json" ]; then
-    die "theme-previews/ 里没有 manifest.json，产物不完整（重跑 scripts/gen_theme_previews.py 再 build）"
+elif [ ! -f "$PREVIEW_MANIFEST" ]; then
+    die "缺 frontend/src/assets/theme-previews/manifest.json（manifest 已从 public 迁至 src；重跑 scripts/gen_theme_previews.py 再 build）"
 else
     PREVIEW_BAD=0
     PREVIEW_TOTAL=0
-    for cid in $(grep -oE '"[a-z0-9-]+--[a-z0-9-]+"' "$PREVIEW_DIR/manifest.json" \
+    for cid in $(grep -oE '"[a-z0-9-]+--[a-z0-9-]+"' "$PREVIEW_MANIFEST" \
                  | tr -d '"' | sort -u); do
         PREVIEW_TOTAL=$((PREVIEW_TOTAL + 1))
         # 每个组合是两档文件：列表窗口用的 460px 缩略图 + 「查看大图」用的原图。
@@ -200,7 +204,7 @@ else
     done
     [ "$PREVIEW_TOTAL" -gt 0 ] || die "manifest.json 里没解析出任何组合键，产物格式不对"
     [ "$PREVIEW_BAD" -eq 0 ] || die "缺 $PREVIEW_BAD 个主题预览图文件（$PREVIEW_TOTAL 个组合 × 2 档；先跑 python3 scripts/gen_theme_previews.py 再 build）"
-    echo "  主题预览图齐全（$PREVIEW_TOTAL 个组合 × 大图 + 缩略图，与 manifest 逐一对上）"
+    echo "  主题预览图齐全（$PREVIEW_TOTAL 个组合 × 大图 + 缩略图，与源码 manifest 逐一对上）"
 fi
 
 # ---------- 1. 连接方式与传输方式 ----------
