@@ -502,7 +502,7 @@ describe('content/CompanyProfile', () => {
 
     expect(w.find('.el-radio[data-value="upload"]').attributes('data-disabled')).toBe('1')
     expect(w.text()).toContain('本地存储不支持视频直传，请改用对象存储')
-    expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').exists()).toBe(true)
+    expect(byPlaceholder(w, 'mp4 地址（http:// 或 https://）').exists()).toBe(true)
   })
 
   it('自托管 MP4 档 · 直链：显示 MP4 地址输入框', async () => {
@@ -510,7 +510,7 @@ describe('content/CompanyProfile', () => {
     await pickSource(w, 'mp4')
     await pickMp4Mode(w, 'url')
 
-    expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').exists()).toBe(true)
+    expect(byPlaceholder(w, 'mp4 地址（http:// 或 https://）').exists()).toBe(true)
   })
 
   // 四种视频档都可能播不出来：视频号（feed-token 失效）、腾讯视频（vid 未过审）、
@@ -635,6 +635,36 @@ describe('content/CompanyProfile', () => {
     )
   })
 
+  // 主源与兜底是两个地址槽，各自独立的提示：只提示兜底等于没说——客户最常见的
+  // 形态恰恰是「主源就是那个只开了 http 的七牛地址」。
+  it('主视频地址是 http：同样提示明文风险，且用的是主源的口径', async () => {
+    const w = await mountPage()
+    await pickSource(w, 'mp4')
+    await pickMp4Mode(w, 'url')
+    await byPlaceholder(w, 'mp4 地址（http:// 或 https://）').setValue(
+      'http://qiniu.ziyuanxingqiu.cn/video-langhui.mp4'
+    )
+    await flush()
+
+    expect(w.text()).toContain('收紧')
+    expect(w.text()).toContain('真的播起来时黑屏')
+    // 两处共用 httpPlainHint 但场景词各传各的；写串了就会主源借用兜底那句话
+    expect(w.text()).not.toContain('真到兜底时黑屏')
+    expect(ElMessage.warning).not.toHaveBeenCalled()
+  })
+
+  it('主视频地址是 https：不出现明文提示', async () => {
+    const w = await mountPage()
+    await pickSource(w, 'mp4')
+    await pickMp4Mode(w, 'url')
+    await byPlaceholder(w, 'mp4 地址（http:// 或 https://）').setValue(
+      'https://cdn.example.com/a.mp4'
+    )
+    await flush()
+
+    expect(w.text()).not.toContain('收紧')
+  })
+
   // ---- 自托管 MP4 的兜底：备用地址必须是独立槽 ----
   //
   // videoUrl 在 upload / url 两档是主视频源，又在 channels / tencent 两档兼作兜底源。
@@ -647,7 +677,7 @@ describe('content/CompanyProfile', () => {
     const BACKUP = 'https://cdn-b.example.com/backup.mp4'
     const BACKUP_PH = '备用 mp4 地址（建议与主源用不同域名 / CDN）'
     const FALLBACK_PH = '兜底用的 mp4 地址（云存储或任意 CDN 均可）'
-    const MAIN_PH = 'https:// 开头的 mp4 地址'
+    const MAIN_PH = 'mp4 地址（http:// 或 https://）'
 
     const mp4Profile = (extra: any = {}) => ({
       ...profile('url', MAIN),
@@ -1020,7 +1050,7 @@ describe('content/CompanyProfile', () => {
       await flush()
 
       expect((w.find('.el-select').element as HTMLSelectElement).value).toBe('mp4')
-      expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').element.value).toBe(
+      expect(byPlaceholder(w, 'mp4 地址（http:// 或 https://）').element.value).toBe(
         'https://cdn.example.com/a.mp4'
       )
     })
@@ -1049,7 +1079,7 @@ describe('content/CompanyProfile', () => {
       // 切到直链后直链槽是空的（上传得到的地址不会被搬过来，这正是拆槽的目的），
       // 所以这里必须自己填一个地址——否则会被「请填写 MP4 地址」拦下，
       // 这条用例就变成在测拦截而不是在测取值映射
-      await byPlaceholder(w, 'https:// 开头的 mp4 地址').setValue('https://cdn.example.com/b.mp4')
+      await byPlaceholder(w, 'mp4 地址（http:// 或 https://）').setValue('https://cdn.example.com/b.mp4')
       await flush()
       await saveButton(w).trigger('click')
       await flush()
@@ -1116,7 +1146,7 @@ describe('content/CompanyProfile', () => {
       const w = await mountPage(profile('url', 'https://cdn.example.com/video-langhui.mp4'), MP4_CAP)
       await flush()
       // 先确认直链确实回填进了直链输入框（否则下面「上传组件是空的」就不成立）
-      expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').element.value).toBe(
+      expect(byPlaceholder(w, 'mp4 地址（http:// 或 https://）').element.value).toBe(
         'https://cdn.example.com/video-langhui.mp4'
       )
 
@@ -1132,7 +1162,7 @@ describe('content/CompanyProfile', () => {
 
       await pickMp4Mode(w, 'url')
 
-      expect(byPlaceholder(w, 'https:// 开头的 mp4 地址').element.value).toBe('')
+      expect(byPlaceholder(w, 'mp4 地址（http:// 或 https://）').element.value).toBe('')
     })
 
     // 注意这两条必须「改过值再保存」：只回显不修改的话，错取的槽恰好也等于原值，
@@ -1153,7 +1183,7 @@ describe('content/CompanyProfile', () => {
       const w = await mountPage(profile('url', 'https://cdn.example.com/old.mp4'), MP4_CAP)
       await flush()
 
-      await byPlaceholder(w, 'https:// 开头的 mp4 地址').setValue('https://cdn.example.com/new.mp4')
+      await byPlaceholder(w, 'mp4 地址（http:// 或 https://）').setValue('https://cdn.example.com/new.mp4')
       await flush()
       await saveButton(w).trigger('click')
       await flush()
@@ -1170,7 +1200,7 @@ describe('content/CompanyProfile', () => {
 
       // 先在直链槽里留一个值，再切回上传档
       await pickMp4Mode(w, 'url')
-      await byPlaceholder(w, 'https:// 开头的 mp4 地址').setValue('https://other.example.com/x.mp4')
+      await byPlaceholder(w, 'mp4 地址（http:// 或 https://）').setValue('https://other.example.com/x.mp4')
       await flush()
       await pickMp4Mode(w, 'upload')
       await saveButton(w).trigger('click')
@@ -1257,7 +1287,7 @@ describe('content/CompanyProfile', () => {
   // 所以每条取值用例都先把输入框改成新值再点按钮。
   describe('测试地址', () => {
     const CAP = { driver: 'oss', presign: true, videoUpload: true, videoMaxMb: 200, reason: '' }
-    const MAIN_INPUT = 'https:// 开头的 mp4 地址'
+    const MAIN_INPUT = 'mp4 地址（http:// 或 https://）'
     const BACKUP_INPUT = '备用 mp4 地址（建议与主源用不同域名 / CDN）'
     const FALLBACK_INPUT = '兜底用的 mp4 地址（云存储或任意 CDN 均可）'
 

@@ -193,7 +193,9 @@
         </el-form-item>
 
         <el-form-item v-if="mp4Mode === 'url'" label="MP4 地址">
-          <el-input v-model="externalUrl" placeholder="https:// 开头的 mp4 地址" />
+          <!-- 占位符不再写死「https:// 开头」：CDN 只开了 http 的客户会以为自己填不了。
+               http 能存也能播（下方有明文风险的提示），不该在输入框里先劝退。 -->
+          <el-input v-model="externalUrl" placeholder="mp4 地址（http:// 或 https://）" />
           <div class="hint">我们不保存文件。流量费由您的存储服务商收取，视听类目资质需自行具备。</div>
         </el-form-item>
 
@@ -215,6 +217,9 @@
               {{ probeResult.main }}
             </div>
             <div class="hint">
+              <!-- 主源是 http 明文时先说这一句，再讲排查方法：否则下面整段
+                   「打不开怎么排查」会让人以为问题出在配置写错，而不是协议。 -->
+              <div v-if="mainHttpHint" class="hint-warn">{{ mainHttpHint }}</div>
               点开应当能直接播放。这里打不开，小程序里也一定播不了（先在浏览器排除证书与地址问题）。
               相对路径会在小程序端自动拼上服务域名，请确认该域名下确实有这个文件。
               如果对象存储控制台里文件名带目录前缀（如 aitel/xxx.mp4），「文件访问基址」也必须带上同样的目录前缀，
@@ -260,15 +265,9 @@
             仅在视频号 / 腾讯视频主源报错时切换，正常情况下不会用到。留空等于没开兜底。
           </template>
           <!-- 只提示、不拦截：同源的 http/https 写入侧已经宽容（否则「什么都没改、点保存就报
-               地址不合法」，第五十九轮上线时真实发生过）。
-               为什么仍然建议 https：官方对媒体资源的口径在收紧——基础库 3.8.7 起 image 在
-               开发版/体验版已不支持 http 图片，video 的 http 失败反馈也一直是社区高频问题。
-               「能播」和「可靠」不是一回事，生产环境不该赌。 -->
-          <span v-if="fallbackIsHttp" class="hint-warn">
-            地址是 <code>http://</code>：可以保存，但微信在收紧明文资源（基础库 3.8.7 起
-            image 在开发版 / 体验版已不支持 http 图片），生产环境请务必用 <code>https://</code>，
-            否则可能「配置看着正常、真到兜底时黑屏」。
-          </span>
+               地址不合法」，第五十九轮上线时真实发生过）。文案与主视频地址共用 httpPlainHint，
+               两处不许各写一份。 -->
+          <span v-if="fallbackHttpHint" class="hint-warn">{{ fallbackHttpHint }}</span>
         </div>
         <!-- 四档共用一个按钮，但测的是各自的地址槽（fallbackUrlValue）：
              自托管 MP4 取 videoBackupUrl，视频号/腾讯视频取 videoUrl。别写成固定取某一列。 -->
@@ -456,11 +455,28 @@ const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.
 // 拦不住真正没填的情况（主源永远非空）。
 const fallbackUrlValue = computed(() => (isMp4.value ? form.videoBackupUrl : form.videoUrl))
 
-// 兜底地址用了 http：能存（后端对同源 http/https 宽容），但微信在收紧明文资源
-// （基础库 3.8.7 起 image 在开发版/体验版已不支持 http 图片，video 的 http 失败反馈
-// 也一直是社区高频问题）。所以这里提前提示「生产环境请用 https」，但**不拦保存**——
-// 拦会把「存量地址 + 什么都没改」的客户卡死在保存按钮上（第五十九轮真实发生过）。
+// 「地址是 http 明文」的统一口径，主源与兜底共用一份：两处各写一遍，改一处漏一处
+// 就是同一件事在界面上有两种说法。
+// 为什么只提示不拦截：媒体资源的 src 历史上不校验业务域名，http 在真机上能播；
+// 但微信在收紧（基础库 3.8.7 起 image 在开发版/体验版已不支持 http 图片）。
+// 拦下来会把「存量地址 + 什么都没改」的客户卡死在保存按钮上——第五十九轮真实发生过。
+function httpPlainHint(scene: string): string {
+  return (
+    '地址是 http://：可以保存，但微信在收紧明文资源（基础库 3.8.7 起 image 在开发版 / 体验版' +
+    '已不支持 http 图片），生产环境请务必用 https://，否则可能「配置看着正常、' +
+    scene +
+    '」。'
+  )
+}
+
+// 主视频地址（只有 MP4 档才有；其余档位 activeVideoUrl 恒为空）。
+const mainIsHttp = computed(() => /^http:\/\//i.test(activeVideoUrl.value.trim()))
+const mainHttpHint = computed(() => (mainIsHttp.value ? httpPlainHint('真的播起来时黑屏') : ''))
+
 const fallbackIsHttp = computed(() => /^http:\/\//i.test(fallbackUrlValue.value.trim()))
+const fallbackHttpHint = computed(() =>
+  fallbackIsHttp.value ? httpPlainHint('真到兜底时黑屏') : ''
+)
 
 // ---- 「测试地址」：两个槽各自的结果，互不覆盖 ----
 // 之所以不共用一个 result：主源与兜底地址常常一好一坏，同时把结论摆出来才看得出
