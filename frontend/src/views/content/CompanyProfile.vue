@@ -23,10 +23,8 @@
         <div v-if="form.videoSource === 'channels'" class="hint hint-good">
           视频存微信服务器、播放走微信 CDN，<b>不产生存储与流量费用</b>，且官方声明该组件无视听资质要求。
           <span class="hint-warn">
-            形态说明（微信组件固定行为，均无开关可改）：内嵌播放时封面自带<b>视频号名称与推荐角标</b>，无法隐藏。
-            播放方式见下方单选：<b>内嵌</b>留在本页，<b>跳转</b>会离开小程序打开视频号视频页。
-            要求「原位播放、画面干净」请用<b>自托管 MP4</b>（上传文件，或直接填任意 https mp4 地址）；
-            其中「上传到云存储」仅当存储配置为对象存储时可用，本地磁盘存储下只能填直链。
+            形态说明（微信组件固定行为，无开关可改）：封面自带<b>视频号名称与推荐角标</b>，无法隐藏；
+            要「画面干净」请改选<b>自托管 MP4</b>。
           </span>
         </div>
         <div v-else-if="form.videoSource === 'tencent'" class="hint hint-good">
@@ -48,16 +46,47 @@
         </div>
       </el-form-item>
 
-      <!-- 视频号档：先选播放方式，它决定下面要填哪些凭证。
-           embed 走 <channel-video> 原位内嵌；redirect 走 wx.openChannelsActivity 跳到视频号视频页。 -->
+      <!-- 视频号档：顺序按**依赖**排，不按「哪个概念更重要」排。
+           先给「播什么」——视频号 ID（哪个号）、feedId（哪一条）、feed-token（跨主体替代）；
+           最后才选「怎么播」。播放方式放末尾是有意的：选「跳转」硬性要求 ID + feedId 同时存在，
+           把开关摆在两个字段前面，就成了「先让你选、选完才告诉你缺东西」。
+           凭证区内部也是依赖顺序：ID 定位视频号 → feedId 定位视频 → token 是同主体的替代品，
+           放最后且与 feedId 相邻说明「二选一」。 -->
       <template v-if="form.videoSource === 'channels'">
         <el-form-item label="视频号 ID">
           <el-input v-model="form.videoChannelId" placeholder="sph 开头，视频号助手首页可查看" />
           <div class="hint">
-            <b>跳转播放必填</b>（<code>wx.openChannelsActivity</code> 的 <code>finderUserName</code>）；
-            <b>内嵌播放也建议填</b>——它会作为 <code>&lt;channel-video&gt;</code> 的
-            <code>finder-user-name</code> 透传，官方属性表把这一项标为必填（与 feedId 同组）。
-            不填时内嵌档只靠 feedId 定位，能不能播官方没有背书。
+            <b>跳转播放必填</b>；内嵌播放也会透传给 <code>&lt;channel-video&gt;</code>，建议一起填
+            （官方属性表把它与 feedId 列为同组必填）。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="视频 feedId">
+          <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
+          <div class="hint">
+            <b>同主体填这个</b>：从视频号助手复制，长期稳定。
+            <span class="hint-warn">视频号与小程序不同主体时它不生效，改用下面的 feed-token。</span>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="feed-token">
+          <el-input
+            v-model="form.videoFeedToken"
+            :disabled="isChannelsRedirect"
+            placeholder="跨主体才填：MP 平台开权限后移动端复制"
+          />
+          <div class="hint">
+            <b>跨主体才需要</b>（官方明确 feedId 仅同主体生效），代价是官方强制<b>不能自动播放</b>。
+            获取入口有 24 小时窗口且只对操作者本人可见，需由我们协助提取。
+            <span class="hint-warn">
+              两个硬条件：小程序须为非个人主体；客户端基础库 ≥ 2.31.1（低版本不认它，会退成封面图）。
+              报错 <code>channel-video:fail 1416106</code> 多为 token 与本小程序不匹配或被截断
+              （正常形如 <code>token/</code> 开头的一长串，详见部署手册排障表）。
+            </span>
+            <span v-if="form.videoFeedId.trim()" class="hint-warn">已填 feedId，本项不会被使用。</span>
+            <span v-if="isChannelsRedirect" class="hint-warn">
+              跳转播放用不到它，已填内容会保留，切回「内嵌播放」仍在使用。
+            </span>
           </div>
         </el-form-item>
 
@@ -67,53 +96,22 @@
             <el-radio value="redirect" :disabled="!canRedirect">跳转打开视频号</el-radio>
           </el-radio-group>
           <div class="hint">
-            <b>内嵌播放</b>：用 <code>&lt;channel-video&gt;</code> 在名片页原位播放，访客不离开小程序；
-            基础库 ≥ 2.25.1。官方虽允许同主体自动播放，但<b>视频号档不启用自动播放</b>（进页面不会突然出声）。
-            <span class="hint-warn">暂不支持纯图片视频号内容——那类内容内嵌不显示，只能用「跳转打开」。</span>
-            <span class="hint-warn">
-              跨主体只能靠 feed-token，且官方强制<b>不能自动播放</b>——访客得自己点一下播放键。
-              <span class="hint-warn">
-                官方原文只写「支持在小程序中播放视频号视频，并无弹窗跳转至视频号」，<b>没有</b>说点击播放会跳走；
-                但也别向客户承诺「绝不会离开小程序」——组件自带跳转入口，访客点了就会跳走。
-              </span>
-            </span>
+            <b>内嵌播放</b>：<code>&lt;channel-video&gt;</code> 在名片页原位播放，访客不离开小程序
+            （基础库 ≥ 2.25.1）。本产品<b>不启用自动播放</b>，访客自己点播放键。
+            <span class="hint-warn">不支持纯图片视频号内容——那类内容内嵌不显示，只能选「跳转打开」。</span>
           </div>
           <div class="hint">
-            <b>跳转打开</b>：点封面后用 <code>wx.openChannelsActivity</code> 打开视频号视频页。
-            <b>无主体限制</b>（跨主体也能用），代价是离开小程序、且记不到播放统计。
+            <b>跳转打开</b>：点封面用 <code>wx.openChannelsActivity</code> 打开视频号视频页
+            （基础库 ≥ 2.19.2，<b>无主体限制</b>），代价是离开小程序、记不到播放统计。
             <span class="hint-warn">
-              要求同时填写<b>视频号 ID</b>与<b>feedId</b>：该接口只认这两个参数，<b>feed-token 不能用于跳转</b>。
-              基础库 ≥ 2.19.2。
+              需同时填<b>视频号 ID</b>与<b>feedId</b>；该接口不认 feed-token。
             </span>
             <span v-if="!canRedirect" class="hint-warn">
               当前还缺{{ missingForRedirect }}，补齐后「跳转打开」才可选。
             </span>
             <span v-if="isChannelsRedirect" class="hint-warn">
-              跳转播放不经过小程序：视频由视频号页面自己加载，主源失败这件事在这里不会发生，
-              所以<b>不再提供兜底 MP4</b>（配了也不会被触发，摆着只会让人以为已经兜住了）。
+              跳转不经过小程序，视频由视频号页面自己加载，所以这一档<b>不再提供兜底 MP4</b>。
             </span>
-          </div>
-        </el-form-item>
-
-        <el-form-item label="视频 feedId">
-          <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
-          <div class="hint">
-            <b>同主体用这个</b>（视频号与小程序同一主体）：官方允许自动播放，但<b>视频号档不启用</b>（进页面不会自己出声）；从视频号助手复制即长期稳定。
-          </div>
-        </el-form-item>
-        <el-form-item v-if="form.videoChannelPlayMode === 'embed'" label="feed-token">
-          <el-input v-model="form.videoFeedToken" placeholder="跨主体才填：MP 平台开权限后移动端复制" />
-          <div class="hint">
-            <b>跨主体才需要</b>：官方明确 feed-id「仅同主体时生效」，视频号与我们小程序不同主体时必须改用它。
-            代价是<b>强制不能自动播放</b>（用户需点一下）。获取入口有 24 小时窗口且只对操作者本人可见，需由我们协助提取。
-            <span class="hint-warn">
-              两个硬条件：小程序须为非个人主体；用户微信基础库 ≥ 2.31.1（低版本不认 feed-token，组件报错后会回落成封面图）。
-              保存后若小程序只显示封面，多半是 token 不完整或基础库过低。
-              组件报错 <code>channel-video:fail 1416106</code> 即「feed-token 跨主体播放失败」：
-              ① token 必须是在移动端「在小程序中引用该视频」时<b>选中本小程序</b>生成的（该 token 仅对生成时所指定的小程序生效）；
-              ② 存的 token 要完整，正常形如 <code>token/</code> 开头一长串，短于十位多半被截断。
-            </span>
-            <span v-if="form.videoFeedId.trim()" class="hint-warn">当前已填 feedId，feed-token 不会被使用。</span>
           </div>
         </el-form-item>
       </template>

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject } from 'vue'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import CompanyProfile from './CompanyProfile.vue'
 
 // 公司简介页：视频来源五档 + 动态表单 + 存储能力探测。
@@ -70,9 +73,10 @@ const ElFormItem = defineComponent({
 })
 const ElInput = defineComponent({
   name: 'ElInput',
-  props: ['modelValue', 'placeholder', 'type', 'rows'],
+  props: ['modelValue', 'placeholder', 'type', 'rows', 'disabled'],
   emits: ['update:modelValue'],
   template: `<input class="el-input" :placeholder="placeholder" :value="modelValue"
+    :disabled="disabled"
     @input="$emit('update:modelValue', $event.target.value)" />`,
 })
 const ElSelect = defineComponent({
@@ -340,9 +344,17 @@ describe('content/CompanyProfile', () => {
       expect(w.text()).toContain('feedId')
     })
 
-    // 补齐两项后必须真的能选：只做「缺字段时禁用」，禁用条件写错成恒真也测不出来
-    it('补齐视频号 ID 与 feedId 后可选跳转，选中后隐藏只有内嵌才用的 feed-token', async () => {
-      const w = await mountPage(channelsProfile({ videoChannelId: 'sphABC', videoFeedId: 'feed-1' }))
+    // 补齐两项后必须真的能选：只做「缺字段时禁用」，禁用条件写错成恒真也测不出来。
+    // 选中后 feed-token **置灰但不隐藏**：藏起来会让客户以为刚填的 token 被清空了，
+    // 而它其实还在表单里、切回内嵌就又生效——「配置了什么」必须始终看得见。
+    it('补齐视频号 ID 与 feedId 后可选跳转；选中后 feed-token 置灰但值仍可见', async () => {
+      const w = await mountPage(
+        channelsProfile({
+          videoChannelId: 'sphABC',
+          videoFeedId: 'feed-1',
+          videoFeedToken: 'token/keepme',
+        })
+      )
       await flush()
 
       expect(radio(w, 'redirect').attributes('data-disabled')).toBe('0')
@@ -351,7 +363,33 @@ describe('content/CompanyProfile', () => {
       await flush()
 
       expect(radio(w, 'redirect').attributes('data-checked')).toBe('1')
-      expect(hasInput(w, TOKEN_PH)).toBe(false)
+      // 仍在页面上（没被 v-if 藏掉），但已禁用，且原值保留
+      expect(hasInput(w, TOKEN_PH)).toBe(true)
+      const tokenInput = byPlaceholder(w, TOKEN_PH)
+      expect(tokenInput.attributes('disabled')).toBeDefined()
+      expect((tokenInput.element as HTMLInputElement).value).toBe('token/keepme')
+    })
+
+    // 顺序即依赖：ID（哪个号）→ feedId（哪一条）→ feed-token（同主体的替代）→ 播放方式（怎么播）。
+    // 播放方式必须排在最后——选「跳转」硬性要求前两项，摆在前面就成了「先让你选、选完再说缺东西」。
+    // 这条守门盯的是模板里的书写顺序，改回去必红。
+    it('四个配置项按依赖顺序排列，播放方式在最后', () => {
+      const sfc = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), 'CompanyProfile.vue'),
+        'utf8'
+      )
+      const anchors = [
+        'label="视频号 ID"',
+        'label="视频 feedId"',
+        'label="feed-token"',
+        'label="播放方式"',
+      ]
+      const idx = anchors.map((a) => {
+        const i = sfc.indexOf(a)
+        expect(i, `锚点 ${a} 不在模板里，顺序断言会空转`).toBeGreaterThan(-1)
+        return i
+      })
+      expect(idx).toEqual([...idx].sort((a, b) => a - b))
     })
 
     it('跳转模式随保存提交，且 feedId 与视频号 ID 一并带上', async () => {
