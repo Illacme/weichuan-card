@@ -59,14 +59,21 @@ const ElDivider = defineComponent({
 })
 const ElTag = defineComponent({ name: 'ElTag', template: `<span class="el-tag"><slot /></span>` })
 
-// radio-group 通过 provide 把「选中」事件转给子项，复刻真实组件的 v-model 语义
+// radio-group 通过 provide 把「选中」事件转给子项，复刻真实组件的 v-model 语义。
+// data-selected 暴露当前值：没有它就只能靠「点一下再存」间接验证回显，
+// 而回显写错（比如把档位读成别的字段）恰好会被这种间接断言放过。
 const ElRadioGroup = defineComponent({
   name: 'ElRadioGroup',
   props: ['modelValue'],
   emits: ['update:modelValue'],
   setup(_props, { slots, emit }) {
     provide('radioGroup', { select: (v: string) => emit('update:modelValue', v) })
-    return () => h('div', { class: 'el-radio-group' }, slots.default ? slots.default() : [])
+    return () =>
+      h(
+        'div',
+        { class: 'el-radio-group', 'data-selected': String(_props.modelValue ?? '') },
+        slots.default ? slots.default() : []
+      )
   },
 })
 const ElRadio = defineComponent({
@@ -185,6 +192,17 @@ async function pickTimeMode(w: any, label: string, optionText: string) {
   await flush()
 }
 
+// 通用版：按表单项 label + 选项文字点选。LOGO 的两组档位文案是「小 / 靠左」这类
+// 短词，与时间档位共用一套定位逻辑，但错一个字就会静默点空，所以找不到直接抛。
+async function pickRadio(w: any, label: string, optionText: string) {
+  const radio = formItemByLabel(w, label)
+    .findAll('.el-radio')
+    .find((r: any) => r.text() === optionText)
+  if (!radio) throw new Error(`「${label}」里找不到选项：${optionText}`)
+  await radio.trigger('click')
+  await flush()
+}
+
 describe('content/HomeLayout', () => {
   beforeEach(() => {
     mocks.getHomeLayout.mockClear()
@@ -200,22 +218,28 @@ describe('content/HomeLayout', () => {
   })
 
   // 只挪表单项、把 divider 留在原地，会出现「标题说首页背景，底下是板块顺序」的错位，
-  // 所以直接钉死五个模块标题在源码里的相对位置。首页文字展示（公司名/简介档位）
+  // 所以直接钉死六个模块标题在源码里的相对位置。首页文字展示（公司名/简介档位）
   // 必须夹在「首页背景」与「板块顺序」中间——这是产品约定的插入位置；
+  // 名片 LOGO 紧随首页文字展示（两者都是「名片卡长什么样」），
   // 业绩与案例展示紧随板块顺序，且在详情页时间显示之前。
-  it('配置模块顺序：首页背景 → 首页文字展示 → 板块顺序 → 业绩与案例展示 → 详情页时间显示', () => {
+  it('配置模块顺序：首页背景 → 首页文字展示 → 名片 LOGO → 板块顺序 → 业绩与案例展示 → 详情页时间显示', () => {
     const src = readFileSync(PAGE_SRC, 'utf-8')
-    const bg = src.indexOf('<el-divider content-position="left">首页背景</el-divider>')
-    const text = src.indexOf('<el-divider content-position="left">首页文字展示</el-divider>')
-    const order = src.indexOf('<el-divider content-position="left">板块顺序</el-divider>')
-    const display = src.indexOf('<el-divider content-position="left">业绩与案例展示</el-divider>')
-    const time = src.indexOf('<el-divider content-position="left">详情页时间显示</el-divider>')
-
-    expect(bg).toBeGreaterThan(-1)
-    expect(text).toBeGreaterThan(bg)
-    expect(order).toBeGreaterThan(text)
-    expect(display).toBeGreaterThan(order)
-    expect(time).toBeGreaterThan(display)
+    const anchors = [
+      '首页背景',
+      '首页文字展示',
+      '名片 LOGO',
+      '板块顺序',
+      '业绩与案例展示',
+      '详情页时间显示',
+    ].map((name) => `<el-divider content-position="left">${name}</el-divider>`)
+    const idx = anchors.map((a) => {
+      const i = src.indexOf(a)
+      // 锚点不存在时 indexOf 返回 -1，后面的 > 比较会拿 -1 当「最靠前」，
+      // 于是「删掉一个分组」照样全绿——必须显式断言存在。
+      expect(i, `锚点 ${a} 不在模板里，顺序断言会空转`).toBeGreaterThan(-1)
+      return i
+    })
+    expect(idx).toEqual([...idx].sort((a, b) => a - b))
   })
 
   // 顶部说明漏写分区时，运营只看第一眼会以为这个页签只有背景和顺序——
@@ -223,9 +247,60 @@ describe('content/HomeLayout', () => {
   it('顶部说明覆盖所有分区，不只列首页背景与板块顺序', async () => {
     const w = await mountPage()
     const desc = w.find('p.desc').text()
-    for (const kw of ['首页背景', '公司名称与简介', '先后顺序', '业绩分类', '精选案例', '封面图名称', '更新于']) {
+    for (const kw of ['首页背景', '公司名称与简介', 'LOGO 的大小与位置', '先后顺序', '业绩分类', '精选案例', '封面图名称', '更新于']) {
       expect(desc, `顶部说明漏了「${kw}」`).toContain(kw)
     }
+  })
+
+  // ---- 名片 LOGO 尺寸 / 位置（0053）----
+  //
+  // 客户的原话是「正方形图看起来偏左，要能调大小和位置」。这里守三件事：
+  // ① 历史行没有这两列时回显不能落空（否则 radio 一个都不选中，看起来像配置丢了）；
+  // ② 切档后保存提交的是新值（不是永远缺省）；
+  // ③ 预览随档位联动——预览不动的控件等于让客户盲调。
+  it('历史行没有这两列（0053 之前的存量）：回显成 中 / 居中', async () => {
+    // 默认 mock 刻意不带 logoSize / logoAlign，模拟旧后端 / 旧行
+    const w = await mountPage()
+
+    expect(formItemByLabel(w, 'LOGO 大小').find('.el-radio-group').attributes('data-selected')).toBe(
+      'medium'
+    )
+    expect(formItemByLabel(w, 'LOGO 位置').find('.el-radio-group').attributes('data-selected')).toBe(
+      'center'
+    )
+  })
+
+  it('后端下发 大 / 靠右：控件回显，预览同步换成大区块并贴右', async () => {
+    const w = await mountPage({ order: [], logoSize: 'large', logoAlign: 'right' })
+
+    expect(formItemByLabel(w, 'LOGO 大小').find('.el-radio-group').attributes('data-selected')).toBe(
+      'large'
+    )
+    expect(formItemByLabel(w, 'LOGO 位置').find('.el-radio-group').attributes('data-selected')).toBe(
+      'right'
+    )
+    const slot = w.find('.lp-slot')
+    expect(slot.classes()).toContain('lp-slot-large')
+    expect(slot.classes()).toContain('lp-align-right')
+    expect(w.find('.lp-img').classes()).toContain('lp-img-large')
+  })
+
+  it('把 LOGO 调成 小 / 靠左 后保存：提交新档位，预览跟着变', async () => {
+    const w = await mountPage()
+
+    await pickRadio(w, 'LOGO 大小', '小')
+    await pickRadio(w, 'LOGO 位置', '靠左')
+
+    const slot = w.find('.lp-slot')
+    expect(slot.classes()).toContain('lp-slot-small')
+    expect(slot.classes()).toContain('lp-align-left')
+
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ logoSize: 'small', logoAlign: 'left' })
+    )
   })
 
   // order[0] 决定谁是「在前」的板块
@@ -268,6 +343,8 @@ describe('content/HomeLayout', () => {
       serviceTimeMode: 'date',
       companyNameScale: 'large',
       introFontScale: 'large',
+      logoSize: 'medium',
+      logoAlign: 'center',
     })
   })
 
@@ -373,6 +450,8 @@ describe('content/HomeLayout', () => {
       serviceTimeMode: 'date',
       companyNameScale: 'large',
       introFontScale: 'large',
+      logoSize: 'medium',
+      logoAlign: 'center',
     })
   })
 

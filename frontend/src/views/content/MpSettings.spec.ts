@@ -249,6 +249,10 @@ describe('content/MpSettings', () => {
       // 只提交缺省，断言就会红——用 large 断言则「没接线」也能过。
       companyNameScale: 'small',
       introFontScale: 'hidden',
+      // 0053 LOGO 两档同样刻意给非缺省值（medium / center 是缺省）：
+      // 回显丢了、或页面忘了提交，断言都会红。
+      logoSize: 'large',
+      logoAlign: 'right',
       styleId: 'default',
       brandColorId: null,
       templateEntitled: true,
@@ -478,6 +482,9 @@ describe('content/MpSettings', () => {
       // 两处文字档位必须随保存提交：漏了就是「后台选了、小程序没变」
       companyNameScale: 'small',
       introFontScale: 'hidden',
+      // 0053 LOGO 尺寸 / 位置同理：不提交就等于「后台调了、小程序没动」
+      logoSize: 'large',
+      logoAlign: 'right',
     })
   })
 

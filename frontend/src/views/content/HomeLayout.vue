@@ -7,7 +7,7 @@
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
-    <p class="desc">设置小程序首页背景、视频下方公司名称与简介的大小/显示、首页「经典业绩」与「业务服务」的先后顺序、业绩分类与精选案例的展示数量与效果、「封面图名称」（封面图下是否再显示名称），以及两个详情页是否显示「更新于」。</p>
+    <p class="desc">设置小程序首页背景、视频下方公司名称与简介的大小/显示、名片右上角 LOGO 的大小与位置、首页「经典业绩」与「业务服务」的先后顺序、业绩分类与精选案例的展示数量与效果、「封面图名称」（封面图下是否再显示名称），以及两个详情页是否显示「更新于」。</p>
 
     <!-- 表单宽度与「访客先看到谁」对齐（720）：560 时「从素材库选择」按钮的文字会被
          挤成两行，撑满卡片后这个窄表单也显得孤零零 -->
@@ -78,6 +78,53 @@
         <div class="bg-hint">
           只影响首页的<b>简介文字一段</b>，不改公司名与其它文字。关闭后首页不再渲染简介，
           腾出的空间给下面的板块。
+        </div>
+      </el-form-item>
+
+      <el-divider content-position="left">名片 LOGO</el-divider>
+
+      <p class="desc desc-tight">
+        名片卡右上角的企业 LOGO 原来是固定尺寸、固定位置：一张<strong>正方形或竖版</strong>的图会被缩到框内居中，
+        左右各留一大块空白，看起来像「浮在偏左的位置」，小尺寸图尤其明显。这两组档位就是用来调它的。
+      </p>
+
+      <el-form-item label="LOGO 大小">
+        <el-radio-group v-model="logoSize">
+          <el-radio value="small">小</el-radio>
+          <el-radio value="medium">中（默认）</el-radio>
+          <el-radio value="large">大</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">
+          「中」就是加这个设置前的样子（高 44rpx、区块宽 150rpx），升级后没有任何变化。
+        </div>
+      </el-form-item>
+
+      <el-form-item label="LOGO 位置">
+        <el-radio-group v-model="logoAlign">
+          <el-radio value="left">靠左</el-radio>
+          <el-radio value="center">居中（默认）</el-radio>
+          <el-radio value="right">靠右</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">
+          只影响<strong>方块 / 竖版</strong> LOGO；<strong>横版长条</strong> LOGO 本来就会撑满整块区域，三档看不出差别。
+          想在右上角再往右挪一点，选「靠右」。
+        </div>
+      </el-form-item>
+
+      <el-form-item label="效果预览">
+        <div>
+          <div class="logo-preview">
+            <!-- 用方块占位模拟「正方形 LOGO」——正是会被压缩、最能看出位置差别的那种。
+                 尺寸按真实比例（1rpx = 0.5px @375）换算，别为了好看放大，
+                 否则客户按预览调完到真机上会不一致。 -->
+            <div class="lp-row">
+              <span class="lp-name">姓名</span>
+              <span class="lp-slot" :class="[`lp-slot-${logoSize}`, `lp-align-${logoAlign}`]">
+                <span class="lp-img" :class="`lp-img-${logoSize}`" />
+              </span>
+            </div>
+          </div>
+          <div class="bg-hint">方块 LOGO 的实际效果（彩色块代表 LOGO，右侧空白就是卡片右边缘）。</div>
         </div>
       </el-form-item>
 
@@ -184,7 +231,14 @@
 import { ElMessage } from 'element-plus'
 import { ref, computed, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
-import { getHomeLayout, saveHomeLayout, type DetailTimeMode, type FeaturedEffect } from '@/api/content'
+import {
+  getHomeLayout,
+  saveHomeLayout,
+  type DetailTimeMode,
+  type FeaturedEffect,
+  type LogoAlign,
+  type LogoSize,
+} from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import ImageViewer from '@/components/ImageViewer.vue'
 
@@ -217,6 +271,10 @@ const serviceTimeMode = ref<DetailTimeMode>('date')
 // 历史行该列可能为空，load 时用 || 'large' 兜底，避免 radio 落到未选中态。
 const companyNameScale = ref<string>('large')
 const introFontScale = ref<string>('large')
+// 名片卡右上角 LOGO 的尺寸 / 位置档位（0053）。缺省 medium / center =
+// 加配置前写死的 150×44 + aspectFit 居中；历史行该列可能为空，load 时兜底。
+const logoSize = ref<LogoSize>('medium')
+const logoAlign = ref<LogoAlign>('center')
 
 // 把档位翻译成「小程序上会看到什么」，比让客户理解 hidden/date/minute 直观。
 // 时间取当下（不是真实内容时间，只演示格式），够用且不会误导成「这是某条内容的时间」。
@@ -257,6 +315,9 @@ async function load() {
     serviceTimeMode.value = d?.serviceTimeMode || 'date'
     companyNameScale.value = d?.companyNameScale || 'large'
     introFontScale.value = d?.introFontScale || 'large'
+    // 历史行这两列可能为空（0053 之前建的），兜底成缺省档，否则 radio 会一个都不选中。
+    logoSize.value = (d?.logoSize || 'medium') as LogoSize
+    logoAlign.value = (d?.logoAlign || 'center') as LogoAlign
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -284,6 +345,8 @@ async function save() {
       serviceTimeMode: serviceTimeMode.value,
       companyNameScale: companyNameScale.value,
       introFontScale: introFontScale.value,
+      logoSize: logoSize.value,
+      logoAlign: logoAlign.value,
     })
     ElMessage.success('已保存小程序展示设置')
   } catch {
@@ -349,6 +412,76 @@ defineExpose({ load, save, loading, saving })
   color: #606266;
   font-size: 13px;
   text-align: right;
+}
+/* 名片 LOGO 效果预览：按 1rpx = 0.5px（375 视口）换算真实比例，
+   放大只会让客户按预览调完、到真机上对不上。
+   虚线框是「LOGO 区块」本身——横版长条 LOGO 会撑满它，三档才看不出差别；
+   彩色方块代表方块 LOGO，右侧留白就是卡片右边缘。 */
+.logo-preview {
+  width: 240px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.lp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lp-name {
+  font-size: 17px; /* 34rpx */
+  font-weight: 700;
+  color: #222;
+}
+.lp-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 8px; /* 16rpx */
+  border: 1px dashed #dcdfe6;
+  box-sizing: border-box;
+}
+/* 区块宽度：110 / 150 / 190 rpx */
+.lp-slot-small {
+  width: 55px;
+  height: 18px;
+}
+.lp-slot-medium {
+  width: 75px;
+  height: 22px;
+}
+.lp-slot-large {
+  width: 95px;
+  height: 26px;
+}
+.lp-align-left {
+  justify-content: flex-start;
+}
+.lp-align-center {
+  justify-content: center;
+}
+.lp-align-right {
+  justify-content: flex-end;
+}
+/* 方块 LOGO：高 = 18 / 22 / 26 rpx×0.5，正方形，所以宽高相等 */
+.lp-img {
+  display: block;
+  background: linear-gradient(135deg, #409eff, #79bbff);
+  border-radius: 2px;
+}
+.lp-img-small {
+  width: 18px;
+  height: 18px;
+}
+.lp-img-medium {
+  width: 22px;
+  height: 22px;
+}
+.lp-img-large {
+  width: 26px;
+  height: 26px;
 }
 /* 效果预览：模拟小程序首页——背景铺底 + 遮罩 + 白色卡片浮起 */
 .bg-preview {

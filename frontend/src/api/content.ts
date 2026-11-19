@@ -179,6 +179,21 @@ export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 /** 首页精选案例的循环呈现效果。与后端 model.FeaturedEffect* 白名单一一对应。 */
 export type FeaturedEffect = 'static' | 'fade' | 'scroll' | 'flip'
 
+/**
+ * 名片卡右上角企业 LOGO 的尺寸档。与后端 model.LogoSize* 一一对应。
+ * medium = 加配置前写死的 150×44rpx，缺省；small / large 才显式改变大小。
+ */
+export type LogoSize = 'small' | 'medium' | 'large'
+
+/**
+ * LOGO 在「右上角区块」内的水平对齐。与后端 model.LogoAlign* 一一对应。
+ *
+ * 语义边界（后台必须照这个说，否则客户会以为「靠左」是把 LOGO 挪到姓名旁边）：
+ * 只影响内容宽度小于区块宽度的图（方块 / 竖版 LOGO）；横版长条 LOGO 会撑满区块，
+ * 三档看起来完全一样。center = aspectFit 原本的居中观感，即加配置前的样子。
+ */
+export type LogoAlign = 'left' | 'center' | 'right'
+
 /** 模板系列：style=整体风格（配色+版式），brand=品牌配色（只换配色）。由服务端下发。 */
 export type ThemeSeries = 'style' | 'brand'
 
@@ -225,6 +240,10 @@ export interface HomeLayoutData {
   companyNameScale: string
   /** 首页视频下方「简介文字」展示档位：large(基线) / medium / small / hidden(关闭该行) */
   introFontScale: string
+  /** 名片卡右上角 LOGO 的尺寸档，默认 medium（= 加配置前的 150×44rpx） */
+  logoSize: LogoSize
+  /** LOGO 在右上角区块内的水平对齐，默认 center（= aspectFit 原本的居中） */
+  logoAlign: LogoAlign
   templates: ThemeTemplate[]
   /** 本租户是否开通高级模板；false 时高级款置灰并说明原因 */
   templateEntitled: boolean
@@ -248,6 +267,8 @@ export function getHomeLayout() {
           brandColorId: null,
           companyNameScale: 'large',
           introFontScale: 'large',
+          logoSize: 'medium',
+          logoAlign: 'center',
           templates: [],
           templateEntitled: true,
         }) as HomeLayoutData
