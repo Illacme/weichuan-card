@@ -65,10 +65,12 @@ backend/server
 backend/thumbbackfill
 backend/license
 # 交叉编译出来的任何平台二进制
-/server-linux-amd64
-/server-linux-arm64
-/server-darwin-amd64
-/server-darwin-arm64
+# 必须用 `**/` 而不是 `/`：原件写在 backend/ 下，`/server-*` 只匹配仓库根目录，
+# 2026-11-19 就是这样把 43MB 的 backend/server-linux-amd64 提交进了仓库。
+**/server-linux-amd64
+**/server-linux-arm64
+**/server-darwin-amd64
+**/server-darwin-arm64
 
 # ── 微信小程序开发者工具本地私有配置 ──
 project.private.config.json
