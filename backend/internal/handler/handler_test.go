@@ -3040,3 +3040,40 @@ func TestCompanyProfileRefSchemeTolerated(t *testing.T) {
 	require.EqualValues(t, 1, b["code"], "响应：%v", b)
 	require.Contains(t, b["msg"], "封面图")
 }
+
+// TestCompanyProfileQiniuHTTPWithPathBase 钉住 2026-11-19 线上报障的接口级行为：
+// 平台基址带七牛空间目录（https://<CDN>/aitel），客户兜底地址是同 host 根路径下的
+// http 直链（http://<CDN>/video-langhui.mp4）——必须能保存且原样保留。
+//
+// 《TestCompanyProfileRefSchemeTolerated》用的是域名根基址，只覆盖了「仅协议不同」；
+// 带路径基址时 host 相同、路径不同，仍会撞同源守门。这条用例打到 HTTP 出口，
+// 测的是「点保存成功」这个承诺本身，不是只测归一工具函数。
+func TestCompanyProfileQiniuHTTPWithPathBase(t *testing.T) {
+	r := setupSQLiteEngine(t, func(c *config.Config) {
+		c.UploadBaseURL = "https://qiniu.zhiyuanxingqiu.cn/aitel"
+	})
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+
+	const link = "http://qiniu.zhiyuanxingqiu.cn/video-langhui.mp4"
+	_, b := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"introText":        "简介",
+		"videoSource":      "channels",
+		"videoChannelId":   "sphABC",
+		"videoUrl":         link,
+		"videoFallbackUrl": true,
+	}, tok)
+	require.EqualValues(t, 0, b["code"], "线上这条 http 兜底直链必须存得进去，响应：%v", b)
+
+	// 读回原样：不能被猜键改写成 /uploads/... 或补上 /aitel 前缀。
+	_, gb := c.do("GET", "/api/admin/company-profile", nil, tok)
+	require.EqualValues(t, link,
+		gb["data"].(map[string]interface{})["videoUrl"])
+
+	// 反向：同 host + 带路径基址下的 https 非法址仍要拒，放宽只给 http。
+	_, bad := c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"videoSource": "none",
+		"videoUrl":    "https://qiniu.zhiyuanxingqiu.cn/other/x.mp4",
+	}, tok)
+	require.EqualValues(t, 1, bad["code"], "https 同源推不出键仍要拒：%v", bad)
+}

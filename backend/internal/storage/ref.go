@@ -477,7 +477,22 @@ func NormalizeOrKeep(raw, baseURL string, scope Scope, companyID int64) (string,
 	if !isHTTPURL(s) {
 		return "", "", relErr
 	}
-	if sameHostAsBase(s, baseURL) {
+	// 同源且推不出键：默认仍拒（基址配错时把本平台对象当外链放过，库形态会静默
+	// 退回绝对 URL，见 TestNormalizeOrKeepRejectsSameHostUnparsable）。
+	//
+	// 唯一例外：**http 明文地址按历史外链放行**。这是 2026-11-19 线上报障补的：
+	// 客户一直在用 `http://qiniu.../video-langhui.mp4` 这条第三方直链，而平台基址
+	// 是 `https://qiniu.../aitel`（七牛 S3 的对象名带空间目录前缀，见 README 存储
+	// 章节）。host 相同、路径却不在基址前缀下，协议又是 http——《42d08ee》只放过
+	// 「同 host 且路径相同、仅协议不同」，这一种「同 host 路径不同」仍被拒，
+	// 于是客户什么都没改、点保存就报「视频地址不合法」。
+	//
+	// 为什么放行 http 是安全的：本平台对象无论本地 /uploads/ 还是云驱动，公开的
+	// 新基址都是 https（小程序 <video>/<image> 也只认 https），**不存在**一个
+	// 「本该归一却写成 http 明文直链、且路径不在 /uploads/ 段」的平台对象。
+	// 这类地址只可能是历史手工填写的第三方直链，原样保留即可，与外链同口径。
+	// https 的同源异常继续拒，原守门语义不变。
+	if sameHostAsBase(s, baseURL) && !strings.HasPrefix(strings.ToLower(s), "http://") {
 		return "", "", fmt.Errorf("%w（与本平台基址同源，多为 upload_base_url 配错或数据形态异常）", relErr)
 	}
 	return s, RefForeignURL, nil

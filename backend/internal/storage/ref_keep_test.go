@@ -125,6 +125,42 @@ func TestNormalizeOrKeepRejectsSameHostUnparsable(t *testing.T) {
 	require.Empty(t, kind)
 }
 
+// 同 host、路径不在基址下、且是 http 明文直链 → 按历史外链放行（2026-11-19 线上报障）。
+//
+// 真实场景：客户一直在用 `http://qiniu.../video-langhui.mp4` 这条第三方视频直链，
+// 平台基址是 `https://qiniu.../aitel`（七牛 S3 的对象名带空间目录前缀）。
+// host 相同、路径不同、协议是 http。《42d08ee》只放过「同 host + 同路径 + 仅协议
+// 不同」，这一种仍被上面那条同源守门拒掉，于是客户什么都没改、点保存就报
+// 「视频地址不合法」。http 明文不可能是本平台对象，放行不破坏「同源必拒」的初衷
+// （那条守的是 https 基址配错、本平台对象退回绝对 URL 的情形）。
+func TestNormalizeOrKeepAllowsSameHostHTTPForeignLink(t *testing.T) {
+	const raw = "http://qiniu.zhiyuanxingqiu.cn/video-langhui.mp4"
+	cases := []struct{ name, base string }{
+		{"基址带七牛空间目录", "https://qiniu.zhiyuanxingqiu.cn/aitel"},
+		{"基址是域名根", "https://qiniu.zhiyuanxingqiu.cn"},
+		{"基址连末尾斜杠", "https://qiniu.zhiyuanxingqiu.cn/aitel/"},
+	}
+	require.GreaterOrEqual(t, len(cases), 3, "量尺要有读数")
+	for _, c := range cases {
+		key, kind, err := NormalizeOrKeep(raw, c.base, ScopeTenant, 5)
+		require.NoError(t, err, "%s：http 历史直链不该被拒", c.name)
+		// 两种合法归类都接受：基址是域名根时 swapScheme 能剥出相对部分 → legacy-path；
+		// 基址带 /aitel 时走 http 例外 → foreign-url。两者都原样保留、不猜键改写，
+		// 对用户结果一致（保存成功、地址不变），不该因归类不同判失败。
+		require.Contains(t, []RefKeepKind{RefForeignURL, RefLegacyPath}, kind, c.name)
+		require.Equal(t, raw, key, "%s：外链原样保留，不许猜键改写", c.name)
+	}
+}
+
+// 反例：同样「同 host、路径不同」，https 地址仍必须拒——原守门语义不能丢。
+func TestNormalizeOrKeepStillRejectsSameHostHTTPSUnparsable(t *testing.T) {
+	_, _, err := NormalizeOrKeep(
+		"https://qiniu.zhiyuanxingqiu.cn/other/x.mp4",
+		"https://qiniu.zhiyuanxingqiu.cn/aitel", ScopeTenant, 5)
+	require.Error(t, err, "https 同源推不出键仍要拒，不能被 http 的放宽连带放过")
+	require.Contains(t, err.Error(), "同源")
+}
+
 // 空值是合法状态：avatar / cover / logo 大量为空，出参侧 ResolveRef 也约定
 // 空值不报错。两侧口径必须一致，否则「清空头像」这个操作会失败。
 func TestNormalizeOrKeepEmptyIsOK(t *testing.T) {
