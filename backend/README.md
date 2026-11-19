@@ -537,7 +537,7 @@ curl -X POST "$BASE/api/admin/companies/5/storage/check" -H "Authorization: Bear
 | 档位 | 播放形态 | 存储/流量 | 播放埋点 | 门槛 |
 |---|---|---|---|---|
 | `none` | 封面占位 | — | — | 无 |
-| `channels` | 跨主体点击拉起视频号页；封面带视频号名称与推荐角标 | 微信承担 | **无**（官方 channel-video 只有 binderror） | 非个人主体 + 基础库 ≥ 2.31.1 |
+| `channels` | `<channel-video>` 原位内嵌（跨主体时官方强制不能自动播放，需用户点一下）；播放方式选「跳转打开」时改走 `wx.openChannelsActivity` 拉起视频号视频页 | 微信承担 | **无**（官方 channel-video 只有 binderror，无播放事件） | 内嵌同主体：基础库 ≥ 2.25.1；内嵌跨主体（feed-token）：非个人主体 + ≥ 2.31.1；跳转播放：≥ 2.19.2 且**无主体限制** |
 | `upload` | 原位播放 | 客户对象存储 | 有 | 需配置对象存储（本地磁盘下该档禁用） |
 | `url` | 原位播放 | 客户自备 CDN | 有 | 正式版需把 mp4 域名加入小程序「业务域名」 |
 | `tencent` | 原位播放、无视频号角标 | 腾讯视频承担 | **有**（插件透传 bindplay） | 系统设置开启 + 插件授权 + `app.json` 声明 |

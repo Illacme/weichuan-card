@@ -198,7 +198,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - 工具栏开箱即用（加粗/标题/列表/图片/链接等），并通过 `excludeKeys` 排除了自带视频上传。
 - **图片菜单已接后台存储**：`MENU_CONF.uploadImage.customUpload` 调 `src/api/uploadFile.ts`（预签名直传优先、不支持则回退 multipart），与 `UploadField` 共用同一份实现——此前没配 `customUpload`，wangEditor 只会去它自己的默认上传地址，运营被迫「插入网络图片」贴外链，这是详情页图片失效的根因。上传上限 10MB（与 `sys_setting.upload_max_mb` 出厂默认一致；直传路径后端看不到字节，只能前端把关）。
 - **视频块节点（三种来源）**：通过 `src/editor/wxVideoModule.ts` 注册了自定义元素 `wxVideo`，序列化为 `<wx-video …></wx-video>`，用 `type` 属性区分来源（缺省 `channels`，兼容存量视频号内容），与小程序端 `rich-video` 组件约定一致；回显时 `<wx-video>` 标签会被解析还原为编辑区节点。三种来源的凭证：
-  - **视频号**（缺省 / `channels`，编辑区绿色占位）：`feed-id`（同主体，视频号助手 → 动态管理复制）> `feed-token`（跨主体专用，基础库 2.31.1+，强制不能自动播放）> `channel-id`（视频号 ID，**sph 开头**，`gh_` 是公众号 ID，只能展示视频号主页）。存量内容里只有 `channel-id`，故仍读写它以便回退，编辑区会标出「视频号主页」提示它播不了指定视频。
+  - **视频号**（缺省 / `channels`，编辑区绿色占位）：`feed-id`（同主体，视频号助手 → 动态管理复制）> `feed-token`（跨主体专用，基础库 2.31.1+，官方强制不能自动播放）> `channel-id`（视频号 ID，**sph 开头**，`gh_` 是公众号 ID）。`channel-id` 有两个用途：内嵌时作为 `channel-video` 的 `finder-user-name` 透传（官方属性表标必填，与 feed-id 同组），跳转播放时作 `wx.openChannelsActivity` 的 `finderUserName`；**它单独存在时没有可播的视频**（只是「哪个视频号」，不是「哪一条视频」），官方也没有「只传视频号 ID 就展示主页」的能力。存量内容里只有 `channel-id`，故仍读写它以便回退，编辑区会标出「仅视频号 ID（无视频标识）」提示它播不了。
   - **腾讯视频**（`type="tencent"`，蓝色占位）：`vid` 是唯一取片凭证（v.qq.com 播放页 `/page/` 与 `.html` 之间那段；弹窗里可直接粘贴播放页地址自动提取）。依赖小程序的腾讯视频插件——部署未开启该档时块渲染不出来，弹窗内有提示。
   - **MP4 直链**（`type="mp4"`，橙色占位）：`src` 为可直接播放的 MP4 地址（对象存储或客户自备 CDN）；正式版要求域名在小程序「业务域名」白名单内。
 - 编辑器上方有一个「插入视频块」按钮，弹窗先选「视频来源」，再按所选类型填凭证（void 原子块，内部不可编辑）。编辑已有块时类型随块回填，切换类型会把旧类型的残留属性一并清掉。

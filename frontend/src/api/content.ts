@@ -23,7 +23,7 @@ export function saveCompanyInfo(p: {
 // videoSource 五档：none / channels（视频号）/ upload（云存储上传）/ url（外部直链）/ tencent（预留）
 // videoUrl 由 upload 与 url 两档共用，并作为 channels / tencent 开启 videoFallbackUrl 时的兜底源。
 // videoBackupUrl 是 upload / url 两档主 MP4 失败时的备用地址，独立一列，不与 videoUrl 共用。
-// channels 档：feedId（同主体，可自动播放）与 feedToken（跨主体，强制不能自动播放）二选一，feedId 优先。
+// channels 档：feedId（同主体；官方允许自动播放，本产品不传 autoplay）与 feedToken（跨主体，官方强制不能自动播放）二选一，feedId 优先。
 export function getCompanyProfile() {
   return http.get('/admin/company-profile').then((r: any) => (r.data ?? { id: 1 }) as any)
 }

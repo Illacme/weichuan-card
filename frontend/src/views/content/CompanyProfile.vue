@@ -54,8 +54,10 @@
         <el-form-item label="视频号 ID">
           <el-input v-model="form.videoChannelId" placeholder="sph 开头，视频号助手首页可查看" />
           <div class="hint">
-            内嵌播放时仅作留档；<b>跳转播放必填</b>——它是 <code>wx.openChannelsActivity</code> 的
-            <code>finderUserName</code> 参数。
+            <b>跳转播放必填</b>（<code>wx.openChannelsActivity</code> 的 <code>finderUserName</code>）；
+            <b>内嵌播放也建议填</b>——它会作为 <code>&lt;channel-video&gt;</code> 的
+            <code>finder-user-name</code> 透传，官方属性表把这一项标为必填（与 feedId 同组）。
+            不填时内嵌档只靠 feedId 定位，能不能播官方没有背书。
           </div>
         </el-form-item>
 
@@ -66,7 +68,8 @@
           </el-radio-group>
           <div class="hint">
             <b>内嵌播放</b>：用 <code>&lt;channel-video&gt;</code> 在名片页原位播放，访客不离开小程序；
-            基础库 ≥ 2.25.1，同主体靠 feedId 可自动播放。
+            基础库 ≥ 2.25.1。官方虽允许同主体自动播放，但<b>视频号档不启用自动播放</b>（进页面不会突然出声）。
+            <span class="hint-warn">暂不支持纯图片视频号内容——那类内容内嵌不显示，只能用「跳转打开」。</span>
             <span class="hint-warn">
               跨主体只能靠 feed-token，且官方强制<b>不能自动播放</b>，用户点一下仍会拉起视频号页面。
             </span>
@@ -91,7 +94,7 @@
         <el-form-item label="视频 feedId">
           <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
           <div class="hint">
-            <b>同主体用这个</b>（视频号与小程序同一主体）：可自动播放，从视频号助手复制即长期稳定。
+            <b>同主体用这个</b>（视频号与小程序同一主体）：官方允许自动播放，但<b>视频号档不启用</b>（进页面不会自己出声）；从视频号助手复制即长期稳定。
           </div>
         </el-form-item>
         <el-form-item v-if="form.videoChannelPlayMode === 'embed'" label="feed-token">

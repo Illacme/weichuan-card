@@ -53,15 +53,39 @@
     <view class="rich-video-jump-tip">在视频号中播放</view>
   </view>
 
-  <!-- 视频号块（无 type / type="channels"，存量内容兼容）：三凭证优先级递减 -->
-  <channel-video wx:elif="{{feedId}}" feed-id="{{feedId}}" class="rich-video" />
+  <!-- 视频号块（无 type / type="channels"，存量内容兼容）：三凭证优先级递减。
+       finder-user-name 按官方属性表补上（标必填，与 feed-id 同组）；channelId 为空时值是空串，
+       与默认值 "" 等价。三档都挂 bind:error——没有它，块出错就是一个白块 + 控制台全静默，
+       客户只会说「详情页那块空白」，运维无从下手。 -->
+  <channel-video
+    wx:elif="{{feedId}}"
+    finder-user-name="{{channelId}}"
+    feed-id="{{feedId}}"
+    class="rich-video"
+    bind:error="onVideoError"
+  />
 
   <!-- 跨主体：feed-id 官方明确仅同主体生效，不同主体必须改用 feed-token。
-       代价是强制 autoplay=false（只能显示封面让用户点），故排在同主体之后。 -->
-  <channel-video wx:elif="{{feedToken}}" feed-token="{{feedToken}}" class="rich-video" />
+       代价是强制 autoplay=false（只能显示封面让用户点），故排在同主体之后。
+       **不传 finder-user-name**：官方对它写的是「视频号必须与当前小程序相同主体」，
+       与 token 档的跨主体语义相悖；token 自身已指明视频号与视频。 -->
+  <channel-video
+    wx:elif="{{feedToken}}"
+    feed-token="{{feedToken}}"
+    class="rich-video"
+    bind:error="onVideoError"
+  />
 
-  <!-- 只有 channel-id 时回退 finder-user-name 展示视频号主页。
-       这是兼容历史富文本内容的旧行为——存量块里只存了视频号 ID，
-       若直接丢弃会让这些内容整块消失，故保留回退而不是一刀切。 -->
-  <channel-video wx:elif="{{channelId}}" finder-user-name="{{channelId}}" class="rich-video" />
+  <!-- ⚠ 只有 channel-id 的存量块：官方组件文档里**没有**「只传 finder-user-name 就能展示
+       视频号主页」这个能力——channel-video 是「视频号视频」组件，没有 feed-id/feed-token
+       就等于没有要播的对象，实际表现大概率是空白或报错（本仓从未真机证实过）。
+       保留这个分支只是为了让存量块**不至于整块消失**（有报错事件总比块被删掉可诊断），
+       不要据此向客户承诺「能展示主页」。真正能看主页的是小程序里另开
+       wx.openChannelsUserProfile（与视频播放无关）。 -->
+  <channel-video
+    wx:elif="{{channelId}}"
+    finder-user-name="{{channelId}}"
+    class="rich-video"
+    bind:error="onVideoError"
+  />
 </view>

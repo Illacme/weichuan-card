@@ -175,7 +175,7 @@ describe('company-video 组件', () => {
     expect(c.data.mode).toBe('mp4')
   })
 
-  it('channels 档：有 feedId 走 channels（同主体可自动播放）', async () => {
+  it('channels 档：有 feedId 走 channels（同主体）', async () => {
     const c = instance(await loadComponent())
 
     c.repick('channels', 'feed_1', 'tok_1', '', false)
@@ -1243,5 +1243,44 @@ describe('自托管 MP4 备用地址的静态守门', () => {
   it('切过备用仍失败时，提示要点明两个地址都挂了', () => {
     expect(compWxml).toContain('wx:if="{{mp4FallbackUsed}}"')
     expect(compWxml).toContain('主视频与备用地址都无法加载')
+  })
+})
+
+// ---- 静态守门：channel-video 的属性按官方文档传 ----
+//
+// 官方 <channel-video> 属性表把 feed-id 与 finder-user-name 列为同一组（都标必填），
+// feed-token 是跨主体通道（基础库 2.31.1+，非个人主体）。这组断言盯「参数有没有真的
+// 到组件上」——漏传不报错，只表现成「同主体档播不出来」（而这个档只在客户自建小程序
+// 的私有部署里出现，坏了很难被发现），或者「跨主体档被塞了要求同主体的属性」。
+describe('channel-video 属性透传的静态守门', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const strip = (s: string) => s.replace(/<!--[\s\S]*?-->/g, '')
+  const compWxml = strip(readFileSync(resolve(root, 'components/company-video/index.wxml'), 'utf8'))
+  const tags = [...compWxml.matchAll(/<channel-video\b[\s\S]*?\/>/g)].map((m) => m[0])
+  const byAttr = (attr: string) => tags.find((t) => t.includes(attr)) || ''
+
+  it('同主体档同时传 feed-id 与 finder-user-name', () => {
+    const tag = byAttr('feed-id=')
+    // 量尺：标签必须找到。属性改名时这里先红，而不是让下面的断言在空串上恒真。
+    expect(tag, '找不到带 feed-id 的 channel-video 标签，断言会空转').not.toBe('')
+    expect(tag).toContain('finder-user-name="{{channelId}}"')
+  })
+
+  it('跨主体档只传 feed-token，不塞 finder-user-name', () => {
+    const tag = byAttr('feed-token=')
+    expect(tag, '找不到带 feed-token 的 channel-video 标签').not.toBe('')
+    expect(tag).not.toContain('finder-user-name')
+  })
+
+  it('两档都挂 bind:error——没有它，视频号档出错是纯白块、控制台全静默', () => {
+    expect(tags.length).toBeGreaterThanOrEqual(2)
+    for (const t of tags) expect(t).toContain('bind:error="onVideoError"')
+    expect(readFileSync(resolve(root, 'components/company-video/index.ts'), 'utf8')).toContain(
+      'onVideoError('
+    )
+  })
+
+  it('不传 autoplay：我们不启用自动播放，别在改属工时顺手加上', () => {
+    for (const t of tags) expect(t).not.toContain('autoplay')
   })
 })

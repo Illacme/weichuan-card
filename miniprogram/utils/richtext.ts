@@ -7,7 +7,11 @@
 //     feed-token  跨主体凭证。官方明确 feed-id 只支持同主体，视频号与小程序不同主体时必须用它
 //                 （基础库 2.31.1+，非个人主体），代价是强制不能自动播放。
 //     channel-id  视频号 ID，**sph 开头**（`gh_` 是公众号 ID，早期注释写错，勿沿用）。
-//                 只能映射到 finder-user-name 展示视频号主页，播不了指定视频。
+//                 内嵌时作为 <channel-video> 的 finder-user-name 透传（官方标必填，与 feed-id 同组）；
+//                 跳转播放时是 wx.openChannelsActivity 的 finderUserName。
+//                 **单独存在时播不了视频**——它只是「哪个视频号」，不是「哪一条视频」；
+//                 官方也没有「只传视频号 ID 就展示主页」这个能力（主页要用 wx.openChannelsUserProfile）。
+//                 保留它只为兼容存量块，别据此承诺能看。
 //     play-mode   仅视频号块：redirect=wx.openChannelsActivity 跳转打开（需要 channel-id +
 //                 feed-id，无主体限制）；缺省 embed=<channel-video> 原位内嵌。
 //     优先级 feed-id > feed-token > channel-id。后两者是兼容与跨主体通道，

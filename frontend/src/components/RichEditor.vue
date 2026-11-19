@@ -56,7 +56,7 @@
           <el-form-item label="feedId">
             <el-input v-model="videoForm.feedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
             <div class="field-hint">
-              决定播哪一条视频。<b>同主体</b>填这个即可（可自动播放）。与 feed-token 二选一。
+              决定播哪一条视频。<b>同主体</b>填这个即可（官方允许自动播放，但本产品不启用）。与 feed-token 二选一。
             </div>
           </el-form-item>
           <el-form-item v-if="videoForm.playMode !== 'redirect'" label="feed-token">
@@ -70,9 +70,14 @@
           <el-form-item label="视频号 ID">
             <el-input v-model="videoForm.channelId" placeholder="sph 开头，可留空" />
             <div class="field-hint">
-              <b>跳转播放必填</b>（<code>finderUserName</code>）；内嵌时选填、仅作留档。
-              视频号 ID 是 <b>sph</b> 开头（<code>gh_</code> 是公众号 ID）。
-              内嵌且只填它、不填 feedId 时，小程序端只能展示视频号主页。
+              <b>跳转播放必填</b>（<code>finderUserName</code>）；<b>内嵌播放也建议填</b>——
+              它会作为 <code>&lt;channel-video&gt;</code> 的 <code>finder-user-name</code> 透传，
+              官方属性表把这一项标为必填（与 feedId 同组）。视频号 ID 是 <b>sph</b> 开头
+              （<code>gh_</code> 是公众号 ID）。
+              <span class="field-warn">
+                只填它、不填 feedId / feed-token 时<b>播不了视频</b>：channel-video 是「视频号视频」
+                组件，没有视频标识就没有播放对象，官方也没有「只传视频号 ID 就能展示视频号主页」这个能力。
+              </span>
             </div>
           </el-form-item>
         </template>

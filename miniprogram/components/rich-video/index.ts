@@ -42,12 +42,14 @@ Component({
     // 块类型：'channels'（缺省，存量内容无 type）| 'tencent' | 'mp4'
     videoType: String,
     // ---- channels 三件套（优先级 feedId > feedToken > channelId）----
-    // 同主体：视频号视频 feedId（优先，可自动播放）
+    // 同主体：视频号视频 feedId（优先）。官方允许同主体自动播放，本产品不传 autoplay
     feedId: String,
-    // 跨主体：feed-token（feedId 为空时启用，强制不能自动播放）
+    // 跨主体：feed-token（feedId 为空时启用，官方强制不能自动播放）
     feedToken: String,
-    // 视频号 ID（sph 开头）：跳转播放时是 wx.openChannelsActivity 的 finderUserName；
-    // 内嵌且前两者都缺失时的兼容回退，只展示视频号主页
+    // 视频号 ID（sph 开头）：① 内嵌时作为 channel-video 的 finder-user-name 透传
+    // （官方属性表标必填，与 feedId 同组）；② 跳转播放时是 wx.openChannelsActivity 的 finderUserName。
+    // 单独存在时没有可播的视频——官方没有「只传视频号 ID 就展示主页」的能力，
+    // 这一档只为让存量块不至于整块消失（现在还会挂 bind:error，出问题能在控制台看到）。
     channelId: String,
     // 视频号档播放方式：embed（缺省）/ redirect。只认 redirect 这一个非默认值，
     // 脏值等同 embed（与后台编辑器、company-video、后端归一同一口径）。

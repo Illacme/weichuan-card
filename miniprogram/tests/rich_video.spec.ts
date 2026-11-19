@@ -415,4 +415,29 @@ describe('详情页视频块的静态守门', () => {
       expect(page).toContain('playMode="{{item.playMode}}"')
     }
   })
+
+  // 官方 <channel-video> 属性表：finder-user-name 标必填，与 feed-id 属同一组；
+  // feed-token 是跨主体通道（2.31.1+），官方对该属性写的是「视频号必须与当前小程序
+  // 相同主体」，所以 token 档不能塞 finder-user-name。bind:error 是组件唯一的事件，
+  // 不挂它 = 块出错时白块 + 控制台全静默（客户只会说「详情页那块空白」）。
+  it('feedId 分支同时透传 finder-user-name（官方与 feed-id 同组必填）', () => {
+    const tags = [...wxml.matchAll(/<channel-video\b[\s\S]*?\/>/g)].map((m) => m[0])
+    const tag = tags.find((t) => t.includes('feed-id=')) || ''
+    expect(tag, '找不到带 feed-id 的 channel-video 标签，下面的断言会空转').not.toBe('')
+    expect(tag).toContain('finder-user-name="{{channelId}}"')
+  })
+
+  it('feed-token 分支不传 finder-user-name（该属性要求同主体）', () => {
+    const tags = [...wxml.matchAll(/<channel-video\b[\s\S]*?\/>/g)].map((m) => m[0])
+    const tag = tags.find((t) => t.includes('feed-token=')) || ''
+    expect(tag, '找不到带 feed-token 的 channel-video 标签').not.toBe('')
+    expect(tag).not.toContain('finder-user-name')
+  })
+
+  it('三个内嵌分支都挂 bind:error，出错不再是纯白块', () => {
+    const tags = [...wxml.matchAll(/<channel-video\b[\s\S]*?\/>/g)].map((m) => m[0])
+    expect(tags.length, 'channel-video 分支少了一个，说明渲染链被改过').toBeGreaterThanOrEqual(3)
+    for (const t of tags) expect(t).toContain('bind:error="onVideoError"')
+    expect(ts).toContain('onVideoError(')
+  })
 })

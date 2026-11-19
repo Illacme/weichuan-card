@@ -18,7 +18,12 @@ import { h } from 'snabbdom'
  *   feed-id     某一条视频的标识，有它才能播指定视频（视频号助手 → 动态管理复制），**仅同主体生效**
  *   feed-token  跨主体凭证。视频号与小程序不同主体时 feed-id 无效，必须用它（基础库 2.31.1+，
  *               非个人主体），代价是强制不能自动播放
- *   channel-id  视频号 ID（**sph 开头**），只能展示视频号主页；为兼容存量内容保留读写
+ *   channel-id  视频号 ID（**sph 开头**）。两个用途：① 作为 <channel-video> 的
+ *               finder-user-name 透传（官方属性表标必填，与 feed-id 同组）；
+ *               ② 跳转播放时是 wx.openChannelsActivity 的 finderUserName。
+ *               单独存在（没有 feed-id / feed-token）时**没有可播的视频**——
+ *               channel-video 是「视频号视频」组件，官方没有「只传视频号 ID 就展示主页」
+ *               这个能力；为兼容存量内容保留读写
  *   play-mode   仅视频号档：embed（缺省）=<channel-video> 原位内嵌；
  *               redirect=wx.openChannelsActivity 跳转打开视频号视频页（无主体限制，
  *               但要求 channel-id + feed-id 同时存在，feed-token 在该接口里没有位置）
@@ -136,8 +141,10 @@ export function registerWxVideoModule() {
         kind = '▶ 视频'
         label = src
       } else {
-        // 展示优先级与渲染一致：feed-id（同主体）> feed-token（跨主体）> channel-id（仅主页）。
-        label = feedId ? feedId : feedToken ? `跨主体 ${feedToken.slice(0, 10)}…` : channelId ? `视频号主页 ${channelId}` : '未设置'
+        // 展示优先级与渲染一致：feed-id（同主体）> feed-token（跨主体）> channel-id（无视频标识）。
+        // 不要再把 channel-id 标成「视频号主页」：官方没有「只传视频号 ID 就展示主页」的能力，
+        // 这么写会让客户以为块已经配好了，实际是空白（跳转播放才认这个值）。
+        label = feedId ? feedId : feedToken ? `跨主体 ${feedToken.slice(0, 10)}…` : channelId ? `⚠ 仅视频号 ID ${channelId}（无视频标识）` : '未设置'
       }
       // MP4 地址可能很长，截断显示
       if (videoType === 'mp4' && label.length > 40) label = label.slice(0, 40) + '…'

@@ -85,7 +85,7 @@ export interface CompanyProfile {
    * redirect 需要 videoChannelId + videoFeedId 同时存在（接口不收 feed-token）。
    */
   videoChannelPlayMode: string
-  /** feedId（同主体，可自动播放）与 feedToken（跨主体，强制不能自动播放）二选一 */
+  /** feedId（同主体；官方允许自动播放，本产品不传 autoplay）与 feedToken（跨主体，官方强制不能自动播放）二选一 */
   videoFeedId: string
   videoFeedToken: string
   videoVid: string

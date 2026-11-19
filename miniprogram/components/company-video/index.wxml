@@ -1,7 +1,20 @@
 <view class="company-video">
-  <!-- 同主体：feed-id（视频号助手 → 动态管理复制），可自动播放 -->
+  <!-- 同主体：feed-id（视频号助手 → 动态管理复制）+ finder-user-name（视频号 ID，sph 开头）。
+       官方属性表把 finder-user-name 标为必填，说明里写的就是「视频号 id…视频号必须与当前小程序
+       相同主体」——它和 feed-id 属同一组，一起传才是官方写法。只传 feed-id 能不能播，官方没有
+       任何一句背书，属未验证灰区；而这个档在生产上几乎只出现在「客户自建小程序 + 自有视频号」
+       的私有部署里，坏了也没人会立刻发现，所以按官方写法补齐。
+       channelId 为空时属性值是空串，与官方默认值 "" 等价（等于没传），历史数据不会因此变差。
+
+       **autoplay 不写**：官方 2.31.1+ 才有这个属性，且只允许同主体设为 true。我们不传 = 一律
+       不自动播放（进页面不突然出声），这是产品取舍，不是漏配。
+
+       **channels-token 档不传 finder-user-name**：官方对该属性的说明是「视频号必须与当前小程序
+       相同主体」，而 token 档的整个存在意义就是跨主体；把跨主体的 sph 塞进一个要求同主体的属性
+       没有依据，可能反而被拒。token 自带「是哪个视频号哪条视频」的信息，单独传即可。 -->
   <channel-video
     wx:if="{{mode === 'channels'}}"
+    finder-user-name="{{channelId}}"
     feed-id="{{feedId}}"
     object-fit="cover"
     class="cv-video"
