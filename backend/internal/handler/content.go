@@ -229,14 +229,6 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			{"company-profile.videoBackupUrl", "备用地址", &req.VideoBackupURL},
 			{"company-profile.cover", "封面图", &req.Cover},
 		} {
-			// 先判「同 host 不同协议」：它占报障的大头，而原始文案完全指不到病因
-			// （客户看到「请重新上传」只会反复传文件）。改 http→https 即可通过。
-			if hint := refSchemeHint(*f.ptr, cfg.UploadBaseURL); hint != "" {
-				log.Printf("[REF][WARN] %s 协议与平台基址不一致 company=%d host=%s",
-					f.name, cid, urlHost(*f.ptr))
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": f.label + hint})
-				return
-			}
 			v, err := normalizeResourceRef(cfg, cid, f.name, *f.ptr)
 			if err != nil {
 				// 三个字段共用一句文案时，线上只能靠猜是哪一处（真实报障：客户既换了封面

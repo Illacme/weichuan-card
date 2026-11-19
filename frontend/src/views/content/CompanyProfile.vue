@@ -259,6 +259,13 @@
           <template v-else>
             仅在视频号 / 腾讯视频主源报错时切换，正常情况下不会用到。留空等于没开兜底。
           </template>
+          <!-- 只提示、不拦截：同源的 http/https 写入侧已经宽容（否则「什么都没改、点保存就报
+               地址不合法」，第五十九轮上线时真实发生过）。但小程序只认 https，
+               真到兜底那一刻会加载失败，所以这里提前说一句。 -->
+          <span v-if="fallbackIsHttp" class="hint-warn">
+            地址是 <code>http://</code>：小程序只认 <b>https</b>，真到兜底时大概率加载失败，
+            建议把开头改成 <code>https://</code>。
+          </span>
         </div>
         <!-- 四档共用一个按钮，但测的是各自的地址槽（fallbackUrlValue）：
              自托管 MP4 取 videoBackupUrl，视频号/腾讯视频取 videoUrl。别写成固定取某一列。 -->
@@ -445,6 +452,10 @@ const canOpenVideoUrl = computed(() => /^(https?:\/\/|\/)/i.test(activeVideoUrl.
 // 校验「开了兜底却没填地址」也必须按槽取值，否则 MP4 档会拿主源地址冒充备用地址，
 // 拦不住真正没填的情况（主源永远非空）。
 const fallbackUrlValue = computed(() => (isMp4.value ? form.videoBackupUrl : form.videoUrl))
+
+// 兜底地址用了 http：能存（后端对同源 http/https 宽容），但小程序只认 https，
+// 真到兜底那一刻照样加载失败——所以在这里提前说，别等真机才发现。
+const fallbackIsHttp = computed(() => /^http:\/\//i.test(fallbackUrlValue.value.trim()))
 
 // ---- 「测试地址」：两个槽各自的结果，互不覆盖 ----
 // 之所以不共用一个 result：主源与兜底地址常常一好一坏，同时把结论摆出来才看得出

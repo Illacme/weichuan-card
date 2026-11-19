@@ -205,12 +205,17 @@ func legacyRel(raw, baseURL string) (string, error) {
 	}
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base != "" && strings.HasPrefix(s, base+"/") {
-		rel := strings.TrimPrefix(s, base+"/")
-		// 签名 URL 带 ?X-Amz-Signature=...，不切掉会连签名一起当键名
-		if i := strings.IndexAny(rel, "?#"); i >= 0 {
-			rel = rel[:i]
-		}
-		return cleanRel(rel)
+		return stripBasePrefix(s, base)
+	}
+	// 同 host、只差协议：基址是 https 而地址写成 http（或反之）。
+	//
+	// 必须放行而不是拒。这是**存量数据与配置漂移的自然产物**：第五十九轮写入侧归一
+	// 上线首日就有客户「什么都没改、点保存就报地址不合法」被卡住，而那条地址是他
+	// 一直在用的七牛 http 链接（2026-11-06 的截图里就是它）。拒绝等于让一次升级
+	// 把能存的数据变成不可保存——比「存了个播不了的地址」严重得多。
+	// 剥法与非跨协议时完全一致，后续照常判「带前缀的新键 / 无前缀的历史对象」。
+	if alt := swapScheme(base); alt != "" && strings.HasPrefix(s, alt+"/") {
+		return stripBasePrefix(s, alt)
 	}
 	// 基址没配或对不上时，只认明确的 /uploads/ 段，绝不猜键。
 	const marker = "/uploads/"
@@ -219,6 +224,31 @@ func legacyRel(raw, baseURL string) (string, error) {
 	}
 	return "", fmt.Errorf("%w: 无法从 URL 推导对象键（基址不匹配且无 %s 段）%q",
 		ErrInvalidRef, marker, raw)
+}
+
+// stripBasePrefix 去掉基址前缀并清洗剩下相对部分。
+// 签名 URL 带 ?X-Amz-Signature=...，不切掉会连签名一起当键名。
+func stripBasePrefix(s, base string) (string, error) {
+	rel := strings.TrimPrefix(s, base+"/")
+	if i := strings.IndexAny(rel, "?#"); i >= 0 {
+		rel = rel[:i]
+	}
+	return cleanRel(rel)
+}
+
+// swapScheme 把基址的协议换一个：https↔http。其它形态返回空串（不做任何猜测）。
+//
+// 只用于「同 host 只差协议」这一种历史形态，调用方仍会用返回值做**完整前缀**比较，
+// 所以不存在「把别的域当成自家对象」的风险。
+func swapScheme(base string) string {
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		return "http://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		return "https://" + strings.TrimPrefix(base, "http://")
+	default:
+		return ""
+	}
 }
 
 // NormalizeRef 写入侧：把上传 / 采用 / 预签名返回的 URL 收敛成新形态对象键。

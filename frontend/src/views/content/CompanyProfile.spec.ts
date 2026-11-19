@@ -610,6 +610,31 @@ describe('content/CompanyProfile', () => {
     )
   })
 
+  // 地址是 http 时不拦保存（后端对同源 http/https 已宽容，否则「什么都没改、点保存就报
+  // 地址不合法」会重演），但要在界面上说清「小程序只认 https」——这类地址存得住、播不了，
+  // 是典型的「配置看着完整、真到兜底才失败」。
+  it('兜底地址是 http：提示小程序只认 https，但保存照放行', async () => {
+    const w = await mountPage()
+    await pickSource(w, 'channels')
+    await byPlaceholder(w, '视频号助手 → 动态管理 → 复制 feedId').setValue('feed-1')
+    await w.find('.el-checkbox input').setValue(true)
+    await flush()
+    await byPlaceholder(w, '兜底用的 mp4 地址（云存储或任意 CDN 均可）').setValue(
+      'http://qiniu.example.com/v.mp4'
+    )
+    await flush()
+
+    expect(w.text()).toContain('小程序只认')
+    expect(ElMessage.warning).not.toHaveBeenCalled()
+
+    await saveButton(w).trigger('click')
+    await flush()
+
+    expect(mocks.saveCompanyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ videoUrl: 'http://qiniu.example.com/v.mp4' })
+    )
+  })
+
   // ---- 自托管 MP4 的兜底：备用地址必须是独立槽 ----
   //
   // videoUrl 在 upload / url 两档是主视频源，又在 channels / tencent 两档兼作兜底源。

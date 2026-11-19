@@ -125,36 +125,6 @@ func urlHost(raw string) string {
 	return u.Host
 }
 
-// refSchemeHint 识别「同 host、但 scheme 与平台基址不一致」这一种最常见的填错。
-//
-// 归一函数剥基址是靠**字符串前缀**的：基址 `https://cdn.example.com/uploads` 对不上
-// `http://cdn.example.com/uploads/x.mp4`，于是剥不出键；接着走「是不是外链」时
-// 又发现 host 相同，判成「同源异常」直接拒掉。落到客户眼前只剩一句
-// 「视频或封面地址不合法，请重新上传」——他会去反复重传文件，而真正要做的
-// 只是把 http 改成 https（小程序 <video src> 本来也只认 https）。
-//
-// 返回空串表示不是这种情况，调用方走原有错误处理。
-func refSchemeHint(raw, baseURL string) string {
-	s := strings.TrimSpace(raw)
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if s == "" || base == "" {
-		return ""
-	}
-	su, err := url.Parse(s)
-	if err != nil || su.Host == "" {
-		return ""
-	}
-	bu, err := url.Parse(base)
-	if err != nil || bu.Host == "" {
-		return ""
-	}
-	if !strings.EqualFold(su.Host, bu.Host) || strings.EqualFold(su.Scheme, bu.Scheme) {
-		return ""
-	}
-	return fmt.Sprintf("用的是 %s，而平台基址是 %s——小程序只认 https，请把开头改成 https://",
-		su.Scheme, bu.Scheme)
-}
-
 // refErrKind 把归一错误收敛成有限几类再进日志。
 //
 // 不能直接记 err：`storage` 的报错里带 %q 的原始值（如归属不一致时的对象键、
