@@ -62,7 +62,9 @@ INDEX_WXML = ROOT / "miniprogram/pages/index/index.wxml"
 ACTION_WXML = ROOT / "miniprogram/components/action-bar/index.wxml"
 SEED_DIR = ROOT / "backend/internal/demoseed/seedassets"
 OUT_DIR = ROOT / "frontend/public/theme-previews"
-MANIFEST = OUT_DIR / "manifest.json"
+# manifest 是构建期数据（画布高度 / token 快照），由 Vite 从 src 直接 import；
+# public 只留运行时按 URL 取的 PNG 与遮罩。Vite 不允许从 JS 导入 public 下的资源。
+MANIFEST = ROOT / "frontend/src/assets/theme-previews/manifest.json"
 # 浓度模拟用的「背景遮罩」单独放子目录：--check 扫 OUT_DIR/*.png 找多余图，
 # 把 mask 放进根目录会被当成旧扁平 id 残留直接判红；子目录也让它和组合图一眼分开。
 MASK_DIR = OUT_DIR / "masks"
@@ -313,6 +315,7 @@ def write_manifest(
     combos: dict[str, tuple[str, str | None]],
     combo_tok: dict[str, dict[str, str]],
 ) -> None:
+    MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST.write_text(
         json.dumps(
             manifest_payload(tokens, layouts, bottoms, heights, combos, combo_tok),

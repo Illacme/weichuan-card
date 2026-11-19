@@ -269,7 +269,7 @@ import { ref, computed, onMounted } from 'vue'
 import { getHomeLayout, saveHomeLayout, type ThemeTemplate } from '@/api/content'
 // 画布高度直接读生成脚本的产物：换素材 / 改布局后 manifest 会重写，
 // 组件跟着变，不必再手工同步一份硬编码常量（2026-11-18 换服务图时踩过）。
-import previewManifest from '../../../public/theme-previews/manifest.json'
+import previewManifest from '@/assets/theme-previews/manifest.json'
 
 // embedded=true：被「小程序设置」页签内嵌时不再重复自己的标题（当前仅用于约定，
 // 标题行与操作按钮已上移到父组件「小程序设置」的页签切换栏，本组件不再自行渲染）。

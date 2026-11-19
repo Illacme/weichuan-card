@@ -9,9 +9,10 @@ import MpTheme from './MpTheme.vue'
 // 预览图 manifest：浓度遮罩高度按各风格实测高度反算，与生成脚本同源对账。
 const MANIFEST = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  '../../../public/theme-previews/manifest.json'
+  '../../assets/theme-previews/manifest.json'
 )
-const MASKS_DIR = resolve(dirname(MANIFEST), 'masks')
+// 遮罩图仍在 public 下按 URL 取，别跟着 manifest 一起挪进 src
+const MASKS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../public/theme-previews/masks')
 
 // 风格页 P5：核心约束是**只提交 (styleId, brandColorId, bgGradientStrength) 三值**，
 // 4 风格 × 10 色档 = 44 个组合全部可选、全部按自己的组合键寻图；顶部浓度随这三值

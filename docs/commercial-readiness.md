@@ -1770,7 +1770,7 @@ CI 则由全量 Vitest 覆盖——`frontend/vitest.config.ts` 的 include 含
 
 **只查「PNG 都在」有个漏洞**：改了 `app.wxss` 的配色 / 圆角却没重跑脚本时，
 文件一个不少、尺寸也对，客户看到的却还是旧样式，而且没人会报错。所以出图时同时
-写 `frontend/public/theme-previews/manifest.json`（每款模板的 18 个 token 快照 +
+写 `frontend/src/assets/theme-previews/manifest.json`（PNG / 遮罩仍在 public，manifest 是构建期数据由 Vite 从 src import）（每款模板的 18 个 token 快照 +
 画布参数），`--check` 与 `theme.spec.ts` 都拿它和当前 `app.wxss` 逐项对账。
 改了样式不重出图、删快照、手改快照伪造同版，两边都会变红。
 

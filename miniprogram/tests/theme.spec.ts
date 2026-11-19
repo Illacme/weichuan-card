@@ -788,6 +788,8 @@ describe('小程序整体风格模板 版式差异', () => {
 // 这里把 Go 白名单 / PNG 产物 / 生成脚本画布 / 后台容器比例 / 接入代码钉成一条链，
 // 并且和生成脚本的 --check 互为补充：那个查产物，这个查「接入代码有没有被改回去」。
 const PREVIEW_DIR = resolve(REPO, 'frontend/public/theme-previews')
+// manifest 已从 public 移到 src（Vite 不允许从 JS 导入 public 资源）；PNG / 遮罩仍在 public
+const MANIFEST_PATH = resolve(REPO, 'frontend/src/assets/theme-previews/manifest.json')
 const PREVIEW_SCRIPT = resolve(REPO, 'scripts/gen_theme_previews.py')
 const MP_THEME_VUE = resolve(REPO, 'frontend/src/views/content/MpTheme.vue')
 
@@ -873,7 +875,7 @@ describe('小程序整体风格模板 真实预览图', () => {
     expect(dim, '生成脚本缺画布尺寸').not.toBeNull()
     expect(scale, '生成脚本缺 SCALE').not.toBeNull()
     // 长图按风格内容高度各自收口，同风格的 11 档颜色共用该风格画布。
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const heights = manifest.canvasByStyle as Record<string, number>
     expect(Object.keys(heights).sort()).toEqual([...STYLE_IDS].sort())
 
@@ -929,7 +931,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 
     // ② 规格只有一处来源：manifest 与脚本常量必须一致
     const combos = expectedCombos()
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const thumbWidth = manifest.thumbWidth as number
     expect(thumbWidth, 'manifest 缺 thumbWidth：改了规格却没重出图').toBe(460)
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
@@ -1151,7 +1153,7 @@ describe('小程序整体风格模板 真实预览图', () => {
   // 只查「PNG 都在」挡不住「app.wxss 改了配色却没重出图」：文件一个不少，
   // 客户看到的仍是旧样式，而且没人会报错。manifest 是出图时写下的 token 快照。
   it('token / 布局快照与 app.wxss 同版（改了配色 / 圆角 / 模块排布没重出图会变红）', () => {
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     expect(manifest.source).toBe('miniprogram/app.wxss')
     const ids = goTemplateIds()
     expect(Object.keys(manifest.tokens).sort()).toEqual([...ids].sort())
@@ -1202,7 +1204,7 @@ describe('小程序整体风格模板 真实预览图', () => {
   })
 
   it('两层读出的 12 组基础色板逐字等于预览快照（拆层零视觉突变）', () => {
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const merged = readThemeVars()
     expect(Object.keys(merged).sort(), '组合集合漂移').toEqual(Object.keys(manifest.tokens).sort())
     expect(merged, '合并口径与生成脚本漂移，或拆层时改了某个色值').toEqual(manifest.tokens)
@@ -1217,7 +1219,7 @@ describe('小程序整体风格模板 真实预览图', () => {
 // 且 4 个风格下全部色档可选。
 describe('P5 44 组合预览图与后台三步选择', () => {
   it('44 张图按 4 风格分组：每风格全部色档共用同一画布，四风格高度互不相同', () => {
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const scale = Number(/SCALE\s*=\s*(\d+)/.exec(script)![1])
     const combos = expectedCombos()
@@ -1252,7 +1254,7 @@ describe('P5 44 组合预览图与后台三步选择', () => {
     expect(script).toContain('data.get("layouts") != layouts')
     expect(script).toContain('data.get("comboTokens") != combo_tok')
     expect(script).toContain('for sid in STYLE_IDS:')
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     expect(manifest.layouts).toEqual(expectedLayoutRules())
     for (const sid of STYLE_IDS) {
       for (const hook of ['emp-card', 'mp-profile', 'mp-achievements', 'mp-services']) {
@@ -1366,7 +1368,7 @@ describe('小程序风格模板 完整首页示意', () => {
     expect(script).toContain('MEASURE_HEIGHT')
     expect(script).toContain('canvasByStyle')
     expect(script).toContain('contentBottoms')
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     for (const sid of STYLE_IDS) {
       const bottom = manifest.contentBottoms[sid]
       expect(bottom, `${sid} 缺实测内容底部`).toBeGreaterThan(0)
@@ -1427,7 +1429,7 @@ describe('小程序风格模板 完整首页示意', () => {
   })
 
   it('manifest 记下通用素材与占位文案，换了素材 / 文案却没重出图会变红', () => {
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
     const listed = Array.from(script.matchAll(/"(cat-\d\.png|svc-\d\.png|cover-[\w-]+\.jpg)"/g))
       .map((m) => m[1])
@@ -1496,7 +1498,7 @@ describe('小程序风格模板 通用平台脱敏', () => {
   it('预览 HTML 与占位文案里不出现任何真实或演示客户身份', () => {
     const html = previewHtml()
     const script = readFileSync(PREVIEW_SCRIPT, 'utf-8')
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const placeholders = Object.values(manifest.placeholders as Record<string, string>)
     for (const token of identityBlacklist()) {
       expect(html, `预览 HTML 出现真实客户身份「${token}」`).not.toContain(token)
@@ -1516,7 +1518,7 @@ describe('小程序风格模板 通用平台脱敏', () => {
 
   it('企业 / 联系人 / 联系方式全部换成明显的中性占位，且保留原版式密度', () => {
     const html = previewHtml()
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     const ph = manifest.placeholders as Record<string, string>
     for (const key of ['short_name', 'full_name', 'person', 'title', 'phone', 'tel', 'email', 'address', 'intro']) {
       expect(ph[key], `缺占位 ${key}`).toBeTruthy()
@@ -1542,7 +1544,7 @@ describe('小程序风格模板 通用平台脱敏', () => {
     for (const token of identityBlacklist()) {
       expect(block, `占位文案字典出现真实客户身份「${token}」`).not.toContain(token)
     }
-    const manifest = JSON.parse(readFileSync(join(PREVIEW_DIR, 'manifest.json'), 'utf-8'))
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
     expect(manifest.placeholders.short_name).toBe('示例企业')
     expect(manifest.placeholders.person).toBe('示例联系人')
   })
