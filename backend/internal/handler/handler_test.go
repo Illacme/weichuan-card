@@ -2958,3 +2958,51 @@ func TestCompanyShortNameDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestCompanyProfileRefSchemeMismatch 钉住「视频/封面地址被拒」时的可诊断性。
+//
+// 线上真实报障：客户填了兜底 MP4 `http://cdn.example.com/x.mp4`，基址是 https 的同一
+// 个域名，保存后只看到「视频或封面地址不合法，请重新上传」——他去反复重传文件，
+// 而真正要改的只是开头少了个 s。归一函数是按**字符串前缀**剥基址的，scheme 不同就
+// 剥不出来，随后又因 host 相同被判「同源异常」。
+//
+// 这里钉三件事：① 同 host 不同协议要说清「改成 https」，而不是「请重新上传」；
+// ② 改成 https 能过（证明拒的是协议，不是地址本身）；③ 真非法时点名到字段。
+func TestCompanyProfileRefSchemeMismatch(t *testing.T) {
+	// 基址用**域名根**：七牛 / S3 那类部署就是这么配的（带 /uploads 路径的是本地磁盘形态，
+	// 那种配置下「同 host 但不在该路径下」会被归一的「绝不猜键」规则拒掉，属另一码事）。
+	r := setupSQLiteEngine(t, func(c *config.Config) {
+		c.UploadBaseURL = "https://cdn.example.com"
+	})
+	c := newTestClient(r, t)
+	tok := loginAdmin(t, c)
+
+	base := func(videoURL string) map[string]interface{} {
+		return map[string]interface{}{
+			"introText":      "简介",
+			"videoSource":    "channels",
+			"videoChannelId": "sphABC",
+			"videoFeedId":    "feed-1",
+			"videoUrl":       videoURL,
+		}
+	}
+
+	// ① http 与基址的 https 不同：必须点名「视频地址」并给出 https
+	_, b := c.do("PUT", "/api/admin/company-profile", base("http://cdn.example.com/x.mp4"), tok)
+	require.EqualValues(t, 1, b["code"], "响应：%v", b)
+	msg, _ := b["msg"].(string)
+	require.Contains(t, msg, "视频地址")
+	require.Contains(t, msg, "https", "文案要直接给出改法，不能只说「不合法」")
+	require.NotContains(t, msg, "请重新上传", "这一种不是重传能解决的")
+
+	// ② 同一对象、只把 scheme 改成 https：应当通过（归一成键或原样保留都不影响这里）
+	_, b = c.do("PUT", "/api/admin/company-profile", base("https://cdn.example.com/x.mp4"), tok)
+	require.EqualValues(t, 0, b["code"], "改成 https 后应通过，响应：%v", b)
+
+	// ③ 真非法（路径穿越）时点名到「封面图」——三个字段共用一个笼统文案会让线上只能猜
+	_, b = c.do("PUT", "/api/admin/company-profile", map[string]interface{}{
+		"videoSource": "none", "cover": "../../etc/passwd",
+	}, tok)
+	require.EqualValues(t, 1, b["code"], "响应：%v", b)
+	require.Contains(t, b["msg"], "封面图")
+}

@@ -221,16 +221,30 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 「自托管上传」档填本平台地址则被收敛成裸键。分档判反而要多维护一份
 		// 「哪一档算本平台资源」的映射，将来加档必漏。
 		for _, f := range []struct {
-			name string
-			ptr  *string
+			name  string
+			label string
+			ptr   *string
 		}{
-			{"company-profile.videoUrl", &req.VideoURL},
-			{"company-profile.videoBackupUrl", &req.VideoBackupURL},
-			{"company-profile.cover", &req.Cover},
+			{"company-profile.videoUrl", "视频地址", &req.VideoURL},
+			{"company-profile.videoBackupUrl", "备用地址", &req.VideoBackupURL},
+			{"company-profile.cover", "封面图", &req.Cover},
 		} {
+			// 先判「同 host 不同协议」：它占报障的大头，而原始文案完全指不到病因
+			// （客户看到「请重新上传」只会反复传文件）。改 http→https 即可通过。
+			if hint := refSchemeHint(*f.ptr, cfg.UploadBaseURL); hint != "" {
+				log.Printf("[REF][WARN] %s 协议与平台基址不一致 company=%d host=%s",
+					f.name, cid, urlHost(*f.ptr))
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": f.label + hint})
+				return
+			}
 			v, err := normalizeResourceRef(cfg, cid, f.name, *f.ptr)
 			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "视频或封面地址不合法，请重新上传"})
+				// 三个字段共用一句文案时，线上只能靠猜是哪一处（真实报障：客户既换了封面
+				// 又填了兜底地址，看到「视频或封面地址不合法」不知道该改哪个）。这里点名到字段；
+				// 原因只记类别、原值只记 host——地址常带签名，进日志等于泄露凭证。
+				log.Printf("[REF][WARN] %s 归一失败 company=%d host=%s err=%s",
+					f.name, cid, urlHost(*f.ptr), refErrKind(err))
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": f.label + "不合法，请重新上传或检查地址"})
 				return
 			}
 			*f.ptr = v
