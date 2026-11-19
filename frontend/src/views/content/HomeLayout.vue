@@ -124,7 +124,10 @@
               <span class="lp-avatar" />
               <span class="lp-info">
                 <span class="lp-line1">
-                  <span class="lp-name">姓名</span>
+                  <span class="lp-name-group">
+                    <span class="lp-name">姓名</span>
+                    <span class="lp-title">职位</span>
+                  </span>
                   <span class="lp-slot" :class="[`lp-slot-${logoSize}`, `lp-align-${logoAlign}`]">
                     <span class="lp-img" :class="`lp-img-${logoSize}`" />
                   </span>
@@ -133,7 +136,7 @@
             </div>
           </div>
           <div class="bg-hint">
-            当前风格：<strong>{{ logoStyleLabel }}</strong>。彩色块代表方块 LOGO，虚线框是 LOGO 区块本身。
+            当前风格：<strong>{{ logoStyleLabel }}</strong>。灰字「职位」与姓名同一行，彩色块代表方块 LOGO，虚线框是 LOGO 区块本身。
             <br />
             区块在卡片里的落点由「风格模板」决定（标准/浅墨贴右边缘、暖色换到姓名下方居中、青色落在头像左侧），
             本页只调区块<strong>内部</strong>的左 / 中 / 右。
@@ -496,6 +499,17 @@ defineExpose({ load, save, loading, saving, refreshStyle })
   align-items: center;
   justify-content: space-between;
 }
+.lp-name-group {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.lp-title {
+  font-size: 12px;
+  color: #6b7a89;
+  white-space: nowrap;
+}
 .lp-name {
   font-size: 17px; /* 34rpx */
   font-weight: 700;
@@ -515,6 +529,7 @@ defineExpose({ load, save, loading, saving, refreshStyle })
 }
 .lp-layout-stack .lp-line1 {
   flex-direction: column;
+  align-items: center; /* 与真机 .wc-style-warm .ec-line1 同值：整组居中，组内仍横排 */
   justify-content: center;
 }
 .lp-layout-stack .lp-slot {

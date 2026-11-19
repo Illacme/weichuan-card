@@ -547,12 +547,16 @@ ${tokens}
                border-radius: 15px 15px 0 0; background: var(--wc-primary-border); }
   .ec-info { flex: 1; min-width: 0; margin-left: 10px; }
   .ec-line1 { display: flex; align-items: center; justify-content: space-between; }
-  .ec-name { font-size: 17px; font-weight: 700; color: #222; }
+  /* 职位挪到姓名右侧（1rpx=0.5px，与 app.wxss 的 gap 12rpx / 24rpx 同值）。
+     包成一组才不会被 space-between 均分；长职位省略号，不挤走 LOGO。 */
+  .ec-name-group { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .ec-name { flex: none; font-size: 17px; font-weight: 700; color: #222; }
   .logo-ph { width: 64px; height: 23px; flex: none; display: flex; align-items: center;
              justify-content: center; font-size: 11px; font-weight: 700; letter-spacing: 1px;
              color: var(--wc-primary-deep); background: var(--wc-primary-soft);
              border: 1px dashed var(--wc-primary-border); border-radius: var(--wc-r-chip); }
-  .ec-title { color: #6b7a89; font-size: 11px; margin-top: 1px; }
+  .ec-title { flex: 0 1 auto; min-width: 0; color: #6b7a89; font-size: 12px;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ec-line3 { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 6px; }
   .ec-cname { color: var(--wc-primary-deep); font-size: 12.5px; font-weight: 700;
               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -687,8 +691,7 @@ ${tokens}
     <div class="ec-head">
       <div class="avatar-ph ec-avatar" aria-hidden="true"></div>
       <div class="ec-info">
-        <div class="ec-line1"><span class="ec-name">${person}</span><span class="logo-ph">LOGO</span></div>
-        <div class="ec-title">${title}</div>
+        <div class="ec-line1"><span class="ec-name-group"><span class="ec-name">${person}</span><span class="ec-title">${title}</span></span><span class="logo-ph">LOGO</span></div>
         <div class="ec-line3"><span class="ec-cname">${full_name}</span><span class="case-btn">查看案例 ▸</span></div>
         <div class="ec-addr">${address}</div>
       </div>
