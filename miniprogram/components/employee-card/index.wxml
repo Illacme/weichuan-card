@@ -12,7 +12,13 @@
     <view class="ec-avatar" wx:else />
     <view class="ec-info">
       <view class="ec-line1">
-        <view class="ec-name">{{employee.name}}</view>
+        <!-- 姓名 + 职位同一行：职位紧挨在姓名右侧（不再是下面单独一行），
+             两者包成一组，LOGO 仍是行内另一项，space-between 把它推到行尾。
+             不包这一层的话三块会被 space-between 均分，职位跑到了行中间。 -->
+        <view class="ec-name-group">
+          <view class="ec-name">{{employee.name}}</view>
+          <view class="ec-title" wx:if="{{employee.title}}">{{employee.title}}</view>
+        </view>
         <!-- LOGO 区块（0053）：宽高按后台档位固定，图片在区块内左/中/右对齐。
              单独包一层而不是直接给 image 设宽高，是因为 aspectFit 会把图缩到框内居中——
              方块 LOGO 因此左右各留空白，看起来「浮在偏左」。组件按 bindload 拿到的
@@ -28,7 +34,6 @@
             binderror="onImgFail" data-fail="logoFail" data-src="{{company.logo}}" />
         </view>
       </view>
-      <view class="ec-title" wx:if="{{employee.title}}">{{employee.title}}</view>
       <view class="ec-line3">
         <view class="ec-cname">{{company.fullName}}</view>
         <!-- 细描边小药丸（两轮收紧：18rpx 字 + 固定高 28rpx + 左右 10rpx 内边距，
