@@ -67,6 +67,12 @@ func employeeBindingRows(list []model.Employee) []employeeWithBinding {
 	out := make([]employeeWithBinding, 0, len(list))
 	for i := range list {
 		e := &list[i]
+		// 头像列与全站出参同一口径：库里是归一后的裸键（t/<cid>/x.jpg / p/x.jpg），
+		// 必须补回 /uploads/ 前缀前端才请求得到。漏掉这一步时上传本身是成功的、
+		// 列表里却是裂图（el-image 两试两 404 显示「加载失败」），且后台预览因走
+		// 平台域名同源看不出异常——典型的静默失败。list 是查询出的局部变量，
+		// 就地解析不写库（见 model/refs.go「只解析不再写库的值」）。
+		e.ResolveRefs(model.PlatformOrigin())
 		out = append(out, employeeWithBinding{
 			Employee:    e,
 			OpenID:      maskOpenIDForDisplay(e.OpenID),

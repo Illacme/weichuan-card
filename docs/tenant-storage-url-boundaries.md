@@ -170,7 +170,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | R11 | `handler/content.go:72,111,129,230` | `"data": ci` / `"data": cp` | 后台企业信息 / 公司简介 GET + PUT，**第五十七轮已接**（GET 就地解析、PUT 对副本解析） |
 | R12 | `handler/content.go:347,376` → `:775-776` | `"data": projectToMap(p)` | 后台案例详情 / 编辑，**第五十七轮已接**：`p.ResolveRefs()` + `album = model.ResolveResourceRefs(album)` |
 | R13 | `handler/content.go:239,397`（列表）/ `:255,418`（POST 回显） | `"data": list` / `"data": resp` | 后台分类 / 服务，**第五十七轮已接**（`for i := range list { list[i].ResolveRefs() }`） |
-| R14 | `handler/apply.go:109`（`/api/employee/me`）、`:842`（员工导出） | `"data": e` | 员工模型（含 `avatar`），**第五十七轮已接** |
+| R14 | `handler/apply.go:109`（`/api/employee/me`）、`:842`（员工导出）、`handler/wechat_binding.go:66`（`employeeBindingRows`，后台员工列表 + `?staffIds=`） | `"data": e` / `"data": list` | 员工模型（含 `avatar`），**第五十七轮已接**（「我的」+ 导出），**第六十九轮后补**：列表这条出口漏接，新上传归一成裸键后后台头像裂图（上传成功却显示「加载失败」），已在 `employeeBindingRows` 内 `e.ResolveRefs(model.PlatformOrigin())` 收口 |
 | R15 | `handler/settings.go:73` / `handler/wechat_admin.go:91` | `"data": items` / `rows` | **核查后判定无需接**（见下） |
 
 **第六十九轮：出参 origin 在 §3.1 与 §3.2 之间刻意不同**（不是漏点）：

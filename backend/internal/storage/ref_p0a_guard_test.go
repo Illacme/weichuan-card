@@ -43,6 +43,11 @@ func TestRefWiringGate(t *testing.T) {
 		filepath.Join(root, "handler", "wechat.go"):          true, // W3 小程序码用 ObjectKeyFor 落 p/ 前缀
 		filepath.Join(root, "handler", "content.go"):         true, // 后台内容类出参（R11–R13）+ projectToMap 的 cover/album
 		filepath.Join(root, "handler", "apply.go"):           true, // 小程序「我的」与后台员工导出（avatar）
+		// 后台员工列表（employeeBindingRows）：头像列出参补 /uploads/ 前缀。
+		// 第五十七轮只接了「我的」与员工导出，列表这条出口漏了——新上传归一成裸键后
+		// 后台列表头像裂图（上传成功却显示「加载失败」）。它同样是只读出参、不写库，
+		// 与 apply.go 的导出同口径，故一并登记。
+		filepath.Join(root, "handler", "wechat_binding.go"): true,
 		// 第五十九轮：写入侧归一的唯一落地点。所有业务表单都经它调 storage.NormalizeOrKeep，
 		// 不允许各自直接调纯函数——否则「读写从哪进」这件事就散在十几个 handler 里了。
 		filepath.Join(root, "handler", "resourceref.go"):      true,

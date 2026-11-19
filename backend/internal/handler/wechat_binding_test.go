@@ -90,6 +90,47 @@ func TestMaskOpenIDForDisplay(t *testing.T) {
 	require.Equal(t, "o****cdef", maskOpenIDForDisplay("o1234abcdef"))
 }
 
+// 员工列表头像必须出「可访问 URL」而不是库里的裸键（2026-11-19 真实 bug）。
+//
+// 背景：写入侧把上传返回的 /uploads/t/<cid>/x.jpg 归一成裸键 t/<cid>/x.jpg 落库（对的），
+// 但员工列表出参曾直接序列化模型、漏掉 ResolveRefs——前端拿到裸键按相对路径请求两次
+// 都 404，el-image 显示「加载失败」，而上传本身是成功的。这里测的是**接口承诺本身**
+// （列表里的 avatar 能直接塞进 <img src>），不是只测 ResolveRef 工具函数——
+// 工具函数早就对了，漏的是调用点，只有打到 HTTP 出口才抓得住。
+func TestEmployeeListResolvesAvatarRef(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// 四种真实会混在员工 avatar 列里的形态：新裸键（租户/平台）/ 历史相对路径 / 外链。
+	cases := []struct{ name, avatar, want string }{
+		{"租户裸键", "t/1/head.png", "/uploads/t/1/head.png"},
+		{"平台裸键", "p/asset/logo.png", "/uploads/p/asset/logo.png"},
+		{"历史相对", "/uploads/old.jpg", "/uploads/old.jpg"},
+		{"外链原样", "https://cdn.x/head.jpg", "https://cdn.x/head.jpg"},
+	}
+	// 量尺要有读数：负例集合不能只剩一两条，否则「漏解析」可能恰好没覆盖到。
+	require.GreaterOrEqual(t, len(cases), 4)
+	for i, tc := range cases {
+		emp := model.Employee{
+			CompanyID: 1, Name: fmt.Sprintf("头像%d", i),
+			Phone: fmt.Sprintf("1350000007%d", i), Avatar: tc.avatar, Status: "enabled",
+		}
+		require.NoError(t, db.Create(&emp).Error)
+		require.Greater(t, emp.StaffID, int64(0), "造数失败会让下面 len 断言变成假绿")
+	}
+
+	rows := bindingRows(t, c, "/api/admin/employees?size=50", adminToken)
+	require.Len(t, rows, len(cases))
+	got := make(map[string]string, len(rows))
+	for _, row := range rows {
+		got[row["name"].(string)] = row["avatar"].(string)
+	}
+	for i, tc := range cases {
+		require.Equal(t, tc.want, got[fmt.Sprintf("头像%d", i)], tc.name)
+	}
+}
+
 func TestWechatBindingVisibility(t *testing.T) {
 	r, db := bindingEngine(t)
 	c := newTestClient(r, t)
