@@ -185,6 +185,9 @@ func TestProbeSuccessIsHEADOnlyAndKeepsHost(t *testing.T) {
 	require.Equal(t, "video/mp4", res.ContentType)
 	require.Equal(t, int64(1234), res.ContentLength)
 	require.Contains(t, res.Message, "地址可访问")
+	// scheme 必须真的从 URL 一路传到 describe：假 CDN 走的是 http 地址，
+	// 少了这条断言，把 scheme 写死成 "https" 也不会红。
+	require.Contains(t, res.Message, "http:// 明文地址")
 	require.Equal(t, []string{"HEAD"}, methods, "只能发 HEAD，绝不拉响应体")
 	require.Equal(t, []string{"cdn.example.com"}, hosts, "Host 头必须还是原域名")
 	require.Equal(t, int32(1), dialed.Load())
@@ -197,15 +200,21 @@ func TestProbeStatusHints(t *testing.T) {
 		contentTyp string
 		location   string
 		wantMsg    string
-		wantOK     bool
+		// notMsg 是「绝不能出现」的片段。只写 wantMsg 会漏：两条分支共用同一批
+		// 关键词时（403 的两种成因都提「防盗链 Referer」），任何一条都能让断言绿，
+		// 于是 scheme 传错也照样通过。
+		notMsg string
+		wantOK bool
 	}{
-		{"404 提示目录前缀", 404, "application/xml", "", "目录前缀", false},
-		{"403 提示 HTTPS 未启用", 403, "text/plain", "", "httpsDisabled", false},
-		{"200 但返回网页", 200, "text/html; charset=utf-8", "", "不是视频文件", false},
-		{"405 提示浏览器确认", 405, "", "", "浏览器里确认", false},
-		{"500 通用失败", 500, "", "", "不可用", false},
-		{"302 不跟随", 302, "", "http://127.0.0.1/admin", "不跟随跳转", false},
-		{"206 也算可访问", 206, "video/mp4", "", "地址可访问", true},
+		{"404 提示目录前缀", 404, "application/xml", "", "目录前缀", "", false},
+		// 探测的是 http 地址，就绝不能再提示「检查是否启用了 HTTPS」——那是 https
+		// 探测才可能成立的成因，写在这里等于把人往反方向带。
+		{"403 探测 http 时不提 HTTPS", 403, "text/plain", "", "防盗链 Referer", "httpsDisabled", false},
+		{"200 但返回网页", 200, "text/html; charset=utf-8", "", "不是视频文件", "", false},
+		{"405 提示浏览器确认", 405, "", "", "浏览器里确认", "", false},
+		{"500 通用失败", 500, "", "", "不可用", "", false},
+		{"302 不跟随", 302, "", "http://127.0.0.1/admin", "不跟随跳转", "", false},
+		{"206 也算可访问", 206, "video/mp4", "", "地址可访问", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,8 +232,77 @@ func TestProbeStatusHints(t *testing.T) {
 			require.Equal(t, tc.status, res.Status)
 			require.Equal(t, tc.wantOK, res.Reachable)
 			require.Contains(t, res.Message, tc.wantMsg)
+			if tc.notMsg != "" {
+				require.NotContains(t, res.Message, tc.notMsg)
+			}
 		})
 	}
+}
+
+// describe 是纯函数，直接喂构造好的响应比绕 HTTP + 自签 TLS 更省事，
+// 也才能覆盖 https 探测这条真实路径（七牛的 httpsDisabled 只可能在 https 下出现）。
+func TestDescribeSchemeAwareness(t *testing.T) {
+	resp := func(status int, kv ...string) *http.Response {
+		h := http.Header{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return &http.Response{StatusCode: status, Header: h}
+	}
+
+	t.Run("http 地址 200：可访问但提示明文风险", func(t *testing.T) {
+		r := describe(resp(200, "Content-Type", "video/mp4"), "http", "cdn.example.com")
+		require.True(t, r.Reachable)
+		require.Contains(t, r.Message, "地址可访问")
+		require.Contains(t, r.Message, "http:// 明文地址")
+	})
+	t.Run("https 地址 200：不啰嗦明文风险", func(t *testing.T) {
+		r := describe(resp(200, "Content-Type", "video/mp4"), "https", "cdn.example.com")
+		require.True(t, r.Reachable)
+		require.NotContains(t, r.Message, "明文地址")
+	})
+	t.Run("403 带 X-Error-Info=httpsDisabled：直接给改法", func(t *testing.T) {
+		r := describe(resp(403, "X-Error-Info", "httpsDisabled"), "https", "cdn.example.com")
+		require.False(t, r.Reachable)
+		require.Contains(t, r.Message, "httpsDisabled")
+		require.Contains(t, r.Message, "未启用 HTTPS")
+		require.Contains(t, r.Message, "改用 http://")
+	})
+	t.Run("403 来自 Cloudflare：指出请求没到源站", func(t *testing.T) {
+		r := describe(resp(403, "Server", "cloudflare"), "http", "cdn.example.com")
+		require.Contains(t, r.Message, "Cloudflare 边缘")
+		require.Contains(t, r.Message, "没到源站")
+		// 也不能拿七牛的 httpsDisabled 去猜
+		require.NotContains(t, r.Message, "httpsDisabled")
+	})
+	t.Run("403 探测 http 且无对端线索：不导出「未启用 HTTPS」这个错方向", func(t *testing.T) {
+		r := describe(resp(403), "http", "cdn.example.com")
+		require.Contains(t, r.Message, "防盗链 Referer")
+		require.NotContains(t, r.Message, "httpsDisabled")
+		require.Contains(t, r.Message, "与「域名是否启用 HTTPS」无关")
+	})
+	t.Run("403 探测 https 且无对端线索：才提 HTTPS 未启用", func(t *testing.T) {
+		r := describe(resp(403), "https", "cdn.example.com")
+		require.Contains(t, r.Message, "httpsDisabled")
+	})
+	t.Run("302 跳到同域名 https：告诉客户直接改成 https", func(t *testing.T) {
+		r := describe(resp(302, "Location", "https://cdn.example.com/a.mp4"), "http", "cdn.example.com")
+		require.Contains(t, r.Message, "改成 https:// 开头")
+		// 没发过那次请求，不能断言「https 可访问」
+		require.NotContains(t, r.Message, "https 可访问")
+	})
+	t.Run("302 跳到别的域名：不猜，只说不跟随", func(t *testing.T) {
+		r := describe(resp(302, "Location", "https://evil.example.net/a.mp4"), "http", "cdn.example.com")
+		require.NotContains(t, r.Message, "改成 https:// 开头")
+	})
+	t.Run("X-Error-Info 是对端内容：清洗控制字符并截断", func(t *testing.T) {
+		evil := "bad\x00\x1b[31m" + strings.Repeat("A", 200)
+		r := describe(resp(403, "X-Error-Info", evil), "https", "cdn.example.com")
+		require.NotContains(t, r.Message, "\x00")
+		require.NotContains(t, r.Message, "\x1b")
+		require.Less(t, len(r.Message), 200+64, "回显必须截断，不能被对端撑爆")
+		require.Contains(t, r.Message, "X-Error-Info")
+	})
 }
 
 func TestProbeDoesNotFollowRedirectToIntranet(t *testing.T) {

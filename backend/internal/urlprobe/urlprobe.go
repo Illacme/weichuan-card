@@ -38,7 +38,18 @@ const (
 	responseHeaderTimeout = 4 * time.Second
 	requestTimeout        = 6 * time.Second
 	userAgent             = "weichuan-urlprobe/1.0"
+	// maxHeaderEcho 限制「把第三方响应头的值回显到页面」的字符数。这些值完全由
+	// 对端控制：既可能超长撑爆布局，也可能是对端塞进来伪造成系统提示的内容。
+	maxHeaderEcho = 64
 )
+
+// httpPlainHint 是「探测的是 http 明文地址」时统一追加的一句。
+//
+// 口径：**提示但不拦截**。媒体资源（`<image>` / `<video>` 的 src）历史上不校验
+// 业务域名，http 在真机上能播；但微信在收紧——基础库 3.8.7 起 image 在开发版 /
+// 体验版已不支持 http 图片。所以要把「能播」与「可靠」分开说，而不是判成不可用。
+const httpPlainHint = "注意这是 http:// 明文地址：能播但不可靠，" +
+	"微信基础库 3.8.7 起 image 在开发版 / 体验版已不支持 http，生产环境建议换成 https://"
 
 // 对外可直接展示的错误文案：刻意不含内部主机名、解析结果与底层 err，
 // 免得把服务器拓扑当成报错回给页面。细节只进服务端日志。
@@ -264,7 +275,7 @@ func Probe(ctx context.Context, raw string) (Result, error) {
 		return Result{}, ErrRequest
 	}
 	defer func() { _ = resp.Body.Close() }() // HEAD 无响应体，关闭只为复用连接；失败无需上报
-	return describe(resp), nil
+	return describe(resp, u.Scheme, host), nil
 }
 
 // newPinnedClient 把「已校验的 IP + 原始端口」写死进 DialContext。
@@ -291,7 +302,12 @@ func newPinnedClient(pinned net.IP, port string) *http.Client {
 	}
 }
 
-func describe(resp *http.Response) Result {
+// describe 把一次 HEAD 的响应翻译成后台能照做的结论。
+//
+// scheme / host 必须传进来：同一句「403」在 http 探测与 https 探测下成因完全不同，
+// 混成一句话就会把人带偏——第五十九轮上线首日，客户拿着自己一直在用的七牛 http
+// 地址点保存被拒，界面上给出的却是「检查 CDN 是否启用了 HTTPS」，方向整个反了。
+func describe(resp *http.Response, scheme, host string) Result {
 	ct := resp.Header.Get("Content-Type")
 	statusText := "HTTP " + strconv.Itoa(resp.StatusCode)
 	r := Result{
@@ -307,10 +323,14 @@ func describe(resp *http.Response) Result {
 		}
 		r.Reachable = true
 		r.Message = statusText + "，地址可访问"
+		if scheme == "http" {
+			r.Message += "。" + httpPlainHint
+		}
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		r.Message = statusText + " 重定向；出于安全不跟随跳转，请直接填最终地址"
+		r.Message += redirectHint(resp.Header.Get("Location"), scheme, host)
 	case resp.StatusCode == 403:
-		r.Message = statusText + " 禁止访问：检查 CDN 是否启用了 HTTPS（七牛未启用时 https 会回 httpsDisabled）、防盗链 Referer 或签名有效期"
+		r.Message = describe403(resp, scheme)
 	case resp.StatusCode == 404:
 		r.Message = statusText + " 找不到对象：检查文件访问基址是否带上了对象存储里的目录前缀"
 	case resp.StatusCode == 405 || resp.StatusCode == 501:
@@ -319,4 +339,68 @@ func describe(resp *http.Response) Result {
 		r.Message = statusText + "，地址当前不可用"
 	}
 	return r
+}
+
+// describe403 把 403 的常见成因分开说：处置动作完全不同，一句通用文案等于没说。
+// 判据只取对端给的**事实**（X-Error-Info / Server），不猜。
+func describe403(resp *http.Response, scheme string) string {
+	base := "HTTP 403 禁止访问"
+	// 七牛在拒绝时会带 X-Error-Info，值是机器可读的原因。原样回显比我们猜更准，
+	// 客户也能直接拿去搜官方文档。它是对方控制的内容，先做长度与字符清洗。
+	if info := echoHeader(resp.Header.Get("X-Error-Info")); info != "" {
+		base += "（CDN 报错 X-Error-Info: " + info + "）"
+		if strings.EqualFold(info, "httpsDisabled") {
+			return base + "——该域名未启用 HTTPS：改用 http:// 地址，或去 CDN 控制台开启 HTTPS"
+		}
+		return base + "，请按该报错查 CDN 文档"
+	}
+	// Cloudflare 在自己这一层就拒了，请求根本没到源站。这个组合很常见也很费时间：
+	// 七牛域名只开了 http，而 CF 回源走代理，于是 CF 边缘直接 403。
+	if resp.Header.Get("Cf-Ray") != "" ||
+		strings.Contains(strings.ToLower(resp.Header.Get("Server")), "cloudflare") {
+		return base + "：这是 Cloudflare 边缘返回的，请求可能没到源站——" +
+			"检查 CF 的代理开关、回源设置与防火墙规则（CDN 只开了 http 时，回源走代理会被拒）"
+	}
+	if scheme == "http" {
+		// 探测的就是明文地址，「未启用 HTTPS」这个方向压根不成立，不能再提。
+		return base + "：检查防盗链 Referer、签名有效期与存储桶读权限" +
+			"（探测的是 http 地址，与「域名是否启用 HTTPS」无关，别去改协议）"
+	}
+	return base + "：检查 CDN 是否启用了 HTTPS（七牛未启用时 https 会回 httpsDisabled）、" +
+		"防盗链 Referer 或签名有效期"
+}
+
+// redirectHint 补一句「把地址改成 https:// 开头」，但**不说 https 一定能访问**。
+// CDN 强制 HTTPS 是最常见的一种 302，这时让客户自己去读 Location 是多余的一步。
+// 跨域名跳转刻意不提：那种情况多半是对象不存在被导到别的站点或登录页，方向不同。
+func redirectHint(location, scheme, host string) string {
+	loc, err := url.Parse(strings.TrimSpace(location))
+	if err != nil || loc.Hostname() == "" {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSuffix(loc.Hostname(), "."), host) {
+		return ""
+	}
+	if scheme == "http" && strings.EqualFold(loc.Scheme, "https") {
+		// 不能说「https 能访问」——我们没有发那次请求。
+		return "；同域名的 https 地址要求跳转，请把地址改成 https:// 开头"
+	}
+	return ""
+}
+
+// echoHeader 把第三方响应头的值清洗成可安全展示的短串：只留可打印 ASCII，
+// 并截断到 maxHeaderEcho。头的值是机器 token，丢中文不损失信息，换来的是
+// 不会把控制字符 / 超长内容原样塞进页面。
+func echoHeader(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	out := make([]byte, 0, len(v))
+	for i := 0; i < len(v) && len(out) < maxHeaderEcho; i++ {
+		if c := v[i]; c >= 0x20 && c < 0x7f {
+			out = append(out, c)
+		}
+	}
+	return strings.TrimSpace(string(out))
 }

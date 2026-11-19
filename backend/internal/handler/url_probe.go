@@ -34,8 +34,10 @@ var urlProbeLimitFn = func() int { return urlProbeLimitPerMin }
 //
 // 场景：管理员在「公司简介 → 视频来源」里填了 CDN 地址，点开链接未必能排除问题
 // （浏览器能开不等于服务端能取、更不等于小程序能播；反过来 403/404 在小程序里
-// 只表现为黑屏 00:00 且无任何报错）。七牛未启用 HTTPS 时 https 回
-// X-Error-Info: httpsDisabled 403、对象带目录前缀时裸域名 404，都能在这里一次看出来。
+// 只表现为黑屏 00:00 且无任何报错）。对象带目录前缀时裸域名 404、七牛未启用 HTTPS
+// 时 https 回 X-Error-Info: httpsDisabled 403、CF 回源走代理时边缘直接 403，
+// 都能在这里一次看出来。**结论文案必须按探测协议分**：同一条 403 在 http 与 https
+// 下成因不同，混成一句会把排查方向带反（第五十九轮真实发生过）。
 //
 // 安全边界全在 internal/urlprobe：URL 形态白名单 → 自己解析 DNS 并逐个 IP 排除
 // 私网/回环/链路本地/保留段 → 把已校验 IP 固定进 DialContext（防 DNS rebinding）
