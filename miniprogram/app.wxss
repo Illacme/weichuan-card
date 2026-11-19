@@ -306,6 +306,9 @@ page {
 .wc-style-default .emp-card .ec-label { font-size: 26rpx; }
 .wc-style-default .emp-card .ec-val { font-size: 26rpx; }
 .wc-style-default .emp-card .ec-val-email { font-size: 26rpx; }
+/* 客户反馈：「查看案例」按钮相对公司名略下移。用 relative 做纯视觉位移，
+   不写 margin / 不改 .ec-line3 的 align-items——公司名那一行与卡片高度都不动。 */
+.wc-style-default .emp-card .case-btn { position: relative; top: 8rpx; }
 /* 原设计稿：视频封面与下方公司名称之间有一条阴影带，视觉上像视频窗口的倒影。
    放在 .cv-wrap 的伪元素上：与视频同宽、上缘圆角、与视频拉开一段空隙，
    pointer-events:none 不挡「跳转打开」的点击。倒影不占布局高度，
