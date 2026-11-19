@@ -59,14 +59,17 @@ describe('默认标准风格：联系方式字号与视频底部分割条', () =
     )
   })
 
-  it('阴影分割条：贴在视频下缘外侧，不占高度、不挡跳转点击', () => {
+  it('阴影倒影：与视频同宽、上缘圆角，与视频拉开空隙，不挡跳转点击', () => {
     const shade = ruleBody(WXSS, '.wc-style-default .mp-profile .company-video .cv-wrap::after')
     expect(decl(shade, 'content')).toBe('""')
     expect(decl(shade, 'position')).toBe('absolute')
-    expect(decl(shade, 'top')).toBe('100%')
+    expect(decl(shade, 'left')).toBe('0')
+    expect(decl(shade, 'right')).toBe('0')
+    expect(decl(shade, 'top'), '与视频之间要留空隙，不能紧贴下缘').toBe('calc(100% + 16rpx)')
     expect(decl(shade, 'height')).toBe('18rpx')
-    expect(decl(shade, 'left')).toBe('8rpx')
-    expect(decl(shade, 'right')).toBe('8rpx')
+    expect(decl(shade, 'border-radius'), '左上角 / 右上角圆角，像视频窗口的倒影').toBe(
+      '12rpx 12rpx 0 0'
+    )
     expect(decl(shade, 'pointer-events')).toBe('none')
     expect(shade, '渐变阴影条而不是一条实色线').toContain('linear-gradient')
     expect(shade, '阴影是中性灰，不随品牌主色变蓝').toContain('rgba(30, 42, 53, 0.22)')
@@ -75,10 +78,21 @@ describe('默认标准风格：联系方式字号与视频底部分割条', () =
     expect(decl(ruleBody(WXSS, '.company-video .cv-wrap'), 'position')).toBe('relative')
   })
 
+  it('公司名称与简介落在倒影内侧：下移让出间距，左右各收一点', () => {
+    const text = ruleBody(WXSS, '.wc-style-default .mp-profile .pf-text')
+    expect(text, '缺了文字区的收窄规则').toBeTruthy()
+    // 倒影底边 = 视频底 + 16rpx 空隙 + 18rpx 条高 = 34rpx；再留 18rpx 给名称
+    expect(decl(text, 'margin')).toBe('52rpx 16rpx 0')
+  })
+
   it('另外三款没有这条阴影条，也没有联系方式字号覆盖', () => {
     expect(WXSS).not.toMatch(/\.wc-style-(?:ink|warm|teal)[\s\S]{0,100}\.cv-wrap::after\s*\{/)
     // 更不能写成全局选择器——那样四款都会出现阴影条，只是没人说「其他风格不变」
     expect(WXSS).not.toMatch(/(?:^|\n)[ \t]*\.company-video \.cv-wrap::after\s*\{/)
+    // 文字区的下移收窄也只属于 default
+    expect(WXSS).not.toMatch(
+      /\.wc-style-(?:ink|warm|teal)[\s\S]{0,120}\.pf-text\s*\{[^}]*margin:\s*52rpx/
+    )
   })
 
   it('预览出图脚本同构：有同名容器，风格规则原文在通用 CSS 之后注入', () => {
