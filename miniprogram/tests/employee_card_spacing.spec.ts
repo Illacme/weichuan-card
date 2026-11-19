@@ -28,11 +28,25 @@ const SCRIPT = readFileSync(resolve(REPO, 'scripts/gen_theme_previews.py'), 'utf
  *      行尾允许跟一条注释（`/* … *\/` 或 `// …`）：反向验证时真在行尾加过注释，
  *      装置当时就漏抓了——那是量尺的毛病，不能算产品的。
  */
-function ruleBody(src: string, selector: string): string | undefined {
+function rulePattern(selector: string, global = false): RegExp {
   const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const tail = '(?:\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*)?[ \\t]*(?:\\n|$)'
-  const m = src.match(new RegExp('(?:^|\\n)[ \\t]*' + esc + '[ \\t]*\\{([^}]*)\\}[ \\t]*' + tail))
+  return new RegExp(
+    '(?:^|\\n)[ \\t]*' + esc + '[ \\t]*\\{([^}]*)\\}[ \\t]*' + tail,
+    global ? 'g' : ''
+  )
+}
+function ruleBody(src: string, selector: string): string | undefined {
+  const m = src.match(rulePattern(selector))
   return m ? m[1] : undefined
+}
+/** 同一选择器在文件里写了多条时取最后一条（后写的覆盖先写的，才是生效值） */
+function ruleBodyLast(src: string, selector: string): string | undefined {
+  let m: RegExpExecArray | null
+  let body: string | undefined
+  const re = rulePattern(selector, true)
+  while ((m = re.exec(src))) body = m[1]
+  return body
 }
 
 /** 从声明体里取某个属性的值（含单位） */
@@ -94,5 +108,63 @@ describe('名片卡：姓名上方留白与手机号列缩进', () => {
     expect(decl(ruleBody(SCRIPT, '.ec-head'), 'margin-top')).toBe('8px')
     expect(decl(ruleBody(SCRIPT, '.ec-col'), 'box-sizing')).toBe('border-box')
     expect(decl(ruleBody(SCRIPT, '.ec-col:not(.ec-col-r)'), 'padding-left')).toBe('8px')
+  })
+})
+
+describe('按风格分流：只加标准均衡与紧凑信息，其余风格逐像素不变', () => {
+  it('标准均衡：姓名上方 24rpx、手机号列 24rpx，座机 / 邮箱没有专属缩进', () => {
+    // 全局基线仍是 16rpx；default 用更高优先级的风格规则覆盖，其他风格吃不到
+    expect(decl(ruleBody(WXSS, '.emp-card .ec-head'), 'margin-top')).toBe('16rpx')
+    expect(decl(ruleBody(WXSS, '.wc-style-default .emp-card .ec-head'), 'margin-top')).toBe('24rpx')
+    expect(
+      decl(ruleBody(WXSS, '.wc-style-default .emp-card .ec-contact .ec-col:not(.ec-col-r)'), 'padding-left')
+    ).toBe('24rpx')
+    expect(
+      ruleBody(WXSS, '.wc-style-default .emp-card .ec-contact .ec-col-r'),
+      '座机 / 邮箱不能跟着右移——default 不该给右列写缩进'
+    ).toBeUndefined()
+  })
+
+  it('紧凑信息：座机 / 邮箱与手机号同为 16rpx，单列四行左缘对齐', () => {
+    // ink 的右列在同文件里先被写了 flex/width 规则，后写的 padding 才是生效值
+    expect(
+      decl(ruleBodyLast(WXSS, '.wc-style-ink .emp-card .ec-contact .ec-col-r'), 'padding-left')
+    ).toBe('16rpx')
+    // 与上一条手机号列同值；改成别的值就又错开了
+    expect(
+      decl(ruleBodyLast(WXSS, '.wc-style-ink .emp-card .ec-contact .ec-col-r'), 'padding-left')
+    ).toBe(decl(ruleBody(WXSS, '.emp-card .ec-contact .ec-col:not(.ec-col-r)'), 'padding-left'))
+    // ink 本来就是单列四行，不能为了对齐把它改回两列
+    expect(decl(ruleBody(WXSS, '.wc-style-ink .emp-card .ec-contact'), 'flex-direction')).toBe(
+      'column'
+    )
+  })
+
+  it('暖色 / 青色没有被这两条覆盖波及', () => {
+    // 这两款本来就各有一条 .ec-head / .ec-col-r 规则（换姿态用的），所以要断言的是
+    // 「没被追加 margin-top / padding-left」，而不是「规则不存在」。
+    expect(WXSS).not.toMatch(/\.wc-style-warm[\s\S]{0,120}\.ec-head\s*\{[^}]*margin-top/)
+    expect(WXSS).not.toMatch(/\.wc-style-warm[\s\S]{0,200}\.ec-col-r\s*\{[^}]*padding-left/)
+    expect(WXSS).not.toMatch(/\.wc-style-teal[\s\S]{0,120}\.ec-head\s*\{[^}]*margin-top/)
+    expect(WXSS).not.toMatch(
+      /\.wc-style-teal[\s\S]{0,200}\.ec-col:not\(\.ec-col-r\)\s*\{[^}]*padding-left/
+    )
+    // teal 的分栏缩进保持原值
+    expect(
+      decl(ruleBody(WXSS, '.wc-style-teal .emp-card .ec-contact .ec-col-r'), 'padding-left')
+    ).toBe('20rpx')
+  })
+
+  it('预览图：通用 CSS 保持 8px，风格规则从 app.wxss 原文注入到通用 CSS 之后', () => {
+    // 前面那条守门钉死「通用没变」；default/ink 的 12px/8px 不写死在脚本里，
+    // 而是由 read_layout_rules() 从 wxss 抓原文再注入，否则就会出现第二套布局。
+    expect(SCRIPT).toContain('def read_layout_rules()')
+    expect(SCRIPT).toContain('STYLE_RULE_RE')
+    // 脚本开头注释里也提到 ${style_css}，取最后一个才是真正的注入点
+    const inject = SCRIPT.lastIndexOf('${style_css}')
+    expect(inject, '没有布局注入点').toBeGreaterThan(0)
+    expect(inject).toBeGreaterThan(SCRIPT.indexOf('  .ec-head { display: flex'))
+    // 出图脚本必须重跑，manifest 的布局快照对账会盯住新规则有没有进图
+    expect(SCRIPT).toContain('"layouts": layouts')
   })
 })

@@ -281,7 +281,10 @@ describe('后台 LOGO 预览按风格摆姿态', () => {
 
   it('标准 / 浅墨是基线横排：没有方向的覆盖', () => {
     expect(decl(ruleBody(WXSS, '.emp-card .ec-head'), 'flex-direction')).toBe('')
-    expect(ruleBody(WXSS, '.wc-style-default .emp-card .ec-head'), '标准款不另写头部规则').toBeUndefined()
+    // 2026-11-19 二次调整后标准款允许另写 margin-top（加留白），但方向仍走基线
+    const def = ruleBody(WXSS, '.wc-style-default .emp-card .ec-head')
+    expect(decl(def, 'flex-direction'), '标准款只加留白，不改头部方向').toBe('')
+    expect(decl(def, 'margin-top'), '二次调整后的标准款留白').toBe('24rpx')
     const ink = ruleBody(WXSS, '.wc-style-ink .emp-card .ec-head')
     expect(ink, '浅墨只改 align-items，不改方向').toContain('align-items')
     expect(decl(ink, 'flex-direction')).toBe('')

@@ -297,6 +297,10 @@ page {
 .wc-style-default .emp-card .ec-avatar { width: 112rpx; height: 112rpx; }
 .wc-style-default .mp-profile .cv { height: 440rpx; border-radius: 12rpx; }
 .wc-style-default .mp-profile .intro { line-height: 1.7; }
+/* 2026-11-19 二次反馈：标准均衡的姓名上方再高一点、手机号列再往右一点。
+   两条都只覆盖 default；座机 / 邮箱列没写 padding，位置与上一版逐像素一致。 */
+.wc-style-default .emp-card .ec-head { margin-top: 24rpx; }
+.wc-style-default .emp-card .ec-contact .ec-col:not(.ec-col-r) { padding-left: 24rpx; }
 
 /* 紧凑信息 · 工牌单栏款：方角小头像、整卡去圆角；联系表由「两列」改成**单列四行**，
    行间用 1rpx 细线分隔（像贴在工牌背面的通讯录）；公司简介封面压成通栏窄条，
@@ -310,6 +314,10 @@ page {
 .wc-style-ink .emp-card .ec-contact { flex-direction: column; }
 .wc-style-ink .emp-card .ec-contact .ec-col,
 .wc-style-ink .emp-card .ec-contact .ec-col-r { flex: 0 0 auto; width: 100%; max-width: 100%; margin-left: 0; }
+/* 紧凑信息是单列四行：座机 / 邮箱要和上面的手机号左缘对齐。
+   通用规则只缩进左列，这里给右列同样的 16rpx；box-sizing 已让缩进算在列宽内，
+   两行左缘因此逐像素一致。 */
+.wc-style-ink .emp-card .ec-contact .ec-col-r { padding-left: 16rpx; }
 .wc-style-ink .emp-card .ec-line { padding: 6rpx 0; border-bottom: 1rpx solid var(--wc-primary-border); }
 .wc-style-ink .mp-profile .cv,
 .wc-style-ink .mp-profile .cv-video { height: 240rpx; border-radius: 0; }
