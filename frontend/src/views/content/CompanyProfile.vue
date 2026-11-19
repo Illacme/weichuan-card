@@ -65,7 +65,10 @@
           <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
           <div class="hint">
             <b>同主体填这个</b>：从视频号助手复制，长期稳定。
-            <span class="hint-warn">视频号与小程序不同主体时它不生效，改用下面的 feed-token。</span>
+            <span class="hint-warn">
+              视频号与小程序<b>不同主体</b>时它不生效，且<b>两者都填时以 feedId 为准</b>——
+              跨主体场景下留着它会让下面的 feed-token 失效（表现为只显示封面），要清空它。
+            </span>
           </div>
         </el-form-item>
 
@@ -83,7 +86,9 @@
               报错 <code>channel-video:fail 1416106</code> 多为 token 与本小程序不匹配或被截断
               （正常形如 <code>token/</code> 开头的一长串，详见部署手册排障表）。
             </span>
-            <span v-if="form.videoFeedId.trim()" class="hint-warn">已填 feedId，本项不会被使用。</span>
+            <span v-if="form.videoFeedId.trim()" class="hint-warn">
+              已填 feedId，本项不会被使用——跨主体请先清空上面的 feedId。
+            </span>
             <span v-if="isChannelsRedirect" class="hint-warn">
               跳转播放用不到它，已填内容会保留，切回「内嵌播放」仍在使用。
             </span>
