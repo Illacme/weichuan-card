@@ -530,7 +530,10 @@ ${tokens}
   /* ---- 名片卡：头像 / 姓名职位 / 企业 LOGO / 公司全称 / 查看案例 / 地址 / 两列联系表 ----
      类名与 app.wxss 的 .emp-card 规则对齐（.ec-avatar / .ec-rows / .ec-line / .case-btn），
      尺寸由 ${style_css} 注入的布局规则覆盖，这里只给形状与颜色。 */
-  .ec-head { display: flex; align-items: flex-start; }
+  /* 姓名上方留白 16rpx（=8px @0.5）与手机号列左缩进 16rpx，与 app.wxss 的
+     .ec-head{margin-top:16rpx} / .ec-col:not(.ec-col-r){padding-left:16rpx} 同值。
+     右列（座机 / 邮箱）不缩进：box-sizing 让缩进算进 50% / 40% 的列宽，起点不动。 */
+  .ec-head { display: flex; align-items: flex-start; margin-top: 8px; }
   /* 头像与 LOGO 用中性占位，不引用真人照片 / 带企业名的标识：
      通用平台产品的示意图不能让客户误以为这是某家真实企业的名片。 */
   .avatar-ph, .ec-avatar { width: 56px; height: 56px; border-radius: 50%; flex: none; position: relative;
@@ -569,7 +572,8 @@ ${tokens}
     background: linear-gradient(90deg, var(--wc-primary-deep) 0, var(--wc-primary-deep) 34%,
                 var(--wc-track) 34%, var(--wc-track) 100%); }
   .ec-contact { display: flex; align-items: flex-start; }
-  .ec-col { min-width: 0; }
+  .ec-col { min-width: 0; box-sizing: border-box; }
+  .ec-col:not(.ec-col-r) { padding-left: 8px; }
   .ec-contact-short .ec-col { flex: 0 0 50%; }
   .ec-line { display: flex; align-items: baseline; font-size: 10.5px; color: #333; padding: 4px 0; }
   .ec-label { width: 28px; flex: none; color: #98a6b5; font-size: 10px; }

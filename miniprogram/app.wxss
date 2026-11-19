@@ -425,7 +425,10 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
   padding: 24rpx 20rpx 20rpx;
   box-sizing: border-box;
 }
-.emp-card .ec-head { display: flex; }
+/* 姓名上方留白：加在 .ec-head 上而不是 .emp-card 的 padding-top——四个风格各自
+   覆盖了 .emp-card 的 padding，写在那里只有 default 生效。加在这里四风格一致下移，
+   也不改各风格自己的上下留白比例。 */
+.emp-card .ec-head { display: flex; margin-top: 16rpx; }
 .emp-card .ec-avatar {
   width: 112rpx; height: 112rpx; border-radius: 50%;
   background: var(--wc-primary-tint); flex-shrink: 0;
@@ -497,6 +500,12 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 }
 .emp-card .ec-contact { display: flex; align-items: flex-start; }
 .emp-card .ec-col { min-width: 0; }
+/* 手机号列（左列）整体右移一点，和卡片左缘留出呼吸感；右列（座机 / 邮箱）位置不动：
+   · box-sizing 让这 16rpx 算在 50% / 40% 的列宽里，右列的起点因此不变；
+   · :not(.ec-col-r) 只作用于左列——teal 给右列写的 20rpx 分栏缩进（配左边框）不受影响；
+     ink / warm 的联系表是纵向单列，也不会把座机 / 邮箱一起缩进。 */
+.emp-card .ec-contact .ec-col { box-sizing: border-box; }
+.emp-card .ec-contact .ec-col:not(.ec-col-r) { padding-left: 16rpx; }
 .emp-card .ec-contact-short .ec-col { flex: 0 0 50%; }
 .emp-card .ec-contact-long .ec-col { flex: 0 0 40%; }
 .emp-card .ec-contact-long .ec-col-r { flex: 0 1 auto; max-width: 60%; margin-left: auto; }
