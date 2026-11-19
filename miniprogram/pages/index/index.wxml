@@ -55,7 +55,7 @@
     <block wx:else>
       <!-- id 供自动化/调试寻址用：自定义组件内部元素跨组件选不到（>>> 也不支持），
            有 id 才能用 page.selectComponent('#emp-card') 直接拿到组件实例 -->
-      <employee-card id="emp-card" class="mp-card-area" employee="{{employee}}" company="{{company}}" case-arrow="{{caseArrow}}" bind:entercase="onEnterCase" />
+      <employee-card id="emp-card" class="mp-card-area" employee="{{employee}}" company="{{company}}" case-arrow="{{caseArrow}}" logo-size="{{logoSize}}" logo-align="{{logoAlign}}" bind:entercase="onEnterCase" />
       <view class="section mp-profile">
         <!-- 「公司简介」标题按设计稿叠在封面图左上角（见 company-video 组件），此处不再单列。
              视频来源由后端 videoSource 决定，组件内部自行选档 + 失败兜底 -->

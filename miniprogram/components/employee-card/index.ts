@@ -34,6 +34,29 @@ function estimateRpx(text: string): number {
   return w
 }
 
+// 名片卡右上角 LOGO 的尺寸档 → 区块宽高（rpx）。三档必须与后台预览
+// （frontend/views/content/HomeLayout.vue 的 .lp-slot-* / .lp-img-*，1rpx=0.5px）
+// 以及 app.wxss 的 .ec-logo-slot-* / .ec-logo-* 逐值一致，否则客户按预览调完、
+// 到真机上是另一个大小。改这里就要同时改那两处（有守门用例钉着）。
+const LOGO_H: Record<string, number> = { small: 36, medium: 44, large: 52 }
+const LOGO_W: Record<string, number> = { small: 110, medium: 150, large: 190 }
+const LOGO_SIZES = ['small', 'medium', 'large']
+const LOGO_ALIGNS = ['left', 'center', 'right']
+// 宽高比的安全区间：极端图（超长横条 / 超细竖条）不该把行宽吃光或缩成一个点。
+const LOGO_RATIO_MIN = 0.2
+const LOGO_RATIO_MAX = 6
+
+// logoWidth 按档位与原始宽高比算 LOGO 的渲染宽度（rpx），夹在区块宽以内。
+// 抽成纯函数是为了能被用例直接盯住：它是「后台预览 / app.wxss / 组件」三处
+// 尺寸一致的那一环，写错了三处会各说各话。
+// ratio=0 表示还没拿到原始尺寸 → 返回 0，WXML 里就不写内联宽度，
+// 让 CSS 的 width:100% 生效（= 改造前的观感），不猜比例。
+function logoWidth(size: string, ratio: number): number {
+  if (!ratio) return 0
+  const s = LOGO_SIZES.indexOf(size) >= 0 ? size : 'medium'
+  return Math.min(LOGO_W[s], Math.round(LOGO_H[s] * ratio))
+}
+
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -45,6 +68,16 @@ Component({
       type: String,
       value: '▸',
     },
+    // 名片卡右上角 LOGO 的档位（0053），由页面按 home-layout 下发。
+    // 缺省值 = 加配置前的 150×44 + aspectFit 居中，旧后端不下发这两项时也不突变。
+    logoSize: {
+      type: String,
+      value: 'medium',
+    },
+    logoAlign: {
+      type: String,
+      value: 'center',
+    },
   },
   data: {
     // 邮箱是否「长」：超过半栏可用宽度 → 走 long 档（右列≤60% + 邮箱地址右对齐）
@@ -53,6 +86,9 @@ Component({
     // 记 URL 而不是布尔标记，换图后自动重试（见 utils/thumb.ts onImgFail）
     avatarFail: '',
     logoFail: '',
+    // LOGO 的原始宽高比与据此算出的渲染宽度（rpx）。0 = 还没拿到（用 CSS 的 100%）。
+    logoRatio: 0,
+    logoW: 0,
   },
   observers: {
     // 员工数据是首页异步加载后 setData 进来的，observer 里拿不到渲染后的 DOM，
@@ -60,8 +96,24 @@ Component({
     'employee.email'(email: string) {
       this.setData({ emailLong: estimateRpx(email || '') > LONG_EMAIL_THRESHOLD_RPX })
     },
+    // 换尺寸档或换了图（原始比例变了）都要重算渲染宽度：只算一次的话，
+    // 客户把「中」改成「大」之后 LOGO 宽度会停在旧值、看不出变大。
+    'logoSize, logoRatio'(_size: string, ratio: number) {
+      this.setData({ logoW: logoWidth(_size, ratio) })
+    },
   },
   methods: {
+    // LOGO 加载完拿到**原始像素宽高**，据此把图片框收到内容宽度：
+    // aspectFit 在「框宽 == 内容宽」时才不会留白，位置档才真的能左/中/右挪。
+    // 拿不到就保持 logoW=0，走 CSS 的 100%（= 改造前的观感），不猜比例。
+    onLogoLoad(e: any) {
+      const d = (e && e.detail) || {}
+      const w = Number(d.width)
+      const h = Number(d.height)
+      if (!w || !h) return
+      const ratio = Math.min(LOGO_RATIO_MAX, Math.max(LOGO_RATIO_MIN, w / h))
+      this.setData({ logoRatio: ratio })
+    },
     // 头像 / LOGO 加载失败：记下失败的地址，WXML 据此不再画这张图（见 utils/thumb.ts）
     onImgFail,
     // 「查看案例」：只上报意图，具体行为（滚动业绩区 / 跳第一个分类 / 提示）由页面决定

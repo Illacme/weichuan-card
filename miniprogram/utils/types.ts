@@ -170,6 +170,17 @@ export type HomeLayoutResp = Envelope & {
   showCategoryName?: boolean
   /** 业务服务封面图**下方**是否再显示一行名称，缺省 false（理由同上，竖版卡标题烧在图内） */
   showServiceName?: boolean
+  /**
+   * 名片卡右上角企业 LOGO 的尺寸档：small / medium / large，缺省 medium。
+   * medium = 加配置前写死的 150×44rpx，所以旧后端不下发这列也不会突变。
+   */
+  logoSize?: string
+  /**
+   * LOGO 在「右上角区块」内的水平对齐：left / center / right，缺省 center。
+   * center = aspectFit 原本的居中观感。只影响窄图（方块 / 竖版），
+   * 横版长条 LOGO 会撑满区块，三档看不出差别。
+   */
+  logoAlign?: string
   /** 整体风格（布局族）id；P1 起由后端根级下发，缺省按 default 渲染 */
   styleId?: string
   /** 品牌色系（纯颜色层）id；null / 缺省 = 用风格默认色 */

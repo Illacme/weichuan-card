@@ -18,6 +18,16 @@ function normalizeFeaturedEffect(v: unknown): string {
   return typeof v === 'string' && FEATURED_EFFECTS.indexOf(v) >= 0 ? v : 'static'
 }
 
+// 名片卡右上角 LOGO 的两组档位（0053），与后端 model.LogoSize* / LogoAlign* 一一对应。
+// 端上再归一一次：旧后端不下发 → 落缺省（与改造前一致）；脏数据下发未知值 →
+// 若不归一，CSS 类名匹配不上会静默退回 flex-start（靠左），比不生效更误导。
+const LOGO_SIZES = ['small', 'medium', 'large']
+const LOGO_ALIGNS = ['left', 'center', 'right']
+
+function normalizeLogo(v: unknown, allowed: string[], fallback: string): string {
+  return typeof v === 'string' && allowed.indexOf(v) >= 0 ? v : fallback
+}
+
 Page({
   data: {
     themeClass: '',
@@ -28,6 +38,9 @@ Page({
     employee: null,
     company: null,
     profile: null,
+    // 名片卡右上角 LOGO 档位（0053）：先落缺省，拿到 home-layout 后覆盖。
+    logoSize: 'medium',
+    logoAlign: 'center',
     categories: [],
     featured: [],
     services: [],
@@ -328,10 +341,16 @@ Page({
       // 端上再钳一次 0~100，防旧后端/脏数据下发越界值让 alpha > 1 或 < 0（CSS 会忽略）。
       const rawStrength = layout.bgGradientStrength ?? 100
       const strength = Math.max(0, Math.min(100, rawStrength))
+      // 0053：名片卡右上角 LOGO 的尺寸 / 位置。旧后端不下发时落缺省
+      // （medium / center = 改造前的 150×44 + aspectFit 居中），零视觉突变。
+      const logoSize = normalizeLogo(layout.logoSize, LOGO_SIZES, 'medium')
+      const logoAlign = normalizeLogo(layout.logoAlign, LOGO_ALIGNS, 'center')
       this.setData({
         employee: cardData.employee,
         company: cardData.company,
         profile: cardData.profile,
+        logoSize,
+        logoAlign,
         categories,
         featured,
         services,

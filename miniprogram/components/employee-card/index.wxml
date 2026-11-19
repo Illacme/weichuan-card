@@ -13,8 +13,20 @@
     <view class="ec-info">
       <view class="ec-line1">
         <view class="ec-name">{{employee.name}}</view>
-        <image class="ec-logo" src="{{company.logo}}" mode="aspectFit" lazy-load wx:if="{{company.logo && logoFail !== company.logo}}"
-          binderror="onImgFail" data-fail="logoFail" data-src="{{company.logo}}" />
+        <!-- LOGO 区块（0053）：宽高按后台档位固定，图片在区块内左/中/右对齐。
+             单独包一层而不是直接给 image 设宽高，是因为 aspectFit 会把图缩到框内居中——
+             方块 LOGO 因此左右各留空白，看起来「浮在偏左」。组件按 bindload 拿到的
+             原始宽高比把 image 宽度收到内容宽（见 index.ts 的 logoWidth），位置档才真的起作用。
+             区块也挂 wx:if：没配 LOGO 时不能凭空占掉 150rpx 的行宽。 -->
+        <view
+          wx:if="{{company.logo && logoFail !== company.logo}}"
+          class="ec-logo-slot ec-logo-slot-{{logoSize}} ec-logo-align-{{logoAlign}}"
+        >
+          <image class="ec-logo ec-logo-{{logoSize}}" src="{{company.logo}}" mode="aspectFit" lazy-load
+            style="{{logoW ? 'width:' + logoW + 'rpx;' : ''}}"
+            bindload="onLogoLoad"
+            binderror="onImgFail" data-fail="logoFail" data-src="{{company.logo}}" />
+        </view>
       </view>
       <view class="ec-title" wx:if="{{employee.title}}">{{employee.title}}</view>
       <view class="ec-line3">

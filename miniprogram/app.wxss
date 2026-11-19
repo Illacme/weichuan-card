@@ -325,7 +325,7 @@ page {
 .wc-style-warm .emp-card .ec-avatar { width: 136rpx; height: 136rpx; margin-bottom: 18rpx; }
 .wc-style-warm .emp-card .ec-info { flex: 0 0 auto; width: 100%; margin-left: 0; text-align: center; }
 .wc-style-warm .emp-card .ec-line1 { flex-direction: column; align-items: center; justify-content: center; }
-.wc-style-warm .emp-card .ec-logo { margin-left: 0; margin-top: 12rpx; }
+.wc-style-warm .emp-card .ec-logo-slot { margin-left: 0; margin-top: 12rpx; }
 .wc-style-warm .emp-card .ec-line3 { flex-direction: column; align-items: center; margin-top: 14rpx; }
 .wc-style-warm .emp-card .ec-cname { flex: none; }
 .wc-style-warm .emp-card .case-btn { margin-left: 0; margin-top: 14rpx; height: 34rpx; padding: 0 16rpx; }
@@ -434,7 +434,31 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card .ec-info { flex: 1; min-width: 0; margin-left: 22rpx; }
 .emp-card .ec-line1 { display: flex; align-items: center; justify-content: space-between; }
 .emp-card .ec-name { font-size: 34rpx; font-weight: 700; color: #222; }
-.emp-card .ec-logo { width: 150rpx; height: 44rpx; flex-shrink: 0; margin-left: 16rpx; }
+/* 名片卡右上角 LOGO（0053）：尺寸三档 × 位置三档，档位由后台「名片页面样式」下发。
+   · .ec-logo-slot 是「LOGO 区块」：宽高按档位固定，图片在区块内对齐；
+   · 区块里为什么还要包一层，而不是直接给 image 设宽高：mode="aspectFit" 会把图
+     按比例缩到框内并**居中**，方块 LOGO 因此左右各留一大块空白，在右上角看起来
+     「浮在偏左」。组件用 bindload 拿到的原始宽高比把 image 宽度收到内容宽
+     （见 employee-card/index.ts 的 syncLogoWidth），再在区块内左/中/右对齐，
+     窄图才真的看得出位置差别；
+   · 横版长条 LOGO 的内容宽本来就等于区块宽，三档位置完全一致——这是预期行为，
+     不是漏了样式。
+   · 缺省 medium（150×44）+ center 与加配置前逐像素一致，存量租户零突变。 */
+.emp-card .ec-logo-slot {
+  display: flex; align-items: center; flex-shrink: 0; margin-left: 16rpx;
+}
+.emp-card .ec-logo-slot-small { width: 110rpx; height: 36rpx; }
+.emp-card .ec-logo-slot-medium { width: 150rpx; height: 44rpx; }
+.emp-card .ec-logo-slot-large { width: 190rpx; height: 52rpx; }
+.emp-card .ec-logo-align-left { justify-content: flex-start; }
+.emp-card .ec-logo-align-center { justify-content: center; }
+.emp-card .ec-logo-align-right { justify-content: flex-end; }
+/* 未拿到原始比例时 width 走 100%（= 铺满区块，等价于改造前的 aspectFit 观感），
+   拿到后由组件按「高度 × 原始宽高比」内联覆盖，并夹在区块宽以内。 */
+.emp-card .ec-logo { width: 100%; max-width: 100%; }
+.emp-card .ec-logo-small { height: 36rpx; }
+.emp-card .ec-logo-medium { height: 44rpx; }
+.emp-card .ec-logo-large { height: 52rpx; }
 .emp-card .ec-title { color: #6b7a89; font-size: 24rpx; margin-top: 2rpx; }
 .emp-card .ec-line3 { display: flex; align-items: center; margin-top: 10rpx; }
 .emp-card .ec-cname {
