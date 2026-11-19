@@ -37,7 +37,7 @@ describe('标准均衡：「查看案例」按钮相对公司名下移', () => {
   it('default 按钮 relative 下移 8rpx，且没写 margin 去推动公司名', () => {
     const off = ruleBody(WXSS, '.wc-style-default .emp-card .case-btn')
     expect(decl(off, 'position')).toBe('relative')
-    expect(decl(off, 'top')).toBe('8rpx')
+    expect(decl(off, 'top'), '要落到公司名与地址的中点').toBe('20rpx')
     expect(decl(off, 'margin-top'), '不能靠 margin 把整行撑高').toBe('')
     expect(decl(off, 'margin'), '不能靠 margin 把整行撑高').toBe('')
     // 基线行仍是居中对齐、原来的 margin-top，未被这次改动波及
