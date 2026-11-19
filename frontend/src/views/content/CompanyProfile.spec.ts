@@ -611,9 +611,9 @@ describe('content/CompanyProfile', () => {
   })
 
   // 地址是 http 时不拦保存（后端对同源 http/https 已宽容，否则「什么都没改、点保存就报
-  // 地址不合法」会重演），但要在界面上说清「小程序只认 https」——这类地址存得住、播不了，
-  // 是典型的「配置看着完整、真到兜底才失败」。
-  it('兜底地址是 http：提示小程序只认 https，但保存照放行', async () => {
+  // 地址不合法」会重演），但要在界面上说清「生产环境请用 https」——这类地址存得住、
+  // 可能播不了，是典型的「配置看着完整、真到兜底才失败」。
+  it('兜底地址是 http：提示生产环境用 https，但保存照放行', async () => {
     const w = await mountPage()
     await pickSource(w, 'channels')
     await byPlaceholder(w, '视频号助手 → 动态管理 → 复制 feedId').setValue('feed-1')
@@ -624,7 +624,7 @@ describe('content/CompanyProfile', () => {
     )
     await flush()
 
-    expect(w.text()).toContain('小程序只认')
+    expect(w.text()).toContain('收紧')
     expect(ElMessage.warning).not.toHaveBeenCalled()
 
     await saveButton(w).trigger('click')
