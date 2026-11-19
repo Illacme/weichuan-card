@@ -673,17 +673,37 @@ if [ "$DO_VERIFY" = 1 ] && [ -n "$DEPLOY_URL" ]; then
     # 两档都探：缩略图缺了页面照样能开（退回拉原图），只有「切风格有点慢」，
     # 这种退化必须在这里拦住，否则要等用户抱怨才被发现。
     for probe_name in default--default.png default--default.thumb.png; do
-        PROBE=$(curl -sS -o /dev/null -m 20 -w '%{http_code} %{content_type}' \
-            "$DEPLOY_URL/theme-previews/$probe_name?cb=$$$(date +%s)") || PROBE="curl 失败"
+        # 超时 / 连接失败跟「图没传到」是两回事：前者是链路抖动（线上实测大图 5.5s、
+        # 缩略图 4.2s，20s 余量偏紧），重试即可；后者会拿到 200 text/html（SPA 兜底）。
+        # 旧版把两者混成一句「图没传 / 缓存旧」，运维会去查 CDN 而真因只是超时。
+        PROBE=''
+        CURL_RC=0
+        for attempt in 1 2 3; do
+            PROBE=$(curl -sS -o /dev/null -m 20 -w '%{http_code} %{content_type}' \
+                "$DEPLOY_URL/theme-previews/$probe_name?cb=$$$(date +%s%N)" 2>/dev/null) \
+                && CURL_RC=0 || CURL_RC=$?
+            if [ "$CURL_RC" -eq 0 ]; then
+                break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+                warn "  · $probe_name 第 $attempt 次探测失败（curl exit=${CURL_RC}），重试"
+            fi
+        done
         case "$PROBE" in
             200\ image/png*)
                 echo "  ✓ 主题预览图可取 ($probe_name)"
                 ;;
             *)
-                warn "✗ 主题预览图异常 ($probe_name)：$PROBE"
-                warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
-                warn "  文件在但仍显示旧版式，说明缓存里还是旧副本：先确认 URL 带的是新构建戳"
-                warn "  （?v=__APP_BUILD__），再 Purge CDN 的 /theme-previews/*。"
+                if [ "$CURL_RC" -ne 0 ]; then
+                    warn "✗ 主题预览图探测超时 ($probe_name)：连续 3 次 curl exit=$CURL_RC"
+                    warn "  这是网络 / CDN 回源抖动，不代表图没传到——上传后的清单已逐张对账过。"
+                    warn "  重试发版自检即可；若持续超时再查 $DEPLOY_URL 的连通性与 CDN 回源。"
+                else
+                    warn "✗ 主题预览图异常 ($probe_name)：$PROBE"
+                    warn "  期望「200 image/png」。拿到 text/html 说明图没传到服务器（被 SPA 兜底成 200）；"
+                    warn "  文件在但仍显示旧版式，说明缓存里还是旧副本：先确认 URL 带的是新构建戳"
+                    warn "  （?v=__APP_BUILD__），再 Purge CDN 的 /theme-previews/*。"
+                fi
                 warn "  源站缓存策略见 deploy/baota/nginx-site.conf 的 /theme-previews/ 段与 \$preview_cache map。"
                 exit 1
                 ;;

@@ -1609,4 +1609,13 @@ describe('发版脚本与 manifest 新位置对齐', () => {
       '"$PREVIEW_DIR/manifest.json"'
     )
   })
+
+  it('线上抽检把 curl 超时和「图没传到」分开，超时先重试', () => {
+    // 2026-11-19 真实踩过：图上传正常、本机 curl 也 200 image/png，只是发版那次 20s
+    // 超时，脚本却报「图没传到 / 缓存旧」，把运维指向了错误的排查方向。
+    expect(DEPLOY).toContain('for attempt in 1 2 3')
+    expect(DEPLOY).toContain('连续 3 次 curl exit=')
+    expect(DEPLOY).toContain('网络 / CDN 回源抖动')
+    expect(DEPLOY, '不能再把所有失败都塞成一句 curl 失败').not.toContain('PROBE="curl 失败"')
+  })
 })
