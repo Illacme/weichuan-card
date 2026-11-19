@@ -644,6 +644,8 @@ paths:
                       名片卡右上角 LOGO 在其「右上角区块」内的水平对齐（0053）。缺省 center =
                       aspectFit 原本的居中观感。只影响内容宽度小于区块宽度的图（方块 / 竖版 LOGO）；
                       横版长条 LOGO 会撑满整个区块，三档看不出差别。
+                      注意本档位只管**区块内部**：区块在卡片里的落点由 `styleId` 决定——标准 / 浅墨
+                      贴卡片右边缘、暖色换行到姓名下方居中、青色因头像在右而落在头像左侧。
                   styleId:
                     type: string
                     enum: [default, ink, warm, teal]

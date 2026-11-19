@@ -125,8 +125,13 @@ const saveTitle = computed(() =>
 function onReloadActive() {
   ;(activeRef.value as any)?.load?.()
 }
-function onSaveActive() {
-  ;(activeRef.value as any)?.save?.()
+async function onSaveActive() {
+  const active = activeRef.value as any
+  await active?.save?.()
+  // 风格保存成功后，「名片页面样式」页的 LOGO 预览要换成新风格的姿态：它按当前风格
+  // 渲染（标准/浅墨贴右边缘、暖色换到姓名下方、青色落在头像左侧）。只重读风格本身，
+  // 不重载那一页的表单，客户在那边未保存的编辑不会被冲掉。
+  if (tab.value === 'theme') await (appearanceRef.value as any)?.refreshStyle?.()
 }
 </script>
 

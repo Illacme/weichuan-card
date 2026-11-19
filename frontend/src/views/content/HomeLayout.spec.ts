@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     featuredEffect: 'static',
     companyNameScale: 'large',
     introFontScale: 'large',
+    styleId: 'default',
   })),
   saveHomeLayout: vi.fn(async (_payload: any) => ({ code: 0 })),
 }))
@@ -301,6 +302,63 @@ describe('content/HomeLayout', () => {
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
       expect.objectContaining({ logoSize: 'small', logoAlign: 'left' })
     )
+  })
+
+  // ---- 预览必须按「当前风格」摆姿态（否则预览会骗人）----
+  //
+  // LOGO 区块在卡片里的落点由风格决定：标准/浅墨贴右边缘、暖色换行到姓名下方居中、
+  // 青色因头像在右而落在中部。只画一种姿态时，暖色 / 青色的客户就是对着一个真机上
+  // 不存在的落点调档位——调得越认真偏得越多。
+  const LAYOUT_FULL = {
+    order: ['achievement', 'service'],
+    bgImage: '',
+    bgMask: 0,
+    categoryLimit: 20,
+    featuredCount: 3,
+    featuredEffect: 'static',
+    companyNameScale: 'large',
+    introFontScale: 'large',
+    logoSize: 'medium',
+    logoAlign: 'center',
+  }
+
+  it('风格是暖色：预览换成上下堆叠（LOGO 在姓名下方），并标出当前风格名', async () => {
+    const w = await mountPage({ ...LAYOUT_FULL, styleId: 'warm' })
+
+    expect(w.find('.lp-card').classes()).toContain('lp-layout-stack')
+    expect(w.text()).toContain('当前风格')
+    expect(w.text()).toContain('暖色')
+  })
+
+  it('风格是青色：预览用左右翻转（头像在右，LOGO 落在头像左侧）', async () => {
+    const w = await mountPage({ ...LAYOUT_FULL, styleId: 'teal' })
+
+    expect(w.find('.lp-card').classes()).toContain('lp-layout-reverse')
+    expect(w.text()).toContain('青色')
+  })
+
+  it('标准 / 浅墨：预览是常规横排（LOGO 贴卡片右边缘）', async () => {
+    for (const styleId of ['default', 'ink']) {
+      const w = await mountPage({ ...LAYOUT_FULL, styleId })
+      expect(w.find('.lp-card').classes(), `${styleId} 应该是横排姿态`).toContain('lp-layout-row')
+    }
+  })
+
+  it('refreshStyle 只重读风格：客户在本页未保存的档位不会被冲掉', async () => {
+    const w = await mountPage({ ...LAYOUT_FULL, styleId: 'default' })
+    // 先把本页改到「小 / 靠左」，但刻意不保存
+    await pickRadio(w, 'LOGO 大小', '小')
+    await pickRadio(w, 'LOGO 位置', '靠左')
+
+    mocks.getHomeLayout.mockResolvedValueOnce({ ...LAYOUT_FULL, styleId: 'warm' })
+    await (w.vm as any).refreshStyle()
+    await flush()
+
+    expect(w.find('.lp-card').classes()).toContain('lp-layout-stack')
+    expect(formItemByLabel(w, 'LOGO 大小').find('.el-radio-group').attributes('data-selected')).toBe(
+      'small'
+    )
+    expect(w.find('.lp-slot').classes()).toContain('lp-align-left')
   })
 
   // order[0] 决定谁是「在前」的板块

@@ -420,6 +420,26 @@ describe('content/MpSettings', () => {
     })
   })
 
+  // LOGO 的预览要按「当前风格」摆姿态（标准/浅墨贴右、暖色换到姓名下方、青色落在头像左侧），
+  // 所以风格一存就得让样式页重读。不接线的话预览会停在旧姿态，客户照着调、越调越偏。
+  it('保存风格后通知样式页刷新 LOGO 预览姿态', async () => {
+    // 先进样式页让 HomeLayout 挂载（页签 lazy，从没打开过就没有实例），再切去风格页保存。
+    const { w } = await mountPage('?tab=appearance')
+    await pickTab(w, 'theme')
+    // 清掉两个页签挂载时各自的 getHomeLayout，只数保存之后的那次
+    contentMocks.getHomeLayout.mockClear()
+
+    const save = w
+      .find('.tab-actions')
+      .findAll('.el-button')
+      .find((b: any) => b.text().includes('保存风格'))
+    await save!.trigger('click')
+    await flush()
+
+    // MpTheme.save 只发 saveHomeLayout；这一次 getHomeLayout 只能来自 refreshStyle
+    expect(contentMocks.getHomeLayout).toHaveBeenCalledTimes(1)
+  })
+
   it('点切换栏上的「重新加载」会重新拉取入口配置（访客先看到谁页）', async () => {
     const { w } = await mountPage('?tab=entry')
     const before = mpMocks.getMpEntry.mock.calls.length

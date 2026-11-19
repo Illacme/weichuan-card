@@ -439,7 +439,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
    · 区块里为什么还要包一层，而不是直接给 image 设宽高：mode="aspectFit" 会把图
      按比例缩到框内并**居中**，方块 LOGO 因此左右各留一大块空白，在右上角看起来
      「浮在偏左」。组件用 bindload 拿到的原始宽高比把 image 宽度收到内容宽
-     （见 employee-card/index.ts 的 syncLogoWidth），再在区块内左/中/右对齐，
+     （见 employee-card/index.ts 的 logoWidth），再在区块内左/中/右对齐，
      窄图才真的看得出位置差别；
    · 横版长条 LOGO 的内容宽本来就等于区块宽，三档位置完全一致——这是预期行为，
      不是漏了样式。

@@ -113,18 +113,31 @@
 
       <el-form-item label="效果预览">
         <div>
+          <!-- 预览必须按「当前风格」摆姿态。LOGO 区块在卡片里的落点由风格决定：
+               标准/浅墨贴着卡片右边缘、暖色换行到姓名下方居中、青色因头像在右而落在中部。
+               只画一种姿态，暖色 / 青色的客户就是对着一个不存在的落点调档位。 -->
           <div class="logo-preview">
             <!-- 用方块占位模拟「正方形 LOGO」——正是会被压缩、最能看出位置差别的那种。
-                 尺寸按真实比例（1rpx = 0.5px @375）换算，别为了好看放大，
-                 否则客户按预览调完到真机上会不一致。 -->
-            <div class="lp-row">
-              <span class="lp-name">姓名</span>
-              <span class="lp-slot" :class="[`lp-slot-${logoSize}`, `lp-align-${logoAlign}`]">
-                <span class="lp-img" :class="`lp-img-${logoSize}`" />
+                 区块与方块的尺寸按真实比例（1rpx = 0.5px @375）换算，别为了好看放大，
+                 否则客户按预览调完到真机上会不一致；卡宽与头像只是示意。 -->
+            <div class="lp-card" :class="`lp-layout-${logoLayout}`">
+              <span class="lp-avatar" />
+              <span class="lp-info">
+                <span class="lp-line1">
+                  <span class="lp-name">姓名</span>
+                  <span class="lp-slot" :class="[`lp-slot-${logoSize}`, `lp-align-${logoAlign}`]">
+                    <span class="lp-img" :class="`lp-img-${logoSize}`" />
+                  </span>
+                </span>
               </span>
             </div>
           </div>
-          <div class="bg-hint">方块 LOGO 的实际效果（彩色块代表 LOGO，右侧空白就是卡片右边缘）。</div>
+          <div class="bg-hint">
+            当前风格：<strong>{{ logoStyleLabel }}</strong>。彩色块代表方块 LOGO，虚线框是 LOGO 区块本身。
+            <br />
+            区块在卡片里的落点由「风格模板」决定（标准/浅墨贴右边缘、暖色换到姓名下方居中、青色落在头像左侧），
+            本页只调区块<strong>内部</strong>的左 / 中 / 右。
+          </div>
         </div>
       </el-form-item>
 
@@ -275,6 +288,28 @@ const introFontScale = ref<string>('large')
 // 加配置前写死的 150×44 + aspectFit 居中；历史行该列可能为空，load 时兜底。
 const logoSize = ref<LogoSize>('medium')
 const logoAlign = ref<LogoAlign>('center')
+// 当前风格（本页不提交，只用来给 LOGO 预览摆对姿态）。风格在「风格模板」页签改，
+// 保存成功后由 MpSettings 调 refreshStyle() 只重读这一个值——直接调 load() 会把
+// 客户在本页还没保存的编辑冲掉。
+const LOGO_STYLE_LABELS: Record<string, string> = {
+  default: '标准均衡',
+  ink: '浅墨',
+  warm: '暖色',
+  teal: '青色',
+}
+// 与 app.wxss 的 .wc-style-* 逐条对应，别凭印象写：
+//   default / ink → ec-head 是 row，ec-line1 用 space-between，区块贴卡片右边缘；
+//   warm          → ec-head 列向居中、ec-info 宽 100%，.ec-logo-slot 换成 margin-top: 12rpx；
+//   teal          → ec-head 是 row-reverse、ec-info 让出 margin-right: 24rpx，区块落在头像左侧。
+const LOGO_STYLE_LAYOUTS: Record<string, string> = {
+  default: 'row',
+  ink: 'row',
+  warm: 'stack',
+  teal: 'reverse',
+}
+const styleId = ref('default')
+const logoStyleLabel = computed(() => LOGO_STYLE_LABELS[styleId.value] || LOGO_STYLE_LABELS.default)
+const logoLayout = computed(() => LOGO_STYLE_LAYOUTS[styleId.value] || 'row')
 
 // 把档位翻译成「小程序上会看到什么」，比让客户理解 hidden/date/minute 直观。
 // 时间取当下（不是真实内容时间，只演示格式），够用且不会误导成「这是某条内容的时间」。
@@ -318,6 +353,7 @@ async function load() {
     // 历史行这两列可能为空（0053 之前建的），兜底成缺省档，否则 radio 会一个都不选中。
     logoSize.value = (d?.logoSize || 'medium') as LogoSize
     logoAlign.value = (d?.logoAlign || 'center') as LogoAlign
+    styleId.value = d?.styleId || 'default'
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -361,11 +397,23 @@ function clearBg() {
   bgMask.value = 0
 }
 
+// 只重读「当前风格」这一个值，供 MpSettings 在「风格模板」保存成功后调用：
+// LOGO 预览的姿态跟着风格走，客户刚换完风格回来看到的必须是新姿态。
+// 刻意不调 load()——那会把本页还没保存的编辑（背景图、板块顺序、档位）一起冲掉。
+async function refreshStyle() {
+  try {
+    const d = await getHomeLayout()
+    styleId.value = d?.styleId || 'default'
+  } catch {
+    /* 拦截器已提示；预览退回上一次的风格，不影响本页保存 */
+  }
+}
+
 onMounted(load)
 
 // 内嵌在「小程序设置」时，父组件用 ref 调这里的 load/save 来驱动切换栏右侧按钮的
 // loading 态；首页样式页无「未填完不可保存」的限制，故不暴露 disabled 判定。
-defineExpose({ load, save, loading, saving })
+defineExpose({ load, save, loading, saving, refreshStyle })
 </script>
 
 <style scoped>
@@ -416,7 +464,9 @@ defineExpose({ load, save, loading, saving })
 /* 名片 LOGO 效果预览：按 1rpx = 0.5px（375 视口）换算真实比例，
    放大只会让客户按预览调完、到真机上对不上。
    虚线框是「LOGO 区块」本身——横版长条 LOGO 会撑满它，三档才看不出差别；
-   彩色方块代表方块 LOGO，右侧留白就是卡片右边缘。 */
+   彩色方块代表方块 LOGO。
+   卡宽与头像是示意（真机卡片内容宽 ≈ 700rpx，按 1:2 会撑到 350px），
+   但区块与方块的像素必须与真机严格 1:2，由 home_logo_style.spec 守着。 */
 .logo-preview {
   width: 240px;
   padding: 10px 12px;
@@ -425,7 +475,23 @@ defineExpose({ load, save, loading, saving })
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
-.lp-row {
+.lp-card {
+  display: flex;
+  align-items: center;
+}
+.lp-avatar {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #e8f0fe;
+}
+.lp-info {
+  flex: 1;
+  min-width: 0;
+  padding-left: 6px;
+}
+.lp-line1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -434,6 +500,32 @@ defineExpose({ load, save, loading, saving })
   font-size: 17px; /* 34rpx */
   font-weight: 700;
   color: #222;
+}
+/* 三种落点姿态，逐条对齐 app.wxss 的 .wc-style-*：
+   row     = 标准 / 浅墨：ec-head 是 row，区块贴卡片右边缘
+   stack   = 暖色：ec-head 列向居中，.ec-logo-slot 换成 margin-top: 12rpx（=6px）
+   reverse = 青色：ec-head 是 row-reverse，ec-info 让出 margin-right: 24rpx（=12px），区块落在头像左侧 */
+.lp-layout-stack {
+  flex-direction: column;
+  align-items: center;
+}
+.lp-layout-stack .lp-info {
+  width: 100%;
+  padding-left: 0;
+}
+.lp-layout-stack .lp-line1 {
+  flex-direction: column;
+  justify-content: center;
+}
+.lp-layout-stack .lp-slot {
+  margin: 6px 0 0;
+}
+.lp-layout-reverse {
+  flex-direction: row-reverse;
+}
+.lp-layout-reverse .lp-info {
+  padding-left: 0;
+  padding-right: 12px;
 }
 .lp-slot {
   display: inline-flex;

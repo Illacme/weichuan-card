@@ -247,3 +247,85 @@ describe('名片 LOGO 档位（0053）', () => {
     expect(OPENAPI).toContain('enum: [left, center, right]')
   })
 })
+
+// ---- 后台预览的姿态必须跟着风格走 ----
+//
+// 这一段是实拍截图推翻初版后补的：预览原来只画「姓名 …… LOGO 贴右」一种姿态，
+// 而暖色风格把 LOGO 换到姓名下方居中、青色风格因为头像在右把 LOGO 落在中部。
+// 客户选暖色时看到的预览，在真机上根本不存在——他会照着调，越调越偏。
+// 守两件事：三种姿态后台都实现了；姿态分类与 app.wxss 的真实规则一致
+// （app.wxss 改了头部布局而预览没跟，必须红）。
+describe('后台 LOGO 预览按风格摆姿态', () => {
+  const MP_SETTINGS = readFileSync(resolve(REPO, 'frontend/src/views/content/MpSettings.vue'), 'utf-8')
+
+  it('量尺自检：先证明 ruleBody 真能读到 app.wxss 的规则', () => {
+    expect(ruleBody(WXSS, '.emp-card .ec-head'), '抓不到基线头部规则，下面的断言会空转').toBeTruthy()
+    expect(ruleBody(WXSS, '.wc-style-warm .emp-card .ec-head')).toBeTruthy()
+    expect(ruleBody(WXSS, '.wc-style-teal .emp-card .ec-head')).toBeTruthy()
+  })
+
+  it('暖色风格在真机上是列向居中，LOGO 换行到姓名下方', () => {
+    const head = ruleBody(WXSS, '.wc-style-warm .emp-card .ec-head')
+    expect(decl(head, 'flex-direction')).toBe('column')
+    const slot = ruleBody(WXSS, '.wc-style-warm .emp-card .ec-logo-slot')
+    expect(decl(slot, 'margin-left'), '暖色下区块要取消左间距（换行到下一行）').toBe('0')
+    expect(decl(slot, 'margin-top'), '暖色下区块靠 margin-top 与姓名拉开').toBe('12rpx')
+  })
+
+  it('青色风格在真机上是左右翻转（头像在右），LOGO 落在头像左侧', () => {
+    expect(decl(ruleBody(WXSS, '.wc-style-teal .emp-card .ec-head'), 'flex-direction')).toBe(
+      'row-reverse'
+    )
+    expect(decl(ruleBody(WXSS, '.wc-style-teal .emp-card .ec-info'), 'margin-right')).toBe('24rpx')
+  })
+
+  it('标准 / 浅墨是基线横排：没有方向的覆盖', () => {
+    expect(decl(ruleBody(WXSS, '.emp-card .ec-head'), 'flex-direction')).toBe('')
+    expect(ruleBody(WXSS, '.wc-style-default .emp-card .ec-head'), '标准款不另写头部规则').toBeUndefined()
+    const ink = ruleBody(WXSS, '.wc-style-ink .emp-card .ec-head')
+    expect(ink, '浅墨只改 align-items，不改方向').toContain('align-items')
+    expect(decl(ink, 'flex-direction')).toBe('')
+  })
+
+  it('后台的三种姿态在 CSS 里真的会改变排布', () => {
+    expect(decl(ruleBody(LAYOUT_VUE, '.lp-layout-stack'), 'flex-direction')).toBe('column')
+    expect(decl(ruleBody(LAYOUT_VUE, '.lp-layout-reverse'), 'flex-direction')).toBe('row-reverse')
+    expect(
+      decl(ruleBody(LAYOUT_VUE, '.lp-layout-stack .lp-slot'), 'margin'),
+      '堆叠时区块要换行，不能还挂着 16rpx 的左间距'
+    ).toContain('6px')
+    expect(
+      decl(ruleBody(LAYOUT_VUE, '.lp-layout-reverse .lp-info'), 'padding-right'),
+      '翻转后要让出与头像的间距'
+    ).toBe('12px')
+  })
+
+  it('风格 → 姿态的映射与 app.wxss 对齐，且模板用动态 class', () => {
+    expect(LAYOUT_VUE).toContain("default: 'row'")
+    expect(LAYOUT_VUE).toContain("ink: 'row'")
+    expect(LAYOUT_VUE).toContain("warm: 'stack'")
+    expect(LAYOUT_VUE).toContain("teal: 'reverse'")
+    expect(LAYOUT_VUE, '模板必须用动态姿态类，写死就退回「只画一种」').toContain(
+      '`lp-layout-${logoLayout}`'
+    )
+    expect(LAYOUT_VUE, '不能再有写死 class="lp-card"> 的旧结构').not.toMatch(/<div class="lp-card">/)
+  })
+
+  it('保存风格后样式页的预览要跟着换（否则停在旧姿态）', () => {
+    // 别只断言「文件里出现过 refreshStyle」——注释里写一句也会过，那是空转。
+    // 要的是「theme 分支里真的调了它」这个调用形态。
+    expect(MP_SETTINGS, '风格页保存后没通知样式页，预览会停在旧姿态').toMatch(
+      /tab\.value === 'theme'[\s\S]{0,40}\?\.refreshStyle\?\.\(\)/
+    )
+    expect(LAYOUT_VUE).toContain('refreshStyle')
+    expect(LAYOUT_VUE).toMatch(/defineExpose\(\{[^}]*refreshStyle/)
+  })
+
+  it('文案写明「区块在卡片里的落点由风格决定」，别让客户以为本页能挪整块', () => {
+    expect(LAYOUT_VUE).toContain('当前风格')
+    expect(LAYOUT_VUE).toContain('由「风格模板」决定')
+    expect(LAYOUT_VUE, '旧文案「右侧空白就是卡片右边缘」在暖色 / 青色下是错的').not.toContain(
+      '右侧空白就是卡片右边缘'
+    )
+  })
+})

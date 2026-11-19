@@ -278,6 +278,7 @@ miniprogram/
 - 横版长条 LOGO 的内容宽本来就等于区块宽，三档位置看不出差别，这是预期而不是漏样式。
 - 端上再按白名单归一一次（`LOGO_SIZES` / `LOGO_ALIGNS`）：旧后端不下发 → 缺省 `medium` / `center`；脏值 → 同样落缺省（不归一的话未知类名匹配不上，会静默退回 `flex-start`，比不生效更误导）。
 - 拿不到 `bindload`（图挂了 / 还没加载完）时宽度走 CSS `width:100%`，即改造前的观感，不猜比例。
+- **后台的效果预览按当前风格摆姿态**：LOGO 区块在卡片里的落点由风格决定——default / ink 是横排、区块贴卡片右缘（`.ec-head` 是 row，`.ec-line1` 用 `space-between`）；warm 是列向居中、区块换行到姓名下方（`.ec-head { flex-direction: column }` + `.ec-logo-slot { margin-left: 0; margin-top: 12rpx }`）；teal 是 `row-reverse`、头像在右，区块落在头像左侧。预览若只画一种姿态，暖色 / 青色的客户会照着一个真机上不存在的位置调档位。所以 `HomeLayout.vue` 按 `styleId` 切 `lp-layout-row|stack|reverse`，「风格模板」保存成功后由 `MpSettings` 调它的 `refreshStyle()` **只重读风格**（不重载表单，避免冲掉未保存的编辑）。`home_logo_style.spec.ts` 会拿 `app.wxss` 的真实规则反查这三类姿态，改了头部布局而预览没跟就红。
 
 ## 首页业绩分类 / 精选案例展示配置（0049）
 - 后台「小程序设置 → 名片页面样式 → 业绩与案例展示」提供三项：`categoryLimit`（业绩分类最多 0~20 个，0=不渲染分类图标墙但保留精选案例与「更多案例」入口）、`featuredCount`（精选案例**每页并排张数** 0~3）、`featuredEffect`（循环效果 `static` / `fade` / `scroll` / `flip`）。三者与背景、时间档位共用 `home-layout` 端点，部分更新语义，风格页保存两轴时不会冲掉它们。
