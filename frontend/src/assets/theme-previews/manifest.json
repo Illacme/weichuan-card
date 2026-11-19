@@ -4,10 +4,10 @@
     2580
   ],
   "canvasByStyle": {
-    "default": 1249,
-    "ink": 1111,
-    "teal": 1603,
-    "warm": 2390
+    "default": 1229,
+    "ink": 1092,
+    "teal": 1554,
+    "warm": 2341
   },
   "comboTokens": {
     "default--brand-amber": {
@@ -1070,10 +1070,10 @@
     }
   },
   "contentBottoms": {
-    "default": 1169,
-    "ink": 1031,
-    "teal": 1523,
-    "warm": 2310
+    "default": 1149,
+    "ink": 1012,
+    "teal": 1474,
+    "warm": 2261
   },
   "layouts": {
     "default": ".emp-card { border-radius: var(--wc-r-card); }\n  .emp-card .ec-avatar { width: 56px; height: 56px; }\n  .mp-profile .cv { height: 220px; border-radius: 6px; }\n  .mp-profile .intro { line-height: 1.7; }\n  .emp-card .ec-head { margin-top: 12px; }\n  .emp-card .ec-contact .ec-col:not(.ec-col-r) { padding-left: 12px; }\n  .emp-card .ec-label { font-size: 13px; }\n  .emp-card .ec-val { font-size: 13px; }\n  .emp-card .ec-val-email { font-size: 13px; }\n  .mp-profile .company-video .cv-wrap::after { content: \"\"; position: absolute; left: 0; right: 0; top: calc(100% + 8px);\n  height: 9px; border-radius: 6px 6px 0 0; pointer-events: none;\n  background: linear-gradient(180deg, rgba(30, 42, 53, 0.22), rgba(30, 42, 53, 0)); }\n  .mp-profile .pf-text { margin: 26px 8px 0; }\n  .mp-achievements .cat-item { width: 25%; }\n  .mp-achievements .feat-item { width: 50%; }\n  .mp-achievements .feat-cover { height: 87.5px; border-radius: 6px; }\n  .mp-services .svc-item { width: 25%; }",
