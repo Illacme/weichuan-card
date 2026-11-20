@@ -597,9 +597,10 @@ ${tokens}
 
   /* ---- 公司简介：真实封面图 + 视频控件 + 黑色粗体公司名 + 4 行简介 ----
      .cv / .cv-video / .company-name / .intro 的高度与行距由布局规则注入。 */
-  /* 真机 .cv-wrap 是视频四种来源（腾讯 / 跳转 / MP4 / 封面）共用的定位容器，
-     标准款的阴影分割条加在它的 ::after 上（由 ${style_css} 注入），
-     这里必须同构，否则预览图看不到那条阴影。 */
+  /* 真机的阴影分割条挂在最外层 .company-video::after（由 ${style_css} 注入），
+     五种播放档都在这个容器里。这里必须同构，否则预览图看不到那条阴影。
+     早先挂在 .cv-wrap 上漏掉了视频档，导致「模拟全绿、真机没有」。 */
+  .company-video { position: relative; }
   .company-video .cv-wrap { position: relative; }
   .cv { position: relative; height: 220px; border-radius: var(--wc-r-card-bg);
         overflow: hidden; box-shadow: var(--wc-card-shadow-bg);

@@ -312,10 +312,11 @@ page {
    不改 .ec-line3 的 align-items——公司名那一行与卡片高度都不动。 */
 .wc-style-default .emp-card .case-btn { position: relative; top: 20rpx; }
 /* 原设计稿：视频封面与下方公司名称之间有一条阴影带，视觉上像视频窗口的倒影。
-   放在 .cv-wrap 的伪元素上：与视频同宽、上缘圆角、与视频拉开一段空隙，
-   pointer-events:none 不挡「跳转打开」的点击。倒影不占布局高度，
-   公司名称的间距与宽度另由 .pf-text 控制，避免阴影压字。 */
-.wc-style-default .mp-profile .company-video .cv-wrap::after {
+   挂在 .company-video 这个所有档共有的最外层容器上（不是 .cv-wrap——它只在
+   「无视频有封面」和「跳转播放」两档存在，视频档整条会消失）。
+   与视频同宽、上缘圆角、与视频拉开一段空隙，pointer-events:none 不挡点击。
+   倒影不占布局高度，公司名称的间距与宽度另由 .pf-text 控制，避免阴影压字。 */
+.wc-style-default .mp-profile .company-video::after {
   content: ""; position: absolute; left: 0; right: 0; top: calc(100% + 16rpx);
   height: 18rpx; border-radius: 12rpx 12rpx 0 0; pointer-events: none;
   background: linear-gradient(180deg, rgba(30, 42, 53, 0.22), rgba(30, 42, 53, 0));
@@ -560,6 +561,11 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .emp-card .ec-tap-hover { opacity: 0.55; }
 
 /* 公司简介卡片（设计稿：封面大图左上角叠白色标题，图片更高挺拔） */
+/* 倒影挂在这个最外层容器上：五种播放形态（视频号内嵌 / token / 跳转 /
+   腾讯视频 / MP4 / 兜底封面）都在这里面，挂它才能档档都有。以前挂在
+   .cv-wrap::after 上，只有「无视频有封面」和「跳转播放」两档出现，
+   真机配了视频就整条消失——而预览脚本恰好只画了 .cv-wrap，所以模拟全绿。 */
+.company-video { position: relative; }
 .company-video .cv-wrap { position: relative; }
 .company-video .cv { width: 100%; height: 440rpx; border-radius: 12rpx; }
 /* 视频播放形态（channel-video / video）：沿用封面同款尺寸，底色黑避免加载时闪白 */
