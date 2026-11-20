@@ -167,10 +167,20 @@ const ElRadio = defineComponent({
   },
 })
 
+// FieldHelp 的弹层由 el-tooltip 的 content 承载。测试桩把 content 渲染进 DOM，
+// 这样「默认不占版面」的说明依旧可被断言；真实界面里它在 hover / 点击后才出现。
+const ElTooltip = defineComponent({
+  name: 'ElTooltip',
+  props: ['content', 'visible', 'trigger', 'placement', 'popperClass'],
+  emits: ['update:visible'],
+  template: `<span class="el-tooltip"><slot /><span class="el-tooltip__content">{{ content }}</span></span>`,
+})
+
 const mountOpts = {
   global: {
     stubs: {
       'el-card': ElCard,
+      'el-tooltip': ElTooltip,
       'el-button': ElButton,
       'el-form': ElForm,
       'el-form-item': ElFormItem,
@@ -1435,6 +1445,80 @@ describe('content/CompanyProfile', () => {
       await flush()
       expect(w.findAll('.probe-result')).toHaveLength(2)
       expect(mocks.probeVideoUrl).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  // ---- 配置项说明：默认收起，展开后按同一结构讲清「功能 / 值来源 / 规则限制」 ----
+  describe('配置项说明徽标', () => {
+    function channelsWithIds(extra: any = {}) {
+      return {
+        ...profile('channels', ''),
+        videoChannelId: 'sphABC',
+        videoFeedId: 'feed-1',
+        ...extra,
+      }
+    }
+
+    it('视频号档每个配置项都有徽标，且说明结构齐全', async () => {
+      const w = await mountPage(channelsWithIds(), undefined, VCAP_ON)
+      await flush()
+
+      // 简介 / 视频来源 / 视频号 ID / feedId / feed-token / 播放方式 / 封面
+      expect(w.findAll('.field-help')).toHaveLength(7)
+      const contents = w.findAll('.el-tooltip__content').map((c: any) => c.text())
+      expect(contents).toHaveLength(7)
+      for (const text of contents) {
+        expect(text).toContain('功能：')
+        expect(text).toContain('值来源：')
+        expect(text).toContain('规则限制：')
+      }
+    })
+
+    it('feed-token 说明写清「24 小时是复制窗口」与「token 长期有效」', async () => {
+      const w = await mountPage()
+      await pickSource(w, 'channels')
+
+      const tokenHelp = w
+        .findAll('.el-tooltip__content')
+        .map((c: any) => c.text())
+        .find((t: string) => t.includes('跨主体场景代替 feedId'))
+      expect(tokenHelp).toBeTruthy()
+      expect(tokenHelp).toContain('复制入口窗口')
+      expect(tokenHelp).toContain('长期有效')
+      expect(tokenHelp).toContain('不必反复重取')
+      expect(tokenHelp).toContain('1416106')
+    })
+
+    it('feedId 与跳转说明点明优先级和不认 feed-token', async () => {
+      const w = await mountPage()
+      await pickSource(w, 'channels')
+
+      const all = w
+        .findAll('.el-tooltip__content')
+        .map((c: any) => c.text())
+        .join('\n')
+      expect(all).toContain('以 feedId 为准')
+      expect(all).toContain('不认 feed-token')
+      expect(all).toContain('不再提供兜底 MP4')
+    })
+
+    // 源码守门：静态备注必须收进 FieldHelp，别再往页面里贴大段常驻说明。
+    // 只数组件实例不够——将来有人可以直接在模板里再写一段 .hint。
+    it('静态说明不再常驻版面，动态警告仍然可见', async () => {
+      const sfc = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), 'CompanyProfile.vue'),
+        'utf8'
+      )
+      expect(sfc).not.toContain('hint-good">')
+      expect((sfc.match(/<FieldHelp v-bind=/g) || []).length).toBeGreaterThanOrEqual(14)
+
+      const w = await mountPage(
+        channelsWithIds({ videoFeedToken: 'token/keep', videoChannelPlayMode: 'redirect' })
+      )
+      await flush()
+      // 缺字段/当前配置不生效这类即时警告必须常驻，不能一起藏进徽标
+      expect(w.find('.hint-warn').exists()).toBe(true)
+      expect(w.text()).toContain('已填 feedId，本项不会被使用')
     })
   })
 })
