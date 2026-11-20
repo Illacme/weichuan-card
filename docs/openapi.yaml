@@ -5282,6 +5282,338 @@ paths:
                     description: 解的是当前登录账号；为 true 时本次响应之后旧令牌即失效
                   companyId: { type: integer, format: int64 }
 
+  /api/admin/backup/status:
+    get:
+      tags: [系统]
+      summary: 备份三件套状态（平台超管）
+      description: 读取库备份 / 图片包 / 密钥包各自最新一份的文件名、大小与新鲜度；缺失也占一行并说明。密钥包刻意不提供下载。
+      responses:
+        "200":
+          description: code=0 成功；code=1 读取备份目录失败；code=403 非平台超管
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: object
+                    properties:
+                      driver: { type: string, description: sqlite 或 mysql }
+                      canRun: { type: boolean, description: 仅 SQLite 形态支持后台即时备份 }
+                      running: { type: boolean }
+                      items: { type: array, items: { type: object } }
+                      notes: { type: array, items: { type: string } }
+
+  /api/admin/backup/run:
+    post:
+      tags: [系统]
+      summary: 触发一次即时备份（平台超管）
+      description: 仅 SQLite 形态可用；MySQL 形态返回 code=1 并指引在服务器执行 scripts/backup.sh。已有任务在跑时拒绝重复触发。按钮不替代 crontab。
+      responses:
+        "200":
+          description: code=0 已启动（data.started=true）；code=1 形态不支持或任务进行中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: object
+                    properties:
+                      started: { type: boolean }
+
+  /api/admin/backup/download:
+    get:
+      tags: [系统]
+      summary: 下载库备份或图片备份（平台超管）
+      description: 按文件名下载，文件名不合法或文件不存在返回 code=1。运行时密钥包不提供下载——能从后台导出等于和数据放回同一故障域，须从服务器取并与 BACKUP_ENC_KEY 分开保管。
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: { type: string }
+          description: backup/status 返回的 items[].name
+      responses:
+        "200":
+          description: 成功时返回 application/gzip 文件流；失败返回 JSON code=1
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+
+  /api/admin/categories/sort:
+    put:
+      tags: [超管-内容管理]
+      summary: 批量排序业绩分类
+      description: 请求体为 [{id, sort}]，单事务更新；带 company_id 条件，企业管理员排不到别家。静态 /sort 路由必须先于 /:id 注册。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+                  sort: { type: integer }
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误或数据库错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+
+  /api/admin/projects/sort:
+    put:
+      tags: [超管-内容管理]
+      summary: 批量排序项目案例
+      description: 与 /api/admin/categories/sort 同构，目标表为项目案例。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+                  sort: { type: integer }
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误或数据库错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+
+  /api/admin/services/sort:
+    put:
+      tags: [超管-内容管理]
+      summary: 批量排序业务服务
+      description: 与 /api/admin/categories/sort 同构，目标表为业务服务。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+                  sort: { type: integer }
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误或数据库错误
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+
+  /api/admin/employees/{id}/export:
+    get:
+      tags: [超管-员工管理]
+      summary: 按员工导出个人信息（PIPL 权利入口）
+      description: 受 scopeCond 租户隔离，审计留痕 employee.export。响应不含 json:"-" 的密码哈希等字段——这条是后端导出，前端另有 /api/admin/employees/export 的批量档。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0 成功，data 为该员工的个人信息 JSON；code=403 跨租户或未登录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { type: object }
+
+  /api/admin/assets/library:
+    get:
+      tags: [超管-内容管理]
+      summary: 内置素材库清单（管理员登录态）
+      description: 支持按 type / style 筛选与分页，返回全量素材（含图标配色变体），供后台素材库浏览器使用。小程序请走公开的 /api/assets/posters。
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string }
+        - name: style
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: code=0 成功；code=1 素材库加载失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { type: object }
+
+  /api/admin/assets/adopt:
+    post:
+      tags: [超管-内容管理]
+      summary: 采用内置素材到租户上传存储
+      description: 把内嵌素材复制进上传存储，返回与普通上传同形态的 URL，随后可像自有图片一样使用。落盘名带 hash，不能靠覆盖同名文件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: string, description: 素材库条目 id }
+      responses:
+        "200":
+          description: code=0 成功并返回 URL；code=1 素材不存在或写入失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { type: object }
+
+  /api/assets/posters:
+    get:
+      tags: [公开内容]
+      summary: 海报素材清单（公开）
+      description: 只回 poster 分类，字段压到小程序真正需要的四五个；不分页（当前 44 张一次拉全在本地横滑）。素材通用、不含租户数据，未登录访客也可读。
+      responses:
+        "200":
+          description: code=0 成功；code=1 素材库加载失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: object
+                    properties:
+                      version: { type: string }
+                      items: { type: array, items: { type: object } }
+
+  /api/assets/file/{path}:
+    get:
+      tags: [公开内容]
+      summary: 内置素材文件（公开、长缓存）
+      description: 通配路径，{path} 为素材库里的相对路径（如 posters/xx.jpg）。素材不含租户数据，公开无信息泄露风险。
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 图片文件流；不存在时返回 404
+
+  /api/apply/open/avatar:
+    post:
+      tags: [租户]
+      summary: 访客申请头像上传（匿名）
+      description: >-
+        无鉴权公开端点，按 IP 固定窗口限流（桶键 upload: 前缀，跨副本走 rate_limit_hits）。
+        客户端须带 openid 以便照常送图片内容安全检测；上传成功即返回永久 URL。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+                openid: { type: string, description: wx.login 静默换取，无需用户授权 }
+      responses:
+        "200":
+          description: code=0 成功并返回 URL；code=429 触发限流；code=1 文件不合法
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  url: { type: string }
+
+  /api/company:
+    get:
+      tags: [公开内容]
+      summary: 企业公开信息（按 companyId）
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0 成功；code=1 企业不存在
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data: { type: object }
+
+  /api/employee/me/cancel:
+    post:
+      tags: [员工端]
+      summary: 员工注销本人账号（PIPL 删除权）
+      description: 事务删除 Employee + CardModifyApply + StatEvent 三表，仅删本人。删除后 TokenVersion 查不到员工，会话立即被中间件锁死。该操作不可逆，端上须两次强确认。
+      responses:
+        "200":
+          description: code=0 已注销；code=401 未登录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  msg: { type: string }
+
+  /api/subscribe/config:
+    get:
+      tags: [公开内容]
+      summary: 订阅模板配置（公开）
+      description: companyId 来自小程序端；企业独立版取自己账号下的模板，平台模式传 0 / 不传则回落全局模板。模板 ID 不是密钥（授权弹窗里本就可见），访客提交申请前尚无身份，故不挂鉴权。
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: code=0 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { $ref: "#/components/schemas/Code" }
+                  data:
+                    type: object
+                    properties:
+                      auditTemplateId: { type: string }
+
 components:
   # 分页约定（管理端列表统一）：请求 ?page=&size=，响应 data 为**当前页数组**，
   # total/page/size 放在顶层。实现见 backend/internal/handler/pagination.go。

@@ -108,17 +108,25 @@ jobs:
   # 之前 openapi.yaml 没有任何通用校验，路径数从 106 涨到 108 也没人发现。
   # 用 venv 装 PyYAML：真解析而不是数正则，避免「文档坏成空文件也全绿」；
   # 不污染 runner 的 Python，也不依赖系统发行版是否预装 yaml。
+  # 2026-11-20 起加两层：
+  #   ① 静态扫描后端注册的路由，契约缺一条就红（当时有 12 条路由没进文档而 CI 全绿）；
+  #   ② --selftest 注入假路由证明对账真的会拦，防守门自己空转。
   openapi-contract:
     name: OpenAPI 契约对账
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 解析并校验契约
+      - name: 安装 PyYAML
         run: |
           python3 -m venv /tmp/weichuan-openapi-venv
           /tmp/weichuan-openapi-venv/bin/pip install -q pyyaml
-          /tmp/weichuan-openapi-venv/bin/python scripts/check_openapi.py
+
+      - name: 守门自检（证明会红）
+        run: /tmp/weichuan-openapi-venv/bin/python scripts/check_openapi.py --selftest
+
+      - name: 解析并校验契约（含路由对账）
+        run: /tmp/weichuan-openapi-venv/bin/python scripts/check_openapi.py
 
   # ───────── 后端：MySQL 生产契约 parity（**正式门禁**，2026-11-09 起必跑） ─────────
   # 演进：原先靠仓库变量 TEST_MYSQL_DSN 门控，没配就整个 job skipped。实测最近 12 次
