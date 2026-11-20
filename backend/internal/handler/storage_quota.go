@@ -78,8 +78,9 @@ func checkStorageQuota(db *gorm.DB, cid, incoming int64) (bool, string) {
 	}
 	// 租户已切到自有桶：对象落在客户自己的存储，平台不持有这些字节，
 	// 平台配额不再硬拦截（成本不在平台），改为计量与展示（见 storageGetHandler）。
-	// 判定复用 tenantStorageActive 的同一份口径，与"谁会先挡住上传"同源；
-	// 开关默认 off，功能未启用前这一支恒不命中，是零行为变更。
+	// 判定在 tenantUsesOwnBucket 里单点完成：**先档案、后旧表**，与「谁会先挡住上传」
+	// 同源。别在这里另写一份「读 tenant_storage_configs 看 enabled」的乐观判断——
+	// 绑到云档案的企业根本没有那张表的行，另写一份就会把它们继续按平台配额硬拦。
 	if tenantUsesOwnBucket(db, cid) {
 		return true, ""
 	}
@@ -207,6 +208,7 @@ func storageGetHandler(db *gorm.DB) gin.HandlerFunc {
 		}
 		// 已切到自有桶的租户：平台配额不约束其上传（成本不在平台），
 		// 这里的 bytes 仅作"累计上传量"展示用，不再画满格拦截进度条。
+		// 判定含档案绑定（见 tenantUsesOwnBucket），否则绑了云档案的企业会被画成满格。
 		usesOwnBucket := tenantUsesOwnBucket(db, cid)
 		quota := storageQuotaBytesFor(db, cid)
 		percent := 0
