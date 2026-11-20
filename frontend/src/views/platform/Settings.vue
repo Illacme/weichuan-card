@@ -57,7 +57,7 @@
       :closable="false"
       show-icon
       title="要配置多套存储 / CDN？请使用「文件存储与分发」"
-      description="在那里可以保存多套存储档案与 CDN 分发档案、切换全局默认（即时生效）、给企业绑定档案（仅平台超管），并用迁移任务搬运历史对象。本页下面的存储 / CDN 项属于兼容旧部署的全局单值配置，改动仍需重启；两者不冲突，新档案未绑定时继续沿用本页配置。"
+      description="在那里可以保存多套存储档案与 CDN 分发档案、切换全局默认（即时生效）、给企业绑定档案（仅平台超管），并用迁移任务搬运历史对象。本页下面的存储 / CDN 项是平台自身的落点配置：平台对象（素材采用 / 小程序码 / 访客头像等 p/ 对象）始终用它，尚未绑定档案的企业也用它，已绑档案的企业走自己的档案。改动仍需重启。"
       class="storage-module-entry"
     >
       <template #default>
@@ -197,7 +197,7 @@
              组内分区与配置向导 steps 的 groups 同结构：项多的组按主题分堆，
              小标题 + 尾部细线；无分区的组平铺 -->
         <!-- 默认档案（推荐）：多套存储 / CDN 的全局默认在这里直接选，保存即时生效。
-             下面的平铺项是兼容旧部署的全局单值配置，只在「没有绑定任何档案」时生效。 -->
+             下面的平铺项决定平台自身落点（平台对象 + 未绑档案企业），不是旧配置残留。 -->
         <div v-if="g.key === 'storage' && !keyword.trim()" class="profile-default">
           <div class="profile-default-head">
             <div>
@@ -225,9 +225,11 @@
             <span class="profile-default-source">{{ profileSourceText }}</span>
           </div>
           <div class="profile-default-legacy">
-            下面的「兜底 · 存储位置 / 访问方式 / CDN 刷新」是兼容旧部署的全局单值配置：
-            <b>已选默认档案时不再生效</b>，仅在没有绑定任何档案时兜底，且改动需要重启。
-            客户自己的桶请到「企业管理 → 自有桶」单独接入——那里才是 nginx 回源段的来源。
+            下面的「平台存储 · 存储位置 / 访问方式 / CDN 刷新」决定<b>平台自身</b>的文件落点：
+            素材采用、小程序码、下架占位图、访客未登录头像等 <code>p/</code> 平台对象始终走这里，
+            尚未绑定档案的企业也走这里；已绑档案的企业走自己的档案，与这里无关。
+            这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，改动需要重启服务。
+            企业自有桶由平台超管到「文件存储与分发」里接入并绑定。
           </div>
         </div>
 
@@ -449,7 +451,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '兜底（高级）：图片 / 视频 / 小程序码存哪、怎么访问，这组兼容旧部署的全局单值配置只在「没有绑定任何档案」时决定——日常请用上面的「默认档案」。它同时是 STORAGE_* / MINIO_* 环境变量的界面映射，私有部署靠改 env 起服务时走的就是这里。⚠️ 本组任一项改动都需重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。',
+    '平台自身落点（高级）：图片 / 视频 / 小程序码存哪、怎么访问。这里的配置决定 p/ 平台对象（素材采用 / 小程序码 / 访客头像等）的落点，以及尚未绑定档案企业的落点；已绑档案的企业走自己的档案。它同时是 STORAGE_* / MINIO_* 环境变量的界面映射，私有部署靠改 env 起服务时走的就是这里。⚠️ 本组任一项改动都需重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -513,12 +515,12 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 // 用户在一边看懂的分区，另一边直接认出来。
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
-    // 三个分区标题统一带「兜底 · 」前缀：它们与上方「默认档案」是两套东西，
-    // 只在没有任何档案绑定时生效。不带前缀时用户会以为改了这里就等于换了存储。
+    // 三个分区标题统一带「平台存储 · 」前缀：它们与上方「默认档案」是两套东西。
+    // 这里定的是平台自身落点（p/ 平台对象 + 未绑档案企业），不是「没绑档案才生效」的旧配置。
     // local 与云存储两套互斥配置在这一区里按 depState 二选一出现
-    { label: '兜底 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
-    { label: '兜底 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
-    { label: '兜底 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
+    { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
+    { label: '平台存储 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
+    { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
   ],
   upload: [
     { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },

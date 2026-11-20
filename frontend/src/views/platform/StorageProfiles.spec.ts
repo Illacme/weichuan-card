@@ -161,8 +161,18 @@ describe('文件存储与分发模块', () => {
 
     // 文案与开关不能回退到「企业自选」：该页与 options 接口已下线（平台超管专属）。
     expect(settings).not.toContain('让企业在管理页自选')
+    // 存储组的措辞要按实际生效范围写：平台对象（p/）+ 无绑定企业始终走这组配置，
+    // 不是「没绑档案时才生效」。旧文案会把人误导到「选了默认档案就不用管这里」。
+    expect(settings).toContain('平台自身的落点')
+    expect(settings).toContain('尚未绑定档案的企业也用它')
+    expect(settings).not.toContain('兼容旧部署')
+    expect(settings).not.toContain('已选默认档案时不再生效')
+    expect(settings).not.toContain('企业管理 → 自有桶')
     const profiles = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(profiles).toMatch(/label="公开读桶">\s*<el-switch[^>]*disabled/)
     expect(profiles).toContain('后端会拒绝 publicRead=false')
+    // 迁移入口已下线：不许文案再把运维指向不存在的「转为存储档案」按钮。
+    expect(profiles).not.toContain('转为存储档案')
+    expect(profiles).not.toContain('给自己选「用哪一套」')
   })
 })
