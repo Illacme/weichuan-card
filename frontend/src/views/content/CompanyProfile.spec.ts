@@ -69,7 +69,14 @@ const ElForm = defineComponent({
 const ElFormItem = defineComponent({
   name: 'ElFormItem',
   props: ['label'],
-  template: `<div class="el-form-item"><label>{{ label }}</label><slot /></div>`,
+  // 真实 Element Plus 里 label slot 会覆盖 label prop；桩也照这个规则来。
+  setup(props, { slots }) {
+    return () =>
+      h('div', { class: 'el-form-item' }, [
+        h('label', {}, slots.label ? slots.label() : props.label),
+        slots.default ? slots.default() : [],
+      ])
+  },
 })
 const ElInput = defineComponent({
   name: 'ElInput',
@@ -167,13 +174,13 @@ const ElRadio = defineComponent({
   },
 })
 
-// FieldHelp 的弹层由 el-tooltip 的 content 承载。测试桩把 content 渲染进 DOM，
-// 这样「默认不占版面」的说明依旧可被断言；真实界面里它在 hover / 点击后才出现。
+// FieldHelp 的说明放在 el-tooltip 的 content 插槽里。测试桩把插槽渲染进 DOM，
+// 这样「默认不占版面」的分段说明依旧可被断言；真实界面里它在 hover / 点击后才出现。
 const ElTooltip = defineComponent({
   name: 'ElTooltip',
-  props: ['content', 'visible', 'trigger', 'placement', 'popperClass'],
+  props: ['visible', 'trigger', 'placement', 'popperClass'],
   emits: ['update:visible'],
-  template: `<span class="el-tooltip"><slot /><span class="el-tooltip__content">{{ content }}</span></span>`,
+  template: `<span class="el-tooltip"><slot name="content" /><slot /></span>`,
 })
 
 const mountOpts = {
@@ -1459,18 +1466,26 @@ describe('content/CompanyProfile', () => {
       }
     }
 
-    it('视频号档每个配置项都有徽标，且说明结构齐全', async () => {
+    it('视频号档每个配置项都有徽标，徽标就在配置项名称右侧', async () => {
       const w = await mountPage(channelsWithIds(), undefined, VCAP_ON)
       await flush()
 
-      // 简介 / 视频来源 / 视频号 ID / feedId / feed-token / 播放方式 / 封面
-      expect(w.findAll('.field-help')).toHaveLength(7)
-      const contents = w.findAll('.el-tooltip__content').map((c: any) => c.text())
-      expect(contents).toHaveLength(7)
-      for (const text of contents) {
-        expect(text).toContain('功能：')
-        expect(text).toContain('值来源：')
-        expect(text).toContain('规则限制：')
+      // 简介 / 视频来源 / 视频号 ID / feedId / feed-token / 播放方式 / 兜底 MP4 / 封面
+      expect(w.findAll('.field-help')).toHaveLength(8)
+      expect(w.findAll('.el-form-item label .field-help')).toHaveLength(8)
+      const firstLabel = w.find('.el-form-item label')
+      expect(firstLabel.text().startsWith('简介文字')).toBe(true)
+
+      const pops = w.findAll('.fh-pop')
+      expect(pops).toHaveLength(8)
+      for (const pop of pops) {
+        const keys = pop.findAll('.fh-key').map((k: any) => k.text())
+        expect(keys.slice(0, 3)).toEqual(['功能', '值来源', '规则限制'])
+        // 四段分别用蓝 / 绿 / 橙 / 红（注意段可缺省），减轻大段文字的阅读压力
+        expect(pop.find('.fh-key-usage').exists()).toBe(true)
+        expect(pop.find('.fh-key-source').exists()).toBe(true)
+        expect(pop.find('.fh-key-rules').exists()).toBe(true)
+        if (keys.includes('注意')) expect(pop.find('.fh-key-note').exists()).toBe(true)
       }
     })
 
@@ -1478,28 +1493,36 @@ describe('content/CompanyProfile', () => {
       const w = await mountPage()
       await pickSource(w, 'channels')
 
-      const tokenHelp = w
-        .findAll('.el-tooltip__content')
-        .map((c: any) => c.text())
-        .find((t: string) => t.includes('跨主体场景代替 feedId'))
-      expect(tokenHelp).toBeTruthy()
-      expect(tokenHelp).toContain('复制入口窗口')
-      expect(tokenHelp).toContain('长期有效')
-      expect(tokenHelp).toContain('不必反复重取')
-      expect(tokenHelp).toContain('1416106')
+      const tokenPop = w
+        .findAll('.fh-pop')
+        .find((p: any) => p.find('.fh-title').text() === 'feed-token')!
+      expect(tokenPop.exists()).toBe(true)
+      const text = tokenPop.text()
+      expect(text).toContain('24 小时说的是')
+      expect(text).toContain('复制')
+      expect(text).toContain('可以一直用')
+      expect(text).toContain('不必反复重取')
+      expect(text).toContain('1416106')
     })
 
     it('feedId 与跳转说明点明优先级和不认 feed-token', async () => {
       const w = await mountPage()
       await pickSource(w, 'channels')
-
-      const all = w
-        .findAll('.el-tooltip__content')
-        .map((c: any) => c.text())
-        .join('\n')
-      expect(all).toContain('以 feedId 为准')
+      const all = w.findAll('.fh-pop').map((p: any) => p.text()).join('\n')
+      expect(all).toContain('微信只认 feedId')
       expect(all).toContain('不认 feed-token')
       expect(all).toContain('不再提供兜底 MP4')
+    })
+
+    it('配置项下面的即时说明用叹号标识，不和帮助问号混淆', async () => {
+      const w = await mountPage(channelsWithIds({ videoFeedId: 'feed-1' }))
+      await flush()
+      const notice = w.find('.inline-notice.hint-warn')
+      expect(notice.exists()).toBe(true)
+      expect(notice.find('.inline-notice-mark').text()).toBe('!')
+      expect(notice.text()).toContain('这一项不会生效')
+      // ? 只在 label 上；! 只在下方说明上
+      expect(w.find('.inline-notice .field-help').exists()).toBe(false)
     })
 
     // 源码守门：静态备注必须收进 FieldHelp，别再往页面里贴大段常驻说明。
@@ -1511,14 +1534,14 @@ describe('content/CompanyProfile', () => {
       )
       expect(sfc).not.toContain('hint-good">')
       expect((sfc.match(/<FieldHelp v-bind=/g) || []).length).toBeGreaterThanOrEqual(14)
+      expect(sfc).toContain('<InlineNotice')
+      expect(sfc).not.toContain('<span class="hint-warn">')
 
       const w = await mountPage(
         channelsWithIds({ videoFeedToken: 'token/keep', videoChannelPlayMode: 'redirect' })
       )
       await flush()
-      // 缺字段/当前配置不生效这类即时警告必须常驻，不能一起藏进徽标
-      expect(w.find('.hint-warn').exists()).toBe(true)
-      expect(w.text()).toContain('已填 feedId，本项不会被使用')
+      expect(w.find('.inline-notice.hint-warn').exists()).toBe(true)
     })
   })
 })

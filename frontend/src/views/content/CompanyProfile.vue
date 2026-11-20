@@ -5,23 +5,23 @@
       <el-button :icon="Refresh" :loading="loading" @click="load">重新加载</el-button>
     </div>
 
-    <el-form :model="form" label-width="110px" style="max-width: 680px">
+    <el-form :model="form" label-width="140px" style="max-width: 680px">
       <el-form-item label="简介文字">
+        <template #label>简介文字 <FieldHelp v-bind="HELP.introText" /></template>
         <el-input v-model="form.introText" type="textarea" :rows="5" placeholder="首页简介区文字" />
-        <FieldHelp v-bind="HELP.introText" />
       </el-form-item>
 
       <!-- 简介展示档位（大/中/小/关闭）已迁到
            「小程序设置 → 名片页面样式」页签，与首页背景、板块顺序等版式配置放一起。 -->
 
       <el-form-item label="视频来源">
+        <template #label>视频来源 <FieldHelp v-bind="HELP.videoSource" /></template>
         <el-select v-model="sourceUi" style="width: 280px">
           <el-option label="不展示视频（显示封面）" value="none" />
           <el-option label="微信视频号（推荐）" value="channels" />
           <el-option label="自托管 MP4（上传或直链）" value="mp4" />
           <el-option label="腾讯视频（插件）" value="tencent" :disabled="!vcap.tencentVideo" />
         </el-select>
-        <FieldHelp v-bind="HELP.videoSource" />
       </el-form-item>
 
       <!-- 视频号档：顺序按**依赖**排，不按「哪个概念更重要」排。
@@ -32,40 +32,40 @@
            放最后且与 feedId 相邻说明「二选一」。 -->
       <template v-if="form.videoSource === 'channels'">
         <el-form-item label="视频号 ID">
+          <template #label>视频号 ID <FieldHelp v-bind="HELP.videoChannelId" /></template>
           <el-input v-model="form.videoChannelId" placeholder="sph 开头，视频号助手首页可查看" />
-          <FieldHelp v-bind="HELP.videoChannelId" />
         </el-form-item>
 
         <el-form-item label="视频 feedId">
+          <template #label>视频 feedId <FieldHelp v-bind="HELP.videoFeedId" /></template>
           <el-input v-model="form.videoFeedId" placeholder="视频号助手 → 动态管理 → 复制 feedId" />
-          <FieldHelp v-bind="HELP.videoFeedId" />
         </el-form-item>
 
         <el-form-item label="feed-token">
+          <template #label>feed-token <FieldHelp v-bind="HELP.videoFeedToken" /></template>
           <el-input
             v-model="form.videoFeedToken"
             :disabled="isChannelsRedirect"
             placeholder="跨主体才填：MP 平台开权限后移动端复制"
           />
-          <FieldHelp v-bind="HELP.videoFeedToken" />
           <!-- 只保留「当前填法不生效」这类当场要处理的动态警告；静态说明收进 ? 里 -->
-          <div v-if="form.videoFeedId.trim()" class="hint hint-warn">
-            已填 feedId，本项不会被使用——跨主体请先清空上面的 feedId。
-          </div>
-          <div v-if="isChannelsRedirect" class="hint hint-warn">
-            跳转播放用不到它，已填内容会保留，切回「内嵌播放」仍在使用。
-          </div>
+          <InlineNotice v-if="form.videoFeedId.trim()" class="hint hint-warn" tone="warn">
+            已经填了 feedId，<strong>这一项不会生效</strong>；跨主体请先把上面的 feedId 清空。
+          </InlineNotice>
+          <InlineNotice v-if="isChannelsRedirect" class="hint hint-warn" tone="warn">
+            跳转播放用不到它。已填内容会保留，<strong>切回内嵌播放后继续生效</strong>。
+          </InlineNotice>
         </el-form-item>
 
         <el-form-item label="播放方式">
+          <template #label>播放方式 <FieldHelp v-bind="HELP.videoPlayMode" /></template>
           <el-radio-group v-model="form.videoChannelPlayMode">
             <el-radio value="embed">内嵌播放（留在本页）</el-radio>
             <el-radio value="redirect" :disabled="!canRedirect">跳转打开视频号</el-radio>
           </el-radio-group>
-          <FieldHelp v-bind="HELP.videoPlayMode" />
-          <div v-if="!canRedirect" class="hint hint-warn">
-            当前还缺{{ missingForRedirect }}，补齐后「跳转打开」才可选。
-          </div>
+          <InlineNotice v-if="!canRedirect" class="hint hint-warn" tone="warn">
+            还缺<strong>{{ missingForRedirect }}</strong>，补齐后「跳转打开」才可选。
+          </InlineNotice>
         </el-form-item>
       </template>
 
@@ -76,15 +76,15 @@
           <template #title>{{ vcap.tencentReason || '当前部署未启用腾讯视频插件' }}</template>
         </el-alert>
         <el-form-item v-if="vcap.tencentVideo" label="视频 vid">
+          <template #label>视频 vid <FieldHelp v-bind="HELP.videoVid" /></template>
           <el-input v-model="form.videoVid" placeholder="如 n0041aa087e（腾讯视频播放页地址末段）" />
-          <FieldHelp v-bind="HELP.videoVid" />
         </el-form-item>
         <!-- 自动播放：腾讯视频插件的 autoplay **默认是 true**（与微信原生 video 相反），
              不显式关掉的话，访客一进名片页就带声音自己播起来。
              默认关（数据库默认 0）：名片页是被动打开的落地页，突然出声是负面体验。 -->
         <el-form-item v-if="vcap.tencentVideo" label="自动播放">
+          <template #label>自动播放 <FieldHelp v-bind="HELP.videoAutoplay" /></template>
           <el-switch v-model="form.videoAutoplay" />
-          <FieldHelp v-bind="HELP.videoAutoplay" />
         </el-form-item>
       </template>
 
@@ -100,18 +100,19 @@
         </el-alert>
 
         <el-form-item label="交付方式">
+          <template #label>交付方式 <FieldHelp v-bind="HELP.mp4Mode" /></template>
           <el-radio-group v-model="mp4Mode">
             <el-radio value="upload" :disabled="!cap.videoUpload">上传到云存储</el-radio>
             <el-radio value="url">填写 MP4 地址</el-radio>
           </el-radio-group>
-          <FieldHelp v-bind="HELP.mp4Mode" />
-          <div v-if="!cap.videoUpload" class="hint hint-warn">
+          <InlineNotice v-if="!cap.videoUpload" class="hint hint-warn" tone="warn">
             {{ cap.reason || '当前存储配置不支持视频上传' }}
-          </div>
+          </InlineNotice>
         </el-form-item>
 
         <!-- 复用通用上传组件（内部优先走直传预签名，失败回退普通上传） -->
         <el-form-item v-if="mp4Mode === 'upload' && cap.videoUpload" label="视频文件">
+          <template #label>视频文件 <FieldHelp v-bind="HELP.videoFile" /></template>
           <UploadField
             v-model="uploadUrl"
             :multiple="false"
@@ -121,14 +122,13 @@
             :max-m-b="cap.videoMaxMb"
             :tip="`仅支持 mp4，单文件 ≤${cap.videoMaxMb}MB`"
           />
-          <FieldHelp v-bind="HELP.videoFile" />
         </el-form-item>
 
         <el-form-item v-if="mp4Mode === 'url'" label="MP4 地址">
+          <template #label>MP4 地址 <FieldHelp v-bind="HELP.videoUrl" /></template>
           <!-- 占位符不再写死「https:// 开头」：CDN 只开了 http 的客户会以为自己填不了。
                http 能存也能播（下方有明文风险的提示），不该在输入框里先劝退。 -->
           <el-input v-model="externalUrl" placeholder="mp4 地址（http:// 或 https://）" />
-          <FieldHelp v-bind="HELP.videoUrl" />
         </el-form-item>
 
         <!-- 把最终要写进库的地址摆出来，并允许点开验证。
@@ -136,28 +136,34 @@
              （CDN 证书失效 / 对象不存在 / 相对路径没拼绝对 / 私有桶没签名）。
              不给这一行，客户只能对着小程序的黑屏 00:00 猜。 -->
         <el-form-item v-if="activeVideoUrl" label="最终播放地址">
+          <template #label>最终播放地址 <FieldHelp v-bind="HELP.finalUrl" /></template>
           <div class="video-url-check">
             <a v-if="canOpenVideoUrl" :href="activeVideoUrl" target="_blank" rel="noopener noreferrer">{{ activeVideoUrl }}</a>
             <span v-else>{{ activeVideoUrl }}</span>
+
+            <!-- 地址拼错是最常见的黑屏原因：这句用 ! 提醒，带出三个高频关键词，
+                 展开的 ? 里还有完整规则；两处措辞不许各写一份导致互相打架。 -->
+            <InlineNotice class="hint" tone="info">
+              打开能播，小程序里才有戏。若对象存储文件名带<strong>目录前缀</strong>，「文件访问基址」也要带同样前缀；改完只影响新上传，已保存的地址要<strong>重新上传</strong>。
+            </InlineNotice>
+            <InlineNotice v-if="mainHttpHint" class="hint hint-warn" tone="danger">
+              {{ mainHttpHint }}
+            </InlineNotice>
+
             <div class="probe-row">
               <el-button size="small" :loading="probeLoading.main" :disabled="!canProbe(activeVideoUrl)" @click="testUrl('main')">
                 测试地址
               </el-button>
-              <span v-if="!canProbe(activeVideoUrl)" class="hint">站内相对路径请点开上面的链接在浏览器里确认；服务端只测 http(s) 绝对地址</span>
+              <InlineNotice v-if="!canProbe(activeVideoUrl)" class="hint" tone="info">
+                站内相对路径请在浏览器里点开链接确认；服务端只测 http(s) 绝对地址
+              </InlineNotice>
             </div>
             <div v-if="probeResult.main" class="probe-result" :class="probeOk.main ? 'is-ok' : 'is-bad'">
               {{ probeResult.main }}
             </div>
-            <div class="hint">
-              <FieldHelp v-bind="HELP.finalUrl" />
-              <!-- 主源是 http 明文时先说这一句，再讲排查方法：否则下面整段
-                   「打不开怎么排查」会让人以为问题出在配置写错，而不是协议。 -->
-              <div v-if="mainHttpHint" class="hint-warn">{{ mainHttpHint }}</div>
-              这里打不开，小程序里也一定播不了（先在浏览器排除证书与地址问题）；相对路径会在小程序端自动拼上服务域名。
-              <span class="hint-warn">
-                「测试地址」是从应用服务器发一次 HEAD，能取到不代表手机一定能播；最终仍要在小程序真机确认。
-              </span>
-            </div>
+            <InlineNotice class="hint" tone="info">
+              「测试地址」只是服务器发一次 HEAD，能通不代表手机一定能播，最后仍要在真机确认。
+            </InlineNotice>
           </div>
         </el-form-item>
       </template>
@@ -167,6 +173,7 @@
            upload / url 用 form.videoBackupUrl —— videoUrl 在主源保存时会被 videoUrlToSave()
            覆盖，复用就会把用户填的备用地址悄悄丢掉。 -->
       <el-form-item v-if="needFallback" label="兜底 MP4">
+        <template #label>兜底 MP4 <FieldHelp v-bind="HELP.fallback" /></template>
         <el-checkbox v-model="form.videoFallbackUrl">
           {{ isMp4 ? '主 MP4 加载失败时切换到备用地址' : '主源播放失败时改用 MP4' }}
         </el-checkbox>
@@ -182,13 +189,15 @@
           class="fallback-input"
           placeholder="兜底用的 mp4 地址（云存储或任意 CDN 均可）"
         />
-        <div v-if="form.videoFallbackUrl" class="hint">
-          <FieldHelp v-bind="HELP.fallback" />
-          <!-- 只提示、不拦截：同源的 http/https 写入侧已经宽容（否则「什么都没改、点保存就报
-               地址不合法」，第五十九轮上线时真实发生过）。文案与主视频地址共用 httpPlainHint，
-               两处不许各写一份。 -->
-          <span v-if="fallbackHttpHint" class="hint-warn">{{ fallbackHttpHint }}</span>
-        </div>
+        <InlineNotice v-if="form.videoFallbackUrl" class="hint" tone="info">
+          主视频打不开时才用备用地址，<strong>只切一次</strong>；备用地址<strong>不能与主视频地址相同</strong>，最好换个域名或 CDN。
+        </InlineNotice>
+        <!-- 只提示、不拦截：同源的 http/https 写入侧已经宽容（否则「什么都没改、点保存就报
+             地址不合法」，第五十九轮上线时真实发生过）。文案与主视频地址共用 httpPlainHint，
+             两处不许各写一份。 -->
+        <InlineNotice v-if="form.videoFallbackUrl && fallbackHttpHint" class="hint hint-warn" tone="danger">
+          {{ fallbackHttpHint }}
+        </InlineNotice>
         <!-- 四档共用一个按钮，但测的是各自的地址槽（fallbackUrlValue）：
              自托管 MP4 取 videoBackupUrl，视频号/腾讯视频取 videoUrl。别写成固定取某一列。 -->
         <div v-if="form.videoFallbackUrl" class="probe-row">
@@ -204,8 +213,8 @@
       </el-form-item>
 
       <el-form-item label="封面 / 占位图">
+        <template #label>封面 / 占位图 <FieldHelp v-bind="HELP.cover" /></template>
         <UploadField v-model="form.cover" :multiple="false" accept="image/*" library-type="cover" />
-        <FieldHelp v-bind="HELP.cover" />
       </el-form-item>
 
       <el-form-item>
@@ -230,6 +239,7 @@ import {
 } from '@/api/content'
 import UploadField from '@/components/UploadField.vue'
 import FieldHelp from '@/components/FieldHelp.vue'
+import InlineNotice from '@/components/InlineNotice.vue'
 
 // 每个配置项的「功能 / 值来源 / 规则限制」集中在这里，模板只挂一个 FieldHelp 徽标。
 // 早先这些说明是常驻的大段 .hint，页面一进来像说明书；现在默认只留一个 ?，
@@ -242,107 +252,105 @@ import FieldHelp from '@/components/FieldHelp.vue'
 const HELP = {
   introText: {
     title: '简介文字',
-    usage: '写在名片首页简介区的一段介绍文字。',
-    source: '由客户自行编辑，保存后小程序重新进入即可看到。',
-    rules: '按纯文本保存；留空则该区域不显示文字。',
-    note: '字号档位在「小程序设置 → 名片页面样式」里调，不归本页管。',
+    usage: '写在这里的字，会显示在名片首页的简介区。',
+    source: '您自己填写，保存后重新进入小程序就能看到。',
+    rules: '普通文字即可；留空就不显示这一段。',
+    note: '字大字小在「小程序设置 → 名片页面样式」里调，这里不用管。',
   },
   videoSource: {
     title: '视频来源',
-    usage: '决定名片页放哪一种视频，或者只显示封面图。',
-    source: '四选一：微信视频号、自托管 MP4、腾讯视频、不展示视频。',
+    usage: '决定名片页里播什么：视频号、自己上传的视频、腾讯视频，或者只放一张封面图。',
+    source: '从下拉框里选一种。微信视频号最省事：视频放微信，您不用付存储和流量费。',
     rules:
-      '视频号走微信 CDN，不产生存储与流量费用；自托管 MP4 的费用记在客户自己的云账号上；腾讯视频需先在「系统设置 → 功能开关」开启，且小程序后台已添加并授权插件。',
-    note:
-      '视频号封面的名称与推荐角标是微信组件固定行为，无法隐藏；要画面干净请选自托管 MP4。',
+      '选「自托管 MP4」要花您自己的云存储和流量；选「腾讯视频」要先在功能开关里打开，并在小程序后台授权插件。',
+    note: '视频号封面上的名称和推荐角标是微信自带的，去不掉；想画面干净就选 MP4。',
   },
   videoChannelId: {
     title: '视频号 ID',
-    usage: '定位要播放的微信视频号；跳转播放时用它指定打开哪个号。',
-    source: '视频号助手首页可查看，通常以 sph 开头。',
-    rules: '跳转播放必填；内嵌播放也建议填，官方把视频号 ID 与 feedId 列为同组参数。填错或不填，跳转选项不可选。',
+    usage: '告诉微信要播放哪个视频号。选「跳转打开」时必填。',
+    source: '打开视频号助手，首页就能看到，一般以 sph 开头。',
+    rules: '内嵌播放也建议填。只填它还不够，还要填下面的 feedId 才能指定具体哪条视频。',
   },
   videoFeedId: {
     title: '视频 feedId',
-    usage: '指定视频号里的某一条动态作为播放内容。',
-    source: '视频号助手 → 动态管理 → 复制 feedId。',
-    rules:
-      '同主体（或开放平台关联主体）路径有效，长期稳定。与 feed-token 同时填写时以 feedId 为准，跨主体请清空本项。纯图片动态不支持内嵌播放。',
-    note: '跳转播放同样要求本项。',
+    usage: '告诉微信要播放这个号里的哪一条视频。',
+    source: '视频号助手 → 动态管理 → 找到那条视频 → 复制 feedId。',
+    rules: '小程序和视频号是同一个主体（或在开放平台里关联）时用它，填一次长期有效。',
+    note:
+      '如果和下面的 feed-token 都填了，微信只认 feedId；跨主体时要把这里清空。纯图片的视频号内容不支持内嵌。跳转播放也必须填本项。',
   },
   videoFeedToken: {
     title: 'feed-token',
-    usage: '跨主体场景代替 feedId，交给视频号组件原位播放。',
+    usage: '视频号和小程序不是同一个主体时，用它来放行内嵌播放。',
     source:
-      'MP 平台打开「获取视频号视频 ID 权限」后，同一操作者在移动端复制；完整值以 token/ 开头，是一长串。',
+      '在 MP 平台打开「获取视频号视频 ID 权限」，同一操作者在手机上复制；完整值以 token/ 开头，是很长的一串。',
     rules:
-      '小程序须为非个人主体，客户端基础库 ≥ 2.31.1；官方强制不能自动播放。低版本不认它、token 与小程序不匹配或被截断，都会退成只显示封面。',
+      '小程序必须是非个人主体，访客微信版本要支持（基础库 2.31.1 以上）；这种方式不允许自动播放，访客要自己点。',
     note:
-      '24 小时约束的是开权限后的复制入口窗口，不是 token 值本身的有效期；完整复制出来的 token 长期有效，不必反复重取。报错 1416106 多半是 token 不匹配或复制不全。',
+      '24 小时说的是「开权限后多久还能复制」，不是 token 会过期；完整复制出来的 token 可以一直用，不必反复重取。报错 1416106 通常是复制不全或和小程序不匹配。',
   },
   videoPlayMode: {
     title: '播放方式',
-    usage: '选择访客点视频后是在名片页原位播放，还是跳到视频号页面播放。',
-    source: '客户按需二选一，默认「内嵌播放」。',
-    rules:
-      '内嵌用 channel-video，基础库 ≥ 2.25.1，本产品不启用自动播放，纯图片动态不支持；跳转用 wx.openChannelsActivity，基础库 ≥ 2.19.2、无主体限制，但访客会离开小程序，也记不到播放统计。',
-    note: '跳转需同时填视频号 ID 与 feedId，接口不认 feed-token；跳转档不再提供兜底 MP4。',
+    usage: '决定访客点视频后，是在名片页里直接看，还是跳到视频号去看。',
+    source: '默认「内嵌播放」；想让访客跳出去就用「跳转打开」。',
+    rules: '内嵌：留在本页，访客不离开小程序。跳转：会离开小程序，也记不到播放统计，但不限主体。',
+    note:
+      '跳转必须同时填视频号 ID 和 feedId，而且不认 feed-token；跳转后视频由视频号页面加载，所以这一档不再提供兜底 MP4。',
   },
   videoVid: {
     title: '视频 vid',
-    usage: '腾讯视频插件的唯一取片凭证。',
-    source: '腾讯视频播放页地址里 page/ 与 .html 之间那段；视频需先上传并通过审核。',
-    rules: '插件只认腾讯视频 vid，不认 mp4 / http 地址；未过审的视频播不出来；免费版片头广告无法关闭。',
-    note: '创作号上传分类建议选「企业 / 商业」，选「文化 / 历史」可能放不全片。',
+    usage: '腾讯视频插件靠这个编号找到视频。',
+    source: '把视频传到腾讯视频并过审，播放页网址里 page/ 和 .html 中间那段就是 vid。',
+    rules: '只能填腾讯视频的 vid，填 mp4 网址没用；没过审的视频播不出来。',
+    note: '免费版插件片头广告去不掉；创作号上传时选「企业 / 商业」分类更稳。',
   },
   videoAutoplay: {
     title: '自动播放',
-    usage: '控制腾讯视频插件在访客进入名片页时是否自动开始播放。',
-    source: '开关当前状态即为保存值。',
-    rules: '插件自身 autoplay 默认是 true，必须显式关掉；默认建议关闭，避免落地页突然出声。',
-    note: '改完保存，小程序重新进入即可生效。',
+    usage: '控制访客一进名片页，视频是不是自己开始播。',
+    source: '开关状态就是保存的值。',
+    rules: '建议保持关闭。腾讯视频插件默认会自动播，所以这里必须显式关掉，否则访客一进来就带声音播放。',
+    note: '改完保存，重新进入小程序即可生效。',
   },
   mp4Mode: {
     title: '交付方式',
-    usage: '决定 MP4 文件怎么交付：上传到对象存储，或填写现成的直链。',
-    source: '上传走后台配置的存储（优先直传预签名）；直链由客户提供公网可访问地址。',
-    rules: '两者在小程序端完全等价，都渲染原生 video；上传需当前部署支持视频直传，并受单文件大小上限约束。',
-    note: '存储与流量费用、视听类目资质都由客户自行承担。',
+    usage: '决定视频文件怎么放到网上：由我们帮您传，或者您自己给一个网址。',
+    source: '上传走已配置的对象存储；直链由您提供。两种方式在小程序里看起来完全一样。',
+    rules: '上传时单个文件不能超过能力上限；存储费、流量费和视听资质都由您自己负责。',
   },
   videoFile: {
     title: '视频文件',
-    usage: '上传 MP4 到已配置的对象存储，完成后地址自动写入表单。',
-    source: '浏览器直传到 OSS / COS / MinIO，不经应用服务器。',
-    rules: '仅支持 mp4，单文件不超过能力探测给出的上限；直传是跨域请求，对象存储没配 CORS 时会回退到服务器中转。',
+    usage: '把视频传到后台配置的对象存储，上传完地址会自动填好。',
+    source: '浏览器直接传到 OSS / COS / MinIO，不经过应用服务器。',
+    rules: '只支持 mp4，大小不能超过上面的上限；如果对象存储没配跨域规则，会退回服务器中转，大文件会慢。',
   },
   videoUrl: {
     title: 'MP4 地址',
-    usage: '直接使用一个公网可访问的 MP4 地址。',
-    source: '由客户提供，例如自有 CDN 或对象存储的公开链接。',
-    rules: '地址必须能在浏览器里直接打开播放；生产环境请用 https。http 可以保存，但微信对明文资源的支持正在变化，真机上可能黑屏。',
-    note: '我们不托管这个文件，流量费由存储服务商收取，视听类目资质需自行具备。',
+    usage: '直接填写一个已经能在网上打开播放的 MP4 网址。',
+    source: '您自己的 CDN 或对象存储链接都可以。',
+    rules: '先用浏览器打开试试，能播再填；正式环境请用 https。http 能存，但微信对明文地址的支持在变化，真机可能黑屏。',
+    note: '我们不托管这个文件，流量费由存储服务商收取，视听资质要自行具备。',
   },
   finalUrl: {
     title: '最终播放地址',
-    usage: '显示实际写库、也是小程序真正拿去播放的地址，用来排查黑屏。',
-    source: '按当前交付方式自动计算：上传档取上传得到的地址，直链档取填写的地址。',
+    usage: '这里显示的是实际保存、也是小程序真正去播的地址。视频黑屏时先看这里。',
+    source: '上传档取上传得到的地址，直链档取您填写的地址，自动算出来，不用手填。',
     rules:
-      '浏览器点开应当能直接播放；站内相对路径会在小程序端自动拼上服务域名。对象存储里若带目录前缀（如 aitel/xxx.mp4），「文件访问基址」也必须带同样前缀，否则拼出的地址会 404；改配置只影响新上传，已保存的地址要重新上传才会更新。',
-    note: '「测试地址」只是从应用服务器发一次 HEAD，成功不代表手机一定能播。',
+      '点开链接应该能直接播放。如果对象存储里文件名带目录前缀（如 aitel/xxx.mp4），「文件访问基址」也要带同样前缀，不然会拼出一个 404 地址；改配置只影响新上传，已保存的地址要重新上传才会更新。',
+    note: '「测试地址」只是服务器发一次 HEAD，成功不代表手机一定能播。',
   },
   fallback: {
     title: '兜底 MP4',
-    usage: '主视频源失败时自动改用一段 MP4，避免访客只看到黑屏。',
+    usage: '主视频播不出来时，自动换一段 MP4 接着播，避免访客看到黑屏。',
     source: '自托管 MP4 档填「备用地址」；视频号 / 腾讯视频档填「兜底地址」。',
     rules:
-      '只切一次；备用地址不能与主视频地址相同，建议用不同域名或不同 CDN；开了兜底却没填地址会被拦下，不能保存。跳转播放档不需要兜底。',
-    note: '填完请先在浏览器里打开一次，确认这段地址本身能播放。',
+      '只切一次；备用地址不能与主视频地址相同，最好换一个域名或 CDN；开着但不填地址会被拦下不能保存。跳转播放档不需要兜底。',
+    note: '填完先在浏览器里打开一次，确认备用视频本身能播。',
   },
   cover: {
     title: '封面 / 占位图',
-    usage: '视频加载前，以及选择「不展示视频」时显示的图片。',
-    source: '从图库选择，或本地上传。',
-    rules: '不填则该位置留空；视频档建议用与名片风格一致的竖版图。',
+    usage: '视频还没加载出来时显示这张图；选「不展示视频」时，它就是名片页上的主图。',
+    source: '从图库选一张，或本地上传。',
+    rules: '建议用竖版、和名片配色一致的图；不填这一块就空着。',
   },
 }
 

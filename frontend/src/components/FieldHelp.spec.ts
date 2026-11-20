@@ -7,17 +7,17 @@ import FieldHelp from './FieldHelp.vue'
 // 「什么时候要求它显示」和「它拿到什么内容」，用桩把控制面暴露出来。
 const ElTooltipStub = defineComponent({
   name: 'ElTooltip',
-  props: ['content', 'visible', 'trigger', 'placement', 'popperClass'],
+  props: ['visible', 'trigger', 'placement', 'popperClass'],
   emits: ['update:visible'],
-  template: `<span class="tip"><slot /></span>`,
+  template: `<span class="tip"><slot name="content" /><slot /></span>`,
 })
 
 const props = {
   title: 'feed-token',
-  usage: '跨主体场景代替 feedId 内嵌播放。',
-  source: 'MP 平台开权限后移动端复制。',
-  rules: '小程序须为非个人主体。',
-  note: '24 小时是复制入口窗口，token 值长期有效。',
+  usage: '视频号和小程序不是同一个主体时，用它来放行内嵌播放。',
+  source: '在 MP 平台打开权限后，同一操作者在手机上复制。',
+  rules: '小程序必须是非个人主体。',
+  note: '24 小时说的是复制窗口，token 值本身不会过期。',
 }
 
 async function mountHelp() {
@@ -71,23 +71,20 @@ describe('components/FieldHelp', () => {
 
   it('内容按「功能 / 值来源 / 规则限制 / 注意」四段组织，缺段不占位', async () => {
     const w = await mountHelp()
-    const content = String(w.findComponent(ElTooltipStub).props('content'))
-    expect(content).toBe(
-      [
-        '功能：跨主体场景代替 feedId 内嵌播放。',
-        '值来源：MP 平台开权限后移动端复制。',
-        '规则限制：小程序须为非个人主体。',
-        '注意：24 小时是复制入口窗口，token 值长期有效。',
-      ].join('\n')
-    )
+    expect(w.find('.fh-title').text()).toBe('feed-token')
+    expect(w.findAll('.fh-key').map((k) => k.text())).toEqual([
+      '功能',
+      '值来源',
+      '规则限制',
+      '注意',
+    ])
+    expect(w.find('.fh-text').text()).toContain('不是同一个主体')
 
     const minimal = mount(FieldHelp, {
       props: { title: '封面', usage: '视频加载前显示。' },
       global: { stubs: { 'el-tooltip': ElTooltipStub } },
     })
-    expect(String(minimal.findComponent(ElTooltipStub).props('content'))).toBe(
-      '功能：视频加载前显示。'
-    )
+    expect(minimal.findAll('.fh-key').map((k) => k.text())).toEqual(['功能'])
   })
 
   it('键盘聚焦也能展开，并带可读的无障碍标签', async () => {
