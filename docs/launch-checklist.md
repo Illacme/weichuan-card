@@ -37,6 +37,7 @@
 | 数据库迁移已应用到最新（MySQL 升级） | 启动时自动补齐（`AUTO_MIGRATE=0` 关闭，改跑 `server migrate`） | **MySQL**：启动日志是「已应用 N 个迁移」或「数据库已是最新」，**无** `[MIGRATE][FATAL]`。**SQLite**：表由启动时 `AutoMigrate` 维护，上面两行**根本不会出现**——别照着找（`server migrate` 在 SQLite 下会直接提示无需迁移） | ❌ 需看启动日志（详见 runbook §4） |
 | gin 运行模式 `GIN_MODE` | `docker-compose.yml`（默认 `release`） | 不是 `debug`：debug 下每次启动把全部路由表打进日志，把真正要看的 `[SECURITY]` / `[MIGRATE]` 挤走 | ❌ 需看启动日志有无 `[GIN-debug]` 行 |
 | 服务端时区 `TZ` | `docker-compose.yml` 默认 `Asia/Shanghai`；原生部署设 systemd `Environment=TZ=Asia/Shanghai` | 统计「今日」口径正确：`docker exec weichuan-backend date` 与北京时间一致。不设时 Go 读不到时区库会**静默按 UTC**——每天 00:00–08:00 的访问落到前一天，不报错、只是数字悄悄错位 | ❌ 需人工看一眼容器时间 |
+| 存储 / CDN 多档案（迁移 0054） | 后台「文件存储与分发」 | 若启用档案模式：档案已自检通过、全局默认已选、需要搬迁的企业已跑过迁移任务并核对失败清单为空 | ⬜ 需平台超管确认 |
 | CDN 刷新凭据 `CDN_*` | 同上「文件存储与 CDN」或环境变量 | 需刷新时选了厂商（`CDN_PROVIDER`，五家之一）并填全该厂商要求的凭据、开 `CDN_ENABLED` | ❌ 需人工确认 |
 | `MYSQL_ROOT_PASSWORD` | `docker-compose.yml` / 环境 | 仅 `--profile mysql` 形态必填；改强随机值（默认 SQLite 形态无所谓） | ✅ 查示例值 / 必填 |
 | **微信小程序服务器域名** | mp.weixin.qq.com → 开发管理 → 开发设置 → 服务器域名 | `request` / `uploadFile` / `downloadFile` **三类**都含 `https://<种子基址域名>`。少一类对应功能在真机上静默失败：上传头像走 `wx.uploadFile`，海报背景与小程序码走 `canvas.createImage()`；开发者工具勾「不校验合法域名」时**复现不出来**，只有真机会中招 | ❌ 需人工确认（逐项判据见 `docs/real-device-acceptance.md` §0.5） |

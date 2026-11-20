@@ -43,6 +43,7 @@ import (
 	"weichuan/internal/mptemplate"
 	"weichuan/internal/setting"
 	"weichuan/internal/storage"
+	"weichuan/internal/storageprofile"
 	"weichuan/internal/urlprobe"
 	"weichuan/internal/wechat"
 
@@ -164,6 +165,10 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// + POST .../check。这里不注册的话，「企业管理员越权应 403」那条断言会变成
 	// gin 的 404 纯文本，测试红在一个看不出是路由缺失的地方。
 	RegisterTenantStorage(r, db)
+	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	SetProfileOriginResolver(profiles.OriginFor)
+	RegisterStorageProfiles(r, db, profiles)
+	RegisterStorageMigration(r, db, profiles)
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	RegisterAuditLogs(r, db)      // 操作审计日志（只读查询）
@@ -184,12 +189,14 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// 成为可验证的事实——本文件几十处断言一行没改就全绿。
 	// 需要验证租户分流的用例直接构造 uploadroute.Resolver，不走 buildEngine。
 	res := storage.NewStaticResolver(up, cfg.StorageDriver)
-	RegisterUpload(r, db, cfg, res, refresher)
-	RegisterStorage(r, db, res, refresher, cfg)
-	RegisterAssets(r, db, res, refresher) // 常用素材库（内嵌 Lucide 图标 + 通用封面/LOGO）
-	RegisterWechat(r, db, cfg, res, refresher)
-	RegisterMediaCheck(r, db, cfg, res, refresher) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
-	RegisterSettings(r, db, cfg)                   // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	effective := storageprofile.NewDynamic(res, profiles)
+	effectiveCDN := storageprofile.NewDynamicCDN(refresher, profiles)
+	RegisterUpload(r, db, cfg, effective, effectiveCDN)
+	RegisterStorage(r, db, effective, effectiveCDN, cfg)
+	RegisterAssets(r, db, effective, effectiveCDN) // 常用素材库（内嵌 Lucide 图标 + 通用封面/LOGO）
+	RegisterWechat(r, db, cfg, effective, effectiveCDN)
+	RegisterMediaCheck(r, db, cfg, effective, effectiveCDN) // 图片内容安全：消息推送回调 / 记录列表 / 一键下架
+	RegisterSettings(r, db, cfg)                            // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
 	// 前端报错上报是无鉴权公开端点，两个 cmd/main.go 都注册了。原先这里漏了，
 	// 于是 buildEngine 声称「与生产等价」却根本没有 /api/client-error：
 	// 集成测试里该路径只会拿到 gin 的 404 纯文本。补进来才能进 SQLite/MySQL parity。

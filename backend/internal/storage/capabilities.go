@@ -51,6 +51,33 @@ type ObjectStore interface {
 	PutObject(key string, data []byte, contentType string) error
 }
 
+// ObjectLister 枚举桶内对象（迁移用）。
+//
+// 为什么单独一个接口：ProbeBucket 只做 BucketExists，刻意不要求 ListBucket 权限；
+// 一键迁移则必须列举对象。把列举能力挂在 Uploader 上会让「只给写权限」的桶
+// 在上传侧也被要求列举权限，属于权限面倒退。需要迁移的驱动实现它即可。
+//
+// each 返回 error 时立即停止遍历并把错误透传；key 是不带前导斜杠的对象键。
+type ObjectLister interface {
+	ListObjects(prefix string, each func(key string, size int64) error) error
+}
+
+// ObjectStreamWriter 流式写入对象（迁移大文件用）。
+//
+// ObjectStore.PutObject 收 []byte，适合缩略图（≤16MB）；视频动辄上百 MB，
+// 迁移时不能整段读进内存。三个驱动都实现这个流式版本，迁移只依赖此接口。
+type ObjectStreamWriter interface {
+	PutObjectStream(key string, r io.Reader, size int64, contentType string) error
+}
+
+// ObjectCopier 把本驱动里的一个对象流式复制到目标存储。
+//
+// 源端负责打开对象、目标端负责写入，字节不在应用服务器落盘。
+// 只复制不删除：源桶对象保留，确认无误后由运维自行清理。
+type ObjectCopier interface {
+	CopyObjectTo(dst ObjectStreamWriter, key string) error
+}
+
 // ErrObjectTooLarge 读回对象超过 MaxObjectReadBytes。
 var ErrObjectTooLarge = errors.New("storage: 对象超过可读上限")
 

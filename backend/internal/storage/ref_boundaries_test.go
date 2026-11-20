@@ -196,6 +196,10 @@ func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 		// 对它调 ResolveRef 不会裂图，只会把配置页显示的基址悄悄改形，而且要到客户
 		// 启用自有域名之后才暴露。第五十八轮新增模型时被这条守门抓到，登记在案。
 		"publicBaseUrl": true,
+		// 0054 存储档案化新增：四个 *ProfileId 是外键整数（正则命中了 profile 里的 file），
+		// baseUrl 是上传返回基址（与 publicBaseUrl 同属解析器输入，不是资源字段）。
+		"storageProfileId": true, "deliveryProfileId": true,
+		"sourceProfileId": true, "targetProfileId": true, "baseUrl": true,
 	}
 	require.Equal(t, want, got,
 		"资源相关 json 字段集合变了：新增字段必须判断是不是 URL，并登记到边界清单 §2")

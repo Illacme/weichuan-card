@@ -323,6 +323,12 @@ func cdnRefreshHandler(rf storage.CDNRefresher) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「系统设置 → 文件存储与 CDN」启用刷新，选好厂商并填全它要求的凭据后重启服务"})
 			return
 		}
+		// 动态刷新器是个壳：包了壳但没有全局刷新器、也没有分发档案绑定时，
+		// 仍然等同「未配置」，不能因为类型非 nil 就把失败伪装成成功。
+		if checker, ok := rf.(interface{ Configured() bool }); ok && !checker.Configured() {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「文件存储与分发 → 分发档案」新建一套并绑定，或在系统设置里填全凭据"})
+			return
+		}
 		var req struct {
 			Urls []string `json:"urls"`
 		}

@@ -12,7 +12,7 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **123 paths**，最后同步 2026-11-20。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **137 paths**，最后同步 2026-11-20。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
@@ -5650,3 +5650,7 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 预览脚本同步去掉「示例分类」文字（与真机默认一致），并删掉对应的
 `.cat-name` 样式；`home_names.spec.ts` 8 例覆盖两个组件的开关组合、
 无图兜底、默认值，以及首页 `setData` 的透传。
+
+## 存储 / CDN 多档案（迁移 0054，已落地）
+
+`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。

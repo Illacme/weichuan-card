@@ -357,3 +357,10 @@ func Verify(db *gorm.DB) error {
 }
 
 var _ storage.Resolver = (*Resolver)(nil)
+
+// Build 用一份已解析的配置构造 Uploader。
+//
+// 导出给 storageprofile 使用：档案模式与 tenant_storage_configs 模式必须共用
+// 同一个构造口径（公开读校验 / 凭据完整性 / S3 lookup / URL 拼接），
+// 否则「档案说保存成功、上传时才发现构造规则不一样」会变成两套配置文件各自为政。
+func Build(cfg *Config) (storage.Uploader, error) { return build(cfg) }

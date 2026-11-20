@@ -1599,3 +1599,9 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 - **端口暴露也是这条防线的一部分**：docker 端口映射会把所有外部来源 NAT 成桥接
   网关地址，而网关落在可信网段里。所以 backend 的 8090 与 mysql 的 3306 在
   `docker-compose.yml` 里都绑了 `127.0.0.1`；一旦改成对外发布，谁都能伪造来源 IP。
+
+## 存储 / CDN 档案化运行时（迁移 0054）
+
+`internal/storageprofile` 是档案绑定的运行时解析层：`Resolver.snapshot()` 用三张表的行数 + `MAX(version)` 作指纹，变化即重载（只用 `MAX(version)` 会漏掉「新增一行绑定但版本还是 1」）。`DynamicResolver` 包在 `uploadroute.Resolver` 外侧——有绑定走档案、没绑定沿用 `tenant_storage_configs` 与平台配置；`DynamicCDN` 同理，且明确区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` 把分发档案的域名接进公开出参 origin。
+
+一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。

@@ -22,6 +22,7 @@ import (
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
+	"weichuan/internal/storageprofile"
 	"weichuan/internal/uploadroute"
 
 	"github.com/gin-gonic/gin"
@@ -357,12 +358,16 @@ func main() {
 	// 租户自有对象桶配置（平台超管专属）：GET/PUT/DELETE .../storage + POST .../storage/check。
 	// 与上面那条分开放：这里是客户的云凭据 + 桶地址，泄露面比小程序凭据更大。
 	handler.RegisterTenantStorage(r, db)
-	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
-	handler.RegisterAdmins(r, db)         // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
-	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
-	handler.RegisterBackup(r, db, cfg)    // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
-	handler.RegisterLicenseView(r, db)    // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
-	handler.RegisterURLProbe(r, db)       // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
+	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	handler.SetProfileOriginResolver(profiles.OriginFor)
+	handler.RegisterStorageProfiles(r, db, profiles)  // 存储 / 分发档案 + 全局与企业绑定
+	handler.RegisterStorageMigration(r, db, profiles) // 一键迁移任务
+	handler.RegisterMPRelease(r, db, cfg)             // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
+	handler.RegisterAdmins(r, db)                     // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
+	handler.RegisterAuditLogs(r, db)                  // 操作审计日志（只读查询：平台超管）
+	handler.RegisterBackup(r, db, cfg)                // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
+	handler.RegisterLicenseView(r, db)                // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
+	handler.RegisterURLProbe(r, db)                   // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，
@@ -389,6 +394,8 @@ func main() {
 				storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
 		}
 	}
+	// 多套 CDN：档案绑定优先，没绑定沿用上面这份全局刷新器。
+	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。
 	r.Static("/uploads", cfg.UploadDir)
@@ -407,17 +414,19 @@ func main() {
 		res = uploadroute.New(up, cfg.StorageDriver, uploadroute.DBLoader(db, cfg.UploadBaseURL))
 		log.Print("[STORAGE] 租户存储路由已启用：已启用自有桶的租户，其新上传将写入客户的对象存储")
 	}
-	handler.RegisterUpload(r, db, cfg, res, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
-	handler.RegisterStorage(r, db, res, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
+	// 档案绑定插在既有 Resolver 外侧：有绑定走档案，没绑定沿用旧口径（零突变升级）。
+	var effective storage.Resolver = storageprofile.NewDynamic(res, profiles)
+	handler.RegisterUpload(r, db, cfg, effective, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
+	handler.RegisterStorage(r, db, effective, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
 	// 图片内容安全：微信消息推送回调 + 后台检测记录列表 + 一键下架
-	handler.RegisterMediaCheck(r, db, cfg, res, refresher)
+	handler.RegisterMediaCheck(r, db, cfg, effective, refresher)
 	// 刷新器往下传给「会覆盖同名对象」的两条路径（素材采用 / 小程序码重生成），
 	// 普通上传的对象名是随机的、永不覆盖，刷新对它本就无意义（见 handler.refreshCDN 注释）
-	handler.RegisterAssets(r, db, res, refresher)      // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
-	handler.RegisterWechat(r, db, cfg, res, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId 归属租户取凭据）
-	handler.RegisterSettings(r, db, cfg)               // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
-	handler.RegisterClientError(r)                     // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
-	handler.RegisterPoster(r, db)                      // 海报个性化设置：GET/PUT /api/employee/poster-prefs（自定义背景 + 版式）
+	handler.RegisterAssets(r, db, effective, refresher)      // 常用素材库（内嵌图标/封面/LOGO）：清单 / 采用 / 预览图
+	handler.RegisterWechat(r, db, cfg, effective, refresher) // GET /api/wechat/wxacode（小程序码，按 staffId 归属租户取凭据）
+	handler.RegisterSettings(r, db, cfg)                     // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                           // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                            // 海报个性化设置：GET/PUT /api/employee/poster-prefs（自定义背景 + 版式）
 	// 首次配置状态查询（只读）：已配置时返回 configured=true；未配置时进程根本进不到这里
 	// （见开头 setup.Unconfigured 分支）。前端据此决定是否显示配置引导。
 	// /setup 别名：安装完成后还有人手动敲 /setup 时 302 回首页，不给裸 404。

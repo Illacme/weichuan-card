@@ -49,6 +49,22 @@
       style="margin-bottom: 14px"
     />
 
+    <!-- 新模块入口：下面的「文件存储与 CDN」是遗留平铺项，改完要重启；
+         多套档案、全局即时切换与企业自选都在独立模块里，先给一条明确指路。 -->
+    <el-alert
+      v-if="!keyword.trim()"
+      type="success"
+      :closable="false"
+      show-icon
+      title="要配置多套存储 / CDN？请使用「文件存储与分发」"
+      description="在那里可以保存多套存储档案与 CDN 分发档案、切换全局默认（即时生效）、让企业在管理页自选，并用迁移任务搬运历史对象。本页下面的存储 / CDN 项属于兼容旧部署的全局单值配置，改动仍需重启；两者不冲突，新档案未绑定时继续沿用本页配置。"
+      class="storage-module-entry"
+    >
+      <template #default>
+        <a href="/platform/storage-profiles" class="storage-module-link">打开「文件存储与分发」 →</a>
+      </template>
+    </el-alert>
+
     <!-- 待重启提示：保存含「需重启」项后常驻显示。
          只靠 toast 提示是不够的——它几秒就消失，人一走神就错过，
          接下来就是「明明改了为什么不生效」的排查。这里常驻到用户手动关掉，
@@ -395,7 +411,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '图片 / 视频 / 小程序码存哪、怎么访问，是上传功能的前提。⚠️ 本组任一项改动都需重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。',
+    '（兼容旧部署的全局单值配置）图片 / 视频 / 小程序码存哪、怎么访问，是上传功能的前提。多套档案请到「文件存储与分发」。⚠️ 本组任一项改动都需重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -2028,4 +2044,6 @@ onMounted(load)
   display: flex;
   gap: 8px;
 }
+.storage-module-entry { margin-bottom: 14px; }
+.storage-module-link { display: inline-block; margin-top: 6px; color: #409eff; font-weight: 600; }
 </style>

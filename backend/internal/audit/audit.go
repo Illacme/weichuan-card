@@ -90,6 +90,21 @@ const (
 	// 属高危运维动作（批量改写客户的云凭据密文），必须留痕：记录处理了多少行、是否提供了旧密钥，
 	// 但绝不记录任何凭据明文 / 掩码。谁来执行由调用方决定（CLI 子命令记为 ActorSystem）。
 	ActionTenantStorageRekey = "storage.config.rekey"
+	// ActionStorageProfileUpdate 新建 / 修改一套存储或分发档案。
+	// 档案是全局共享的连接信息与凭据：改一次会影响所有绑定它的企业，
+	// 必须能回答「谁在什么时候把哪套档案的桶地址改成了什么」。
+	ActionStorageProfileUpdate = "storage.profile.update"
+	// ActionStorageProfileDelete 删除一套档案。删除前由接口挡住仍有绑定的档案，
+	// 但删除动作本身仍要留痕（凭据随行消失，不可恢复）。
+	ActionStorageProfileDelete = "storage.profile.delete"
+	// ActionStorageProfileCheck 对档案做连通性自检，成功失败均留痕。
+	ActionStorageProfileCheck = "storage.profile.check"
+	// ActionStorageBindingUpdate 改全局默认或某企业的档案绑定。
+	// 这是「文件到底写去哪」的最终开关，即时生效且影响面大，必须留痕。
+	ActionStorageBindingUpdate = "storage.binding.update"
+	// ActionStorageMigration 创建 / 启动 / 取消一键迁移任务。
+	// 迁移会复制对象并可能自动切换绑定，属高危批量动作。
+	ActionStorageMigration = "storage.migration"
 
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"

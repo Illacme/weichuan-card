@@ -38,6 +38,7 @@ import (
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
+	"weichuan/internal/storageprofile"
 	"weichuan/internal/uploadroute"
 )
 
@@ -183,6 +184,10 @@ func main() {
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额
 	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
 	handler.RegisterTenantStorage(r, db)  // 租户自有对象桶配置：GET/PUT/DELETE .../storage + POST .../check
+	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	handler.SetProfileOriginResolver(profiles.OriginFor)
+	handler.RegisterStorageProfiles(r, db, profiles)
+	handler.RegisterStorageMigration(r, db, profiles)
 	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
 	handler.RegisterAuditLogs(r, db)      // 操作审计日志（只读查询：平台超管）
@@ -197,6 +202,7 @@ func main() {
 		AllowExt: storage.DefaultAllowExt,
 	}
 	var refresher storage.CDNRefresher // 开发态不接 CDN
+	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
 	// 联调期 /uploads 下的文件（含种子素材）经常被同名覆盖，浏览器按 Last-Modified
 	// 启发式缓存会拿到旧图（症状：小程序已更新、后台还是旧图标）→ 开发态一律 no-cache。
 	r.Use(func(c *gin.Context) {
@@ -218,14 +224,15 @@ func main() {
 		res = uploadroute.New(up, cfg.StorageDriver, uploadroute.DBLoader(db, cfg.UploadBaseURL))
 		log.Print("[STORAGE] 租户存储路由已启用（devserver）")
 	}
-	handler.RegisterUpload(r, db, cfg, res, refresher)
-	handler.RegisterMediaCheck(r, db, cfg, res, refresher)
-	handler.RegisterStorage(r, db, res, refresher, cfg)
-	handler.RegisterAssets(r, db, res, refresher)      // 常用素材库（内嵌图标/封面/LOGO）
-	handler.RegisterWechat(r, db, cfg, res, refresher) // 小程序码
-	handler.RegisterSettings(r, db, cfg)               // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
-	handler.RegisterClientError(r)                     // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
-	handler.RegisterPoster(r, db)                      // 海报个性化设置：GET/PUT /api/employee/poster-prefs
+	var effective storage.Resolver = storageprofile.NewDynamic(res, profiles)
+	handler.RegisterUpload(r, db, cfg, effective, refresher)
+	handler.RegisterMediaCheck(r, db, cfg, effective, refresher)
+	handler.RegisterStorage(r, db, effective, refresher, cfg)
+	handler.RegisterAssets(r, db, effective, refresher)      // 常用素材库（内嵌图标/封面/LOGO）
+	handler.RegisterWechat(r, db, cfg, effective, refresher) // 小程序码
+	handler.RegisterSettings(r, db, cfg)                     // 系统设置：GET/PUT /api/admin/settings + GET /api/public/settings
+	handler.RegisterClientError(r)                           // 前端报错上报（无鉴权公开端点，限流 + 日志关联 X-Request-Id）
+	handler.RegisterPoster(r, db)                            // 海报个性化设置：GET/PUT /api/employee/poster-prefs
 	// 安装状态查询与 /setup 别名：必须与生产（cmd/server）一致。
 	// 缺了前者会让前端启动探针 GET /api/setup/status 每次都吃 404——
 	// 功能上无碍（前端把查不到按「已配置」处理，见 api/setup.ts 的注释），

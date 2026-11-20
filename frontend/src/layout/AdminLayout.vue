@@ -363,6 +363,8 @@ const allMenuGroups = [
       { path: '/content/categories', title: '业绩分类' },
       { path: '/content/projects', title: '项目案例' },
       { path: '/content/services', title: '业务服务' },
+      // 企业自助选择平台准备好的存储 / CDN 档案（看不到凭据）
+      { path: '/company-storage', title: '存储档案' },
       // 小程序设置：访客第一眼看到什么（入口 + 名片首页样式）合成一页两页签。
       // 两者接口与保存各自独立，但对客户是同一件事「我的小程序长什么样」。
       { path: '/content/mp-settings', title: '小程序设置' },
@@ -377,6 +379,8 @@ const allMenuGroups = [
     items: [
       { path: '/companies', title: '企业管理' },
       { path: '/platform/cdn-refresh', title: 'CDN 刷新' },
+      // 文件存储与分发：多套档案 + 绑定 + 一键迁移（平台超管专属）
+      { path: '/platform/storage-profiles', title: '文件存储与分发' },
       // 系统设置：运行参数（品牌名 / 上传限制 / 小程序码 TTL / 特性开关）后台维护
       { path: '/platform/settings', title: '系统设置' },
       // 账号管理：平台超管账号改名 / 新增 / 重置密码 / 删除

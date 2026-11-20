@@ -4397,6 +4397,239 @@ paths:
                       lastCheckedAt: { type: string, format: date-time }
                       checkedScope: { type: string, description: 本次自检的覆盖范围与不覆盖项 }
 
+  # ── 文件存储与分发档案（迁移 0054）──────────────────────────────────────
+  # 三层模型：storage_profiles（连接信息）/ delivery_profiles（CDN 分发）
+  # / storage_bindings（谁用哪套，tenant_id=0 是全局默认、企业无行即继承）。
+  # 档案写操作全是平台超管；企业管理员只能给自己选绑定（看不到凭据）。
+  # 保存后 resolver.Touch() 主动失效缓存，全局切换下一个请求就生效，不重启。
+  /api/admin/storage-profiles:
+    get:
+      summary: 存储档案列表（平台超管）
+      description: |
+        返回全部可复用的存储连接档案。凭据只回 `accessKeyMasked` 与
+        `secretKeyConfigured`，`secretKey` 永不回传（连掩码都不给）。
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0（data 为档案数组）；code=403 非平台超管
+    post:
+      summary: 新建存储档案（平台超管）
+      description: |
+        `driver` 支持 local / minio / oss / s3。云端驱动要求 endpoint（只写 host[:port]）、
+        bucket、baseUrl、公开读与 AK/SK；local 用 `localDir` 指定自己的根目录，留空用平台 uploads。
+        凭据明文入库（当前产品决策），回显只给掩码；数据库备份必须受控。
+      tags: [平台管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageProfileSave" }
+      responses:
+        "200":
+          description: code=0（data 为新建档案）；code=1 校验不通过 / 名称重复
+  /api/admin/storage-profiles/{id}:
+    put:
+      summary: 修改存储档案（平台超管）
+      description: |
+        字段省略即保留原值。保存后 `version` 递增、自检状态重置为 unknown，
+        所有绑定该档案的企业在下一次请求就拿到新配置。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageProfileSave" }
+      responses:
+        "200":
+          description: code=0；code=1 档案不存在 / 校验不通过
+    delete:
+      summary: 删除存储档案（平台超管）
+      description: 仍有绑定或内置 local 档案时拒绝删除；只删配置行，不碰桶内对象。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=1 仍有绑定 / 内置档案
+  /api/admin/storage-profiles/{id}/check:
+    post:
+      summary: 存储档案连通性自检（平台超管）
+      description: |
+        带凭据探测桶可达性。范围只含凭据与桶，**不含** nginx Host/SNI、CDN 与证书链；
+        成功失败都回写 status / lastError / lastProbeAt 并留审计。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0（data.ok / detail / error / status / checkedScope）
+  /api/admin/delivery-profiles:
+    get:
+      summary: 分发档案列表（平台超管）
+      description: 独立于存储档案：同一桶可配多套 CDN 域名。凭据只回掩码。
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0（data 为档案数组）
+    post:
+      summary: 新建分发档案（平台超管）
+      description: provider=none 表示不启用 CDN；其他厂商要有合法域名与刷新凭据。
+      tags: [平台管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeliveryProfileSave" }
+      responses:
+        "200":
+          description: code=0；code=1 校验不通过 / 名称重复
+  /api/admin/delivery-profiles/{id}:
+    put:
+      summary: 修改分发档案（平台超管）
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeliveryProfileSave" }
+      responses:
+        "200":
+          description: code=0；code=1 校验不通过
+    delete:
+      summary: 删除分发档案（平台超管）
+      description: 仍有绑定时拒绝删除。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=1 仍有绑定
+  /api/admin/delivery-profiles/{id}/check:
+    post:
+      summary: 分发档案配置自检（平台超管）
+      description: 只验配置完整性与域名形态，**不发起真实刷新请求**（那会污染 CDN 且证明不了域名配对）。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0（data.ok / detail / error / status）
+  /api/admin/storage-bindings:
+    get:
+      summary: 绑定关系总览
+      description: |
+        回 `global`（tenant_id=0）与企业绑定数组。企业没有绑定行时继承全局；
+        `source` 为 inherit / global / platform，如实说明当前生效来源。
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0
+  /api/admin/storage-bindings/options:
+    get:
+      summary: 档案选择项（所有后台管理员）
+      description: |
+        只回档案 `id` + `name`。企业管理员要给本企业选绑定，但不能读桶地址与凭据，
+        因此这是唯一对企业侧开放的档案信息端点。
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0（data.storageProfiles / data.deliveryProfiles）
+  /api/admin/storage-bindings/global:
+    put:
+      summary: 设置全局默认档案（平台超管）
+      description: |
+        `storageProfileId` 必填，`deliveryProfileId=0` 表示不启用 CDN。
+        保存后即时生效：各进程按指纹重载档案快照，无需重启。
+      tags: [平台管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageBindingSave" }
+      responses:
+        "200":
+          description: code=0；code=1 档案不存在
+  /api/admin/storage-bindings/companies/{id}:
+    put:
+      summary: 设置某企业的档案绑定
+      description: |
+        平台超管可代任意企业设置，企业管理员只能设置自己（越权 code=403）。
+        这里只选「用哪一套」，看不到也改不了凭据。删除本行即恢复继承全局。
+      tags: [租户]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageBindingSave" }
+      responses:
+        "200":
+          description: code=0；code=1 档案不存在；code=403 越权
+    delete:
+      summary: 清除某企业的绑定，恢复继承全局
+      tags: [租户]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=403 越权
+  /api/admin/storage-migration-jobs:
+    get:
+      summary: 迁移任务列表（平台超管，最多 200 条）
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0
+    post:
+      summary: 创建一键迁移任务（平台超管）
+      description: |
+        `tenantId=0` 表示整桶（平台对象），>0 只搬 `t/<id>/` 前缀。
+        `dryRun=true` 只统计不复制；`autoSwitch=true` 仅在零失败且非试运行时
+        把对应绑定切到目标档案（保留原 CDN 分发）。只复制不删除源对象。
+      tags: [平台管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageMigrationCreate" }
+      responses:
+        "200":
+          description: code=0（data 为任务）；code=1 参数错误 / 档案不存在
+  /api/admin/storage-migration-jobs/{id}/run:
+    post:
+      summary: 启动（或断点续跑）迁移任务
+      description: 异步执行，进度按对象落库；上次位点 lastKey 之后继续。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=1 已在运行 / 已完成
+  /api/admin/storage-migration-jobs/{id}/cancel:
+    post:
+      summary: 取消运行中的迁移任务
+      description: 协作式取消：每个对象之间检查状态，已复制对象不回滚。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=1 任务未在运行中
+  /api/admin/storage-migration-jobs/{id}/errors:
+    get:
+      summary: 迁移失败对象清单（最多 1000 条）
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0（data 为 objectKey / error / createdAt 数组）
+
   # ── 租户授权（B4）与存储配额（B3）──────────────────────────────────────
   # 这两个能力默认都是「不限制」：授权只在**开通企业时**落一条试用行，存量企业无行 = 不限；
   # 存储配额全局缺省 0 = 不限。升级不得让存量部署突然开始拦人，因此默认值都是放行。
@@ -6926,3 +7159,48 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    StorageProfileSave:
+      type: object
+      description: 所有字段均可省略；省略即保留原值（新建时用服务端缺省）
+      properties:
+        name: { type: string, description: 档案名，展示用，全局唯一 }
+        driver: { type: string, enum: [local, minio, oss, s3] }
+        endpoint: { type: string, description: "host[:port]，不带 scheme 与路径" }
+        bucket: { type: string }
+        region: { type: string }
+        baseUrl: { type: string, description: 上传返回基址（平台统一入口），云端驱动必填 }
+        pathStyle: { type: boolean }
+        hostHeader: { type: string, description: "留空或等于 endpoint 为路径风格；<bucket>.<域名> 为虚拟主机风格" }
+        useSsl: { type: boolean }
+        localDir: { type: string, description: driver=local 的独立根目录；留空用平台 uploads }
+        accessKey: { type: string, description: 明文写入；省略保留，空串清空 }
+        secretKey: { type: string, description: 明文写入，永不回传 }
+        publicRead: { type: boolean, description: 第一阶段只支持 true }
+    DeliveryProfileSave:
+      type: object
+      description: 所有字段均可省略；省略即保留原值
+      properties:
+        name: { type: string, description: 分发档案名，全局唯一 }
+        provider: { type: string, enum: [none, aliyun, tencent, qiniu, cloudflare, cloudfront, custom] }
+        domain: { type: string, description: 公开访问域名，含 https:// 前缀 }
+        pathPrefix: { type: string }
+        accessKey: { type: string }
+        secretKey: { type: string, description: 永不回传 }
+        endpoint: { type: string, description: 刷新接口端点，留空按厂商默认 }
+        resourceId: { type: string, description: Cloudflare Zone ID / CloudFront Distribution ID }
+    StorageBindingSave:
+      type: object
+      required: [storageProfileId]
+      properties:
+        storageProfileId: { type: integer, format: int64 }
+        deliveryProfileId: { type: integer, format: int64, description: 0 = 不启用 CDN }
+    StorageMigrationCreate:
+      type: object
+      required: [sourceProfileId, targetProfileId]
+      properties:
+        tenantId: { type: integer, format: int64, description: "0 = 整桶；>0 只搬 t/<id>/" }
+        sourceProfileId: { type: integer, format: int64 }
+        targetProfileId: { type: integer, format: int64 }
+        dryRun: { type: boolean, description: 只统计不复制 }
+        autoSwitch: { type: boolean, description: 零失败且非试运行时切换绑定 }

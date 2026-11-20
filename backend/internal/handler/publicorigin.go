@@ -31,6 +31,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// profileOriginResolver 由三处启动入口注入（cmd/server、cmd/devserver、测试 harness）。
+//
+// 为什么用函数变量而不是在 publicOriginFor 里直接读 storageprofile：handler 包
+// 不该依赖具体解析器实现，测试也要能在不建档案表的情况下保持旧行为。
+// 返回 false 表示「档案没有接管这家企业」，继续走既有自有域名判定。
+var profileOriginResolver func(cid int64) (model.Origin, bool)
+
+// SetProfileOriginResolver 注入档案出参判定（幂等，重复调用以最后一次为准）。
+func SetProfileOriginResolver(fn func(cid int64) (model.Origin, bool)) { profileOriginResolver = fn }
+
 // publicOriginState 判定一行配置此刻的 origin 实况。
 //
 // 三态缺一不可，少了任何一个都没法向超管解释「为什么没生效」：
@@ -87,6 +97,13 @@ func publicOriginStateFor(db *gorm.DB, cid int64) (base string, active bool, rea
 // 再加一层 TTL / 版本缓存就要多维护一套失效逻辑；这里只是主键上的一次轻量查询，
 // 而 9 条公开 GET 里 5 条本来就有 60 秒边缘缓存。
 func publicOriginFor(db *gorm.DB, cid int64) model.Origin {
+	// 档案绑定的分发域名优先：它是用户在新模块里选的那套 CDN。
+	// 没有绑定 / 域名不合法时继续走旧口径，不把配置错误变成裂图。
+	if profileOriginResolver != nil {
+		if origin, ok := profileOriginResolver(cid); ok {
+			return origin
+		}
+	}
 	base, active, _ := publicOriginStateFor(db, cid)
 	if !active || base == "" {
 		return model.PlatformOrigin()
