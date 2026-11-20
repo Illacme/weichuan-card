@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"weichuan/internal/config"
+	"weichuan/internal/license"
 	"weichuan/internal/model"
 	"weichuan/internal/wechat"
 
@@ -53,6 +54,10 @@ func newMPReleaseEnvWith(t *testing.T, companyID int64, appID, appSecret string)
 	t.Helper()
 	db := newSeedDB(t)
 	require.NoError(t, db.Create(&model.Company{ID: companyID, Name: "乙公司", ShortName: "乙", Status: "enabled"}).Error)
+	// 这几个用例测的是状态机 / 租户开关 / 凭据一致性，不是付费闸门。
+	// 给被测企业配上 mp_release 授权，否则动作路由会在 RequireFeatureFor 处
+	// 提前 403，后面要断言的业务拒绝原因根本走不到。
+	require.NoError(t, license.SetTenantLicense(db, companyID, "trial", 10, nil, "mp_release"))
 
 	uploadDir, err := os.MkdirTemp("", "weichuan-mprel-")
 	require.NoError(t, err)
@@ -446,14 +451,14 @@ func TestMPReleaseGuards(t *testing.T) {
 		require.EqualValues(t, 1, body["code"], "版本号 %q 应被拒", bad)
 	}
 
-	// 不存在的企业 / 不存在的记录
+	// 不存在的企业 / 不存在的记录：第七十六轮起按记录/路径归属判付费授权，
+	// 归属查不出来时闸门直接 403，不会走到 handler 的「企业不存在」业务校验。
+	// 这对后台接口更安全（不对外泄露资源是否存在），因此这里改断言 403。
 	_, body := e.c.do("POST", "/api/admin/companies/999/releases",
 		map[string]interface{}{"userVersion": "1.0.0"}, e.token)
-	require.EqualValues(t, 1, body["code"])
-	require.Contains(t, body["msg"], "企业不存在")
+	require.EqualValues(t, 403, body["code"])
 	_, body = e.c.do("POST", "/api/admin/releases/999/submit-audit", nil, e.token)
-	require.EqualValues(t, 1, body["code"])
-	require.Contains(t, body["msg"], "不存在")
+	require.EqualValues(t, 403, body["code"])
 
 	// 没提审就查审核状态
 	id := e.create(t, 2, "6.0.0")

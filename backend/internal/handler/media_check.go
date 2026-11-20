@@ -151,10 +151,10 @@ func recordMediaCheck(db *gorm.DB, p mediachk.Params, d mediachk.Decision, sourc
 		// note 会随整行回后台列表，绝不写原始错误：微信 SDK 的网络错里带完整
 		// 请求 URL（?access_token=...），落库等于把凭据复制进 DB 和接口出参。
 		row.Note = "send_failed: 微信接口调用失败"
-		log.Printf("[MEDIA-CHECK] send_failed url=%s err=%s", d.URL, redactWXSecretText(err.Error()))
+		log.Printf("[MEDIA-CHECK] send_failed url=%s err=%s", redactURLForLog(d.URL), redactWXSecretText(err.Error()))
 	} else {
 		row.TraceID = trace
-		log.Printf("[MEDIA-CHECK] submitted trace=%s url=%s", trace, d.URL)
+		log.Printf("[MEDIA-CHECK] submitted trace=%s url=%s", trace, redactURLForLog(d.URL))
 	}
 	if db != nil {
 		if err := db.Create(row).Error; err != nil {

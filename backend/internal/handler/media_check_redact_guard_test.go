@@ -22,8 +22,10 @@ func TestMediaCheckNoteSourcesAreSanitized(t *testing.T) {
 		"送检失败的备注禁止拼接任何动态错误（err.Error 里会带 access_token）")
 	require.Regexp(t, `updates\["note"\]\s*=\s*redactWXSecretText\(`, s,
 		"回调写回的备注必须经过凭据打码")
-	require.Regexp(t, `err=%s",\s*d\.URL,\s*redactWXSecretText\(err\.Error\(\)\)\)`, s,
-		"服务端日志允许留错误，但必须先打掉 access_token")
+	require.Regexp(t, `err=%s",\s*redactURLForLog\(d\.URL\),\s*redactWXSecretText\(err\.Error\(\)\)\)`, s,
+		"服务端日志的错误要打 token；URL 也要剥 query（私有桶签名在 query 里）")
+	require.Regexp(t, `submitted trace=%s url=%s",\s*trace,\s*redactURLForLog\(d\.URL\)`, s,
+		"成功日志同样不能把签名 URL 原样打出来")
 }
 
 func TestRedactWXSecretText(t *testing.T) {
@@ -95,5 +97,19 @@ func TestRedactWXSecretText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, redactWXSecretText(tc.in))
 		})
+	}
+}
+
+func TestRedactURLForLog(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"签名 URL 去掉整段 query", "https://bucket.oss.cn/t/5/a.png?X-Amz-Signature=deadbeef&X-Amz-Credential=AK", "https://bucket.oss.cn/t/5/a.png"},
+		{"微信 access_token 也一并去掉", "https://api.weixin.qq.com/x?access_token=tk123&scene=2", "https://api.weixin.qq.com/x"},
+		{"裸对象键的签名参数也要截掉", "t/5/a.png?X-Amz-Signature=abc", "t/5/a.png"},
+		{"fragment 同样去掉", "https://x.com/a.png#sig=xyz", "https://x.com/a.png"},
+		{"普通 URL 原样保留", "https://x.com/a.png", "https://x.com/a.png"},
+		{"空串", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { require.Equal(t, tc.want, redactURLForLog(tc.in)) })
 	}
 }

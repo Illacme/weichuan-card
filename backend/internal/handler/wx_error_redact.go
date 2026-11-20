@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"net/url"
 	"regexp"
+	"strings"
 )
 
 // 微信 SDK / net/http 的错误文本里常常带着完整请求 URL：
@@ -36,4 +38,30 @@ func redactWXSecretText(s string) string {
 	out = wxURLCodePattern.ReplaceAllString(out, "${1}***")
 	out = wxJSONTokenPattern.ReplaceAllString(out, "${1}***${2}")
 	return wxJSONSecretPattern.ReplaceAllString(out, "${1}***${2}")
+}
+
+// redactURLForLog 在写日志前剥掉 URL 的 query 与 fragment。
+//
+// 为什么不能只打 access_token：私有桶的限时签名 URL 把凭据放在
+// X-Amz-Signature / X-Amz-Credential / Signature 等参数里，而且不同厂商名字不同。
+// 逐名打码一定漏，直接去掉整段 query 才不会随日志扩散（日志会被采集、被贴工单、
+// 被长期留存，签名 URL 在有效期内等于一条免登录的读权限）。
+//
+// 非 URL 字符串（如裸对象键 `t/5/a.jpg?X-Amz-Signature=...`）同样截到 ?/# 前，
+// 否则签名字段还是会被打出来。只用于日志，不用于任何真实请求。
+func redactURLForLog(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if u, err := url.Parse(s); err == nil && u.Scheme != "" && u.Host != "" {
+		u.RawQuery = ""
+		u.Fragment = ""
+		u.ForceQuery = false
+		return u.String()
+	}
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

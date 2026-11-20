@@ -26,7 +26,7 @@ const globalData = {
 // 应用后台下发的公开配置：只覆盖「已配置」的项，留空的项保持当前值。
 // allowBackendOverride=false 时（develop 环境）不应用后台下发的 miniprogram_base_url，
 // 以免把开发者工具的测试请求又指回生产（后台下发的是生产地址）。
-// 手动 Storage 覆盖仍可在 develop 下生效（它在 resolveBaseUrl 中优先级最高）。
+// 手动 Storage 覆盖仍可在 develop / trial 下生效；release 会忽略它，避免残留调试地址劫持首连。
 function applySettings(data: PublicSettings | null, allowBackendOverride: boolean) {
   if (!data) return
   const url = baseUrlOf(data)

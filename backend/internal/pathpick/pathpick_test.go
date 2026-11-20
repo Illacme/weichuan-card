@@ -3,6 +3,7 @@ package pathpick
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"weichuan/internal/mpupload"
@@ -193,19 +194,33 @@ func TestListWithoutDirPicksAllowedRoot(t *testing.T) {
 
 func TestEntriesSortedDirsBeforeFiles(t *testing.T) {
 	root := makeFixture(t)
+	// fixture 根目录里只有目录（可执行文件在 bin/ 子目录），原来的用例因此
+	// 永远走不到 file 分支，唯一断言还是 require.True(t, true)——把排序反过来
+	// 测试照样绿。这里在根目录补两个可执行文件，让两类条目都真的出现在结果里。
+	for _, rel := range []string{"aaa-dir", "zzz-dir"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(root, rel), 0o755))
+	}
+	for _, rel := range []string{"aaa-node", "zzz-node"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("#!/bin/sh\n"), 0o755))
+	}
+
 	res, err := List(root, mpupload.KindNodeBin, []string{root})
 	require.NoError(t, err)
-	// 至少有一个目录在文件之前（fixture 里 bin/app/mod/plain 都是目录，无文件；改测通用排序）
-	dirSeen := false
+
+	var dirs, files []string
+	seenFile := false
 	for _, e := range res.Entries {
-		if e.Type == "dir" {
-			dirSeen = true
-		}
-		if e.Type == "file" && dirSeen {
-			// 文件出现前必须已经见过目录
-			require.True(t, true)
+		if e.Type == "file" {
+			seenFile = true
+			files = append(files, e.Name)
+		} else {
+			require.False(t, seenFile, "目录 %q 出现在文件之后", e.Name)
+			dirs = append(dirs, e.Name)
 		}
 	}
+	require.NotEmpty(t, dirs, "量尺自检：结果里必须有目录")
+	require.Equal(t, []string{"aaa-node", "zzz-node"}, files, "可执行文件必须按名升序")
+	require.True(t, sort.StringsAreSorted(dirs), "目录必须按名升序：%v", dirs)
 }
 
 // ---- 空切片 / 选中路径：界面渲染的直接依赖 ----

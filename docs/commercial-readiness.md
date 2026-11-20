@@ -5680,3 +5680,24 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 - 系统设置里的 `storage_*` 全局单值（①）**仍然保留**，但只作三件事：`STORAGE_*` / `MINIO_*`
   环境变量的界面映射、PII 密文凭据的可 re-key 通道（档案是明文）、以及回滚通道。
   **新功能一律只进档案，① 只维护不加功能。** 完整边界见 `docs/tenant-storage-design.md` §0.1。
+
+## 第七十六轮：体检后修掉的六个边角缺口（2026-11-20）
+
+一次四维度审查（后端安全 / 文档对账 / 测试守门 / 前端小程序）后，逐条核实并修复的问题。
+主干没有被推翻，集中在「绿了但没真正守住」的边角接口。
+
+| # | 问题 | 机制 | 修法 |
+| --- | --- | --- | --- |
+| 1 | **私有桶签名可跨租户（P0）** | `signHandler` 从 URL 反推 key 后直接拿调用者的实例签名，不校验归属。平台盘为私有桶时，任何登录用户都能拿公开名片页上别家的 `t/<cid>/…` URL 换到签名地址（可枚举 IDOR）。同文件 `thumbEnsureHandler` 早有归属校验，两条路径标准不一致 | `signerForKey` 按对象归属选实例（`t/` → 该企业的桶、`p/` → 平台实例、历史裸键只放平台超管），不符回 403。守门 `TestSignHandlerChecksObjectOwnership` 6 组 |
+| 2 | **Feature 闸门按错租户判（P0）** | `RequireFeature` 走 `resolveTenantForLicense`，平台超管无 `?companyId=` 时回落默认租户 1。`/api/admin/releases/:id/*` 只有记录 id → 「5 号没买、1 号买了，照样给 5 号发布」，按租户收费失效 | 新增 `RequireFeatureFor(name, tenantOf)`；路径维度从 `:id` 取并**校验企业存在**（否则 `ResolveFor` 回退全局授权会放行虚构企业），记录维度从库的 `row.CompanyID` 取。守门 `TestRequireFeatureForUsesRecordOwner` 含反向验证 |
+| 3 | **CDN 刷新静默回退** | `DynamicCDN.Refresh` 在解析/构造失败时悄悄落到平台 refresher，`base==nil` 直接 `return nil`。企业配了分发档案但凭据写错时，违规图下架后边缘仍是旧图却报成功 | 有分发档案时失败一律报错并禁止回落；没有分发档案才走平台 refresher。守门 `TestDynamicCDNFailsLoudlyWhenDeliveryProfileBroken` |
+| 4 | **送检日志泄露签名** | `media_check.go` 把 `d.URL` 原样打日志，私有桶预签名 query（`X-Amz-Signature` 等）进日志后被采集、贴工单长期留存 | `redactURLForLog` 剥掉整段 query/fragment（逐名打码一定会漏新厂商），源码守门同步盯住两条日志 |
+| 5 | **一条守门恒真** | `TestEntriesSortedDirsBeforeFiles` 的 fixture 根目录全是目录、file 分支根本不执行，唯一断言是 `require.True(t, true)` | 补真实可执行文件让两类条目都出现，断言「目录在前 + 各自按名升序」。**反向验证**：临时反转排序后必红、还原复绿 |
+| 6 | **正式版被调试地址劫持** | `mpBaseUrlOverride` 在 release 仍是最高优先级；真机调试写入忘清 → 首连打到残留地址 → 拿不到后台配置 → 后台下发的生产基址也救不回来 | release 忽略手动覆盖，develop/trial 保留。新增 2 条 spec |
+
+**顺带**：`mp_release` 测试夹具补上 `mp_release` 租户授权（否则动作路由在闸门处提前 403，测不到状态机）；
+不存在资源的断言由 `code:1` 改为 `code:403`（闸门先于业务校验，对后台接口更安全，不泄露资源是否存在）；
+OpenAPI 的签名接口补归属口径描述。
+
+验证：gofmt / vet / build / go test ./... 全绿，golangci-lint 0 issues；
+前端 type-check / lint / **1881 tests** / build 全过；openapi 134 paths + selftest；audit-labels 通过。

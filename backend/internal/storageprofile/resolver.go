@@ -627,20 +627,37 @@ func (d *DynamicCDN) Configured() bool {
 	return d.base != nil || (d.prof != nil && d.prof.HasDeliveryBinding())
 }
 
+// Refresh 按 URL 所属企业选 CDN 刷新器。
+//
+// 第七十六轮修掉一处静默回退：早先 Resolve 失败或 NewCDNRefresher 构造失败时
+// 会悄悄落到平台全局 refresher（base），base 为空则直接 return nil——
+// 企业配了分发档案但凭据写错时，违规图下架后边缘仍是旧图，接口却报成功。
+// 这与本包「绑定存在但档案坏了要报错，绝不静默回退」的纪律直接冲突。
+//
+// 判据不是「进程里有没有任何分发绑定」（HasDeliveryBinding 是全局的，
+// 不能用来判断**这家**有没有绑定），而是本次解析得到的 eff.Delivery：
+//   - 有分发档案 → 用它的凭据刷；失败就报错，不回落；
+//   - 没有分发档案 → 走平台全局 refresher（base），没有就 no-op；
+//   - 解析档案本身失败 → 报错，因为此时根本不知道该刷哪个 CDN。
 func (d *DynamicCDN) Refresh(urls []string) error {
 	if d.prof != nil {
 		eff, err := d.prof.Resolve(TenantFromURLs(urls...))
-		if err == nil && eff.Delivery != nil {
+		if err != nil {
+			return fmt.Errorf("读取分发档案失败，已拒绝静默回落到平台 CDN：%w", err)
+		}
+		if eff.Delivery != nil {
 			if eff.Delivery.Provider == "none" || eff.Delivery.Provider == "" {
-				return nil
+				return nil // 明确配了「不刷新」
 			}
-			if rf, err := storage.NewCDNRefresher(storage.CDNConfig{
+			rf, err := storage.NewCDNRefresher(storage.CDNConfig{
 				Provider: eff.Delivery.Provider, AccessKeyID: eff.Delivery.AccessKey,
 				AccessKeySecret: eff.Delivery.SecretKey, Endpoint: eff.Delivery.Endpoint,
 				ResourceID: eff.Delivery.ResourceID,
-			}); err == nil {
-				return rf.Refresh(urls)
+			})
+			if err != nil {
+				return fmt.Errorf("分发档案的 CDN 凭据无效，已拒绝静默回落到平台 CDN：%w", err)
 			}
+			return rf.Refresh(urls)
 		}
 	}
 	if d.base == nil {

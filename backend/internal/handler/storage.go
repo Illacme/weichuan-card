@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -264,18 +266,19 @@ func capabilityHandler(res storage.Resolver) gin.HandlerFunc {
 // 退到「只认 /uploads/ 段」的兜底，而租户对象存库的形态是
 // <平台入口>/uploads/t/<cid>/x.jpg，从里面反推 t/<cid>/x.jpg 是确定性的。
 // 改入参形态等于让前端跟着改，收益为零、回归面却是一整条链路。
+//
+// **归属校验（第七十六轮补）**：入参 urls 完全由客户端提供，早先反推出 key 后
+// 直接拿 `res.For(调用者 cid)` 签名，不校验 key 属不属于这个 cid。平台盘为私有桶时，
+// 平台实例持有全部 t/<cid>/ 对象的签名权，任何登录用户都能拿公开名片页上别家的
+// URL 换到签名地址（可枚举的 IDOR）。同文件 thumbEnsureHandler 早就做了
+// `ref.Scope/ref.CompanyID != cid → 403`，这里必须同口径。
+//
+// 另一条同源纪律：**按对象归属选实例**，不按调用者身份选。租户对象用自己的桶签、
+// 平台对象用平台实例签——用 A 的凭据去签 B 桶里的 key，签名对不上，端上照样 404，
+// 而且没有任何报错。两者一起改才能既堵越权又不出半截故障。
 func signHandler(res storage.Resolver, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		up, uerr := res.For(uploadCompanyID(c))
-		if uerr != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
-			return
-		}
-		s, ok := up.(storage.Signer)
-		if !ok {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "当前存储模式不支持限时签名访问（仅对象存储私有桶支持）"})
-			return
-		}
+		cid := uploadCompanyID(c)
 		var req struct {
 			Urls []string `json:"urls"`
 		}
@@ -293,6 +296,17 @@ func signHandler(res storage.Resolver, cfg config.Config) gin.HandlerFunc {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "无法解析对象 key: " + u})
 				return
 			}
+
+			s, err := signerForKey(cid, key, res)
+			if err != nil {
+				code := 1
+				if errors.Is(err, storage.ErrScopeMismatch) {
+					code = 403
+				}
+				c.JSON(http.StatusOK, gin.H{"code": code, "msg": err.Error()})
+				return
+			}
+
 			signed, err := s.SignGetURL(key, signTTL("sign_get_ttl_minutes", 30))
 			if err != nil {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
@@ -302,6 +316,48 @@ func signHandler(res storage.Resolver, cfg config.Config) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"signed": out}})
 	}
+}
+
+// signerForKey 校验 key 归属并给出**与该对象同源**的签名器。
+//
+// 三种形态分开处理，不能合并成一个 bool：
+//   - t/<cid>/…：租户对象。cid>0 时只许签自己；平台超管（cid=0）可代签任意企业。
+//   - p/…：平台对象（素材 / 小程序码 / 下架占位图），恒用平台实例。
+//   - 历史裸键：无归属信息、对象在平台盘。只放平台超管；租户签它等于能碰平台盘上
+//     别家的老对象，而这类数据本来就归 P3 搬迁处理，不值得为它开这个口子。
+//
+// 用 ErrScopeMismatch 包装拒绝，handler 据此回 403 而非 code:1——
+// 「没权限」和「签不了」的处置动作完全不同。
+func signerForKey(cid int64, key string, res storage.Resolver) (storage.Signer, error) {
+	var (
+		up  storage.Uploader
+		err error
+	)
+	ref, perr := storage.ParseRef(key)
+	switch {
+	case perr == nil && ref.Scope == storage.ScopeTenant:
+		if cid > 0 && ref.CompanyID != cid {
+			return nil, fmt.Errorf("%w: 无权签名企业 %d 的对象", storage.ErrScopeMismatch, ref.CompanyID)
+		}
+		up, err = res.For(ref.CompanyID)
+	case perr == nil: // ScopePlatform
+		up = res.Platform()
+	case errors.Is(perr, storage.ErrLegacyRef):
+		if cid > 0 {
+			return nil, fmt.Errorf("%w: 历史形态对象不支持租户签名，请联系平台迁移后再试", storage.ErrScopeMismatch)
+		}
+		up = res.Platform()
+	default:
+		return nil, fmt.Errorf("对象键非法：%w", perr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	s, ok := up.(storage.Signer)
+	if !ok {
+		return nil, errors.New("当前存储模式不支持限时签名访问（仅对象存储私有桶支持）")
+	}
+	return s, nil
 }
 
 // signTTL 取限时签名时长（分钟）：优先系统设置，未配置 / 非法时回落 def，

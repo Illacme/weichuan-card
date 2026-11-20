@@ -118,9 +118,34 @@ func EnforceLicense(db *gorm.DB) gin.HandlerFunc {
 // RequireFeature 功能开关拦截：授权未开通该 feature 时拒绝请求（code=403）。
 // 用于把「可选能力」（如小程序代发 mp_release）按授权收紧；授权无 Features 约束（nil/空）时视为全部开通。
 // 同样按当前租户解析授权（Phase 4）：可以给 A 企业开通代发、B 企业不开。
+//
+// **只适用于租户维度路由**（URL 里带企业 id，或企业管理员身份自带 companyId）。
+// 记录维度路由（如 /api/admin/releases/:id/*）必须改用 RequireFeatureFor：
+// resolveTenantForLicense 对平台超管且无 ?companyId= 的请求会回落到默认租户 1，
+// 于是「5 号企业没买、1 号买了，超管仍能给 5 号发布」——按租户收费直接失效。
 func RequireFeature(name string) gin.HandlerFunc {
+	return RequireFeatureFor(name, func(c *gin.Context) (int64, bool) {
+		return resolveTenantForLicense(c), true
+	})
+}
+
+// RequireFeatureFor 与 RequireFeature 相同，但租户由调用方从请求里解析。
+//
+// tenantOf 返回 (companyID, ok)：
+//   - ok=false 表示**无法确定归属**，一律 403，不能退化成默认租户或平台授权
+//     （「判不出来就放行」等于收费闸门可以靠删参数绕过）；
+//   - companyID=0 表示平台自有对象（如平台小程序的发布记录），走平台授权 Current()。
+//
+// 记录维度路由应从**数据库里的记录**取归属，而不是信 URL 里的另一个 id——
+// 后者会出现「URL 写 A、记录属于 B」的错配。
+func RequireFeatureFor(name string, tenantOf func(*gin.Context) (int64, bool)) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ent := license.ResolveFor(c.Request.Context(), resolveTenantForLicense(c))
+		cid, ok := tenantOf(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 403, "msg": "无法确认该记录所属企业，已拒绝操作"})
+			return
+		}
+		ent := license.ResolveFor(c.Request.Context(), cid)
 		if !ent.HasFeature(name) {
 			c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 403, "msg": "当前授权未开通该功能：" + name})
 			return

@@ -20,8 +20,10 @@ package handler
 //
 // 三条安全底线（都由本文件强制执行，不依赖调用方自觉）：
 //  1. 状态机白名单（model.CanTransition）：只登记过的流向才允许，非法流转一律拒绝；
-//  2. 租户开关（company_wx_app.release_enabled）：企业关掉代发后一切动作拒绝；
-//  3. AppID 一致性：登记时记下用的哪个小程序，动作时重新解析凭据比对，
+//  2. 授权功能开关（RequireFeatureFor）：按**记录自身的企业**判定，不能按 query 的
+//     默认租户——否则「5 号没买、1 号买了」也能给 5 号发布；
+//  3. 租户开关（company_wx_app.release_enabled）：企业关掉代发后一切动作拒绝；
+//  4. AppID 一致性：登记时记下用的哪个小程序，动作时重新解析凭据比对，
 //     不一致就拒绝——否则企业换过小程序后，会把审核/发布打到别的小程序上去。
 //
 // 另有两个「微信侧不可逆」的代价在接口形状上可见：撤回审核要求显式
@@ -82,27 +84,72 @@ func RegisterMPRelease(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.GET("/api/admin/companies/:id/releases", plat, func(c *gin.Context) {
 		listMPReleases(c, db)
 	})
-	r.POST("/api/admin/companies/:id/releases", plat, RequireFeature("mp_release"), func(c *gin.Context) {
+	r.POST("/api/admin/companies/:id/releases", plat, RequireFeatureFor("mp_release", mpReleasePathTenant(db)), func(c *gin.Context) {
 		createMPRelease(c, db, cfg)
 	})
 	r.GET("/api/admin/companies/:id/releases/upload-readiness", plat, func(c *gin.Context) {
 		syncMPReleaseUploadReadiness(c, db, cfg)
 	})
-	r.POST("/api/admin/companies/:id/releases/upload", plat, RequireFeature("mp_release"), func(c *gin.Context) {
+	r.POST("/api/admin/companies/:id/releases/upload", plat, RequireFeatureFor("mp_release", mpReleasePathTenant(db)), func(c *gin.Context) {
 		uploadMPRelease(c, db, cfg)
 	})
-	r.POST("/api/admin/releases/:id/submit-audit", plat, RequireFeature("mp_release"), func(c *gin.Context) {
+	// 动作组只有记录 id，没有企业 id。租户必须从记录自身查出来——
+	// 用默认的 RequireFeature 会回落到 1 号租户，让按租户售卖的功能形同虚设。
+	fromRecord := RequireFeatureFor("mp_release", mpReleaseRecordTenant(db))
+	r.POST("/api/admin/releases/:id/submit-audit", plat, fromRecord, func(c *gin.Context) {
 		submitMPReleaseAudit(c, db, cfg)
 	})
+	// 只读轮询不改状态，不放功能闸门（与列表接口同口径）；归属仍由 handler 按 row 校验。
 	r.GET("/api/admin/releases/:id/audit-status", plat, func(c *gin.Context) {
 		syncMPReleaseAuditStatus(c, db, cfg)
 	})
-	r.POST("/api/admin/releases/:id/release", plat, RequireFeature("mp_release"), func(c *gin.Context) {
+	r.POST("/api/admin/releases/:id/release", plat, fromRecord, func(c *gin.Context) {
 		releaseMPRelease(c, db, cfg)
 	})
-	r.POST("/api/admin/releases/:id/undo-audit", plat, RequireFeature("mp_release"), func(c *gin.Context) {
+	r.POST("/api/admin/releases/:id/undo-audit", plat, fromRecord, func(c *gin.Context) {
 		undoMPReleaseAudit(c, db, cfg)
 	})
+}
+
+// mpReleasePathTenant 从 /api/admin/companies/:id/... 的路径参数取企业。
+// 平台超管路由没有 query，不能用 resolveTenantForLicense（它会回落到默认租户）。
+//
+// 必须自己查企业是否存在：license.ResolveFor 对「查不到租户授权行」会回落到平台
+// 全局授权（Phase 1–3 的兼容语义），于是虚构的企业 id 反而可能拿到全局的
+// 「全部功能已开通」，绕过闸门一路走到 handler。查不到就 ok=false → 403。
+func mpReleasePathTenant(db *gorm.DB) func(*gin.Context) (int64, bool) {
+	return func(c *gin.Context) (int64, bool) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id <= 0 {
+			return 0, false
+		}
+		var n int64
+		if err := db.Model(&model.Company{}).Where("id = ?", id).Count(&n).Error; err != nil || n == 0 {
+			return 0, false
+		}
+		return id, true
+	}
+}
+
+// mpReleaseRecordTenant 从 /api/admin/releases/:id/... 的**数据库记录**取企业。
+//
+// 为什么不信 URL 里的企业 id：这两条路由压根没有企业 id，而记录归属是写入时
+// 就定死的。由记录反查还能挡住「拿 A 的授权去操作 B 的记录」这种错配。
+// company_id=0 是平台自有小程序，返回 0 走平台授权（license.Current()）。
+//
+// 解析不出来时返回 ok=false → 403，绝不退回默认租户放行。
+func mpReleaseRecordTenant(db *gorm.DB) func(*gin.Context) (int64, bool) {
+	return func(c *gin.Context) (int64, bool) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id <= 0 {
+			return 0, false
+		}
+		var row model.MPRelease
+		if err := db.Select("company_id").First(&row, id).Error; err != nil {
+			return 0, false
+		}
+		return row.CompanyID, true
+	}
 }
 
 // releaseAllowed 该企业是否允许平台代发版本。

@@ -40,9 +40,13 @@ export const DEFAULT_BASE_URL = 'https://weichuan.ziyuanxingqiu.cn'
 // 据此让「开发者工具联调」自动走测试后端，体验版 / 正式版走生产，无需手动改代码或重新打包。
 //
 // 优先级（从高到低）：
-//   1. 手动覆盖 Storage['mpBaseUrlOverride'] —— 临时顶替自动选择（如想让 develop 也连生产验证）
+//   1. 手动覆盖 Storage['mpBaseUrlOverride'] —— **仅 develop / trial**，正式版忽略
 //   2. envVersion==='develop' → DEV_BASE_URL（测试后端）
 //   3. 其余（trial / release）→ DEFAULT_BASE_URL（生产种子，并允许后台 miniprogram_base_url 下发覆盖）
+//
+// 正式版为什么忽略手动覆盖：真机调试往 Storage 写过一个地址又忘了清，它会一直
+// 顶在最高优先级；首连就打到残留地址 → fetchPublicSettings 拿不到后台配置 →
+// 后台下发的生产基址也救不回来，正式版持续指向错误后端且无可观测报错。
 //
 // 注意：DEV_BASE_URL 仅在 develop 下使用，永不进正式版请求链；发布前即使它还是
 // `http://127.0.0.1:8080` 也安全（preflight 第 3 节只扫 DEFAULT_BASE_URL，不会误拦）。
@@ -80,11 +84,16 @@ export function baseUrlOverride(): string {
   }
 }
 
-// 解析冷启动使用的基址：手动覆盖 > develop 走测试地址 > 否则生产种子。
+// 解析冷启动使用的基址：调试覆盖（非 release）> develop 测试地址 > 生产种子。
 export function resolveBaseUrl(): string {
-  const ov = baseUrlOverride()
-  if (ov) return ov
-  if (wxEnvVersion() === 'develop') return DEV_BASE_URL
+  const env = wxEnvVersion()
+  // 正式版不读手动覆盖：它只服务于开发者工具 / 体验版联调，
+  // 一旦残留进正式版就会劫持首连且后台下发救不回来（见文件头说明）。
+  if (env !== 'release') {
+    const ov = baseUrlOverride()
+    if (ov) return ov
+  }
+  if (env === 'develop') return DEV_BASE_URL
   return DEFAULT_BASE_URL
 }
 

@@ -3393,6 +3393,10 @@ paths:
     post:
       tags: [存储]
       summary: 私有桶限时签名（按 URL 反推 key）
+      description: |
+        按对象归属校验：t/<企业id>/ 只许该企业签名（平台超管可代签），p/ 平台对象用平台实例。
+        提交别家企业的对象键、或租户提交历史裸键，一律 code=403。签名实例按对象归属选，
+        不按调用者身份选——否则签名凭据对不上对象所在的桶。
       security:
         - cookieAuth: []
       requestBody:
@@ -3429,6 +3433,8 @@ paths:
     post:
       tags: [存储]
       summary: 私有桶限时签名（员工端）
+      description: |
+        归属口径与后台接口一致：只能签本企业的 t/<企业id>/ 对象，别家对象 code=403。
       security:
         - bearerAuth: []
       requestBody:

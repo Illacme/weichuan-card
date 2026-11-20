@@ -187,6 +187,16 @@ describe('config', () => {
       expect(resolveBaseUrl()).toBe('https://manual.example.com')
     })
 
+    it('resolveBaseUrl：release 忽略遗留的手动覆盖（防止调试地址劫持正式版首连）', () => {
+      stubWx({ mpBaseUrlOverride: 'http://127.0.0.1:8080' }, { miniProgram: { envVersion: 'release' } })
+      expect(resolveBaseUrl()).toBe(DEFAULT_BASE_URL)
+    })
+
+    it('resolveBaseUrl：trial 仍允许手动覆盖（体验版联调用）', () => {
+      stubWx({ mpBaseUrlOverride: 'https://trial.example.com' }, { miniProgram: { envVersion: 'trial' } })
+      expect(resolveBaseUrl()).toBe('https://trial.example.com')
+    })
+
     it('resolveBaseUrl：无覆盖时 develop 走 DEV_BASE_URL，release 走 DEFAULT_BASE_URL', () => {
       stubWx({}, { miniProgram: { envVersion: 'develop' } })
       expect(resolveBaseUrl()).toBe(DEV_BASE_URL)
