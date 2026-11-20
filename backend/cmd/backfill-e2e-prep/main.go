@@ -1,8 +1,8 @@
 // Command backfill-e2e-prep 是 tools/backfill-e2e 灰度装置的**取证准备**工具。
 //
 // 它不属于生产二进制，只做几件 shell 做不了的事：
-//   - upsert：建真桶、清掉上一轮遗留的 t/<cid>/ 对象、把 tenant_storage_configs
-//     配置行用 pii.Encrypt 写进真 MySQL（凭据密文没法用 SQL 拼）；
+//   - upsert：建真桶、清掉上一轮遗留的 t/<cid>/ 对象、把「存储档案 + 企业绑定」
+//     写进真 MySQL（运行时只认档案这一套模型）；
 //   - delete：删掉配置行，用来验「缺配置时回填必须显式失败、不回退平台盘」；
 //   - stat：用**签名 GET** 从真桶把对象读回来，输出 size 与 sha256。
 //     curl 不会签 SigV4，直接从 POSIX 后端目录读又证明不了「服务端真的认这个对象」；
@@ -117,10 +117,10 @@ func main() {
 	if err != nil {
 		fail("连接数据库失败：%v", err)
 	}
-	if err := db.Where("company_id = ?", *cid).Delete(&model.TenantStorageConfig{}).Error; err != nil {
-		fail("删除配置行失败：%v", err)
+	if err := db.Where("tenant_id = ?", *cid).Delete(&model.StorageBinding{}).Error; err != nil {
+		fail("删除绑定失败：%v", err)
 	}
-	fmt.Println("已删除 company_id 的配置行")
+	fmt.Println("已删除该企业的档案绑定")
 }
 
 func prepare(ctx context.Context, client *minio.Client, dsn, ak, sk, endpoint, bucket string, cid int64, clean bool) {
@@ -154,33 +154,36 @@ func prepare(ctx context.Context, client *minio.Client, dsn, ak, sk, endpoint, b
 		}
 	}
 
-	akEnc, err := pii.Encrypt(ak)
-	if err != nil {
-		fail("加密 AccessKey 失败：%v", err)
-	}
-	skEnc, err := pii.Encrypt(sk)
-	if err != nil {
-		fail("加密 SecretKey 失败：%v", err)
-	}
 	db, _, err := dbopen.Open(dsn)
 	if err != nil {
 		fail("连接数据库失败：%v", err)
 	}
-	if err := db.Where("company_id = ?", cid).Delete(&model.TenantStorageConfig{}).Error; err != nil {
-		fail("清掉旧配置行失败：%v", err)
+	// 同一家企业重复 upsert 时先清旧绑定，避免唯一索引冲突；
+	// 档案本身按名字 upsert，不重复建。
+	if err := db.Where("tenant_id = ?", cid).Delete(&model.StorageBinding{}).Error; err != nil {
+		fail("清掉旧绑定失败：%v", err)
 	}
+	name := fmt.Sprintf("backfill-e2e-%d", cid)
 	now := time.Now()
-	row := model.TenantStorageConfig{
-		CompanyID: cid, Driver: nginxsnippet.DriverMinio,
+	sp := model.StorageProfile{
+		Name: name, Driver: nginxsnippet.DriverMinio,
 		Endpoint: endpoint, Bucket: bucket, Region: "us-east-1",
-		AccessKeyEnc: akEnc, SecretKeyEnc: skEnc,
-		Enabled: true, Status: "ok", PublicRead: true,
-		CreatedAt: now, UpdatedAt: now,
+		AccessKey: ak, SecretKey: sk,
+		Status: "ok", PublicRead: true, UseSSL: true,
+		CreatedAt: now, UpdatedAt: now, Version: 1,
 	}
-	if err := db.Create(&row).Error; err != nil {
-		fail("写配置行失败：%v", err)
+	if err := db.Where("name = ?", name).Delete(&model.StorageProfile{}).Error; err != nil {
+		fail("清掉旧档案失败：%v", err)
 	}
-	fmt.Printf("桶 %s 就绪；company_id=%d 配置行已写入（清理了 %d 个旧对象）\n", bucket, cid, len(stale))
+	if err := db.Create(&sp).Error; err != nil {
+		fail("写存储档案失败：%v", err)
+	}
+	if err := db.Create(&model.StorageBinding{
+		TenantID: cid, StorageProfileID: sp.ID, Version: 1, UpdatedBy: "backfill-e2e-prep",
+	}).Error; err != nil {
+		fail("写档案绑定失败：%v", err)
+	}
+	fmt.Printf("桶 %s 就绪；company_id=%d 档案 #%d 已绑定（清理了 %d 个旧对象）\n", bucket, cid, sp.ID, len(stale))
 }
 
 // putSourceObject 往平台源桶写一个「历史形态」对象：键是 legacyRel 推出的

@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"weichuan/internal/dbopen"
-	"weichuan/internal/pii"
 	"weichuan/internal/refmigrate"
+	"weichuan/internal/storageprofile"
 
 	"gorm.io/gorm"
 )
@@ -78,7 +78,7 @@ func localStores(src refmigrate.ObjectStore, dstDir string) (*refmigrate.Stores,
 	}, nil
 }
 
-// tenantStores 是真桶目标：按 company_id 解密配置得到的客户桶。
+// tenantStores 是真桶目标：按 company_id 取该企业的生效存储档案。
 //
 // 刻意不提供「目标没配就回退到平台盘」这种便利：那会复制出一堆看似成功的对象，
 // 库也改成 t/<cid>/...，但真正的客户桶里一个都没有。配置缺失必须显式报错。
@@ -87,15 +87,9 @@ func tenantStores(src refmigrate.ObjectStore, db *gorm.DB, dstDir string) (*refm
 		return nil, fmt.Errorf("--target-store=tenant 时不要给 --target-dir：" +
 			"两者同时出现无法判断哪个生效，真桶模式绝不读本地目标目录")
 	}
-	// 凭据解密依赖与写配置行时同一把钥匙。用内置 dev 密钥去解生产库里的密文
-	// 会以 GCM 认证失败告终，但报错像「数据被篡改」；这里先把真正的原因说清楚。
-	if pii.UsingPlaceholderKey() {
-		return nil, fmt.Errorf("--target-store=tenant 必须显式设置 %s（与写 tenant_storage_configs 时同一把钥匙），"+
-			"当前在用内置 dev 密钥", pii.KeyEnvVar)
-	}
 	return &refmigrate.Stores{
 		Source:    src,
-		TargetFor: refmigrate.TenantTargetFor(db, ""),
+		TargetFor: refmigrate.TenantTargetFor(storageprofile.New(db)),
 	}, nil
 }
 

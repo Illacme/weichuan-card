@@ -123,15 +123,20 @@ func TestRegisterFuncsTakeResolver(t *testing.T) {
 // TestAssemblyPassesResolverNotUploader 盯三处装配里最容易被漏掉的那一处。
 //
 // 项目纪律是「新增 handler.RegisterX 必须同时改 main.go / devserver / buildEngine 三处，
-// 漏 devserver = 静默 404」。本轮不新增路由，但把参数类型换了——漏改一处就是编译不过，
-// 所以这里的价值不在"能不能编译"，而在于**三处都真的用了 resolver 而不是自己包一层
-// 假分流**（例如图省事写 NewStaticResolver 到生产里，租户路由就永远不生效）。
+// 漏 devserver = 静默 404」。这一轮把「平台实例 + 档案解析」合并成同一个
+// storage.Resolver 实现（storageprofile.Resolver），所以三处装配都必须
+// SetPlatform 注入平台实例、并把 resolver 本身往下传。
+//
+// 为什么不能图省事退回 StaticResolver：那会让租户桶永远不生效——档案界面配了、
+// 上传却一直写平台盘，而任何地方都不会报错。
 func TestAssemblyPassesResolverNotUploader(t *testing.T) {
 	src, err := os.ReadFile("handler_test.go")
 	require.NoError(t, err)
 	body := stripGoComments(string(src))
-	require.Contains(t, body, "storage.NewStaticResolver(up, cfg.StorageDriver)",
-		"buildEngine 必须用 StaticResolver 包住传入的 up：测试默认不启租户分流")
+	require.Contains(t, body, "profiles.SetPlatform(up, cfg.StorageDriver)",
+		"buildEngine 必须把平台实例注入档案解析器")
+	require.Contains(t, body, "var effective storage.Resolver = profiles",
+		"buildEngine 必须直接把档案解析器当 storage.Resolver 用")
 
 	// 三处装配都要把 resolver 往下传，不能还留着旧的 up。
 	require.NotContains(t, body, "RegisterUpload(r, db, cfg, up,",
@@ -143,10 +148,16 @@ func TestAssemblyPassesResolverNotUploader(t *testing.T) {
 		src, err := os.ReadFile(f)
 		require.NoError(t, err)
 		body := stripGoComments(string(src))
-		require.True(t,
-			strings.Contains(body, "storage.NewStaticResolver(") &&
-				strings.Contains(body, "uploadroute.New("),
-			"%s 必须同时有「默认走 StaticResolver」与「开关打开后走 uploadroute.New」两条分支", f)
+		require.Contains(t, body, "profiles.SetPlatform(up, cfg.StorageDriver)",
+			"%s 必须把平台实例注入档案解析器", f)
+		// 静态包装层已整体移出生产包（测试桩在 internal/storage/testsupport），
+		// 这里连「测试支持包」一起拦：装配点引用它等于把桩当成生产实现。
+		require.NotContains(t, body, "NewStaticResolver(",
+			"%s 不得再装配静态解析器：租户桶会永远不生效", f)
+		require.NotContains(t, body, "storage/testsupport",
+			"%s 不得把测试桩包进生产装配", f)
+		require.NotContains(t, body, "uploadroute.",
+			"%s 还在引用已删除的 uploadroute 包", f)
 	}
 }
 

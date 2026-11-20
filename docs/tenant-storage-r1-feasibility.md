@@ -92,7 +92,7 @@ nginx 手上没有 `root`，也就没有静态文件路径。
 （`site.conf` 里那行 `include /cfg/snippets/*.conf`）。
 
 **生成器在 `backend/internal/nginxsnippet` + `backend/cmd/nginx-snippets`**，
-不是运维脚本：它要读 `tenant_storage_configs`、要被配置接口调用，属于后端代码；
+不是运维脚本：它要读存储档案（`storage_profiles` + `storage_bindings`）、要被配置接口调用，属于后端代码；
 而且 snippet 里每一行都对应一个静默失败的坑，必须能用单测钉住。
 三条不变量（尾斜杠、`proxy_pass` 不带 URI、hide 在 add 之前）写在包注释里，
 由 `snippet_test.go` 逐条断言。
@@ -173,9 +173,9 @@ S3 把路径第一段当成了桶名。所以生成器现在按 `host_header` �
 
 > **第六十九轮补记（2026-11-14）**：`public_base_url` 的配置面（第六十八轮）与
 > 出参侧按租户选 origin（第六十九轮）**已在代码侧闭环**，别再把上文「留空」读成
-> 「这列现在不能用」。但 `TENANT_STORAGE_ROUTE` 默认仍 off，且
-> `handler.publicOriginState` 要求对象真的写进客户桶后域名才生效，
-> 所以第一阶段试点的**实际效果**与留空一致。
+> 「这列现在不能用」。第七十五轮起域名配在 `delivery_profiles.domain`，
+> 且 `Resolver.Diagnose` 要求对象真的写进客户桶后域名才生效（判定与写入侧同一个函数），
+> 所以「填了域名但对象还在平台盘」这种状态会明确回报为未生效，不会静默裂图。
 > **R1-b 本身没有闭环**：一旦翻开关、客户自有 CDN 接在前面，「谁 Purge 租户自有边缘」
 > 仍必须先回答，下架覆盖写违规图在客户 CDN 留一年的风险不变。
 > 另新增一条翻开关前检查项：按租户选 origin 后接入层 cache key 必须含

@@ -1,11 +1,13 @@
 package handler
 
-// 第六十九轮「出参侧按租户选 origin」的守门与端到端取证。
+// 「出参侧按租户选 origin」的守门与端到端取证。
 //
-// 这一轮最容易骗过自己的做法，是只断言「publicBaseUrlActive 变成 true」——
+// 这一层最容易骗过自己的做法，是只断言「publicBaseUrlActive 变成 true」——
 // 那只是后台界面上的一个布尔值。真正的承诺是「访客拿到的对象 URL 真的换了域名，
-// 且平台对象没有被误换」。所以下面必须有真发 GET 的集成用例，
-// 并且把开关 off / on 两态都跑一遍，证明默认值下是零行为变更。
+// 且平台对象没有被误换」。所以下面必须有真发 GET 的集成用例。
+//
+// 判定只有一份：storageprofile.Resolver.OriginFor / Diagnose，按「谁在写对象」
+// 分叉。历史上有过 tenant_storage_configs 那一套五道关判定，第七十五轮删除。
 
 import (
 	"testing"
@@ -16,94 +18,116 @@ import (
 	"gorm.io/gorm"
 )
 
-// activeRow 是一行「其它条件全齐」的配置。凭据列只判非空，不需要真密文：
-// tenantStorageActive 关心的是「凭据是否完整」，不是能否解密（解密失败是上传侧的事）。
-func activeRow() *model.TenantStorageConfig {
-	return &model.TenantStorageConfig{
-		CompanyID:     1,
-		Driver:        "minio",
-		Endpoint:      "play.min.io",
-		Bucket:        "wc-demo",
-		HostHeader:    "wc-demo.play.min.io",
-		AccessKeyEnc:  "v1:stub-ak",
-		SecretKeyEnc:  "v1:stub-sk",
-		PublicBaseURL: "https://img.cust.com",
-		PublicRead:    true,
-		Enabled:       true,
+// seedCloudBinding 给 1 号企业绑一套「云桶 + 分发域名」，返回两个档案 id。
+func seedCloudBinding(t *testing.T, db *gorm.DB) (profileID, deliveryID int64) {
+	t.Helper()
+	sp := model.StorageProfile{
+		Name: "云桶", Driver: "minio", Endpoint: "play.min.io", Bucket: "wc-demo",
+		HostHeader: "wc-demo.play.min.io", AccessKey: "AK-STUB", SecretKey: "SK-STUB",
+		BaseURL: "http://127.0.0.1:8080/uploads", PublicRead: true, UseSSL: true, Version: 1,
 	}
+	require.NoError(t, db.Create(&sp).Error)
+	dp := model.DeliveryProfile{
+		Name: "cdn", Provider: "aliyun", Domain: "https://img.cust.com", Version: 1,
+	}
+	require.NoError(t, db.Create(&dp).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{
+		TenantID: 1, StorageProfileID: sp.ID, DeliveryProfileID: dp.ID, Version: 1,
+	}).Error)
+	return sp.ID, dp.ID
 }
 
-// TestPublicOriginStateFollowsRealConditions 钉住「填了不等于生效」。
+// TestPublicOriginDiagnosisFollowsWriteOwnership 钉住「填了不等于生效」，
+// 且每种未生效都给出可照做的原因。
 //
 // 每个负例都对应一种真实的线上状态；放行任何一个，都会把出参 URL 指到
 // 一个取不到对象的客户域名，而后台看起来一切正常。
-func TestPublicOriginStateFollowsRealConditions(t *testing.T) {
-	t.Setenv("TENANT_STORAGE_ROUTE", "on")
+func TestPublicOriginDiagnosisFollowsWriteOwnership(t *testing.T) {
+	_, db := bindingEngine(t)
+	profileID, deliveryID := seedCloudBinding(t, db)
 
-	base, active, reason := publicOriginState(activeRow())
+	base, active, reason := publicOriginDiagnosis(1)
 	require.Equal(t, "https://img.cust.com", base)
 	require.True(t, active)
 	require.Empty(t, reason, "生效时不该挂一段没生效的解释")
 
+	// 档案的即时生效靠 version 递增（解析器按 version 判快照是否过期），
+	// 直接改列而不升版本等于「改了但运行时看不见」——那正是这条守门要防的。
+	bumpVersions := func(t *testing.T) {
+		t.Helper()
+		for _, tbl := range []string{"storage_profiles", "delivery_profiles", "storage_bindings"} {
+			require.NoError(t, db.Exec("UPDATE "+tbl+" SET version = version + 1").Error)
+		}
+	}
+
 	cases := []struct {
 		name       string
-		mut        func(*model.TenantStorageConfig)
+		mut        func(t *testing.T)
 		wantReason string
 	}{
-		{"没登记域名", func(r *model.TenantStorageConfig) { r.PublicBaseURL = "" }, ""},
-		{"域名带路径", func(r *model.TenantStorageConfig) { r.PublicBaseURL = "https://img.cust.com/prefix" }, "不合法"},
-		{"域名带 scheme 之外的内容", func(r *model.TenantStorageConfig) { r.PublicBaseURL = "javascript:alert(1)" }, "不合法"},
-		{"配置未启用", func(r *model.TenantStorageConfig) { r.Enabled = false }, "配置未启用"},
-		{"驱动是 local", func(r *model.TenantStorageConfig) { r.Driver = "local" }, "本地磁盘"},
-		{"凭据不完整", func(r *model.TenantStorageConfig) { r.SecretKeyEnc = "" }, "凭据不完整"},
-		{"私有桶", func(r *model.TenantStorageConfig) { r.PublicRead = false }, "403"},
+		{"没绑分发档案", func(t *testing.T) {
+			require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 1).
+				Update("delivery_profile_id", 0).Error)
+		}, "没有绑定分发域名"},
+		{"域名带路径", func(t *testing.T) {
+			require.NoError(t, db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).
+				Update("domain", "https://img.cust.com/prefix").Error)
+		}, "不合法"},
+		{"域名是伪协议", func(t *testing.T) {
+			require.NoError(t, db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).
+				Update("domain", "javascript:alert(1)").Error)
+		}, "不合法"},
+		{"驱动是 local", func(t *testing.T) {
+			require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", profileID).
+				Update("driver", "local").Error)
+		}, "本地磁盘"},
+		{"私有桶", func(t *testing.T) {
+			require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", profileID).
+				Update("public_read", false).Error)
+		}, "403"},
 	}
-	require.GreaterOrEqual(t, len(cases), 7, "量尺要有读数：负例集合不能被悄悄删短")
+	require.GreaterOrEqual(t, len(cases), 5, "量尺要有读数：负例集合不能被悄悄删短")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			row := activeRow()
-			tc.mut(row)
-			gotBase, gotActive, gotReason := publicOriginState(row)
+			// 每个子用例都从「条件齐全」重新开始，避免前一个用例的修改串味。
+			require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", profileID).
+				Updates(map[string]any{"driver": "minio", "public_read": true}).Error)
+			require.NoError(t, db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).
+				Update("domain", "https://img.cust.com").Error)
+			require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 1).
+				Update("delivery_profile_id", deliveryID).Error)
+			bumpVersions(t)
+			_, ok, _ := publicOriginDiagnosis(1)
+			require.True(t, ok, "基线必须先成立，否则下面的负例是空对空")
+
+			tc.mut(t)
+			bumpVersions(t)
+
+			gotBase, gotActive, gotReason := publicOriginDiagnosis(1)
 			require.Empty(t, gotBase, "未生效时 origin 必须为空串，不能把半截域名传给出参")
 			require.False(t, gotActive)
-			if tc.wantReason != "" {
-				require.Contains(t, gotReason, tc.wantReason)
-			}
+			require.Contains(t, gotReason, tc.wantReason)
 		})
 	}
 
-	t.Run("路由开关未开", func(t *testing.T) {
-		t.Setenv("TENANT_STORAGE_ROUTE", "off")
-		gotBase, gotActive, gotReason := publicOriginState(activeRow())
+	t.Run("没绑定", func(t *testing.T) {
+		gotBase, gotActive, gotReason := publicOriginDiagnosis(99)
 		require.Empty(t, gotBase)
 		require.False(t, gotActive)
-		require.Contains(t, gotReason, "TENANT_STORAGE_ROUTE")
-	})
-
-	t.Run("没配置行", func(t *testing.T) {
-		gotBase, gotActive, gotReason := publicOriginState(nil)
-		require.Empty(t, gotBase)
-		require.False(t, gotActive)
-		require.Contains(t, gotReason, "尚未配置")
+		require.Contains(t, gotReason, "未绑定")
 	})
 }
 
-// TestPublicOriginForRequiresActiveRow 证明「按 cid 读库」与「按行判定」是同一份结论，
-// 且默认开关 off 时出参零行为变更。
-func TestPublicOriginForRequiresActiveRow(t *testing.T) {
+// TestPublicOriginForRequiresBinding 证明「按 cid 查解析器」与「诊断」是同一份结论。
+func TestPublicOriginForRequiresBinding(t *testing.T) {
 	_, db := bindingEngine(t)
-	require.NoError(t, db.Create(activeRow()).Error)
+	seedCloudBinding(t, db)
 
-	t.Setenv("TENANT_STORAGE_ROUTE", "off")
-	require.Equal(t, model.PlatformOrigin(), publicOriginFor(db, 1),
-		"开关默认 off，填了域名也不能改变任何出参")
-
-	t.Setenv("TENANT_STORAGE_ROUTE", "on")
-	o := publicOriginFor(db, 1)
+	o := publicOriginFor(1)
 	require.Equal(t, "https://img.cust.com", o.Base)
 	require.EqualValues(t, 1, o.CompanyID, "CompanyID 必须跟着走，否则归属判定无从做起")
-	require.Equal(t, model.PlatformOrigin(), publicOriginFor(db, 99), "没配过的企业走平台入口")
-	require.Equal(t, model.PlatformOrigin(), publicOriginFor(db, 0), "cid<=0 不做无效查询")
+	require.Equal(t, model.PlatformOrigin(), publicOriginFor(99), "没绑定的企业走平台入口")
+	require.Equal(t, model.PlatformOrigin(), publicOriginFor(0), "cid<=0 不做无效查询")
 }
 
 // TestPublicSettingsAssetOrigin 钉住 /api/public/settings 的诊断出参。
@@ -113,8 +137,7 @@ func TestPublicOriginForRequiresActiveRow(t *testing.T) {
 func TestPublicSettingsAssetOrigin(t *testing.T) {
 	r, db := bindingEngine(t)
 	c := newTestClient(r, t)
-	require.NoError(t, db.Create(activeRow()).Error)
-	t.Setenv("TENANT_STORAGE_ROUTE", "on")
+	seedCloudBinding(t, db)
 
 	_, env := c.do("GET", "/api/public/settings", nil, "")
 	require.EqualValues(t, 0, env["code"])
@@ -125,12 +148,6 @@ func TestPublicSettingsAssetOrigin(t *testing.T) {
 	require.Equal(t, "https://img.cust.com", env["assetOrigin"])
 	require.Equal(t, true, env["assetOriginActive"])
 	require.Equal(t, "", env["assetOriginNote"])
-
-	t.Setenv("TENANT_STORAGE_ROUTE", "off")
-	_, env = c.do("GET", "/api/public/settings?companyId=1", nil, "")
-	require.Equal(t, "", env["assetOrigin"])
-	require.Equal(t, false, env["assetOriginActive"])
-	require.Contains(t, env["assetOriginNote"], "TENANT_STORAGE_ROUTE")
 
 	// 非法 / 缺失的 companyId 一律不回传，别让 ParseInt 的 0 落到缺省企业上。
 	for _, q := range []string{"?companyId=0", "?companyId=-1", "?companyId=abc"} {
@@ -152,12 +169,12 @@ func setCompanyLogo(t *testing.T, db *gorm.DB, logo string) {
 	require.NoError(t, db.Save(&ci).Error)
 }
 
-// TestPublicCompanyGetUsesTenantOrigin 是本轮的主取证：真发公开 GET，
+// TestPublicCompanyGetUsesTenantOrigin 是本层的主取证：真发公开 GET，
 // 证明访客拿到的 URL 真的换了域名，且平台对象 / 历史裸键没有被误换。
 func TestPublicCompanyGetUsesTenantOrigin(t *testing.T) {
 	r, db := bindingEngine(t)
 	c := newTestClient(r, t)
-	require.NoError(t, db.Create(activeRow()).Error)
+	profileID, _ := seedCloudBinding(t, db)
 
 	getLogo := func() string {
 		_, env := c.do("GET", "/api/company?companyId=1", nil, "")
@@ -169,35 +186,29 @@ func TestPublicCompanyGetUsesTenantOrigin(t *testing.T) {
 		return v
 	}
 
+	// ① 条件齐全：本租户新键换成客户域名。
 	setCompanyLogo(t, db, "t/1/logo.png")
-
-	// ① 默认开关 off：与第六十八轮完全一致，零行为变更。
-	t.Setenv("TENANT_STORAGE_ROUTE", "off")
-	require.Equal(t, "/uploads/t/1/logo.png", getLogo())
-
-	// ② 开关打开且条件齐全：本租户新键换成客户域名。
-	t.Setenv("TENANT_STORAGE_ROUTE", "on")
 	require.Equal(t, "https://img.cust.com/uploads/t/1/logo.png", getLogo())
 
-	// ③ 平台对象不在客户桶里，必须继续走平台入口。
+	// ② 平台对象不在客户桶里，必须继续走平台入口。
 	setCompanyLogo(t, db, "p/library/logo.png")
 	require.Equal(t, "/uploads/p/library/logo.png", getLogo())
 
-	// ④ 历史无前缀裸键同样还在平台盘上。
+	// ③ 历史无前缀裸键同样还在平台盘上。
 	setCompanyLogo(t, db, "old-logo.png")
 	require.Equal(t, "/uploads/old-logo.png", getLogo())
 
-	// ⑤ 别家租户的键不能指到这家的域名。
+	// ④ 别家租户的键不能指到这家的域名。
 	setCompanyLogo(t, db, "t/9/logo.png")
 	require.Equal(t, "/uploads/t/9/logo.png", getLogo())
 
-	// ⑥ 存量绝对 URL 原样返回（改了老数据立刻裂图）。
+	// ⑤ 存量绝对 URL 原样返回（改了老数据立刻裂图）。
 	setCompanyLogo(t, db, "https://cdn.old.example.com/logo.png")
 	require.Equal(t, "https://cdn.old.example.com/logo.png", getLogo())
 
-	// ⑦ 配置停用后同一秒内就退回平台入口，不依赖缓存过期。
+	// ⑥ 档案改成本地后同一秒内就退回平台入口，不依赖缓存过期。
 	setCompanyLogo(t, db, "t/1/logo.png")
-	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
-		Where("company_id = ?", 1).Update("enabled", false).Error)
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", profileID).
+		Updates(map[string]any{"driver": "local", "version": 2}).Error)
 	require.Equal(t, "/uploads/t/1/logo.png", getLogo())
 }

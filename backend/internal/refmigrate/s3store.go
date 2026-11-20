@@ -10,11 +10,10 @@ import (
 
 	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/storage"
-	"weichuan/internal/uploadroute"
+	"weichuan/internal/storageprofile"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"gorm.io/gorm"
 )
 
 // 本文件是 P3 的「按 company_id 回源真桶」适配器（第六十六轮）。
@@ -23,7 +22,7 @@ import (
 // t/<cid>/ 所以不串号，但它证明不了「对象真的进了客户的桶」。真桶适配器要补的
 // 不是「再实现一个 ObjectStore」这么简单，有三条不能退的约束：
 //
-//  1. **无静默降级**。DBLoader 的 (nil, nil) 语义是「这家没配，走平台实例」，
+//  1. **无静默降级**。解析器的「没有绑定」语义是「走平台实例」，
 //     在上传链路里完全正确；在搬迁链路里却是最坏的结果——对象被复制到平台盘的
 //     新键下、库也改成 t/<cid>/...，后台显示搬迁成功，等把流量切到客户桶才发现
 //     那边一个对象都没有。所以这里把 (nil, nil) 转成**显式错误**。
@@ -35,7 +34,7 @@ import (
 //     所有错误只压成「错误码 + HTTP 状态码」。
 
 // S3StoreConfig 是构造一家租户 S3 适配器所需的全部输入（凭据已解密）。
-// 与 uploadroute.Config 分开，是为了让 NewS3Store 不依赖数据库，可被 httptest 单测。
+// 独立于档案模型，是为了让 NewS3Store 不依赖数据库，可被 httptest 单测。
 type S3StoreConfig struct {
 	CompanyID  int64
 	Driver     string
@@ -97,7 +96,7 @@ func NewS3Store(cfg S3StoreConfig) (*S3Store, error) {
 		if host != strings.TrimSpace(cfg.Endpoint) {
 			return nil, fmt.Errorf("企业 %d 的 hostHeader=%q 与 endpoint=%q 不是同一个域名："+
 				"回填命令不经 nginx，无法改写 Host/SNI；请用路径风格（hostHeader 留空或等于 endpoint）。"+
-				"客户自有访问域名请填 public_base_url，不要改 hostHeader",
+				"客户自有访问域名请配在分发档案的 domain 上，不要改 hostHeader",
 				cfg.CompanyID, cfg.HostHeader, cfg.Endpoint)
 		}
 	}
@@ -217,39 +216,45 @@ var _ ObjectStore = (*S3Store)(nil)
 
 // TenantTargetFor 返回「按 company_id 组装真桶」的 TargetFor。
 //
-// platformBase 恒传空串即可：回填不生成任何公开 URL，Config.BaseURL /
-// PublicOrigin 都不参与 S3Store 构造。私有桶（public_read=false）也不拦回填：
-// 凭据在手就能写对象，「公开读与否」只影响端上能不能直接取，那是上传侧
-// uploadroute.build 的边界，不是搬迁的边界。两条链路对同一份配置解释不同，
-// 与 (nil, nil) 在这里必须转成错误是同一条纪律。
+// 只认存储档案 + 绑定这一套模型（第七十五轮起也是唯一一套）。
+// 没有绑定 / 档案是 local / 档案读失败，一律返回 error，**绝不回退平台盘**：
+// 对象会被复制到平台本地目录、库也改成 t/<cid>/...，后台显示搬迁成功，
+// 等把流量切到客户桶才发现那边一个对象都没有。
 //
-// 与 uploadroute.Resolver.For 的区别必须记住：那里 (nil, nil) 是「走平台实例」，
-// 这里必须变成错误。两者共享同一个 DBLoader（查表 + 解密 + NeedsSnippet 判定），
-// 但**对三态的解释不同**——这正是「回填绝不回退平台盘」的落点。
-func TenantTargetFor(db *gorm.DB, platformBase string) func(int64) (ObjectStore, error) {
-	load := uploadroute.DBLoader(db, platformBase)
+// 私有桶（public_read=false）不拦回填：凭据在手就能写对象，「公开读与否」
+// 只影响端上能不能直接取，那是上传侧 buildUploader 的边界，不是搬迁的边界。
+// 两条链路对同一份配置解释不同，与「没有绑定必须转成错误」是同一条纪律。
+func TenantTargetFor(prof *storageprofile.Resolver) func(int64) (ObjectStore, error) {
 	return func(cid int64) (ObjectStore, error) {
 		if cid <= 0 {
 			return nil, fmt.Errorf("company_id=%d 不是合法租户", cid)
 		}
-		cfg, err := load(cid)
+		eff, err := prof.Resolve(cid)
 		if err != nil {
-			return nil, fmt.Errorf("企业 %d 的自有存储读取失败（不回退平台盘）：%w", cid, err)
+			return nil, fmt.Errorf("企业 %d 的存储档案读取失败（不回退平台盘）：%w", cid, err)
 		}
-		if cfg == nil {
-			return nil, fmt.Errorf("企业 %d 没有生效的自有桶配置（没配 / 未启用 / driver=local）："+
+		if eff.Storage == nil {
+			return nil, fmt.Errorf("企业 %d 没有绑定存储档案（对象在平台盘上）："+
 				"不回退平台盘——那样对象只会被复制到平台本地目录，客户桶里一个都没有", cid)
 		}
+		sp := eff.Storage
+		if sp.Driver == nginxsnippet.DriverLocal {
+			return nil, fmt.Errorf("企业 %d 的生效档案是本地磁盘（driver=local）：没有可回填的桶，"+
+				"不回退平台盘——对象本来就在平台盘上，复制到平台盘没有意义", cid)
+		}
+		// NginxTarget 已经把 endpoint 剥成 host[:port] 并解析出 use_ssl，
+		// 与 nginx 生成侧、上传侧同一个口径——回填这里不再自己判一次。
+		t := storageprofile.NginxTarget(cid, sp)
 		st, err := NewS3Store(S3StoreConfig{
-			CompanyID:  cfg.CompanyID,
-			Driver:     cfg.Driver,
-			Endpoint:   cfg.Endpoint,
-			Bucket:     cfg.Bucket,
-			Region:     cfg.Region,
-			UseSSL:     cfg.UseSSL,
-			HostHeader: cfg.HostHeader,
-			AccessKey:  cfg.AccessKey,
-			SecretKey:  cfg.SecretKey,
+			CompanyID:  cid,
+			Driver:     t.Driver,
+			Endpoint:   t.Endpoint,
+			Bucket:     t.Bucket,
+			Region:     sp.Region,
+			UseSSL:     t.UseSSL,
+			HostHeader: t.HostHeader,
+			AccessKey:  sp.AccessKey,
+			SecretKey:  sp.SecretKey,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("企业 %d 的真桶适配器不可用（不回退平台盘）：%w", cid, err)

@@ -22,7 +22,7 @@
 | 层 | 谁做 | 断言 |
 | --- | --- | --- |
 | 真 S3 端点 | versitygw（POSIX 后端，验 SigV4） | 匿名 GET 必须是 **403**，拿到 200 就停下（那是个不验签名的桩） |
-| 真配置行 | `backend/cmd/backfill-e2e-prep -mode upsert` | 凭据经 `pii.Encrypt` 写进真 MySQL `tenant_storage_configs`；桶不存在则创建；清掉上一轮 `t/<cid>/` 旧对象 |
+| 真档案绑定 | `backend/cmd/backfill-e2e-prep -mode upsert` | 写一套真 MySQL `storage_profiles` + `storage_bindings`（凭据明文入库）；桶不存在则创建；清掉上一轮 `t/<cid>/` 旧对象 |
 | 存量对象 | `tools/backfill-fixture/seed.sql` | company 7 的 3 条 `/uploads/shared-logo.png` 引用，去重成 1 个 20 字节对象 |
 | 只读盘点 | `storage-backfill plan --company 7` | 3 条待搬 / 1 个对象；九张业务表 `CHECKSUM` 不变 |
 | 预检 | `apply --target-store tenant --dry-run` | 零写入：库值不变、校验和不变、桶里无对象 |

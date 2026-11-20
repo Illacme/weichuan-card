@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,7 +11,6 @@ import (
 	"weichuan/internal/middleware"
 	"weichuan/internal/model"
 	"weichuan/internal/nginxsnippet"
-	"weichuan/internal/pii"
 	"weichuan/internal/storage"
 	"weichuan/internal/storageprofile"
 
@@ -62,12 +59,7 @@ type deliveryProfileReq struct {
 }
 
 // RegisterStorageProfiles 挂载存储档案 / 分发档案 / 绑定关系接口。
-//
-// uploadBaseURL 是平台的「上传返回基址」（cfg.UploadBaseURL）。只有「旧配置转档案」
-// 需要它：旧表从不存这一列，legacy 的 BaseURL 恒取平台统一入口
-// （见 uploadroute.Config.BaseURL 的注释）。档案必须显式存下来，
-// 否则接管出来的档案一上传就因为「基址为空」被 uploadroute.build 拒掉。
-func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofile.Resolver, uploadBaseURL string) {
+func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofile.Resolver) {
 	plat := middleware.PlatformAdminMiddleware(db)
 	admin := middleware.AuthMiddleware(db, "admin")
 
@@ -105,123 +97,6 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		storageProfileAudit(c, db, audit.ActionStorageProfileUpdate, row.ID, row)
-		touchProfileResolver(resolver)
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": storageProfileView(row)})
-	})
-
-	// 旧配置 → 档案：把 tenant_storage_configs 的一行转成一套档案并绑定给该企业。
-	//
-	// 为什么需要这条路径：档案化之后旧表仍被 --source=auto 认（兼容层），
-	// 但企业想用 CDN 分发、多套切换、一键迁移这些能力就必须进档案。
-	// 没有这条桥，已上线客户只能手工重填一遍 AK/SK——而凭据本来就在库里。
-	//
-	// 四条安全约束，都来自「接管 = 立刻改行为」：
-	//  1. 旧配置必须 enabled 且驱动非 local：档案不受 TENANT_STORAGE_ROUTE 控制，
-	//     接管一条停用配置等于偷偷把上传切走。
-	//  2. 先探桶再落库：桶连不上就接管，等于把那家企业的上传全打死。
-	//  3. **绝不修改旧表**：留作回滚通道；接管后 auto 让位给档案，
-	//     真要回滚只需删掉绑定。
-	//  4. 已有绑定直接拒绝：重复接管会造出第二套同源档案，越点越乱。
-	r.POST("/api/admin/storage-profiles/adopt-legacy", plat, func(c *gin.Context) {
-		if writeLocked(c) {
-			return
-		}
-		var req struct {
-			CompanyID int64 `json:"companyId"`
-			Force     bool  `json:"force"`
-		}
-		if c.ShouldBindJSON(&req) != nil || req.CompanyID <= 0 {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请指定 companyId"})
-			return
-		}
-		var comp model.Company
-		if db.First(&comp, req.CompanyID).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
-			return
-		}
-		var legacy model.TenantStorageConfig
-		switch err := db.Where("company_id = ?", req.CompanyID).First(&legacy).Error; {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该企业没有旧的存储配置可接管：直接新建一套档案并绑定即可"})
-			return
-		case err != nil:
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取旧配置失败，请稍后重试"})
-			return
-		}
-		if legacy.Driver == nginxsnippet.DriverLocal {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置是本地磁盘（对象在平台盘上），接管没有意义：请直接选择或新建一套档案"})
-			return
-		}
-		if !legacy.Enabled {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置未启用：接管会让上传立刻改走该桶。请先在旧配置里启用并自检通过，或直接新建档案"})
-			return
-		}
-		if !legacy.PublicRead {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置未开启公开读：档案同样只支持公开读桶"})
-			return
-		}
-		var bound model.StorageBinding
-		if db.Where("tenant_id = ?", req.CompanyID).First(&bound).Error == nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": fmt.Sprintf(
-				"该企业已绑定存储档案 #%d：请直接改选，或先「恢复继承」再接管", bound.StorageProfileID)})
-			return
-		}
-		// 凭据从 PII 密文解出来。注意 pii.Decrypt 对没有 v1: 前缀的值按
-		// 「历史明文」原样返回（兼容尚未回填的旧数据），所以这里只能靠
-		// 「解密报错 / 结果为空」两条拦住真坏的情况。
-		ak, err := pii.Decrypt(legacy.AccessKeyEnc)
-		if err != nil || strings.TrimSpace(ak) == "" {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置的 AccessKey 无法解密（PII_ENC_KEY 与写入时不一致）：请先到旧配置里重填一次密钥"})
-			return
-		}
-		sk, err := pii.Decrypt(legacy.SecretKeyEnc)
-		if err != nil || strings.TrimSpace(sk) == "" {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置的 SecretKey 无法解密（PII_ENC_KEY 与写入时不一致）：请先到旧配置里重填一次密钥"})
-			return
-		}
-		row := &model.StorageProfile{
-			Name: adoptProfileName(db, &comp), Driver: legacy.Driver,
-			Endpoint: legacy.Endpoint, Bucket: legacy.Bucket, Region: legacy.Region,
-			HostHeader: legacy.HostHeader, UseSSL: legacy.UseSSL,
-			AccessKey: strings.TrimSpace(ak), SecretKey: strings.TrimSpace(sk),
-			PublicRead: true, BaseURL: strings.TrimSpace(uploadBaseURL),
-			Status: storageStatusUnknown, Version: 1,
-		}
-		if msg := validateStorageProfile(row); msg != "" {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "旧配置不足以生成档案：" + msg})
-			return
-		}
-		if !req.Force {
-			cfg := storageProfileUploadConfig(row)
-			if _, perr := storage.ProbeBucket(cfg.Driver, cfg.Endpoint, row.AccessKey, row.SecretKey,
-				cfg.Bucket, cfg.Region, cfg.UseSSL); perr != nil {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "桶连通性自检失败，已拒绝接管（确认无误可勾选「跳过探桶」重试）：" + sanitizeProbeError(perr)})
-				return
-			}
-		}
-		if err := db.Create(row).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建档案失败：档案名可能已存在"})
-			return
-		}
-		if err := saveBinding(db, req.CompanyID, row.ID, 0, c.GetString("actorName")); err != nil {
-			// 档案已建但绑定失败：把它删掉，避免留下一条没人引用的孤儿档案。
-			// 删除失败只记日志——孤儿档案无害（没有绑定就不参与任何解析），
-			// 但不能让「删除失败」掩盖真正的绑定错误。
-			if delErr := db.Delete(&model.StorageProfile{}, row.ID).Error; delErr != nil {
-				log.Printf("[STORAGE][WARN] 接管失败后清理孤儿档案 %d 失败：%v", row.ID, delErr)
-			}
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "绑定失败，本次接管已回滚"})
-			return
-		}
-		audit.Record(db, c, audit.Entry{
-			Action: audit.ActionStorageProfileAdopt, TargetType: "storage_profile",
-			TargetID: strconv.FormatInt(row.ID, 10),
-			Detail: map[string]any{
-				"companyId": req.CompanyID, "driver": row.Driver, "bucket": row.Bucket,
-				"probeSkipped": req.Force,
-				"note":         "凭据由 tenant_storage_configs 的 PII 密文解密后写入档案明文列；旧表未改动",
-			},
-		})
 		touchProfileResolver(resolver)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": storageProfileView(row)})
 	})
@@ -308,7 +183,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 	})
 
 	limiter := middleware.NewRateLimiter(
-		func() int { return tenantStorageCheckLimitFn() }, tenantStorageCheckLimitPerMin, time.Minute,
+		func() int { return storageProbeLimitFn() }, storageProbeLimitPerMin, time.Minute,
 	).WithKey(func(c *gin.Context) string {
 		return "storageprofile:" + strconv.FormatInt(c.GetInt64("staffId"), 10)
 	}).WithMessage("自检过于频繁，请稍后再试").WithCounter(dbRateCounter{db: db})
@@ -738,29 +613,6 @@ func applyStorageProfileReq(row *model.StorageProfile, req *storageProfileReq) {
 	if req.PublicRead != nil {
 		row.PublicRead = *req.PublicRead
 	}
-}
-
-// adoptProfileName 给接管出来的档案起一个不与现有档案冲突的名字。
-//
-// 名字带企业名是刻意的：档案列表里一眼能看出「这套是从哪家企业接管来的」，
-// 与手工建的「某某公司桶」不会混淆；名字唯一索引也要求这里必须自己避让。
-func adoptProfileName(db *gorm.DB, comp *model.Company) string {
-	base := strings.TrimSpace(comp.Name)
-	if base == "" {
-		base = "企业 " + strconv.FormatInt(comp.ID, 10)
-	}
-	base = "接管 · " + base
-	for i := 0; i < 50; i++ {
-		name := base
-		if i > 0 {
-			name = fmt.Sprintf("%s（%d）", base, i+1)
-		}
-		var n int64
-		if db.Model(&model.StorageProfile{}).Where("name = ?", name).Count(&n).Error != nil || n == 0 {
-			return name
-		}
-	}
-	return fmt.Sprintf("%s（%d）", base, time.Now().UnixNano())
 }
 
 func validateStorageProfile(row *model.StorageProfile) string {

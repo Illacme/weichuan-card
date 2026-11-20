@@ -99,10 +99,6 @@ const (
 	ActionStorageProfileDelete = "storage.profile.delete"
 	// ActionStorageProfileCheck 对档案做连通性自检，成功失败均留痕。
 	ActionStorageProfileCheck = "storage.profile.check"
-	// ActionStorageProfileAdopt 把 tenant_storage_configs 的一行转成存储档案并绑定给该企业。
-	// 这是一次「凭据从 PII 密文变成档案明文 + 上传立即改走该桶」的动作，
-	// 必须能回答「谁在什么时候把哪家企业的旧配置接管成了哪套档案、有没有跳过探桶」。
-	ActionStorageProfileAdopt = "storage.profile.adopt"
 	// ActionStorageBindingUpdate 改全局默认或某企业的档案绑定。
 	// 这是「文件到底写去哪」的最终开关，即时生效且影响面大，必须留痕。
 	ActionStorageBindingUpdate = "storage.binding.update"

@@ -12,11 +12,18 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **138 paths**，最后同步 2026-11-20。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **135 paths**，最后同步 2026-11-20。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
 > 后端新增接口却没写文档会直接红，不再只靠路径数下限（当时 12 条路由缺失而 CI 全绿）。
+
+> **历史轮次留档说明（2026-11-20 / 第七十五轮）**：下文按轮次记录工程过程，
+> 其中提到 `tenant_storage_configs`、`TENANT_STORAGE_ROUTE`、`uploadroute`、
+> `DynamicResolver`、`server tenant-storage-rekey`、`--source=auto|legacy|profiles`
+> 的段落，**都是当时的事实留档，相关代码已在第七十五轮全部删除**。
+> 现行口径只有一处：「存储 / CDN 多档案（迁移 0054，已落地）」一节。
+> 保留历史轮次是为了「为什么这么改」可追溯，不要照它们写新代码或新配置。
 
 ## 结论摘要
 
@@ -5653,6 +5660,23 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 
 ## 存储 / CDN 多档案（迁移 0054，已落地）
 
-`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
+`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
 
-**三层配置的职责边界（2026-12 补充）**：档案（③）落地后，系统里仍有 ① 系统设置 `storage_*` 全局单值与 ② `tenant_storage_configs` 两套旧配置，**都不能删**。① 是 `DynamicResolver` 的 `base`（无绑定时的兜底）兼 `STORAGE_*` / `MINIO_*` 环境变量的界面映射；② 的凭据走 `pii.Encrypt` + `tenant-storage-rekey`（新档案是明文），且配额判定与它同源。收敛按三阶段推进，**阶段一、二已执行**：阶段一改产品口径（存储组三个分区标题加「兜底 · 」前缀、导语改「兜底（高级）」，企业管理按钮 `存储` → `自有桶` 并在弹窗说明定位）；阶段二让 ② 从「唯一数据源」降为「兼容数据源」——`cmd/nginx-snippets` 新增 `--source=auto|legacy|profiles`（默认 auto，档案优先、旧表补位，`driver=local` 的档案绑定覆盖旧表行，render 与 check 必须同源），并把 `publicOriginState` 的双口径合并进 `storageprofile.Resolver.OriginFor`（按「谁在写对象」分叉，档案接管时不再回落旧域名）。阶段二同时修掉 `storage_profiles` 的 `use_ssl` / `public_read` 因 gorm `default:true` 导致「新建选 false 被翻回 true」的缺陷。**阶段二点五已执行**：配额与后台状态判定接档案（`tenantUsesOwnBucket` 改为先档案后旧表，档案这一支不看 `TENANT_STORAGE_ROUTE`；存储视图新增 `supersededByProfile*` 三个字段），并新增 `POST /api/admin/storage-profiles/adopt-legacy` 把旧表一行（凭据由 PII 密文解出）转成档案 + 绑定，默认先探桶、`force` 可跳过且留审计、**不修改旧表**（删绑定即回滚）。阶段三（批量迁移 + 退役旧表）**未执行**，且接管桥已覆盖「单企业逐个搬」，其剩余价值不足以抵消风险。完整边界见 `docs/tenant-storage-design.md` §0.1。**新功能一律只进档案，① 与 ② 只维护不加功能。**
+**存储配置只剩一套模型（2026-11-20 定稿，第七十五轮执行）**：`tenant_storage_configs` 旧表与
+`TENANT_STORAGE_ROUTE` 开关**已彻底删除**——模型、repository、handler、`server tenant-storage-rekey`
+子命令、前端「自有桶」弹窗、生成器 `--source` 三态、`adopt-legacy` 接管桥全部移除，
+迁移 `0055` 已 `DROP TABLE`。产品未商用，不留兼容层。三张表是**唯一**真值源：
+
+- `storage_profiles`：一套桶的连接参数；`delivery_profiles`：一套分发参数（客户域名 / CDN）；
+  `storage_bindings`：把企业绑到档案，`tenant_id = 0` 为全局默认。
+- `storageprofile.Resolver` **直接实现** `storage.Resolver`（`For` / `Platform` / `DriverFor`），
+  平台实例由 `SetPlatform` 注入；`DynamicResolver` / `uploadroute.Resolver` /
+  `storage.StaticResolver` 三个包装层全部删除。
+- **绑定即生效，没有开关**：那个开关让「配置存了」与「配置生效」变成两件事，
+  于是出现「后台显示已配置、实际全在平台盘」这种没人能发现的静默状态。
+- **同轮运行期优化（不可回退）**：指纹查询从 6 条聚合合并成 **1 条 SQL**；
+  `defaultFingerprintTTL = 700ms` 节流，稳态每进程每秒最多查一次库；
+  `Snapshot.resolved` 缓存同一请求内的解析结果。写接口 `Touch()` 保证保存后立刻可见。
+- 系统设置里的 `storage_*` 全局单值（①）**仍然保留**，但只作三件事：`STORAGE_*` / `MINIO_*`
+  环境变量的界面映射、PII 密文凭据的可 re-key 通道（档案是明文）、以及回滚通道。
+  **新功能一律只进档案，① 只维护不加功能。** 完整边界见 `docs/tenant-storage-design.md` §0.1。

@@ -93,18 +93,6 @@ export function checkStorageProfile(id: number) {
   return http.post(`/admin/storage-profiles/${id}/check`).then((r: any) => unwrap<{ ok: boolean; detail: string; error: string; checkedScope: string }>(r))
 }
 
-/**
- * 把某企业的旧「自有桶接入」配置转成一套存储档案并绑定给它。
- *
- * 后端不改旧表（留作回滚通道），且默认先探桶；`force` 只用于「桶暂时探不通
- * 但确认无误」的场景，会在审计里留痕。返回新建的档案。
- */
-export function adoptLegacyStorage(companyId: number, force = false) {
-  return http
-    .post('/admin/storage-profiles/adopt-legacy', { companyId, force })
-    .then((r: any) => unwrap<StorageProfile>(r))
-}
-
 export function listDeliveryProfiles() {
   return http.get('/admin/delivery-profiles').then((r: any) => unwrap<DeliveryProfile[]>(r))
 }

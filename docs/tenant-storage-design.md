@@ -19,7 +19,9 @@
 > | `UploaderResolver` + 5 处注入（P2） | 上传仍走平台那一套存储，`--dsn` 生成的 snippet 暂无实际流量 |
 > | 存量回填 P3 | 老数据仍是绝对 URL / `/uploads/` 形态 |
 >
-> **现状订正（2026-11-16）**：上表「尚未落地」与 §3.6 的「没有 re-key」都是首版设计当时的口径。配置写接口 / 后台界面、写入侧归一、`UploaderResolver` 注入、存量回填 P3 均已落地；`key_id` 已是当前密钥的稳定指纹，并有停机式 `server tenant-storage-rekey` 命令——但该命令**只重加密 `tenant_storage_configs` 凭据，不覆盖业务 PII**，因此「业务 PII 必须在首次写入前定死密钥」的约束至今不变。
+> **现状订正（2026-11-16）**：上表「尚未落地」与 §3.6 的「没有 re-key」都是首版设计当时的口径。配置写接口 / 后台界面、写入侧归一、`UploaderResolver` 注入、存量回填 P3 均已落地。
+>
+> **第七十五轮（2026-11-20）**：`tenant_storage_configs` 与 `server tenant-storage-rekey` 已随旧模型一并删除（产品未商用，不留兼容层）。档案凭据按产品决策明文入库、仅回显掩码，因此「业务 PII 必须在首次写入前定死密钥」的约束不变；档案侧不做 re-key。下文凡提到旧表 / `TENANT_STORAGE_ROUTE` / `--source` 的段落均为历史记录，现行口径以 §0.1 为准。
 >
 > 文中所有文件路径、标识符与行号都来自对仓库的实读，不引用印象。
 >
@@ -30,80 +32,60 @@
 
 ---
 
-## 0.1 三层配置的职责边界（2026-12 补充，务必先读）
+## 0.1 存储配置只剩一套模型（2026-11-20 定稿）
 
-存储档案（`storage_profiles` / `delivery_profiles` / `storage_bindings`，迁移 0054）落地后，
-系统里同时存在**三套**看起来都能「换存储」的配置。它们不是重复实现，也不能互相删除。
-判断「某个需求该改哪一层」只看下面这张表：
+**唯一真值源**：`storage_profiles` + `delivery_profiles` + `storage_bindings`（迁移 0054）。
+`storage_bindings.tenant_id = 0` 是全局默认，企业行覆盖它。运行时解析在
+`internal/storageprofile`——`Resolver` 同时实现 `storage.Resolver`。
 
-| 层 | 落点 | 现在的真实角色 | 能否删 |
-| --- | --- | --- | --- |
-| ① 平台级平铺配置 | `sys_setting` 的 `storage_driver` / `storage_endpoint` / `storage_bucket` / `storage_*` | `DynamicResolver` 的 `base`：**没有任何绑定时**的兜底；同时是 `STORAGE_*` / `MINIO_*` 环境变量的界面映射（`internal/setting/setting.go` 每项都带 `EnvVar`） | **不能**。私有部署靠改 env 起服务时走的正是这条 |
-| ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | 客户自有桶 + 自有访问域名 + 凭据（PII 密文） | **暂不能**，见下方三项独有能力 |
-| ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings`（迁移 0054） | 多套可复用、按企业继承、即时生效、一键迁移、CDN 分发 | 这是新功能唯一该去的地方 |
+历史上并存过的另外两套配置已在第七十五轮收敛：
 
-### ② 目前仍不可替代的能力（阶段二之后只剩三项）
+| 曾经的层 | 落点 | 结局 |
+| --- | --- | --- |
+| ① 平台级平铺 | `sys_setting` 的 `storage_*` | **保留，但角色收窄**：只用于构造「平台自身那一份实例」（`Resolver.SetPlatform`），服务平台对象（`p/library/...`、`p/wxacode/...`）与**没有绑定档案**的租户。不再作为按企业分流的兜底，也不参与任何租户判定；同时仍是 `STORAGE_*` / `MINIO_*` 环境变量的界面映射 |
+| ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | **已删除**：模型、handler、rekey 子命令、repository、前端弹窗、`TENANT_STORAGE_ROUTE` 开关、生成器 `--source=legacy` 全部移除；迁移 `0055` DROP 该表 |
+| ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
 
-1. ~~**nginx 回源 snippet 的唯一数据源。**~~ **已在阶段二解除**：
-   `cmd/nginx-snippets --source=auto` 现在优先读 `storage_profiles` + `storage_bindings`，
-   旧表给没有档案绑定的企业补位；`--source=legacy` 保留纯旧表通道作回滚。
-   档案侧的目标映射在 `storageprofile.NginxTarget`，与上传侧共用同一套
-   driver / endpoint / bucket / host_header 口径（含 scheme 剥离），
-   避免「上传按虚拟主机风格发、nginx 按路径风格回源」。
-2. **按租户公网 origin 的判定源。** `publicOriginFor` 是「档案接管写入则只看档案，
-   否则走 `publicOriginState → tenantStorageActive`」。**阶段二已把双口径合并**：
-   `storageprofile.Resolver.OriginFor` 现在回报 `handled`，按「谁在写对象」分叉
-   （非 local / 公开读 / 域名合法），档案接管时不再回落旧域名。
-   旧路径保留给没有档案绑定的企业，仍然是它们的唯一判定源。
-3. **凭据是 PII 密文且可 re-key。** ② 的 `access_key_enc` / `secret_key_enc` 走
-   `pii.Encrypt` 并带 `key_id`，有 `server tenant-storage-rekey` 可换密钥；
-   ③ 的凭据按当前产品决策**明文入库**（仅回显掩码）。把 ② 并进 ③ 等于把
-   「可轮换密钥的加密存储」降级成明文，必须单独书面决策，不能顺手做。
-4. **配额判定的同源依赖。** `internal/handler/storage_quota.go` 复用
-   `tenantStorageActive` 判「谁会先挡住上传」，改判定要一起改。
+### 为什么 ① 不删
 
-### 收敛路线（2026-12 定，分三阶段，不一次砍）
+平台自己也需要一个桶，这不是历史包袱：
 
-- **阶段一（已执行）· 只改产品口径，不动数据**
-  - 系统设置「文件存储与 CDN」组的三个分区标题统一加「兜底 · 」前缀，分组导语改成
-    「兜底（高级）：只有在没有绑定任何档案时才生效」；配置向导内**不加**前缀
-    （首配时它确实就是当前生效配置）。
-  - 企业管理行内按钮 `存储` → `自有桶`，弹窗标题改为「自有桶接入」并在顶部说明
-    「这里配的是客户自己的桶，会生成 nginx 回源段；只想换后端请用存储档案」。
-  - 本节即该阶段的文档落点。
-- **阶段二（已执行）· 让 ② 从「唯一数据源」降为「兼容数据源」**
-  - `cmd/nginx-snippets` 新增 `--source=auto|legacy|profiles`（默认 auto），
-    render 与 check 必须同源。档案优先、旧表补位；`driver=local` 的档案绑定会
-    **覆盖**旧表那一行（否则 nginx 会去客户桶取一个不存在的对象）。
-    档案表整体缺失时 auto 降级到旧表并打警告；显式 `profiles` 直接报错。
-  - `publicOriginState` 的双口径合并进 `storageprofile.Resolver.OriginFor`，
-    按「谁在写对象」分叉，档案接管时不再回落旧域名。
-  - 顺带修掉一个真实缺陷：`storage_profiles` 的 `use_ssl` / `public_read` 曾挂
-    gorm `default:true`，导致「新建时选 false」被库默认值翻回 true
-    （自检与上传按 https 发、私有桶被当公开桶）。两列已摘掉 default 标签，
-    默认值改由创建方显式给出。
-- **阶段二点五（已执行）· 补齐两处「只认旧表」的判定 + 旧配置接管桥**
-  - 配额与后台状态接档案：`tenantUsesOwnBucket` 改为「先档案、后旧表」，
-    且档案这一支**不看 `TENANT_STORAGE_ROUTE`**（那是旧表通道的开关，档案不依赖它）。
-    之前绑到云档案的企业仍被平台配额硬拦、后台还显示「使用平台存储」。
-    `GET /api/admin/companies/:id/storage` 新增 `supersededByProfile` /
-    `supersededByProfileId` / `supersededByProfileName`，界面据此把「已被档案接管、
-    本页不再生效」顶到最前面。
-  - `POST /api/admin/storage-profiles/adopt-legacy`：把 `tenant_storage_configs`
-    一行（凭据从 PII 密文解出）建成一套档案并绑定给该企业。四条拒绝条件——
-    未启用 / 驱动 local / 未公开读 / 已有绑定；默认先探桶，`force` 可跳过并留审计。
-    **不修改旧表**，删掉绑定即可回滚。
-- **阶段三（未执行，收益低风险高，近期不建议碰）· 数据迁移与退役**
-  - `tenant_storage_configs` → `storage_profiles` + `storage_bindings` 一次性迁移；
-    同时决定新档案是否引入 `*_enc` 列，否则 `tenant-storage-rekey` 会随之退役。
-  - 之后才谈删表、删 handler、删前端入口。
-  - 注意：接管桥（阶段二点五）已经把「单企业逐个搬」这件事做完了，
-    阶段三剩下的只是「批量 + 删表」，价值主要是省几次点击，不足以抵消风险。
+- 有一类对象键前缀写死了平台（`p/library/...` 素材采用、`p/wxacode/...` 小程序码），
+  它们的 URL 由平台 nginx 的 `/uploads/` 回退段托管。键前缀与实例必须同源，
+  写进客户桶会「字节在客户桶、URL 是平台域名」→ 取图 404。
+- 它是**启动期一次**构造的进程级实例，运行期零查询；而 ② 是每个上传一次必查的
+  表（`company_id` 上的一次必然落空）。删 ② 才是性能收益，删 ① 只有风险。
+- 私有部署靠改 env 起服务时走的正是这条（`STORAGE_*` / `MINIO_*`）。
 
-**新功能一律只进 ③。** ① 与 ② 只维护、不加功能——这是三个阶段共同的约束。
+### 删除 ② 的直接收益
+
+- 每个上传少一次「必然落空」的 `tenant_storage_configs` 查询（绝大多数企业没配过）；
+- 少一层 `DynamicResolver → uploadroute.Resolver` 的链式判定，`storageprofile.Resolver`
+  直接实现 `storage.Resolver`；
+- 判定标准从两套并一套：以前「配额按旧表判、origin 按档案判」会得出自相矛盾的结论。
+
+### 运行期性能（同轮优化）
+
+- 档案快照的指纹检查从 **6 条聚合查询合并成 1 条**（`Resolver.fingerprint`）。
+- 加了 `defaultFingerprintTTL = 700ms` 的节流：稳态下每个进程每秒最多查 1 次库。
+  跨进程变更最多晚 TTL 生效（与既有「秒级最终一致」一致）；**本进程**写入时
+  handler 调 `Touch()` 立即重载，所以「保存后立刻刷新」看到的永远是新值。
+- 解析结果按快照缓存（`Snapshot.resolved`），同一请求里 `OriginFor` 与 `OwnerOf`
+  各调一次时不再重复做版本运算。
+
+### 改判定前必读
+
+「谁在写对象」是这一层的唯一分叉依据，不是「谁配了域名」：
+
+- `OriginFor(cid)` 回答出参该用哪个 origin，并回报 `handled`；
+- `Diagnose(cid)` 是同一判定的诊断版（带原因），只服务 `/api/public/settings`；
+- `OwnerOf(cid)` 回答配额与后台状态该不该按「自有桶」处理；
+- `NginxTarget(cid, sp)` 给生成器用，与上传侧共用同一套 driver / endpoint /
+  bucket / host_header 口径（含 scheme 剥离）。
+
+**新功能一律只进档案这一层。**
 
 ---
-
 
 ## 0. 解决什么，不解决什么
 
@@ -154,8 +136,9 @@
 
 > 用户原话：「平台超管代填，这种权限肯定不能放给企业管理员的」。
 
-**结论**：`tenant_storage_configs` 的**新增 / 修改 / 删除 / 启停 / 连通性自检 / 切回平台默认 /
-触发搬迁**，全部只允许平台超级管理员操作；企业管理员连配置读接口都不给，更不给写接口。
+**结论**：存储档案（`storage_profiles` / `delivery_profiles` / `storage_bindings`）的
+**新增 / 修改 / 删除 / 启停 / 连通性自检 / 切回平台默认 / 触发搬迁**，
+全部只允许平台超级管理员操作；企业管理员连配置读接口都不给，更不给写接口。
 理由不只是「权限收敛」，而是这条配置里装的是**客户的云凭据**：企业管理员一旦能改，
 就能把自己企业的对象写到任意桶、把别人的桶指到自己账号下，且平台无法从业务侧察觉。
 与 R2「静默失败」同源，属于必须在入口就堵死的越权面。
@@ -349,7 +332,14 @@ type Ref struct {
 > sanctioned 出参侧文件）。反向验证已做两组：改坏绝对 URL 分支必红、在 handler 包插一行真实
 > `storage.NormalizeRef` 调用必红（守门定位到 `handler/storage.go`）；还原后文件 sha256 零漂移、全包复绿。
 
-### 3.2 `tenant_storage_configs`（迁移 0044）
+### 3.2 `tenant_storage_configs`（迁移 0044）——**历史，第七十五轮已删除**
+
+> 本节起至 §3.3 末尾是第五十八～七十四轮的建表与演进记录，**代码已不存在**：
+> 模型 / repository / handler / rekey 子命令全部移除，迁移 `0055` 已 `DROP TABLE`。
+> 现行模型见 §0.1 与 `backend/README.md` 的「租户自有对象桶（迁移 0054，存储档案）」一节。
+> 保留本节只为解释
+> 「`host_header` 为什么必须由人填」「凭据为什么只写不读」这些**结论性约束仍然成立**，
+> 以及避免后来人重走一遍已经踩过的坑。
 
 字段草案（**只建表，不写任何业务数据 / 演示配置**）：
 
@@ -623,9 +613,9 @@ type Resolver interface {
 
 | 项 | 落地内容 |
 | --- | --- |
-| `storage.Resolver` | 上述三方法接口 + `StaticResolver`（`TENANT_STORAGE_ROUTE=off` 时的**正式实现**，不是临时脚手架） |
+| `storage.Resolver` | 上述三方法接口 + `StaticResolver`（`TENANT_STORAGE_ROUTE=off` 时的实现）。**第七十五轮已删除 `StaticResolver`**：`storageprofile.Resolver` 直接实现本接口，平台实例由 `SetPlatform` 注入，不再有「静态兜底实现」这一层 |
 | `internal/uploadroute` | `Resolver`（按 cid 取实例、按 `updated_at` 缓存）、`DBLoader`（单行查询 + 解密）、`Verify`（启动自检表在不在）、`RouteEnabled` |
-| 装配 | `main.go` / `cmd/devserver/main.go` / `buildEngine` 三处；`TENANT_STORAGE_ROUTE` 默认 off，只有 `on/1/true/yes` 才开 |
+| 装配 | `main.go` / `cmd/devserver/main.go` / `buildEngine` 三处。**第七十五轮已删除 `TENANT_STORAGE_ROUTE` 开关**：档案解析恒定生效，没有「关掉」这个状态，因此也不存在「开关打开那天才响的雷」 |
 | 行为变更 | 只有两处**判定**：`capabilityHandler` 按租户实例判、`signHandler` 按租户实例签。off 下两者等价于旧实现 |
 | 生效状态回报 | 出参 `trafficEnabled` 改为 `uploadroute.RouteEnabled()`，对话框顶部提示随之切换；写死 `false` 会在开关打开后继续骗人。第六十二轮补 `activeForTenant` / `inactiveReason`（按企业，五态） |
 
@@ -734,7 +724,7 @@ type Resolver interface {
 
 现成机制在 `internal/pii/pii.go`：`Encrypt` / `Decrypt` / `IsEncrypted` / `SetKey` /
 `Reload`，`v1:` 前缀、AES-256-GCM、`base64.StdEncoding`，密钥来自 `PII_ENC_KEY`，
-且有启动自检 `UsingPlaceholderKey()`。项目基线是 **写任何 PII 之前必须把密钥定死**（2026-11-13 当时没有 re-key）。后续已补 `server tenant-storage-rekey`：它只重加密 `tenant_storage_configs` 的云凭据，**不覆盖业务 PII**，所以业务 PII 的时间约束不变；租户凭据可在停机窗口内换钥。
+且有启动自检 `UsingPlaceholderKey()`。项目基线是 **写任何 PII 之前必须把密钥定死**（2026-11-13 当时没有 re-key）。第七十一轮曾补 `server tenant-storage-rekey` 只重加密租户云凭据、**不覆盖业务 PII**，所以业务 PII 的时间约束不变；**第七十五轮该子命令已随旧模型一并删除**（档案凭据按产品决策明文入库、仅回显掩码，档案侧不做 re-key）。因此当前结论只剩一条：**业务 PII 的密钥必须在首次写入前定死，且至今没有 re-key 通道**。
 
 **推荐**：抽 `internal/secrets`，用独立的 `STORAGE_ENC_KEY`，不与 PII 共用一把钥匙。
 理由：两类数据的保留期、轮换需求、泄露后果都不同；`key_id` 列预留在表里，将来换钥匙
@@ -961,17 +951,20 @@ type Resolver interface {
 > 且绝不折叠 query string；翻开关前必须在接入层确认。
 >
 > **守门**：`TestPublicOriginWiringGate` 按 `r.GET("/api/...")` 路由块逐个对账
-> （公开必须含 `publicOriginFor(db, `、不许 `PlatformOrigin()`；后台反过来）
+> （公开必须含 `publicOriginFor(`、不许 `PlatformOrigin()`；后台反过来）
 > +「至少 9 条」读数兜底；`handler/publicorigin_test.go` 真发请求证明
-> `TENANT_STORAGE_ROUTE=off → /uploads/t/1/logo.png`、条件齐全 →
-> `https://img.cust.com/uploads/t/1/logo.png`，且 `p/...` 平台对象不误换。
+> 「无绑定 → `/uploads/t/1/logo.png`、条件齐全 →
+> `https://img.cust.com/uploads/t/1/logo.png`」，且 `p/...` 平台对象不误换。
 > 7 组反向验证全部「注入整套坏实现 → 必红 → 还原复绿 → sha256 零漂移」。
 > 取证细节见 `docs/commercial-readiness.md` 第六十九轮。
 >
-> **本轮边界**：仍是零行为变更——`TENANT_STORAGE_ROUTE` 默认 off 时每家都返回
-> `model.PlatformOrigin()`，出参与第六十八轮逐字节一致。**翻开关前**必须确认
+> **本轮边界**：当时是零行为变更——`TENANT_STORAGE_ROUTE` 默认 off 时每家都返回
+> `model.PlatformOrigin()`，出参与第六十八轮逐字节一致。**第七十五轮删掉开关后
+> 这条边界不再存在**：档案绑定即刻生效，`publicOriginFor` 的入参也从
+> `(db, cid)` 收成 `(cid)`。**翻开关前**必须确认
 > 接入层 cache key 含租户维度、客户域名证书与 `/uploads/t/<企业id>/` 回源规则、
-> 以及 R1-b 的「谁 Purge 租户自有边缘」。
+> 以及 R1-b 的「谁 Purge 租户自有边缘」——这三条在开关删除后**依然要逐条确认**，
+> 只是从「打开前的检查单」变成「绑定客户域名时的检查单」。
 > **仍未做**：`key_id` 轮换、配额口径、解约后清理策略；
 > `driver=oss` 源与「虚拟主机风格且 hostHeader 与 endpoint 不同域名」仍显式拒绝。
 

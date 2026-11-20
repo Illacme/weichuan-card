@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"weichuan/internal/model"
-	"weichuan/internal/pii"
+	"weichuan/internal/storageprofile"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -363,55 +363,67 @@ func TestNewS3StoreAcceptsVirtualHostMatchingEndpoint(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ---- 按 company_id 解密组装 ------------------------------------------------
+// ---- 按 company_id 从存储档案组装 ------------------------------------------
 
 func newTenantDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := t.TempDir() + "/tenant.db"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.TenantStorageConfig{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.StorageProfile{}, &model.DeliveryProfile{}, &model.StorageBinding{}))
 	return db
 }
 
-func seedTenant(t *testing.T, db *gorm.DB, cid int64, driver string, enabled bool, badCipher bool) {
+// seedTenant 建一套档案并绑定给 cid。
+func seedTenant(t *testing.T, db *gorm.DB, cid int64, driver string) *model.StorageProfile {
 	t.Helper()
-	ak, err := pii.Encrypt("AK-TEST")
-	require.NoError(t, err)
-	sk, err := pii.Encrypt("SK-TEST")
-	require.NoError(t, err)
-	if badCipher {
-		ak = "v1:this-is-not-valid-ciphertext"
+	sp := model.StorageProfile{
+		Name: "p-" + strconv.FormatInt(cid, 10), Driver: driver,
+		Endpoint: "127.0.0.1:19000", Bucket: "wc-t7", Region: "us-east-1",
+		AccessKey: "AK-TEST", SecretKey: "SK-TEST",
+		PublicRead: true, UseSSL: true, Version: 1,
 	}
-	require.NoError(t, db.Create(&model.TenantStorageConfig{
-		CompanyID: cid, Driver: driver, Endpoint: "127.0.0.1:19000",
-		Bucket: "wc-t7", Region: "us-east-1",
-		AccessKeyEnc: ak, SecretKeyEnc: sk, Enabled: enabled,
+	require.NoError(t, db.Create(&sp).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{
+		TenantID: cid, StorageProfileID: sp.ID, Version: 1,
 	}).Error)
+	return &sp
+}
+
+// newTarget 构造一个关掉指纹节流的解析器：用例直接写库后立刻断言。
+func newTarget(t *testing.T, db *gorm.DB) func(int64) (ObjectStore, error) {
+	t.Helper()
+	r := storageprofile.New(db)
+	r.SetFingerprintTTL(0)
+	return TenantTargetFor(r)
 }
 
 func TestTenantTargetForRefusesAnythingButARealBucket(t *testing.T) {
 	cases := []struct {
-		name      string
-		seed      bool
-		driver    string
-		enabled   bool
-		badCipher bool
-		wantErr   string
+		name    string
+		seed    func(t *testing.T, db *gorm.DB)
+		wantErr string
 	}{
-		{"没有配置行", false, "minio", true, false, "没有生效的自有桶配置"},
-		{"配置未启用", true, "minio", false, false, "没有生效的自有桶配置"},
-		{"driver=local 明确走平台", true, "local", true, false, "没有生效的自有桶配置"},
-		{"凭据解密失败", true, "minio", true, true, "读取失败"},
+		{"没有绑定", func(*testing.T, *gorm.DB) {}, "没有绑定存储档案"},
+		{"driver=local 明确走平台", func(t *testing.T, db *gorm.DB) {
+			seedTenant(t, db, 7, "local")
+		}, "本地磁盘"},
+		{"凭据缺一", func(t *testing.T, db *gorm.DB) {
+			sp := seedTenant(t, db, 7, "minio")
+			require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
+				Update("access_key", "").Error)
+		}, "凭据"},
+		{"绑定指向不存在的档案", func(t *testing.T, db *gorm.DB) {
+			require.NoError(t, db.Create(&model.StorageBinding{
+				TenantID: 7, StorageProfileID: 9999, Version: 1}).Error)
+		}, "不存在"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			db := newTenantDB(t)
-			if c.seed {
-				seedTenant(t, db, 7, c.driver, c.enabled, c.badCipher)
-			}
-			target := TenantTargetFor(db, "")
-			st, err := target(7)
+			c.seed(t, db)
+			st, err := newTarget(t, db)(7)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), c.wantErr)
 			require.Contains(t, err.Error(), "不回退平台盘")
@@ -422,71 +434,73 @@ func TestTenantTargetForRefusesAnythingButARealBucket(t *testing.T) {
 
 func TestTenantTargetForBuildsS3StoreNotLocalStore(t *testing.T) {
 	db := newTenantDB(t)
-	seedTenant(t, db, 7, "minio", true, false)
-	st, err := TenantTargetFor(db, "")(7)
+	seedTenant(t, db, 7, "minio")
+	target := newTarget(t, db)
+	st, err := target(7)
 	require.NoError(t, err)
 	require.IsType(t, &S3Store{}, st, "真桶模式绝不能悄悄拿到本地盘适配器")
 	require.Equal(t, "wc-t7", st.(*S3Store).bucket)
-	_, err = TenantTargetFor(db, "")(0)
+	_, err = target(0)
 	require.Error(t, err)
 }
 
 // TestTenantTargetForIgnoresPublicReadAndOrigin 钉住「两条链路对同一份配置解释不同」：
 //
-// 上传侧 build 会因 public_read=false 显式拒绝（私有桶要预签名）；回填侧不调
-// build，只按 company_id 拿凭据把对象写进桶里，公开读与否、访客侧域名是什么
-// 都与「能不能写对象」无关。若有人图省事把那条拒绝搬进 DBLoader，这条必红——
-// 那会让「私有桶租户的历史对象搬不了」，而报错看起来像配置问题。
+// 上传侧 buildUploader 会因 public_read=false 显式拒绝（私有桶要预签名）；回填侧
+// 只按 company_id 拿凭据把对象写进桶里，公开读与否、访客侧域名是什么
+// 都与「能不能写对象」无关。若有人图省事把那条拒绝搬进 TenantTargetFor，
+// 这条必红——那会让「私有桶租户的历史对象搬不了」，而报错看起来像配置问题。
 func TestTenantTargetForIgnoresPublicReadAndOrigin(t *testing.T) {
 	db := newTenantDB(t)
-	seedTenant(t, db, 7, "minio", true, false)
-	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
-		Where("company_id = ?", 7).
-		Updates(map[string]any{
-			"public_read":     false,
-			"public_base_url": "https://img.cust.com",
-		}).Error)
+	sp := seedTenant(t, db, 7, "minio")
+	dp := model.DeliveryProfile{Name: "cdn", Provider: "aliyun", Domain: "https://img.cust.com", Version: 1}
+	require.NoError(t, db.Create(&dp).Error)
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
+		Update("public_read", false).Error)
+	require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 7).
+		Update("delivery_profile_id", dp.ID).Error)
 
-	// 先证明这两列确实写进去了，否则「没被拦」可能只是夹具没生效的假绿。
-	var row model.TenantStorageConfig
-	require.NoError(t, db.Where("company_id = ?", 7).First(&row).Error)
-	require.False(t, row.PublicRead)
-	require.Equal(t, "https://img.cust.com", row.PublicBaseURL)
+	// 先证明这两项确实写进去了，否则「没被拦」可能只是夹具没生效的假绿。
+	var got model.StorageProfile
+	require.NoError(t, db.First(&got, sp.ID).Error)
+	require.False(t, got.PublicRead)
+	var b model.StorageBinding
+	require.NoError(t, db.Where("tenant_id = ?", 7).First(&b).Error)
+	require.EqualValues(t, dp.ID, b.DeliveryProfileID)
 
-	st, err := TenantTargetFor(db, "")(7)
-	require.NoError(t, err, "私有桶 / 已登记自有域名都不该拦住回填")
+	st, err := newTarget(t, db)(7)
+	require.NoError(t, err, "私有桶 / 已绑分发域名都不该拦住回填")
 	require.IsType(t, &S3Store{}, st)
 }
 
-// TestPublicBaseURLDoesNotRelaxUpstreamHostBoundary 是「两者正交」的运行时证据。
+// TestDeliveryDomainDoesNotRelaxUpstreamHostBoundary 是「两者正交」的运行时证据。
 //
 // 回填命令不经 nginx，虚拟主机风格下 minio-go 只会把 <bucket> 拼到 endpoint 前，
 // 改不了 Host / TLS SNI。所以 hostHeader 去掉 "<bucket>." 后必须等于 endpoint。
 // 这条拒绝**不能**因为客户配了自有域名就放宽——自有域名是访客侧 origin，
 // 放宽的结果是对象静默写向另一个域名，而后台显示搬迁成功。
-func TestPublicBaseURLDoesNotRelaxUpstreamHostBoundary(t *testing.T) {
+func TestDeliveryDomainDoesNotRelaxUpstreamHostBoundary(t *testing.T) {
 	db := newTenantDB(t)
-	seedTenant(t, db, 7, "minio", true, false)
+	sp := seedTenant(t, db, 7, "minio")
+	dp := model.DeliveryProfile{Name: "cdn", Provider: "aliyun", Domain: "https://img.cust.com", Version: 1}
+	require.NoError(t, db.Create(&dp).Error)
+	require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 7).
+		Update("delivery_profile_id", dp.ID).Error)
 	// 虚拟主机风格、但与 endpoint 不是同一域名（s3store.go 明确拒绝的形态）。
-	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
-		Where("company_id = ?", 7).
-		Updates(map[string]any{
-			"host_header":     "wc-t7.cdn.example.com",
-			"public_base_url": "https://img.cust.com",
-			"public_read":     true,
-		}).Error)
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
+		Update("host_header", "wc-t7.cdn.example.com").Error)
 
-	_, err := TenantTargetFor(db, "")(7)
+	_, err := newTarget(t, db)(7)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "不是同一个域名")
-	require.Contains(t, err.Error(), "public_base_url",
-		"报错要指出自有域名该填哪里，而不是让人去改 hostHeader")
+	require.Contains(t, err.Error(), "分发档案",
+		"报错要指出自有域名该配在哪，而不是让人去改 hostHeader")
 
 	// 换成路径风格（hostHeader 留空）后，同一个自有域名不再拦回填——
 	// 证明被拒的确实是回源 Host，不是自有域名本身。
-	require.NoError(t, db.Model(&model.TenantStorageConfig{}).
-		Where("company_id = ?", 7).Update("host_header", "").Error)
-	st, err := TenantTargetFor(db, "")(7)
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
+		Update("host_header", "").Error)
+	st, err := newTarget(t, db)(7)
 	require.NoError(t, err)
 	require.IsType(t, &S3Store{}, st)
 }

@@ -62,7 +62,7 @@ func TestPublicOriginWiringGate(t *testing.T) {
 		}
 		wired++
 		route := handlerSrc[loc[2]:loc[3]]
-		require.Contains(t, block, "publicOriginFor(db, ",
+		require.Contains(t, block, "publicOriginFor(",
 			"公开路由 %s 下发了资源引用却没按租户取 origin；漏接就是该页图走错域名", route)
 		require.NotContains(t, block, "model.PlatformOrigin()",
 			"公开路由 %s 用了平台零值：后台出口才该这么传", route)
@@ -71,7 +71,7 @@ func TestPublicOriginWiringGate(t *testing.T) {
 		"9 条公开 GET 都必须接按租户 origin；数量变了要同步 docs/tenant-storage-url-boundaries.md")
 
 	// ② /api/card 只能按员工归属取租户，绝不能读访客可改的 ?companyId=。
-	require.Contains(t, handlerSrc, "origin := publicOriginFor(db, e.CompanyID)")
+	require.Contains(t, handlerSrc, "origin := publicOriginFor(e.CompanyID)")
 
 	// ③ 后台出口一律平台零值；apply.go 里「我的」是端上消费点、导出是后台出口。
 	adminSrc := read("handler", "content.go")
@@ -79,23 +79,24 @@ func TestPublicOriginWiringGate(t *testing.T) {
 	require.NotContains(t, adminSrc, "publicOriginFor(",
 		"后台管理端不该接客户域名：多一条无谓的证书 / 回源裂图路径")
 	applySrc := read("handler", "apply.go")
-	require.Contains(t, applySrc, "publicOriginFor(db, e.CompanyID)",
+	require.Contains(t, applySrc, "publicOriginFor(e.CompanyID)",
 		"小程序「我的」页是端上消费点，头像域名要与公开页一致")
 	require.Contains(t, applySrc, ".ResolveRefs(model.PlatformOrigin())",
 		"后台员工导出跑在平台域名下")
 
-	// ④ 单点判定链：不许绕开任何一层另写乐观判断。
+	// ④ 单点判定链：出参只认注入的解析器，handler 里不许再有一份「看域名有没有值」
+	// 的乐观判断。判定本身在 storageprofile.Resolver.OriginFor / Diagnose。
 	originSrc := read("handler", "publicorigin.go")
 	for _, want := range []string{
-		"storage.ValidatePublicOrigin(row.PublicBaseURL)",
-		"if ok, why := tenantStorageActive(row); !ok {",
-		"if !row.PublicRead {",
-		"return publicOriginState(row)",
-		"base, active, _ := publicOriginStateFor(db, cid)",
-		"if !active || base == \"\" {",
+		"profileOriginResolver func(cid int64) (model.Origin, bool)",
+		"profileOriginDiag func(cid int64) (base string, active bool, reason string)",
+		"origin, _ := profileOriginResolver(cid)",
+		"return profileOriginDiag(cid)",
 	} {
 		require.Contains(t, originSrc, want, "origin 判定链缺了 %q", want)
 	}
+	require.NotContains(t, originSrc, "ValidatePublicOrigin(",
+		"handler 不该自己校验域名：那是解析器的事，两份判定迟早漂移")
 
 	// ⑤ model 层必须走「按对象归属选 origin」的解析器，不能简化成无差别拼域名。
 	refsSrc := read("model", "refs.go")
@@ -114,5 +115,5 @@ func TestPublicOriginWiringGate(t *testing.T) {
 	require.Greater(t, guardIdx, 0, "找不到显式 companyId 的闸门")
 	require.Greater(t, strings.Index(settingsSrc, `resp["assetOriginActive"]`), guardIdx,
 		"诊断字段必须在显式 companyId 闸门之后")
-	require.Contains(t, settingsSrc, "publicOriginStateFor(db, q)")
+	require.Contains(t, settingsSrc, "publicOriginDiagnosis(q)")
 }

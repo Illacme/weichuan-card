@@ -19,6 +19,15 @@ func testDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// newTestResolver 关掉指纹节流：这些用例直接写库后立刻断言「下一次解析能看到」，
+// 生产默认的 700ms 节流会让它们读回旧快照（跨进程一致性靠 Touch / 下一轮查询）。
+func newTestResolver(t *testing.T, db *gorm.DB) *Resolver {
+	t.Helper()
+	r := New(db)
+	r.SetFingerprintTTL(0)
+	return r
+}
+
 func TestResolveInheritanceAndImmediateVersion(t *testing.T) {
 	db := testDB(t)
 	sp1 := model.StorageProfile{Name: "default", Driver: "minio", Endpoint: "s1.example.com", Bucket: "b1", BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, Version: 1, UseSSL: true}
@@ -28,8 +37,8 @@ func TestResolveInheritanceAndImmediateVersion(t *testing.T) {
 	require.NoError(t, db.Create(&sp2).Error)
 	require.NoError(t, db.Create(&dp).Error)
 
-	r := New(db)
-	// 无绑定：返回空生效配置，调用方按旧口径走平台，不是错误。
+	r := newTestResolver(t, db)
+	// 无绑定：返回空生效配置，调用方走平台实例，不是错误。
 	eff, err := r.Resolve(7)
 	require.NoError(t, err)
 	require.Nil(t, eff.Storage)
@@ -67,7 +76,7 @@ func TestTenantFromURLsAndDynamicCDN(t *testing.T) {
 	require.EqualValues(t, 0, TenantFromURLs("https://x.com/uploads/p/a.png"))
 
 	db := testDB(t)
-	r := New(db)
+	r := newTestResolver(t, db)
 	cdn := NewDynamicCDN(nil, r)
 	require.False(t, cdn.(*DynamicCDN).Configured(), "没配 CDN 时动态壳不能冒充已配置")
 	require.NoError(t, cdn.Refresh([]string{"https://x.com/uploads/t/12/a.png"}))
@@ -82,9 +91,9 @@ func TestDynamicPlatformNeverUsesProfile(t *testing.T) {
 	require.NoError(t, db.Create(&model.StorageBinding{TenantID: 0, StorageProfileID: sp.ID, Version: 1}).Error)
 
 	plat := &storage.LocalUploader{Dir: t.TempDir()}
-	base := storage.NewStaticResolver(plat, "local")
-	dyn := NewDynamic(base, New(db))
-	require.Same(t, plat, dyn.Platform(), "Platform() 不能被档案接管")
+	r := newTestResolver(t, db)
+	r.SetPlatform(plat, "local")
+	require.Same(t, plat, r.Platform(), "Platform() 不能被档案接管")
 }
 
 // OriginFor 的判定必须按「谁在写对象」分叉，而不是按「谁配了域名」分叉。
@@ -106,11 +115,11 @@ func TestOriginForFollowsWriteOwnership(t *testing.T) {
 	require.NoError(t, db.Create(&local).Error)
 	require.NoError(t, db.Create(&private).Error)
 
-	r := New(db)
+	r := newTestResolver(t, db)
 
-	// 没有任何绑定：档案不接管，交回旧口径（旧表的 public_base_url 仍要能生效）。
+	// 没有任何绑定：档案不接管，出参用平台统一入口。
 	origin, handled := r.OriginFor(7)
-	require.False(t, handled, "无绑定必须交回旧口径")
+	require.False(t, handled, "无绑定必须判为「没有接管」")
 	require.Empty(t, origin.Base)
 
 	// 云档案 + 分发域名：接管，且用分发域名。

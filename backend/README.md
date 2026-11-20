@@ -200,9 +200,9 @@ go build -o storage-backfill ./cmd/storage-backfill
   --source-dir /var/lib/weichuan/uploads --target-dir /tmp/tenant-root
 ./storage-backfill apply    --plan /tmp/plan.json --dsn "$DSN" --source-dir … --target-dir … --yes
 
-# 真桶：目标端按 company_id 解密 tenant_storage_configs，对象真的写进客户自己的桶。
-# 必须显式给 PII_ENC_KEY（与写配置行时同一把钥匙）；不许给 --target-dir。
-PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
+# 真桶：目标端按 company_id 查存储档案，对象真的写进客户自己的桶。
+# 凭据直接来自档案（明文入库、无需密钥）；不许给 --target-dir。
+./storage-backfill apply \
   --plan /tmp/plan.json --dsn "$DSN" --source-dir /var/lib/weichuan/uploads \
   --target-store tenant --yes
 
@@ -247,10 +247,10 @@ PII_ENC_KEY='<base64 32 字节>' ./storage-backfill apply \
 - 7 种归类的处置各不相同（`platform` 永不搬、`foreign-url` 原样保留、`foreign-tenant` /
   `invalid` 必须人工），理由写在 `internal/refmigrate/plan.go` 的 `Class` 注释里。
 - `--target-store` 决定目标端：`local`（默认，离线演练，需 `--target-dir`）/
-  `tenant`（按 `company_id` 查 `tenant_storage_configs` 并用 `PII_ENC_KEY` 解密凭据，
-  走 S3 `StatObject`/`GetObject`/`PutObject`）。**两者不可混给**：tenant 模式下传
+  `tenant`（按 `company_id` 查存储档案，用档案里的凭据走 S3
+  `StatObject`/`GetObject`/`PutObject`）。**两者不可混给**：tenant 模式下传
   `--target-dir` 会直接报错，避免运维以为两边都生效。
-- **tenant 模式绝不回退平台盘**：没配 / 未启用 / `driver=local` / 凭据解密失败 /
+- **tenant 模式绝不回退平台盘**：没有绑定 / 档案读失败 / `driver=local` / 凭据不全 /
   `driver=oss` / 域名与 `hostHeader` 不一致，一律整批停下。静默回退的症状是
   「对象复制到平台本地目录、库也改成 `t/<cid>/...`、后台显示成功，客户桶里一个都没有」。
 - 上传侧与回填侧共用 `storage.S3BucketLookup` 判定路径风格（由 `host_header` 决定
@@ -408,80 +408,120 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - 前置要求：bucket 需设为**公开读**（或经 CDN 回源公开），这样返回的 URL 才能被小程序/H5 直接访问。
 - 依赖：`github.com/minio/minio-go/v7`、`github.com/aliyun/aliyun-oss-go-sdk`。因 SDK 要求，**项目 Go 版本需 ≥ 1.26**（见 `go.mod` 与 `Dockerfile` 的 `golang:1.26-alpine`）。
 
-### 租户自有对象桶（迁移 0044，平台超管代填）
+### 租户自有对象桶（迁移 0054，存储档案）
 
 上面这些 `STORAGE_*` / `MINIO_*` / `OSS_*` 是**全局单值**，全平台只可能有一套。客户说
-「文件存进我自己公司的桶」时，全局单值装不下第二个租户——所以有 `tenant_storage_configs`
-（按 `company_id` 唯一）。配置入口：后台「企业管理」→ 某企业 → **存储**。
+「文件存进我自己公司的桶」时，全局单值装不下第二个租户——所以有了**存储档案**。
 
-- **只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连读接口都是 403：
-  这条配置里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶，而平台从业务侧察觉不到。
-  **不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
-  登录 + `role=admin`，而企业管理员的 role 也是 admin，会直接放行。有一条源码级守门盯着这个。
-- 凭据用 `pii.Encrypt` 落**密文**，因此**必须先把 `PII_ENC_KEY` 定下来**（与员工 PII 同一把钥匙）。
-  出参只回 AccessKey 掩码（`AKIA****MPLE`），SecretKey 连掩码都不给。
+**只有一套模型**（第七十五轮删掉了历史上的 `tenant_storage_configs` 旧表与
+`TENANT_STORAGE_ROUTE` 开关，产品未商用，不留兼容层）：
+
+| 表 | 装什么 |
+| --- | --- |
+| `storage_profiles` | 一套桶的连接参数（driver / endpoint / bucket / region / useSsl / hostHeader / 凭据 / publicRead） |
+| `delivery_profiles` | 一套分发参数（客户自有访问域名 `domain`、CDN 刷新配置） |
+| `storage_bindings` | 把「某家企业」绑到「某套档案」。`tenant_id = 0` 是**全局默认**，企业行覆盖它 |
+
+配置入口：后台「**存储档案**」。三张表之间是多对多，同一套桶可以给多家企业用，
+换桶只改绑定，不用逐家改凭据。
+
+- **档案本身只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连档案读接口
+  都是 403：档案里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶，而平台从业务侧
+  察觉不到。**不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
+  登录 + `role=admin`，而企业管理员的 role 也是 admin，会直接放行。有源码级守门盯着这个。
+- **绑定**的口径不同：全局默认绑定（`/storage-bindings/global`）平台超管专属；
+  企业绑定（`/storage-bindings/companies/:id`）允许该企业的管理员自己设置，
+  但只能设**自己的** `:id`（`canManageBinding` 校验 `CurrentCompanyID(c) == cid`）。
+  企业侧只拿得到档案的 `id` + `name`（`/storage-bindings/options`），拿不到桶地址与凭据。
+- **凭据按产品决策明文入库、只回显掩码**（`AKIA****MPLE`，SecretKey 连掩码都不给）。
+  这是 2026-11-20 的明确取舍：档案凭据要能被运维直接查、直接改，加密只会带来
+  「密钥丢了桶就打不开」的单点故障，而它并不比库本身更敏感（同库同权限）。
+  因此**档案侧没有 re-key 通道**，也不再需要 `PII_ENC_KEY`——业务 PII 的加密策略不受影响。
 - 提交语义：凭据字段**省略 = 保持原值**、`""` = 清空、有值 = 覆盖。界面回显掩码时点保存走「省略」，
   所以不会把凭据误清空。
-- 「自检」带凭据去探桶（S3 语义下匿名请求对「不存在」与「无权访问」回同一个 403，
-  不带签名探不出东西）。它只验证**凭据有效 + 桶可达**，不验证 nginx 侧 Host/SNI、CDN 与证书链。
-- **默认不承载流量**：上传与出参仍走平台那一个全局实例。本层的路由（`internal/uploadroute`）
-  已经接好，由环境变量 `TENANT_STORAGE_ROUTE` 控制，**默认 off**：
+- 「自检」（`POST /api/admin/storage-profiles/:id/check`）带凭据去探桶（S3 语义下匿名请求对
+  「不存在」与「无权访问」回同一个 403，不带签名探不出东西）。它只验证**凭据有效 + 桶可达**，
+  不验证 nginx 侧 Host/SNI、CDN 与证书链。
 
-  | 取值 | 行为 |
-  | --- | --- |
-  | 不设 / `off` / 其他任意值 | 所有租户都用平台实例（`storage.StaticResolver`），与接入本层之前逐字节一致 |
-  | `on` / `1` / `true` / `yes` | 配了自有桶且 `enabled=1` 的租户，其**新上传**写入客户桶；其余租户不受影响 |
+#### 绑定即生效，没有开关
 
-  打开前必须确认迁移 0044 已应用：`on` 时启动会先校验 `tenant_storage_configs` 存在，
-  缺表直接 Fatal 并给出「跑 `./server migrate`」的提示——而不是等第一个上传才发现，
-  那时**所有租户**的上传会同时不可用（不读表就不知道谁配了桶）。
+第七十五轮删掉了 `TENANT_STORAGE_ROUTE`。**给企业绑上一套云档案，它的新上传立刻进客户桶**，
+不需要重启、不需要翻开关。理由不是「省一步操作」，而是那个开关本身是个错误设计：
+它让「配置存了」与「配置生效」变成两件事，于是出现了「后台显示已配置、实际全在平台盘」
+这种没人能发现的静默状态。
 
-  路由打开后「配置坏了」是**显式失败、不回退平台**：凭据解密失败 / 缺凭据 / 缺基址时
-  上传直接返回 `code:1` 并说明「已按要求不回退平台存储」。客户以为文件在自己桶里、
-  实际躺在平台盘上，是没有任何人会发现的静默失败，比上传失败严重得多。
-  后台「存储能力探测」会把原因显示出来（企业管理员唯一能看到自家存储出错的地方）。
-- 出参两个字段别搞混：`trafficEnabled` 是**进程级**开关（配置保存后能不能生效），
-  `activeForTenant` 是**这家企业**此刻是否真的在用自有桶。开关开着但这家的
-  `enabled=false` 时前者 true、后者 false。未生效时 `inactiveReason` 给出具体成因
-  （未配置 / 未启用 / 驱动是 local / 进程未开路由 / 凭据不完整），五种处置方式不同。
+- **解析层单点**：`internal/storageprofile.Resolver` 直接实现 `storage.Resolver`
+  （`For(cid)` / `Platform()` / `DriverFor(cid)`）。没有「静态兜底实现」这一层了。
+- **平台实例由 `SetPlatform(up, driver)` 注入**，只服务两类调用方：平台对象
+  （`p/library/...`、`p/wxacode/...`，键前缀写死平台）与**没有绑定档案**的企业。
+  `Resolver.Platform()` 恒返回它，绝不走档案解析。
+- **显式失败、不回退平台**：档案读失败 / 缺凭据 / 缺基址时上传直接返回 `code:1` 并说明
+  「已按要求不回退平台存储」。客户以为文件在自己桶里、实际躺在平台盘上，是没有任何人
+  会发现的静默失败，比上传失败严重得多。
+- 出参两个字段别搞混：`assetOriginActive` 是**这家企业**此刻是否真的在用客户域名，
+  `assetOriginNote` 是未生效的具体原因（未绑定 / 档案是 local / 分发档案没域名 /
+  域名不合法 / 桶未公开读）。判定与写入侧**同一个函数**（`Resolver.Diagnose`），
+  不会出现「出参说生效、写入还在平台盘」。
+
+#### 运行期开销（同轮优化，别再退回去）
+
+档案是热路径：**每次上传、每个出参 URL 都要问一次「这家用哪个桶」**。三处优化必须保留：
+
+1. **指纹一条 SQL**：`SELECT (MAX(version) FROM storage_profiles), (… delivery_profiles), (… storage_bindings), COUNT(*) ×3`。
+   早先是 6 条独立聚合查询，现在合并成 1 条。只用 `MAX(version)` 会漏掉「新增一行绑定但
+   version 还是 1」，所以行数也要一起比。
+2. **700ms 指纹 TTL**（`defaultFingerprintTTL`）：稳态下每进程每秒最多查一次库，
+   不是每次请求都查。
+3. **快照内解析缓存**（`Snapshot.resolved sync.Map`）：同一个请求里 `OriginFor` +
+   `OwnerOf` 不重复运算。
+
+写接口保存后会 `Touch()`：立即重载并清空 TTL 计时，保证「保存后立刻刷新」看到新值；
+跨进程最多晚一个 TTL（与既有「秒级最终一致」一致）。
+
+#### 两条容易配错的列
+
 - `hostHeader` **不只影响 Host/SNI，它决定路径风格**（第六十三轮真桶实测）：
   留空或等于 `endpoint` = 路径风格，生成器把桶名写进 path（`/<bucket>/<key>`）；
   以 `<bucket>.` 开头 = 虚拟主机风格，path 只留对象键。两种都不是的取值会被**拒绝**——
   猜错不会报错，只会让这家企业的图全部 400（`InvalidBucketName`）。
   同理，**改桶名必须同时改 hostHeader**，否则旧桶名进 Host、新桶名进 path。
-  hostHeader 是回源侧 Host / TLS SNI，**不是**客户自有访问域名：后者填 `publicBaseUrl`，两者互不影响。
-- `publicRead` 第一阶段必须为 true。私有桶需要预签名链路、出参契约会跟着变，本期没做：
-  写入侧 `validateTenantStorageRow` 与上传侧 `uploadroute.build` 都会显式拒绝 false。
-  回填侧不拦——凭据在手就能写对象，公开读与否只影响端上能否直接取。
-- `publicBaseUrl` 是客户自有访问域名，只收**纯 origin**（`http(s)://host[:port]`，不带路径 / 查询）。
-  三态与凭据一致：不传 = 保留、空串 = 清空、有值 = 归一化后覆盖。
-  第六十九轮起**出参侧按租户选 origin 已接入**：`model.ResolveResourceRef(raw, model.Origin)`
-  → `storage.ResolveRefForTenant`。9 条公开 GET 与小程序「我的」页下发的
-  **归属该企业的新形态对象键**（`t/<企业id>/...`）会以它开头；平台对象（`p/` 素材库 /
-  小程序码 / 未登录上传头像）、历史无前缀裸键、别家租户键、合法外链仍走平台统一入口，
-  因为客户域名的回源规则只覆盖 `/uploads/t/<企业id>/`。后台 `/api/admin/*` 出参一律
-  走平台入口：管理端同源可达，不该依赖客户的证书与回源配置。
-  端上无需改动——小程序 `assetUrl` 对 `^https?://` 原样返回。
-  **填了不等于立刻生效**：`publicBaseUrlActive` 由 `handler.publicOriginState` 实况回报，
-  需同时满足 `TENANT_STORAGE_ROUTE` 已开、`enabled=true`、driver 非 local、凭据完整、
-  `publicRead=true`、域名合法。对象还在平台盘时就换域名，客户域名回源取不到对象，
-  全站裂图且没有任何报错——所以判定直接复用 `tenantStorageActive`。
-  `publicBaseUrlNote` 分「已生效说明 / 未生效原因与下一步」两套文案。
-  核对某家此刻的实况：`curl "$BASE/api/public/settings?companyId=5"` 看根级
-  `assetOrigin` / `assetOriginActive` / `assetOriginNote`；**不带 companyId 不回传**
-  （冷启动拿不到租户，按缺省企业下发会跨租户串号）。
-  `TENANT_STORAGE_ROUTE` 默认值仍是 `off`，本轮没翻。
+  hostHeader 是回源侧 Host / TLS SNI，**不是**客户自有访问域名：后者填在
+  `delivery_profiles.domain`，两者互不影响。
+- `publicRead` 当前必须为 true。私有桶需要预签名链路、出参契约会跟着变，本期没做：
+  档案保存校验与上传侧构造都会显式拒绝 false。回填侧不拦——凭据在手就能写对象，
+  公开读与否只影响端上能否直接取。
+
+> ⚠️ `use_ssl` / `public_read` 这两列**不许加 gorm `default` 标签**：带 default 时 GORM 会把
+> 零值从 INSERT 省略、交给库默认值，「新建时选 false」会被翻回 true（自检与上传按 https 发，
+> 自建 MinIO 走 80 必连不上却报「凭据错误」）。默认值由创建方显式给出。
+
+#### 出参 origin 按企业分叉
+
+`model.ResolveResourceRef(raw, model.Origin)` → `storage.ResolveRefForTenant`。9 条公开 GET 与
+小程序「我的」页下发的**归属该企业的新形态对象键**（`t/<企业id>/...`）会以该企业的
+分发域名开头；平台对象（`p/` 素材库 / 小程序码 / 未登录上传头像）、历史无前缀裸键、
+别家租户键、合法外链仍走平台统一入口，因为客户域名的回源规则只覆盖 `/uploads/t/<企业id>/`。
+后台 `/api/admin/*` 出参一律走平台入口：管理端同源可达，不该依赖客户的证书与回源配置。
+端上无需改动——小程序 `assetUrl` 对 `^https?://` 原样返回。
+
+核对某家此刻的实况：`curl "$BASE/api/public/settings?companyId=5"` 看根级
+`assetOrigin` / `assetOriginActive` / `assetOriginNote`；**不带 companyId 不回传**
+（冷启动拿不到租户，按缺省企业下发会跨租户串号）。
 
 ```bash
-# 平台超管令牌下（示例：给企业 5 配自己的 MinIO）
-curl -X PUT "$BASE/api/admin/companies/5/storage" -H "Authorization: Bearer $PLAT_TOKEN" \
+# 平台超管令牌下（示例：给企业 5 建一套自有 MinIO 档案并绑定）
+PROFILE=$(curl -s -X POST "$BASE/api/admin/storage-profiles" -H "Authorization: Bearer $PLAT_TOKEN" \
   -H 'Content-Type: application/json' -d '{
-    "driver":"minio","endpoint":"minio.customer.com","bucket":"weichuan",
-    "useSsl":true,"hostHeader":"weichuan.minio.customer.com",
-    "publicRead":true,"enabled":true,
-    "accessKey":"AKIA...","secretKey":"..."
-  }'
-curl -X POST "$BASE/api/admin/companies/5/storage/check" -H "Authorization: Bearer $PLAT_TOKEN"
+    "name":"客户A-MinIO","driver":"minio","endpoint":"minio.customer.com",
+    "bucket":"weichuan","useSsl":true,"hostHeader":"weichuan.minio.customer.com",
+    "publicRead":true,"accessKey":"AKIA...","secretKey":"..."
+  }' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])')
+
+curl -X POST "$BASE/api/admin/storage-profiles/$PROFILE/check" -H "Authorization: Bearer $PLAT_TOKEN"
+
+# 绑定给企业 5（绑定即刻生效，无需重启；但 nginx 侧要重新 render snippet）
+curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Bearer $PLAT_TOKEN" \
+  -H 'Content-Type: application/json' -d "{\"storageProfileId\":$PROFILE}"
 ```
 
 ## 存储增强（直传预签名 / 私有桶签名 / CDN 刷新）
@@ -1602,8 +1642,8 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 
 ## 存储 / CDN 档案化运行时（迁移 0054）
 
-`internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称与目录；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖租户已有的 `tenant_storage_configs`，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
+`internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称与目录；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖企业已有的云档案绑定，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
 
-`internal/storageprofile` 是档案绑定的运行时解析层：`Resolver.snapshot()` 用三张表的行数 + `MAX(version)` 作指纹，变化即重载（只用 `MAX(version)` 会漏掉「新增一行绑定但版本还是 1」）。`DynamicResolver` 包在 `uploadroute.Resolver` 外侧——有绑定走档案、没绑定沿用 `tenant_storage_configs` 与平台配置；`DynamicCDN` 同理，且明确区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` 把分发档案的域名接进公开出参 origin。
+`internal/storageprofile` 是档案绑定的运行时解析层，也是 `storage.Resolver` 的**唯一实现**（`For` / `Platform` / `DriverFor`）：`Resolver.snapshot()` 用三张表的行数与 `MAX(version)` 作指纹（**一条 SQL**），变化即重载；指纹查询有 700ms 节流，稳态每进程每秒最多查一次库；`Snapshot.resolved` 缓存同一请求内的解析结果。有绑定走档案、没绑定走 `SetPlatform` 注入的平台实例。`DynamicCDN` 区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` / `SetProfileOriginDiag` 把分发档案的域名与诊断接进公开出参 origin。
 
 一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。

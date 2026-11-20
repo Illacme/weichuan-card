@@ -431,7 +431,7 @@ HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导
 
 装完**立即备份** `data/runtime.env`（0600 那份）：里面同时有 `JWT_KEY`、`ADMIN_PASS`
 （初始超管口令）与 `PII_ENC_KEY` 三把密钥——**PII 密钥丢了 = 库里全部敏感信息永远解不开**
-（现有 `server tenant-storage-rekey` 只重加密租户存储凭据，**不覆盖业务 PII**）。业务 PII 解密失败现在会打 `[PII][WARN]`，但不会自愈。
+（**没有任何 re-key 通道**，业务 PII 一旦换钥即不可解）。业务 PII 解密失败现在会打 `[PII][WARN]`，但不会自愈。
 
 **安装中途失败不可重试**（新鲜库守卫：`admins` 表非空即拒）。这是刻意的——
 守卫若改成「清空重装」，重放安装页就成了重置系统漏洞。半配置状态（库已建、
@@ -2010,7 +2010,7 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 |---|---|---|
 | `backups/weichuan-<时间戳>.db.gz` / `.sql.gz` | 数据库 | —— |
 | `backups/uploads-<时间戳>.tar.gz` | `uploads/` 里的图片（头像、案例图、海报素材） | 库恢复了，名片页满屏裂图 |
-| `backups/secrets-<时间戳>.tar.gz.enc` | `runtime.env`（含 `PII_ENC_KEY`）+ `license.key`，**加密** | 库里的姓名/手机是密文，**没有钥匙解不开**；业务 PII 无 re-key（凭据 re-key 命令不覆盖业务表），丢钥=永久失读 |
+| `backups/secrets-<时间戳>.tar.gz.enc` | `runtime.env`（含 `PII_ENC_KEY`）+ `license.key`，**加密** | 库里的姓名/手机是密文，**没有钥匙解不开**；业务 PII 无 re-key，丢钥=永久失读 |
 
 | 形态 | 数据库做法 |
 |---|---|
@@ -2099,7 +2099,7 @@ SQLite 打开时会尝试回放它——结果是把旧数据「恢复」进新�
 - **`runtime.env` 是启动时读取的**：恢复后必须 `docker compose restart backend` 才生效。
 
 **顺序不能反**：库里的 PII 密文必须与 `runtime.env` 里的 `PII_ENC_KEY` 配对。
-两者来自不同时期的备份会解不开——`server tenant-storage-rekey` 只重加密租户存储凭据，不覆盖业务 PII。
+两者来自不同时期的备份会解不开——业务 PII **没有 re-key 通道**，换钥即不可逆。
 
 > **新主机灾难恢复顺序**：① `docker compose up -d` 先让卷建出来 →
 > ② `restore.sh` 恢复库 → ③ `restore_files.sh --all --yes` → ④ 重启 backend。

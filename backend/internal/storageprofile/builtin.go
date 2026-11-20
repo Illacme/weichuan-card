@@ -23,7 +23,7 @@ const builtinLocalName = "平台本地存储"
 //  1. 幂等：重复启动不会重复插入，也不会覆盖管理员改过的名称 / 目录；
 //  2. 只认 builtin=true 的行；若历史手工数据里已有同名非内置行，换一个不冲突的名字；
 //  3. 不自动创建全局绑定——把 local 绑成全局默认会覆盖租户已有的自有桶配置
-//     （tenant_storage_configs），属于静默改变文件落点。绑不绑由管理员在界面决定。
+//     属于静默改变文件落点。绑不绑由管理员在界面决定。
 func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile, error) {
 	if db == nil {
 		return nil, fmt.Errorf("数据库为空")

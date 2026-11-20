@@ -107,7 +107,7 @@ func TestS3BucketLookupRejectsUndecidableConfig(t *testing.T) {
 // 于是「全部通过」（项目里已踩过一次）。
 func TestS3BucketLookupIsTheOnlyStyleDecision(t *testing.T) {
 	files := []string{
-		filepath.Join("..", "uploadroute", "resolver.go"),
+		filepath.Join("..", "storageprofile", "uploader.go"),
 		filepath.Join("..", "refmigrate", "s3store.go"),
 	}
 	found := 0

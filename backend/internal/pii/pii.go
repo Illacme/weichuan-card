@@ -118,7 +118,7 @@ func IsEncrypted(v string) bool { return strings.HasPrefix(v, cipherPrefix) }
 
 // CurrentKeyID 返回当前密钥的稳定指纹（hex 前缀）。
 //
-// 它标识「此刻用来加解密凭据的是哪一把密钥」，写进 tenant_storage_configs.key_id，
+// 它标识「此刻用来加解密 PII 的是哪一把密钥」，写进 PII 密文行的 key_id，
 // 将来换钥匙时据此定位「哪些行还是旧密钥加密的、需要重加密」（见 handler.RekeyTenantStorage）。
 // 密钥装载失败（坏 base64 / 长度不对）时返回空串——此时无法安全加密，调用方应拒绝写入。
 func CurrentKeyID() string { return keyFingerprint }

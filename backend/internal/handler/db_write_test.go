@@ -444,7 +444,7 @@ func TestNoIgnoredDBWritesAcrossHandlers(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, direct, 40,
 		"直接取 .Error/.RowsAffected 的写法几乎没抓到，守门可能退化成只看赋值分支")
-	for _, anchor := range []string{"apply.go", "content.go", "companies.go", "admins.go", "tenant_storage.go"} {
+	for _, anchor := range []string{"apply.go", "content.go", "companies.go", "admins.go", "storage_profile.go"} {
 		require.Contains(t, files, anchor, "守门应覆盖 %s", anchor)
 	}
 

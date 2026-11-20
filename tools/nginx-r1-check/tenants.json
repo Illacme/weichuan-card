@@ -1,5 +1,5 @@
 {
-  "comment": "R1 验证装置的租户表，模拟 tenant_storage_configs 的 enabled 行。只放进 nginx 需要的字段：桶是公开读，snippet 不需要任何凭据。companyId=9 刻意 enabled=false，用来验证「关掉配置切回平台默认」时 /uploads/t/9/... 回落平台盘而不是 404。",
+  "comment": "R1 验证装置的租户表，模拟 storage_bindings + storage_profiles 的绑定行。只放进 nginx 需要的字段：桶是公开读，snippet 不需要任何凭据。companyId=9 刻意 enabled=false，用来验证「停用绑定」时 /uploads/t/9/... 回落平台盘而不是 404（driver=local 走同一条 NeedsSnippet=false 分支）。",
   "tenants": [
     {
       "companyId": 5,

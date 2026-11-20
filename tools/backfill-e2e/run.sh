@@ -71,7 +71,7 @@ step "1. 复位一次性演示库与源对象"
 docker exec -i wc-mysql-ci mysql -uroot -proot --default-character-set=utf8mb4 weichuan_backfill_demo \
   < "$REPO_ROOT/tools/backfill-fixture/seed.sql" > /dev/null 2>&1
 ck "seed.sql 灌入成功" "0" "$?"
-mysqlq "DELETE FROM storage_backfill_refs; DELETE FROM tenant_storage_configs;" > /dev/null
+mysqlq "DELETE FROM storage_backfill_refs;" > /dev/null
 printf '0123456789abcdefghij' > "$SRC/shared-logo.png" # 20 字节，与第六十五轮取证同尺寸
 SRCSHA="$(shasum -a 256 "$SRC/shared-logo.png" | awk '{print $1}')"
 BASE="$(checksum)"
@@ -140,10 +140,12 @@ ck "负例后平台本地盘仍无 t/7/ 对象" "no" "$([ -e "$SRC/t/$CID/shared
 
 # -clean=false：负例阶段要保住第 5 步留下的对象，顺带再证一次「回滚/拒绝都不删对象」。
 "$PREP" -mode upsert -clean=false -dsn "$DSN" -endpoint "$S3_ENDPOINT" -access-key "$S3_AK" -secret-key "$S3_SK" -bucket "$S3_BUCKET" -company "$CID" > /dev/null 2>&1
-mysqlq "UPDATE tenant_storage_configs SET access_key_enc='v1:broken-cipher' WHERE company_id=$CID" > /dev/null 2>&1
+# 负例：把档案凭据清空。凭据明文入库，所以不再有「解密失败」这条路径，
+# 但「缺凭据」必须同样显式失败——静默回退平台盘才是要拦的那个。
+mysqlq "UPDATE storage_profiles SET access_key='' WHERE name='backfill-e2e-$CID'" > /dev/null 2>&1
 OUT="$("$BIN" apply --plan "$PLAN" --dsn "$DSN" --target-store tenant --source-dir "$SRC" --yes 2>&1)"; XRC=$?
 printf '%s\n' "$OUT" | tee -a "$LOG"
-ck "凭据解密失败时显式失败（不回退）" "yes" "$([ "$XRC" -ne 0 ] && has "$OUT" "解密失败" && echo yes || echo no)"
+ck "凭据不完整时显式失败（不回退）" "yes" "$([ "$XRC" -ne 0 ] && has "$OUT" "凭据不完整" && echo yes || echo no)"
 ck "全部负例跑完后对象仍在桶里（R5）" "$SRCSHA" "$(sha_of)"
 
 printf '\n== 结论：%s ==\n' "$([ "$rc" -eq 0 ] && echo '全部通过' || echo '有断言失败')" | tee -a "$LOG"

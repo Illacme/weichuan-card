@@ -1,0 +1,11 @@
+-- 删除 tenant_storage_configs（迁移 0044 建立的「按企业一行自有桶」）。
+--
+-- 第七十五轮：存储配置只剩「档案 + 绑定」一套
+-- （storage_profiles / delivery_profiles / storage_bindings，迁移 0054）。
+-- 该表已无任何代码读写：上传路由、出参 origin、配额判定、nginx snippet 生成
+-- 全部改由档案解析，兼容层与 TENANT_STORAGE_ROUTE 开关一并删除。
+--
+-- 产品尚未正式商用，故不做数据搬迁：旧行里的 endpoint / bucket / 凭据密文
+-- 需要在新模型里重新登记（档案界面）。保留本文件而不是删掉 0044，
+-- 是为了让「已应用过 0044 的库」与「全新安装的库」走到同一个终态。
+DROP TABLE IF EXISTS tenant_storage_configs;

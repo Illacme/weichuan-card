@@ -1,21 +1,26 @@
-# R1 上线 runbook · 翻 TENANT_STORAGE_ROUTE=on（平台域名托管）
+# R1 上线 runbook · 租户自有桶（平台域名托管）
 
 > 范围：**R1（平台域名托管租户桶）**，不是 R1-b（客户自有域名/CDN）。
-> R1 下资产仍走平台统一入口 `https://<平台域名>/uploads/t/<cid>/...`，
-> `public_base_url` 留空；客户自有域名/CDN 那档（`nginx-site.live.conf` 里加
-> 客户 `server` 块+证书、R1-b 按租户 CDN 刷新）是**独立一轮**，见文末「不在本范围」。
+> R1 下资产仍走平台统一入口 `https://<平台域名>/uploads/t/<cid>/...`；
+> 客户自有域名/CDN 那档（`nginx-site.live.conf` 里加客户 `server` 块+证书、
+> R1-b 按租户 CDN 刷新）是**独立一轮**，见文末「不在本范围」。
+>
+> **第七十五轮起没有「开关」这一步**：`TENANT_STORAGE_ROUTE` 已删除，存储档案
+> （`storage_profiles` + `storage_bindings`）是唯一数据源。**给企业绑上一套云档案，
+> 它的新上传立刻进客户桶**，不需要重启、不需要翻开关。因此本手册从「翻开关清单」
+> 变成「绑档案 + 让 nginx 认识新前缀」两件事。
 >
 > 本手册是照做清单：按顺序走，遇到报错看末尾「排错 / FAQ」。
 
-## 前置状态（翻开关前已就绪，无需新代码）
+## 前置状态
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
-| ① 缓存键含租户维度 | ✅ 代码已就绪 | 出参 URL 带 `companyId`/`staffId`，origin 不读 `Host`（`backend/internal/handler/publicorigin.go:41-63`）；5 条公开 GET 发 `public, s-maxage=60`（`pagination.go:65-68`） |
-| ② `/uploads/t/<cid>/` 回源 snippet | ✅ 代码生成 + 验证装置 | `backend/internal/nginxsnippet/snippet.go:176-241`、`tools/nginx-r1-check/` |
-| ③ CDN Purge（平台口径） | ✅ 已就绪 | 全局 refresher 按精确 URL 清，`backend/cmd/server/main.go:373-417` 单实例注入 |
-| 全量迁移已同步 | 需人工确认 | 上线前 `./server migrate` 跑齐（详见 `docs/deploy-runbook.md`） |
-| `PII_ENC_KEY` 已定 | 需人工确认 | 写任何 PII 前必须定下，无 re-key |
+| ① 缓存键含租户维度 | ✅ 代码已就绪 | 出参 URL 带 `companyId`/`staffId`，origin 不读 `Host`（`backend/internal/handler/publicorigin.go`）；5 条公开 GET 发 `public, s-maxage=60`（`pagination.go:65-68`） |
+| ② `/uploads/t/<cid>/` 回源 snippet | ✅ 代码生成 + 验证装置 | `backend/internal/nginxsnippet/snippet.go`、`tools/nginx-r1-check/` |
+| ③ CDN Purge（平台口径） | ✅ 已就绪 | 全局 refresher 按精确 URL 清，`backend/cmd/server/main.go` 单实例注入 |
+| 全量迁移已同步（含 `0054` 建档案表、`0055` 删旧表） | 需人工确认 | 上线前 `./server migrate` 跑齐（详见 `docs/deploy-runbook.md`） |
+| `PII_ENC_KEY` 已定 | 需人工确认 | 写任何业务 PII 前必须定下，**无 re-key**（档案凭据不加密，见 §0.1） |
 
 > ⚠️ **唯一必须人工验收的代码外前置**：确认 Cloudflare 缓存键**含 query string**
 > （`companyId`/`staffId`），不折叠。否则 A 企业客户域名的响应会被发给 B 企业访客。
@@ -50,35 +55,30 @@ file nginx-snippets-linux   # 应显示 ELF 64-bit LSB executable, x86-64, stati
 
 ## 步骤
 
-### 0. 先决条件：至少有一个租户已配置自有存储
+### 0. 先决条件：至少有一个企业已绑定云存储档案
 
-生成器读 `tenant_storage_configs` 表。如果这张表**没有行**，生成的 snippet 只会是一堆注释——
-**R1 此刻没有任何可路由的租户，翻开关也是空操作**。
+生成器读 `storage_profiles` + `storage_bindings`（`delivery_profiles` 参与渲染时的域名判定）。
+**没有绑定**时生成的 snippet 只会是一堆注释——**R1 此刻没有任何可路由的企业**。
 
-> 实测踩过的坑：在 production 上跑 `render` 曾报
-> `数据源：mysql（tenant_storage_configs 共 0 行）`。这说明**还没有任何租户在后台配过自有存储**。
-> 必须先让至少一个租户在管理后台配好：driver / endpoint / bucket / 凭据，且 `enabled=1`。
-> 配完之后表里才会出现行，snippet 才会长出 `location` 块。
+快速确认有没有可接管的企业（在生产库直接查）：
 
-快速确认有没有可接管的租户（在生产库直接查）：
 ```sql
-SELECT company_id, driver, bucket, enabled
-FROM tenant_storage_configs
-WHERE enabled = 1 AND driver <> 'local';
+SELECT b.tenant_id, p.name, p.driver, p.bucket, p.public_read
+FROM storage_bindings b
+JOIN storage_profiles p ON p.id = b.storage_profile_id
+WHERE p.driver <> 'local';
 ```
-有结果 → 继续；空 → 先去后台给租户配存储，再回来。
 
-> **已经用「文件存储与分发」档案的部署**：`--dsn` 默认 `--source=auto`，
-> 会先读 `storage_profiles` + `storage_bindings`（档案优先），再用
-> `tenant_storage_configs` 给没有档案绑定的企业补位。此时上面那条 SQL 查不到东西
-> 是正常的，改查绑定：
-> ```sql
-> SELECT b.tenant_id, p.name, p.driver, p.bucket
-> FROM storage_bindings b JOIN storage_profiles p ON p.id = b.storage_profile_id;
-> ```
-> `tenant_id = 0` 是全局默认，生成器会把它展开成逐家企业。
-> 需要回滚到「只读旧表」时加 `--source=legacy`；只信档案时加 `--source=profiles`
-> （档案表缺失会直接报错，不降级）。stderr 首行会打印本次实际用的数据源与两边行数。
+- `tenant_id = 0` 是**全局默认绑定**，生成器会把它展开成逐家企业（nginx 没有「全局 location」
+  这种形态，必须一家一条 `location`）。
+- `tenant_id > 0` 是该企业的覆盖绑定，优先于全局默认。
+- `driver = 'local'` 的企业**不会**出现在 snippet 里：它们本来就走平台盘，不需要反代。
+- 有结果 → 继续；空 → 先去后台「存储档案」建一套云档案并绑定给企业，再回来。
+
+> 绑定**即时生效**（`Resolver.Touch()` 会让下一次解析看到新值，不需要重启后端）。
+> 但 **nginx 侧需要重新 `render` + `reload` 才会认识新的 `t/<cid>/` 前缀**——
+> 这一步是手工的，绑完档案不重新生成 snippet，新上传的图会 404（对象进了客户桶，
+> 但平台接入层还不知道该往哪转发）。
 
 ### 1. 生成 snippet（在生产服务器上，用二进制）
 
@@ -86,18 +86,20 @@ WHERE enabled = 1 AND driver <> 'local';
 ssh user@<生产服务器>
 /tmp/nginx-snippets-linux render \
     --dsn '<生产DSN，形如 root:xxx@tcp(127.0.0.1:3306)/weichuan>' \
-    --source auto \
     --out /tmp/tenant-storage.conf \
     --dns-precheck
 # 落盘前会解析每个桶域名；解析失败直接拒绝（否则 nginx -t 会 emerg 卡住整份配置）。
-# stderr 摘要：数据源与行数、已接管 / 未接管（回落平台盘）的 company_id 列表。
+# stderr 摘要：已接管 / 未接管（回落平台盘）的 company_id 列表。
 ```
 
+- **数据源必须显式给一个**：`--dsn`（读库）或 `--targets`（本地 JSON），二者互斥。
+  故意不允许「连不上库就退回 JSON」，也不从环境变量自动取——这份输出决定线上
+  哪些 `/uploads/t/<cid>/` 会被代理到哪个桶，数据源不确定就等于事后无法复盘。
 - 输出**只有 `location` 段**，不含 `map`、不含 `server`（`snippet.go:172` 注释）。
 - `$uploads_cache` 这个 map 已在 `nginx-site.live.conf:68-79`（http 级）存在，snippet 里直接引用即可。
 - **空结果保护**（重要）：若生成结果零 location，但 `--out` 指向的文件已存在且非空，
-  生成器**默认拒绝覆盖**（防止「误清配置表」把全部租户撕回平台盘）。
-  若确实要清空，加 `--allow-empty`。这通常是「库里 0 行 + 旧 snippet 文件还在」触发的，
+  生成器**默认拒绝覆盖**（防止「误删绑定」把全部企业撕回平台盘）。
+  若确实要清空，加 `--allow-empty`。这通常是「库里 0 条绑定 + 旧 snippet 文件还在」触发的，
   直接 `rm /tmp/tenant-storage.conf` 再跑即可。
 
 ### 2. 对账（部署前必跑，防漏配）
@@ -105,10 +107,9 @@ ssh user@<生产服务器>
 ```bash
 /tmp/nginx-snippets-linux check \
     --dsn '<同上DSN>' \
-    --source auto \
     --snippet /tmp/tenant-storage.conf
-# 输出「✓ 配置表与 snippet 一致」= 该有 location 的租户都有、不该有的（已停用）都没。
-# check 与 render 必须用同一个 --source，否则对账的是两份不同的配置。
+# 输出「✓ 档案绑定与 snippet 一致」= 该有 location 的企业都有、不该有的（local 档案）都没。
+# check 与 render 必须用同一个数据源（同一个 --dsn / --targets），否则对账的是两份不同的配置。
 ```
 
 ### 3. 落盘 + include 进线上 server{}
@@ -136,40 +137,47 @@ nginx -t            # 宝塔面板「保存」也会自动跑；确认无 emerg
 nginx -s reload     # 或面板保存触发
 ```
 
-此时**没有任何行为变化**：还没有 `t/<cid>/` 形态的对象，这段 location 永远不命中，
-所有 `/uploads/` 仍走回退段（平台盘）。
+此时**对已存在的对象没有任何行为变化**：还没有 `t/<cid>/` 形态的对象，这段 location
+永远不命中，所有 `/uploads/` 仍走回退段（平台盘）。
 
-### 5. 翻开关（写入侧 + 出参 origin 一起生效）
+### 5. 生效：不需要翻开关，绑定已经生效了
 
-服务进程环境变量设 `TENANT_STORAGE_ROUTE=on`，重启服务（`resolver.go` 的
-`RouteEnabled()` 读 env，on/1/true/yes 才开；默认 off）。
+第七十五轮删掉了 `TENANT_STORAGE_ROUTE`。写侧与出参 origin **同源**：
+`storageprofile.Resolver` 同时回答「这个企业用哪个桶写」与「这个企业的对象对外用什么域名」，
+所以不存在「写入切了、出参没切」的中间态，也不需要分步切。
+
+如果企业是**刚绑上**档案的，确认后端已经看到（跨进程最多晚 700ms 指纹 TTL，
+通过管理接口保存的会立刻 `Touch()` 生效）：
 
 ```bash
-# 在部署的环境变量/单元文件里加：
-TENANT_STORAGE_ROUTE=on
-# 重启后端进程（systemd / docker 重启），使 env 生效
+# 后台「存储档案」页保存一次即可触发；或直接看日志有无档案重载记录
 ```
 
-> 开关是**单一**变量，同时管「上传路由到租户桶」与「出参 origin 选客户桶」。
-> 因为对象键布局也由它决定（`/uploads/t/<cid>/...` vs 平台 `/uploads/...`），
-> 读与写在开关下天然同步，不需要分步切。
+> 要**临时**让某家企业回到平台盘：把它的绑定改到内置 local 档案（或删掉绑定让它落全局默认）。
+> 同样是即时生效，且**已写进客户桶的历史对象不会自动搬回**（那是回填任务，见 §6）。
 
 ### 6. 验收
 
-1. 挑一个已配自有桶且 `enabled=1` 的租户，在后台上传一张图 →
-   对象应落在**该租户桶**的 `t/<cid>/` 前缀下（不是平台盘）。
+1. 挑一个已绑定云档案的企业，在后台上传一张图 →
+   对象应落在**该企业桶**的 `t/<cid>/` 前缀下（不是平台盘）。
 2. 用平台域名取该图 `GET https://<平台域名>/uploads/t/<cid>/<key>` → 200，
-   且由 snippet 的 `proxy_pass` 打到租户桶（`proxy_hide_header Cache-Control` 后
+   且由 snippet 的 `proxy_pass` 打到客户桶（`proxy_hide_header Cache-Control` 后
    由 `$uploads_cache` 统一发头，404→no-store）。
 3. 改图后触发 CDN 刷新（`POST /api/admin/cdn/refresh` 或代码内自动 refresh）→
    平台 refresher 能命中平台 CDN 边缘（R1 成立）。
-4. 停用一个租户配置（`enabled=0`）→ 其 `/uploads/t/<cid>/` 回落平台盘（不 404）。
+4. 把该企业的绑定改回 local 档案 → 其**新**上传回平台盘；
+   老的 `t/<cid>/` 对象仍按 snippet 从客户桶取（不会 404，也不会自动搬回）。
+5. **反向验证**：删掉某家企业的绑定并重新 `render`，确认那家的 `location` 消失、
+   `check` 仍然通过——否则「删绑定」在接入层是静默无效的。
 
 ### 回滚
 
-- 关开关：`TENANT_STORAGE_ROUTE=off` + 重启 → 新上传回平台盘。
-- snippet 可留可删：留着无害（无 `t/<cid>/` 对象时不命中）；要彻底清就删 `--out` 文件并对账。
-- 注意：已写进租户桶的历史对象不会因为关开关而搬回平台盘（那是回填任务，非本范围）。
+- **配置回滚**：把企业绑定改回内置 local 档案（或删绑定落全局默认）。即时生效，无需重启。
+- **接入层回滚**：重新 `render` + `reload`，或直接把 `--out` 文件清空。
+  留着无害（无 `t/<cid>/` 对象时不命中）。
+- 注意：已写进客户桶的历史对象不会因为回滚而搬回平台盘。要搬回得走
+  `cmd/storage-backfill`，且它的目标端**只认云档案**——`driver=local` 会直接报错
+  「不回退平台盘」。
 
 ---
 
@@ -177,7 +185,7 @@ TENANT_STORAGE_ROUTE=on
 
 - 客户自有域名 `server` 块 + TLS 证书：仓库无生成代码，需运维在宝塔**逐个域名手加**；
   生成器只产 `location` 段（`snippet.go:172`），不含 server/证书。
-- R1-b 按租户自有 CDN 刷新：`TenantStorageConfig` 无 per-tenant CDN 字段、
+- R1-b 按租户自有 CDN 刷新：`delivery_profiles` 目前只有域名与刷新配置，
   `cdnRefreshHandler`/`CdnRefresh.vue` 无租户维度，平台 refresher 够不到客户边缘
   （`docs/tenant-storage-r1-feasibility.md` §4 R1-b 标「未闭环」）。
 - 这两件是「客户自有域名出图」的前置，与 R1（平台托管）解耦，需单独决策与开发。
@@ -190,13 +198,22 @@ TENANT_STORAGE_ROUTE=on
 
 ## 排错 / FAQ
 
-**Q：`数据源：mysql（tenant_storage_configs 共 0 行）`**
-A：库里没有任何租户配置自有存储。R1 暂时没东西可路由。先去管理后台给某租户配好存储
-（driver / endpoint / bucket / 凭据，`enabled=1`），表里出现行后再跑 `render` 才会出 `location` 块。
+**Q：`render` 输出「零 location」，snippet 里只有注释**
+A：库里没有任何企业绑定云档案（或全部绑的是 local）。R1 暂时没东西可路由。
+先去管理后台「存储档案」建一套云档案并绑定给某企业，再跑 `render` 才会出 `location` 块。
+**不要**加 `--allow-empty` 把已有 snippet 清掉——那会让全部企业撕回平台盘。
+
+**Q：`档案表缺失（迁移 0054 未应用）`**
+A：库还没跑 `0054_storage_profiles`。先 `./server migrate`。生成器**故意不降级**：
+档案表缺失时直接报错，而不是「当作没有绑定」——后者会静默把全站撕回平台盘。
+
+**Q：`单个绑定指向坏档案`**
+A：某条 `storage_bindings` 指向的 `storage_profile_id` 不存在。生成器**报错而不是跳过**：
+跳过等于让那家企业悄悄回落平台盘，且没有任何人会发现。
 
 **Q：`本次渲染没有任何 location，但 /tmp/tenant-storage.conf 已存在且非空`**
 A：安全守卫在生效——本次结果会是空 snippet，但不许覆盖一个已有内容的文件（防误清空）。
-原因通常是「库里 0 行 + 旧 snippet 文件还在」。解决：`rm /tmp/tenant-storage.conf` 后重跑；
+原因通常是「库里 0 条绑定 + 旧 snippet 文件还在」。解决：`rm /tmp/tenant-storage.conf` 后重跑；
 或若确实要清空所有 location，加 `--allow-empty`。
 
 **Q：`Exec format error` / `cannot execute`**
@@ -210,10 +227,19 @@ A：`--dns-precheck` 解析 bucket endpoint 不通。先确认 DNS / 网络能�
 A：重复 include 了 snippet（显式 include + extension 通配都加了）。二选一去掉一处。
 若报 `$uploads_cache` 重复定义，说明 snippet 里误带了 map——正常 snippet 只有 location 段，不含 map/server。
 
+**Q：后台已经绑了云档案，上传的图还是 404**
+A：两种成因，先分清是哪一种：
+1. **对象进了客户桶，但 nginx 不认识前缀** → 忘了重新 `render` + `reload`。查 snippet 里有没有
+   该企业的 `location`（`check` 会告诉你）。
+2. **对象还在平台盘** → 绑定没生效。查该企业有没有被更具体的绑定覆盖、档案 `driver` 是不是
+   还是 local、桶 `public_read` 是不是 false（私有桶直连会 403）。
+
 ---
 
-## 已就绪的守门（翻前放心）
+## 已就绪的守门
 
 - `tools/nginx-r1-check/run.sh`：本地桩桶验证 `/uploads/t/<cid>/` 分流语义（A–F 组断言）。
 - `backend/internal/handler/publicorigin_test.go`：出参 origin 按租户维度、不读 Host。
-- `nginxsnippet` 单测 + `cmd/nginx-snippets check`：配置表↔snippet 对账，漏配即非零退出。
+- `backend/internal/storageprofile/resolver_test.go`：平台实例绝不被档案覆盖、
+  无绑定回落平台、指纹变化即重载。
+- `nginxsnippet` 单测 + `cmd/nginx-snippets check`：档案绑定↔snippet 对账，漏配即非零退出。

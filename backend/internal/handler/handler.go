@@ -133,7 +133,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 接口的参数、访客可以随手改，读了就是跨租户串号。平台对象（p/）与
 		// 历史无前缀裸键仍走平台入口，见 storage.ResolveRefForTenant。
 		// 必须在发 60s 缓存头之前完成，否则边缘会缓存旧形态。
-		origin := publicOriginFor(db, e.CompanyID)
+		origin := publicOriginFor(e.CompanyID)
 		e.ResolveRefs(origin)
 		ci.ResolveRefs(origin)
 		cp.ResolveRefs(origin)
@@ -149,7 +149,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		var comp model.Company
 		if db.First(&comp, "id = ?", cid).Error != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业不存在"})
@@ -186,7 +186,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		page := atoiDefault(c.Query("page"), 1)
 		// size 缺省取 MaxTeamList(300)：改造前这个接口一次最多给 300，
 		// 老版本小程序不带参数时行为保持不变；新端固定传 size=60 做滚动加载。
@@ -249,7 +249,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		cats, featured, err := repository.GetAchievements(db, cid)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "查询失败"})
@@ -274,7 +274,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		catID, _ := strconv.ParseInt(c.Query("categoryId"), 10, 64)
 		// ?limit= 只做上限保护（缺省与上限见 repository.MaxProjectsList），端上无分页 UI
 		limit := limitParam(c, repository.MaxProjectsList, repository.MaxProjectsList)
@@ -299,7 +299,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		p, err := repository.GetProject(db, cid, id)
 		if err != nil {
@@ -338,7 +338,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		limit := limitParam(c, repository.MaxServicesList, repository.MaxServicesList)
 		s, err := repository.ListServices(db, cid, limit)
 		if err != nil {
@@ -361,7 +361,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		s, err := repository.GetService(db, cid, id)
 		if err != nil {
@@ -393,7 +393,7 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 按该企业此刻的实况选出参 origin（未配置 / 开关 off 时退化为平台统一入口）。
-		origin := publicOriginFor(db, cid)
+		origin := publicOriginFor(cid)
 		order := []string{"achievement", "service"}
 		var bgImage string
 		var bgMask int

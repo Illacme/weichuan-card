@@ -23,7 +23,6 @@ import (
 	"weichuan/internal/setup"
 	"weichuan/internal/storage"
 	"weichuan/internal/storageprofile"
-	"weichuan/internal/uploadroute"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,7 +33,6 @@ const usage = `用法：
   server migrate    应用待执行的数据库迁移后退出（不启服务）
   server backup     对 SQLite 库做在线一致性快照（--out <文件>）
   server dbcheck    只读体检一个 SQLite 备份文件（--file <文件>）
-  server tenant-storage-rekey  换 PII_ENC_KEY 后重加密租户存储凭据（需停机窗口；旧密钥经 PII_ENC_KEY_OLD 提供）
   server help       显示本说明
 
 迁移默认在启动时自动补齐（仅 MySQL；AUTO_MIGRATE=0 关闭），
@@ -59,9 +57,6 @@ func main() {
 			return
 		case "dbcheck":
 			runDBCheck()
-			return
-		case "tenant-storage-rekey":
-			runTenantStorageRekey(cfg)
 			return
 		case "help", "-h", "--help":
 			log.Print(usage)
@@ -355,25 +350,23 @@ func main() {
 	handler.RegisterCompanyLicense(r, db) // 按企业查看/设置授权（席位 / 到期 / 功能开关）
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额（GET /api/admin/storage + PUT quota）
 	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
-	// 租户自有对象桶配置（平台超管专属）：GET/PUT/DELETE .../storage + POST .../storage/check。
-	// 与上面那条分开放：这里是客户的云凭据 + 桶地址，泄露面比小程序凭据更大。
-	handler.RegisterTenantStorage(r, db)
 	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
 	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
-		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响旧配置，但「文件存储与分发」缺少兜底）：%v", err)
+		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「文件存储与分发」缺少兜底）：%v", err)
 	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	handler.SetProfileOriginResolver(profiles.OriginFor)
+	handler.SetProfileOriginDiag(profiles.Diagnose)
 	handler.SetProfileOwnerResolver(profiles.OwnerOf)
-	handler.RegisterStorageProfiles(r, db, profiles, cfg.UploadBaseURL) // 存储 / 分发档案 + 全局与企业绑定
-	handler.RegisterStorageMigration(r, db, profiles)                   // 一键迁移任务
-	handler.RegisterMPRelease(r, db, cfg)                               // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
-	handler.RegisterAdmins(r, db)                                       // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
-	handler.RegisterAuditLogs(r, db)                                    // 操作审计日志（只读查询：平台超管）
-	handler.RegisterBackup(r, db, cfg)                                  // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
-	handler.RegisterLicenseView(r, db)                                  // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
-	handler.RegisterURLProbe(r, db)                                     // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
+	handler.RegisterStorageProfiles(r, db, profiles)  // 存储 / 分发档案 + 全局与企业绑定
+	handler.RegisterStorageMigration(r, db, profiles) // 一键迁移任务
+	handler.RegisterMPRelease(r, db, cfg)             // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
+	handler.RegisterAdmins(r, db)                     // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
+	handler.RegisterAuditLogs(r, db)                  // 操作审计日志（只读查询：平台超管）
+	handler.RegisterBackup(r, db, cfg)                // 备份与恢复面板：状态 / 立即备份 / 下载（平台超管）
+	handler.RegisterLicenseView(r, db)                // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
+	handler.RegisterURLProbe(r, db)                   // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
 
 	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
 	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，
@@ -405,23 +398,14 @@ func main() {
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。
 	r.Static("/uploads", cfg.UploadDir)
-	// 该用哪个存储实例：平台那份，还是租户自己的桶。
+	// 该用哪个存储实例：平台那份，还是租户档案里配的桶。
 	//
-	// TENANT_STORAGE_ROUTE 默认 off —— off 时注入 StaticResolver，所有租户仍然只用
-	// 平台实例，与本轮之前逐字节一致。这是本系列「先接形状、再翻开关」的分界线：
-	// 形状改了（5 个 Register 的参数从 Up 变 Resolver），行为没改。
-	// 翻开关前必须确认迁移 0044 已应用：Verify 会在启动阶段把它挡下来，
-	// 而不是等到第一个上传才发现「表不存在」——那时所有租户的上传都会失败。
-	var res storage.Resolver = storage.NewStaticResolver(up, cfg.StorageDriver)
-	if tenantStorageRouteEnabled() {
-		if err := uploadroute.Verify(db); err != nil {
-			log.Fatalf("[STORAGE] TENANT_STORAGE_ROUTE 已启用，但无法启用租户存储路由：%v", err)
-		}
-		res = uploadroute.New(up, cfg.StorageDriver, uploadroute.DBLoader(db, cfg.UploadBaseURL))
-		log.Print("[STORAGE] 租户存储路由已启用：已启用自有桶的租户，其新上传将写入客户的对象存储")
-	}
-	// 档案绑定插在既有 Resolver 外侧：有绑定走档案，没绑定沿用旧口径（零突变升级）。
-	var effective storage.Resolver = storageprofile.NewDynamic(res, profiles)
+	// 只有一条路：档案 + 绑定。平台实例（sys_setting / STORAGE_*）由 SetPlatform
+	// 注入，服务两类调用方——平台对象（p/ 前缀）与**没有绑定档案**的租户。
+	// 历史上这里还有 TENANT_STORAGE_ROUTE 开关与 tenant_storage_configs 分流，
+	// 第七十五轮随该表一起删除：产品未商用，兼容层不值得每个请求多查一次库。
+	profiles.SetPlatform(up, cfg.StorageDriver)
+	var effective storage.Resolver = profiles
 	handler.RegisterUpload(r, db, cfg, effective, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
 	handler.RegisterStorage(r, db, effective, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
 	// 图片内容安全：微信消息推送回调 + 后台检测记录列表 + 一键下架
@@ -578,10 +562,6 @@ func newUploaderWithFallback(cfg config.Config) storage.Uploader {
 	}
 }
 
-// tenantStorageRouteEnabled 见 uploadroute.RouteEnabled —— 判定只留一处，
-// cmd/server 与 cmd/devserver 必须认同一个环境变量。
-func tenantStorageRouteEnabled() bool { return uploadroute.RouteEnabled() }
-
 // newUploader 按存储驱动构造文件存储实现（local / minio / oss / s3），统一返回 storage.Uploader
 func newUploader(cfg config.Config) (storage.Uploader, error) {
 	const maxBytes = 10 * 1024 * 1024 // 10MB
@@ -604,61 +584,4 @@ func newUploader(cfg config.Config) (storage.Uploader, error) {
 			AllowExt: storage.DefaultAllowExt,
 		}, nil
 	}
-}
-
-// runTenantStorageRekey `server tenant-storage-rekey`：换 PII_ENC_KEY 后，对
-// tenant_storage_configs 的凭据做「旧密钥解密 → 新密钥重加密」回填。
-//
-// 运维前置（停机式 re-key，务必在**停写窗口**内执行）：
-//  1. 把新密钥写进配置 / 环境变量 PII_ENC_KEY；
-//  2. 把被替换掉的旧密钥放进 PII_ENC_KEY_OLD（base64 32 字节）；
-//  3. 停止所有写入租户存储配置的服务实例，仅保留本命令运行；
-//  4. 跑本命令；完成后用新密钥正常启动服务。
-//
-// 为什么必须先装载新密钥且拒绝占位密钥：本命令会把所有凭据重加密成「当前进程密钥」加密，
-// 若当前是 dev 占位密钥（未设 PII_ENC_KEY 被放行），重加密后就只有 dev 密钥能解——
-// 等于把生产凭据锁进公开密钥，后果比不轮换更糟，故直接 Fatal 拒绝。
-// 处理范围（务必先读）：只重加密 tenant_storage_configs 的云凭据，
-// **不覆盖业务 PII**——employees / open_applies / card_modify_applies.snapshot
-// 的加密列与盲索引都不在本命令范围内。命令名带 rekey，很容易被当成「全库换钥」；
-// 若 PII_ENC_KEY 已更换且这些表有存量数据，它们仍不可解密，本命令无法补救。
-func runTenantStorageRekey(cfg config.Config) {
-	// 范围警告必须在连库（更别说写库）之前打印：真有人是在换钥后拿它「救数据」，
-	// 跑到一半才发现救不了，就已经白停了一次机。
-	log.Printf("[REKEY][WARN] 本命令只重加密 tenant_storage_configs 的云凭据；" +
-		"不覆盖业务 PII（employees / open_applies / card_modify_applies.snapshot 的加密列与盲索引）。" +
-		"若 PII_ENC_KEY 已更换且这些表有存量数据，它们仍不可解密，本命令无法补救；" +
-		"换钥前必须确认业务 PII 为空或另有回填方案。")
-	if config.Resolved("DB_DSN") == "" {
-		log.Fatal("[REKEY] DB_DSN 未配置：请用 DB_DSN=... server tenant-storage-rekey 显式指定")
-	}
-	// 必须先装载密钥，且必须是有效的新密钥（不能是坏密钥，也不能是 dev 占位密钥误用）。
-	syncPIIKeyFromConfig()
-	if err := pii.KeyError(); err != nil {
-		log.Fatalf("[REKEY][FATAL] PII_ENC_KEY 无效：%v", err)
-	}
-	if pii.UsingPlaceholderKey() && os.Getenv("ALLOW_INSECURE") != "1" {
-		log.Fatalf("[REKEY][FATAL] 当前 PII_ENC_KEY 是内置 dev 占位密钥：用它重加密会把所有租户凭据改成 dev 密钥加密，" +
-			"任何拿到二进制的人都能解密，生产绝不可接受。请设置真实的 PII_ENC_KEY 后重试（本地联调确需放行请加 ALLOW_INSECURE=1）")
-	}
-	target := pii.CurrentKeyID()
-	if target == "" {
-		log.Fatal("[REKEY][FATAL] 无法确定当前密钥指纹（PII_ENC_KEY 未正确装载），停止重加密")
-	}
-	oldB64 := os.Getenv("PII_ENC_KEY_OLD")
-	if oldB64 == "" {
-		log.Printf("[REKEY][WARN] 未提供 PII_ENC_KEY_OLD：凡是当前密钥解不开的存量凭据将无法重加密并导致命令中止。" +
-			"若这是首次启用 KeyID（存量行 key_id 为空）且全程只用当前这一把密钥写入过，可安全忽略本警告。")
-	}
-	db, driver, err := dbopen.Open(cfg.DBDSN)
-	if err != nil {
-		// 不打印 DSN 原文（含数据库口令）
-		log.Printf("[REKEY] 连接数据库失败（driver=%s）：%v", driver, err)
-		log.Fatal("[REKEY] 排查顺序：库是否已启动 / 地址端口是否可达 / 账号口令与库名是否正确（日志不打印 DSN）")
-	}
-	processed, rerr := handler.RekeyTenantStorage(db, oldB64)
-	if rerr != nil {
-		log.Fatalf("[REKEY][FATAL] 重加密中止（已重加密 %d 行）：%v", processed, rerr)
-	}
-	log.Printf("[REKEY] 完成：共重加密 %d 行租户存储凭据，key_id 已刷新为 %s", processed, target)
 }

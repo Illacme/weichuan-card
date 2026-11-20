@@ -161,14 +161,15 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterCompanyLicense(r, db) // 按企业查看/设置授权（B4：试用转正 / 延期 / 改席位）
 	RegisterStorageQuota(r, db)   // 按租户存储用量与配额（B3）
 	RegisterCompanyWXApp(r, db)
-	// 租户自有对象桶配置（平台超管）：GET/PUT/DELETE /api/admin/companies/:id/storage
-	// + POST .../check。这里不注册的话，「企业管理员越权应 403」那条断言会变成
-	// gin 的 404 纯文本，测试红在一个看不出是路由缺失的地方。
-	RegisterTenantStorage(r, db)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	// 测试里关掉指纹节流：用例常常「建完档案立刻发请求断言」，
+	// 生产默认的 700ms 节流会让它读到建档案之前的快照。
+	profiles.SetFingerprintTTL(0)
+	profiles.SetPlatform(up, cfg.StorageDriver)
 	SetProfileOriginResolver(profiles.OriginFor)
+	SetProfileOriginDiag(profiles.Diagnose)
 	SetProfileOwnerResolver(profiles.OwnerOf)
-	RegisterStorageProfiles(r, db, profiles, cfg.UploadBaseURL)
+	RegisterStorageProfiles(r, db, profiles)
 	RegisterStorageMigration(r, db, profiles)
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
@@ -185,12 +186,9 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// 静态托管需要目录存在
 	require.NoError(t, os.MkdirAll(cfg.UploadDir, 0755))
 	r.Static("/uploads", cfg.UploadDir)
-	// 测试里一律用 StaticResolver：所有租户都用同一个 up 实例，与生产
-	// TENANT_STORAGE_ROUTE=off 的默认行为一致。这也让「形状改了、行为没变」
-	// 成为可验证的事实——本文件几十处断言一行没改就全绿。
-	// 需要验证租户分流的用例直接构造 uploadroute.Resolver，不走 buildEngine。
-	res := storage.NewStaticResolver(up, cfg.StorageDriver)
-	effective := storageprofile.NewDynamic(res, profiles)
+	// 与生产同一套解析：平台实例由 SetPlatform 注入，租户桶只看档案绑定。
+	// 没有绑定档案的租户自动回落到 up，所以既有断言（都用本地存储）一行不用改。
+	var effective storage.Resolver = profiles
 	effectiveCDN := storageprofile.NewDynamicCDN(refresher, profiles)
 	RegisterUpload(r, db, cfg, effective, effectiveCDN)
 	RegisterStorage(r, db, effective, effectiveCDN, cfg)
@@ -1496,43 +1494,37 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 1, body["code"])
 	})
 
-	// 租户自有对象桶配置（P1 后半段）：四个接口进 runAPIFlow，才会被
-	// TestAPIFlowMySQL 的 parity 一并覆盖。这里只跑一遍超管闭环——
-	// 企业管理员 403 那条在 tenant_storage_test.go 里单独测（那里要造企业管理员账号）。
-	// 收尾把配置删掉：后面的 flow 不该受「这家企业有自有桶」影响。
-	t.Run("租户存储配置", func(t *testing.T) {
-		old := storageProbeFn
-		storageProbeFn = func(_, _, _, _, bucket, _ string, _ bool) (string, error) {
-			return "凭据有效，桶 " + bucket + " 可达（parity 桩）", nil
-		}
-		t.Cleanup(func() { storageProbeFn = old })
-
-		const p = "/api/admin/companies/1/storage"
-		_, body := c.do("GET", p, nil, adminToken)
+	// 存储档案与绑定：进 runAPIFlow 才会被 TestAPIFlowMySQL 的 parity 一并覆盖。
+	//
+	// 只用 local 驱动：云驱动的 /check 会真发外网请求，parity 不该依赖网络。
+	// 凭据回显的掩码契约在 storage_profile 的独立用例里测，这里只钉「不出参」。
+	t.Run("存储档案与绑定", func(t *testing.T) {
+		_, body := c.do("GET", "/api/admin/storage-profiles", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
-		require.EqualValues(t, false, body["data"].(map[string]interface{})["configured"])
 
-		_, body = c.do("PUT", p, map[string]interface{}{
-			"driver": "minio", "endpoint": "play.min.io", "bucket": "wc-parity",
-			"useSsl": true, "hostHeader": "wc-parity.play.min.io",
-			"enabled": true, "publicRead": true,
-			"accessKey": "AKIAPARITYEXAMPLE0000", "secretKey": "parity-secret",
+		_, body = c.do("POST", "/api/admin/storage-profiles", map[string]interface{}{
+			"name": "parity-local", "driver": "local", "publicRead": true, "useSsl": true,
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"], "%v", body["msg"])
+		data := body["data"].(map[string]interface{})
+		id := int64(data["id"].(float64))
+		require.EqualValues(t, "local", data["driver"])
+		require.NotContains(t, data, "secretKey", "SecretKey 永不出参")
+		require.NotContains(t, fmt.Sprint(body), "parity-secret", "密文/明文都不得回显")
+
+		_, body = c.do("PUT", "/api/admin/storage-bindings/companies/1", map[string]interface{}{
+			"storageProfileId": id,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"], "%v", body["msg"])
 
-		// 回显只有掩码：这是 MySQL 侧也要成立的契约（密文列是 TEXT，落库/读回不改变语义）
-		_, body = c.do("GET", p, nil, adminToken)
+		_, body = c.do("GET", "/api/admin/storage-bindings", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
-		data := body["data"].(map[string]interface{})
-		require.Equal(t, "AKIA****0000", data["accessKeyMasked"])
-		require.NotContains(t, fmt.Sprint(body), "parity-secret")
 
-		_, body = c.do("POST", p+"/check", nil, adminToken)
+		_, body = c.do("DELETE", "/api/admin/storage-bindings/companies/1", nil, adminToken)
 		require.EqualValues(t, 0, body["code"])
-		require.EqualValues(t, true, body["data"].(map[string]interface{})["ok"])
 
-		_, body = c.do("DELETE", p, nil, adminToken)
-		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("DELETE", fmt.Sprintf("/api/admin/storage-profiles/%d", id), nil, adminToken)
+		require.EqualValues(t, 0, body["code"], "%v", body["msg"])
 	})
 
 	// 移动端管理员身份通路：放最后，因为它会往 sys_setting 写 wx_appid，
@@ -2039,16 +2031,26 @@ func TestMySQLMigrations(t *testing.T) {
 	// 校验 migrations 确实建出了关键表（表名与 gorm 模型一致——复数；
 	// 单数名是 2026-10-21 修掉的历史不一致，见 model 包的守门测试）
 	//
-	// tenant_storage_configs / storage_backfill_refs 在列表里，是因为这两张表
-	// 建不出来时失败模式特别安静：生成器只说「表不存在」、回填命令只说「台账为空」，
-	// 而平台照常工作，直到某家租户上传完发现图全裂、或要回滚时发现没有 old_value。
-	// 让 parity 在迁移阶段就撞出来。
-	for _, tbl := range []string{"employees", "achievement_categories", "home_layouts", "project_cases", "admins", "open_applies", "card_modify_applies", "tenant_storage_configs", "storage_backfill_refs"} {
+	// storage_profiles / delivery_profiles / storage_bindings / storage_backfill_refs
+	// 在列表里，是因为这几张表建不出来时失败模式特别安静：生成器只说「表不存在」、
+	// 回填命令只说「台账为空」，而平台照常工作，直到某家租户上传完发现图全裂、
+	// 或要回滚时发现没有 old_value。让 parity 在迁移阶段就撞出来。
+	for _, tbl := range []string{"employees", "achievement_categories", "home_layouts", "project_cases", "admins", "open_applies", "card_modify_applies", "storage_profiles", "delivery_profiles", "storage_bindings", "storage_backfill_refs"} {
 		var cnt int64
 		require.NoError(t, db.Raw(
 			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", tbl,
 		).Scan(&cnt).Error)
 		require.EqualValues(t, 1, cnt, "table %s should exist after migrations", tbl)
+	}
+
+	// 反向断言：旧表必须**不存在**。迁移 0055 会 DROP 它，若哪天有人把 0055 删掉
+	// 或改成「留着不删」，这里立刻红——旧表一旦复活，两套配置并存的老问题就回来了。
+	for _, gone := range []string{"tenant_storage_configs"} {
+		var cnt int64
+		require.NoError(t, db.Raw(
+			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", gone,
+		).Scan(&cnt).Error)
+		require.EqualValues(t, 0, cnt, "table %s 应已被迁移 0055 删除", gone)
 	}
 
 	// 盲索引列存在 ≠ 查询用得上索引：直接查 information_schema 验证 0051 建出了索引，

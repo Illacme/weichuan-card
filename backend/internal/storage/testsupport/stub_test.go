@@ -1,25 +1,28 @@
-package storage
+package testsupport
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"weichuan/internal/storage"
 )
 
-// TestStaticResolverIgnoresCompanyID 钉住 StaticResolver 的核心契约：
-// 不管问哪个租户，拿到的都是同一个平台实例。
+// TestStaticResolverIgnoresCompanyID 钉住桩的核心契约：不管问哪个租户，
+// 拿到的都是同一个实例。
 //
-// 这条看起来"什么都没做"，但它正是 TENANT_STORAGE_ROUTE=off 时的生产行为，
-// 也是第六十一轮「形状变了、行为没变」的全部依据——一旦有人为了"顺手支持租户"
-// 往这里加分支，off 就不再等于升级前的语义了。
+// 它测的是**桩本身**，不是产品行为——生产实现
+// （`storageprofile.Resolver`）的按企业分叉由 `internal/storageprofile` 的
+// 测试覆盖。这里存在的意义是：任何把桩当成「省事实现」塞进生产装配的改动，
+// 都会先让本文件的语义变得可疑，从而被 review 抓住。
 func TestStaticResolverIgnoresCompanyID(t *testing.T) {
-	up := &LocalUploader{Dir: t.TempDir()}
+	up := &storage.LocalUploader{Dir: t.TempDir()}
 	res := NewStaticResolver(up, "minio")
 
 	for _, cid := range []int64{-1, 0, 1, 42, 9999} {
 		got, err := res.For(cid)
 		require.NoError(t, err, "cid=%d 不应报错", cid)
-		require.Same(t, up, got, "cid=%d 必须拿到平台那一个实例", cid)
+		require.Same(t, up, got, "cid=%d 必须拿到同一个实例", cid)
 		require.Same(t, up, res.Platform())
 		require.Equal(t, "minio", res.DriverFor(cid))
 	}
@@ -32,7 +35,7 @@ func TestStaticResolverNilUploaderReportsError(t *testing.T) {
 	res := NewStaticResolver(nil, "local")
 
 	up, err := res.For(1)
-	require.ErrorIs(t, err, ErrNoUploader)
+	require.ErrorIs(t, err, storage.ErrNoUploader)
 	require.Nil(t, up, "报错时不得同时给出一个可用的 nil 实例")
 	require.Nil(t, res.Platform())
 }
@@ -41,6 +44,6 @@ func TestStaticResolverNilUploaderReportsError(t *testing.T) {
 // capabilityHandler 原实现是 `driver == "" → "local"`，这里必须与它一致，
 // 否则「存储能力探测」会在驱动名留空的老部署上报出一个不存在的驱动名。
 func TestStaticResolverEmptyDriverMeansLocal(t *testing.T) {
-	res := NewStaticResolver(&LocalUploader{Dir: t.TempDir()}, "")
+	res := NewStaticResolver(&storage.LocalUploader{Dir: t.TempDir()}, "")
 	require.Equal(t, "local", res.DriverFor(7))
 }

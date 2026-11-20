@@ -12,11 +12,14 @@ var ErrNoUploader = errors.New("存储未初始化（没有可用的上传实例
 
 // Resolver 按租户给出该用哪个存储实例。
 //
-// 为什么要有这一层：直到第六十轮，进程里只有**一个** storage.Uploader，
-// 由 sys_setting 的全局单值（storage_driver / bucket / 凭据）构造，所有租户共用。
-// 客户说「文件存进我自己公司的桶」时，全局单值装不下第二个租户——
-// tenant_storage_configs（迁移 0044）装得下配置，但**表本身不会让上传改道**。
-// Resolver 就是「配置行 → 实例」这一跳，也是那张表第一次真正承载流量的入口。
+// 为什么要有这一层：平台自身的存储由 sys_setting 的全局单值（storage_driver /
+// bucket / 凭据）构造，全平台共用一份。客户说「文件存进我自己公司的桶」时，
+// 全局单值装不下第二个租户——Resolver 就是「档案绑定 → 实例」这一跳。
+//
+// **生产实现只有一个**：`internal/storageprofile.Resolver`（第七十五轮起直接实现
+// 本接口）。历史上还有过 storage.StaticResolver / uploadroute.Resolver /
+// DynamicResolver 三个包装层，随 TENANT_STORAGE_ROUTE 开关一并删除；
+// 测试用的桩实现挪到了 `internal/storage/testsupport`，不再留在生产包里。
 //
 // 接口只留三个方法，是刻意的：
 //   - 设计稿 §3.3 还列了 PresignerFor / SignerFor / RefresherFor，三者都会退化成
@@ -48,40 +51,3 @@ type Resolver interface {
 	// 取不到配置时返回平台驱动：它只用于界面文案，不影响任何写入路径。
 	DriverFor(cid int64) string
 }
-
-// StaticResolver 是「所有租户都走平台那一份实例」的实现。
-//
-// 它不是临时脚手架，而是 TENANT_STORAGE_ROUTE=off 时的**正式实现**：
-// 默认配置下它就是生产行为，所以这里必须与第六十轮之前逐字节等价——
-// 这正是本系列能先「只改形状」的前提，也是把开关默认关掉的意义：
-// 出事时把它关回去，进程内只剩这一条路径，与升级前完全一致。
-type StaticResolver struct {
-	up     Uploader
-	driver string
-}
-
-// NewStaticResolver 包装一个平台实例。driver 传空串时的口径与
-// capabilityHandler 原实现一致（空 = local），不要把空串当「未知驱动」另立分支。
-func NewStaticResolver(up Uploader, driver string) *StaticResolver {
-	return &StaticResolver{up: up, driver: driver}
-}
-
-// For 忽略租户，永远返回平台实例。返回 error 的唯一情形是平台实例本身没建起来，
-// 此时**不能**返回 (nil, nil)：调用方会拿 nil 去 Save。
-func (s *StaticResolver) For(int64) (Uploader, error) {
-	if s.up == nil {
-		return nil, ErrNoUploader
-	}
-	return s.up, nil
-}
-
-func (s *StaticResolver) Platform() Uploader { return s.up }
-
-func (s *StaticResolver) DriverFor(int64) string {
-	if s.driver == "" {
-		return "local"
-	}
-	return s.driver
-}
-
-var _ Resolver = (*StaticResolver)(nil)

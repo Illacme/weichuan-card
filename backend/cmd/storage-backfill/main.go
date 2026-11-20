@@ -111,8 +111,8 @@ apply / rollback（会改数据）:
                     MinIO / S3 兼容桶，直接从桶里读历史对象）。与 --target-store 正交。
   --source-dir      仅 source-store=local 时必填：平台侧现有对象的本地目录。
                     s3 模式给了这个参数会直接报错（避免误以为两边都生效）。
-  --target-store    local（默认，离线演练）/ tenant（按 company_id 解密
-                    tenant_storage_configs，对象真的写进客户自己的桶）
+  --target-store    local（默认，离线演练）/ tenant（按 company_id 查存储档案，
+                    对象真的写进客户自己的桶）
   --target-dir      仅 target-store=local 时的目标对象根目录。本地适配器把各租户
                     映射到同一根目录，键自带 t/<cid>/ 前缀不会串号；
                     tenant 模式给了这个参数会直接报错（避免误以为两边都生效）

@@ -155,15 +155,16 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 可能返回不同域名的绝对 URL。缓存键必须能区分租户——小程序对这批 GET 都会带
 `?companyId=`，`/api/card` 按 `staffId` 定位（staff_id 全局唯一）。
 若 CDN 配成忽略 query string 缓存，A 企业的客户域名响应会被发给 B 企业访客；
-这是翻 `TENANT_STORAGE_ROUTE` 之前必须确认的接入层项（设计稿 §3.8）。
+这是**绑定客户分发域名**之前必须确认的接入层项（设计稿 §3.8）。
 
 > **接入状态（2026-11-13 实装 / 2026-11-14 第六十九轮升级）**：上表 9 条路由**已全部接入**
 > `model/refs.go` 的出参侧解析（整模型路由调 `ResolveRefs(o)`、内联 `gin.H` 路由调
 > `model.ResolveResourceRef(raw, o)`），对现行生产数据零行为变更。
 > 第六十九轮把 `o` 从平台零值升级为按 `company_id` 取的 `model.Origin`：
 > `/api/card` 用 `e.CompanyID`，其余 8 条用 `publicCompanyID(c, db)`；
-> 判定单点在 `handler/publicorigin.go`。`TENANT_STORAGE_ROUTE` 默认 off 时，
-> 每一家的 `o` 都是平台零值，出参与第六十八轮完全一致。
+> 判定单点在 `handler/publicorigin.go`（`profileOriginResolver` + `profileOriginDiag`
+> 两个注入点，薄封装 `publicOriginFor(cid)` / `publicOriginDiagnosis(cid)`）。
+> 第七十五轮删除开关后，没有绑定档案的企业 `o` 仍是平台零值，出参与第六十八轮一致。
 > 接线守门见 `TestPublicOriginWiringGate`（按路由块逐个对账 + 至少 9 条读数兜底）。
 
 ### 3.2 其它出参出口
@@ -386,7 +387,7 @@ sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `st
 `go test ./...` 全包绿（handler 50s、storage 6s）。前端零改动 → 未跑 vue-tsc / Vitest / eslint / build。
 
 **仍未做**：严格裸键、`NormalizeRef` 收敛（写入侧）、存量回填、迁移 0044、
-生成器接真实配置表（`tenant_storage_configs` → snippet）。
+生成器接真实配置表（当时的 `tenant_storage_configs` → snippet；第七十五轮已改为读存储档案）。
 
 ### 5.5 写入侧收敛（2026-11-13 / 第五十九轮，落库形态从三种混存收敛到裸键）
 

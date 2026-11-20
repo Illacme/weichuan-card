@@ -90,8 +90,8 @@ func TestLocalStoresUsesTheGivenRoots(t *testing.T) {
 	}
 }
 
-// testPiiKey 显式装一把真密钥。tenant 模式拒绝内置 dev 密钥，
-// 且 pii 是包级全局状态，必须在用例结束后还原，否则会污染同包其它测试。
+// testPiiKey 显式装一把真密钥：源侧（平台 S3）与凭据相关的用例仍要它。
+// pii 是包级全局状态，必须在用例结束后还原，否则会污染同包其它测试。
 func testPiiKey(t *testing.T) {
 	t.Helper()
 	t.Setenv(pii.KeyEnvVar, base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'k'}, 32)))
@@ -149,24 +149,13 @@ func TestBuildStoresTenantRequiresSourceDir(t *testing.T) {
 	require.Contains(t, err.Error(), "--source-dir")
 }
 
-func TestBuildStoresTenantRefusesPlaceholderKey(t *testing.T) {
-	t.Setenv(pii.KeyEnvVar, "")
-	pii.Reload()
-	t.Cleanup(pii.Reload)
-	require.True(t, pii.UsingPlaceholderKey())
-	_, err := buildStores("local", "tenant", t.TempDir(), "", testEmptyDB(t))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), pii.KeyEnvVar)
-	require.Contains(t, err.Error(), "dev 密钥")
-}
-
 func TestBuildStoresTenantNeverFallsBackToLocalDisk(t *testing.T) {
 	testPiiKey(t)
-	db := testEmptyDB(t) // 故意不建 tenant_storage_configs 表
+	db := testEmptyDB(t) // 故意不建 storage_profiles / storage_bindings 表
 	stores, err := buildStores("local", "tenant", t.TempDir(), "", db)
 	require.NoError(t, err)
 	target, err := stores.TargetFor(7)
-	require.Error(t, err, "读不到配置时必须整批停下")
+	require.Error(t, err, "读不到档案时必须整批停下")
 	require.Contains(t, err.Error(), "不回退平台盘")
 	require.Nil(t, target, "绝不返回本地盘实例顶上")
 }

@@ -79,9 +79,9 @@ func checkStorageQuota(db *gorm.DB, cid, incoming int64) (bool, string) {
 	// 租户已切到自有桶：对象落在客户自己的存储，平台不持有这些字节，
 	// 平台配额不再硬拦截（成本不在平台），改为计量与展示（见 storageGetHandler）。
 	// 判定在 tenantUsesOwnBucket 里单点完成：**先档案、后旧表**，与「谁会先挡住上传」
-	// 同源。别在这里另写一份「读 tenant_storage_configs 看 enabled」的乐观判断——
+	// 同源。别在这里另写一份「读档案看 driver」的乐观判断——
 	// 绑到云档案的企业根本没有那张表的行，另写一份就会把它们继续按平台配额硬拦。
-	if tenantUsesOwnBucket(db, cid) {
+	if tenantUsesOwnBucket(cid) {
 		return true, ""
 	}
 	quota := storageQuotaBytesFor(db, cid)
@@ -209,7 +209,7 @@ func storageGetHandler(db *gorm.DB) gin.HandlerFunc {
 		// 已切到自有桶的租户：平台配额不约束其上传（成本不在平台），
 		// 这里的 bytes 仅作"累计上传量"展示用，不再画满格拦截进度条。
 		// 判定含档案绑定（见 tenantUsesOwnBucket），否则绑了云档案的企业会被画成满格。
-		usesOwnBucket := tenantUsesOwnBucket(db, cid)
+		usesOwnBucket := tenantUsesOwnBucket(cid)
 		quota := storageQuotaBytesFor(db, cid)
 		percent := 0
 		if quota > 0 && !usesOwnBucket {
@@ -262,7 +262,7 @@ func storageQuotaPutHandler(db *gorm.DB) gin.HandlerFunc {
 		// 管理后台也已禁用这一栏并跳过提交）。这里再拒一次，保证即便有别的前端 / 脚本
 		// 绕过界面，也不会写进一条永远不生效的 quota_mb 并污染审计日志。
 		// 判定与 GET 出参同源（tenantUsesOwnBucket），不会出现「界面说不适用、后端照收」。
-		if tenantUsesOwnBucket(db, req.CompanyID) {
+		if tenantUsesOwnBucket(req.CompanyID) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该企业已使用自有存储，平台配额不适用（无需设置）"})
 			return
 		}

@@ -1,10 +1,14 @@
-// Package storageprofile 把「存储 / CDN 档案 + 绑定」解析成运行时生效配置。
+// Package storageprofile 把「存储 / 分发档案 + 绑定」解析成运行时生效配置。
+//
+// 这是**唯一**的存储配置模型。历史上还并存过两套（sys_setting 的平铺项、
+// tenant_storage_configs 的按企业一行），已在第七十五轮删除：产品尚未商用，
+// 兼容层带来的每请求一次必然落空的查询与两套判定标准不值得留。
 //
 // 设计要点（勿回退）：
-//  1. 启动期 config.OverlayFromSettings 的单一快照不再是真值源；这里按请求解析绑定。
+//  1. 档案 + 绑定是唯一真值源；平台自身那份存储由 SetPlatform 注入的实例表达。
 //  2. 档案和绑定各自带 version，快照按版本失效；多副本各进程独立缓存，秒级最终一致。
 //  3. 绑定存在但档案缺失 / status=deprecated 时**报错**，绝不静默回退平台——
-//     与 uploadroute 的既有边界一致，文件落错位置比上传失败严重得多。
+//     文件落错位置比上传失败严重得多。
 package storageprofile
 
 import (
@@ -13,14 +17,26 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"weichuan/internal/model"
 	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/storage"
-	"weichuan/internal/uploadroute"
 
 	"gorm.io/gorm"
 )
+
+// defaultFingerprintTTL 是「多久查一次库看档案变没变」的默认间隔。
+//
+// 为什么需要节流：解析器在**每个**取 origin / 判配额 / 构造上传器的请求上都要
+// 确认快照是不是最新的。以前每次确认打 6 条聚合查询（三张表的 MAX(version) +
+// Count），一个请求里 OriginFor 与 OwnerOf 各来一遍就是 12 条。现在合并成 1 条，
+// 再叠一层短 TTL：稳态下每个进程每秒最多 1 条。
+//
+// 代价是**跨进程**的变更最多晚 TTL 生效。这与本包既有的「秒级最终一致」一致；
+// 而**本进程**写入时 handler 会调 Touch() 立即重载，所以「保存后立刻刷新页面」
+// 看到的永远是新值。
+const defaultFingerprintTTL = 700 * time.Millisecond
 
 // Snapshot 是一次性读出的全部档案与绑定。用 atomic.Value 整份替换，
 // 避免读到「绑定换了、档案还没读到」的半新半旧状态。
@@ -32,28 +48,48 @@ type Snapshot struct {
 	// 只用 MAX(version) 之和会漏掉「新增一行绑定但 version=1」这种变化：
 	// 旧快照里没有这一行、MAX 却还是 1，两边签名相等 → 永远不重载。
 	Fingerprint string
+	// resolved 缓存本快照内的解析结果。快照整份替换时它随之丢弃，
+	// 因此不会出现「档案改了、缓存还留着旧结论」。同一个请求里
+	// OriginFor 与 OwnerOf 各调一次 Resolve 时省掉重复的版本运算与错误构造。
+	resolved sync.Map // int64 -> resolveResult
 }
 
-// Effective 是一次解析的结果。Storage 为 nil 表示「没有档案绑定」，
-// 调用方应走原有 tenant_storage_configs / 平台配置，这不是错误。
+type resolveResult struct {
+	eff Effective
+	err error
+}
+
+// Effective 是一次解析的结果。Storage 为 nil 表示「这家企业没有档案绑定」，
+// 调用方应走平台实例，这不是错误。
 type Effective struct {
 	Storage  *model.StorageProfile
 	Delivery *model.DeliveryProfile
 	Version  int64
 }
 
-// Resolver 是档案绑定的运行时解析器。
+// Resolver 是档案绑定的运行时解析器，同时是 storage.Resolver 的实现。
 type Resolver struct {
 	db       *gorm.DB
 	localDir string
-	snap     atomic.Value // *Snapshot
-	mu       sync.Mutex
-	uploader map[string]storage.Uploader // profileID:version -> uploader
+	// platform 是平台自身那一份存储实例（sys_setting / STORAGE_* 构造）。
+	// 它只服务两类调用方：平台对象（p/ 前缀）与**没有档案绑定**的租户。
+	// 它不参与租户路由判定——「这家有没有自己的桶」只看绑定。
+	platform       storage.Uploader
+	platformDriver string
+
+	snap atomic.Value // *Snapshot
+	mu   sync.Mutex
+	// uploader 缓存已构造的实例，键为「档案 id:版本」。
+	uploader map[string]storage.Uploader
 	upMu     sync.RWMutex
+
+	fpTTL time.Duration
+	fpMu  sync.Mutex
+	fpAt  time.Time
 }
 
 // New 构造解析器并立即加载一次快照；加载失败不阻止启动，
-// 后续每次解析会重试（见 reload）。
+// 后续每次解析会重试（见 snapshot）。
 func New(db *gorm.DB) *Resolver {
 	return NewWithLocal(db, "./uploads")
 }
@@ -61,7 +97,11 @@ func New(db *gorm.DB) *Resolver {
 // NewWithLocal 额外指定本地驱动的根目录。devserver / 测试用它指向临时 uploads，
 // 否则「本地档案」会写到进程当前目录下的 ./uploads，与静态路由托管目录分叉。
 func NewWithLocal(db *gorm.DB, dir string) *Resolver {
-	r := &Resolver{db: db, localDir: dir, uploader: make(map[string]storage.Uploader)}
+	r := &Resolver{
+		db: db, localDir: dir,
+		uploader: make(map[string]storage.Uploader),
+		fpTTL:    defaultFingerprintTTL,
+	}
 	r.snap.Store(&Snapshot{
 		Storages: map[int64]*model.StorageProfile{}, Deliveries: map[int64]*model.DeliveryProfile{},
 		Bindings: map[int64]*model.StorageBinding{},
@@ -70,30 +110,78 @@ func NewWithLocal(db *gorm.DB, dir string) *Resolver {
 	return r
 }
 
-// snapshot 返回当前快照；侦测到数据库版本变化时重载。
+// SetPlatform 注入平台自身那一份实例。必须在开始服务前调用一次。
+//
+// 为什么不从档案里推：平台对象（p/library/... 素材采用、p/wxacode/... 小程序码）
+// 的键前缀写死了平台，它们的字节必须落在平台自己的存储上，否则 URL 指向平台域名
+// 而对象在客户桶里，取图必然 404。平台实例是部署期就确定的事实，不该由一条
+// 可被误删的绑定来表达。
+func (r *Resolver) SetPlatform(up storage.Uploader, driver string) {
+	r.platform = up
+	r.platformDriver = driver
+}
+
+// SetFingerprintTTL 调整快照新鲜度检查的间隔，主要给测试用（传 0 = 每次都查库）。
+func (r *Resolver) SetFingerprintTTL(d time.Duration) { r.fpTTL = d }
+
+// snapshot 返回当前快照；距上次校验超过 TTL 时查一次库，变了就重载。
 func (r *Resolver) snapshot() *Snapshot {
 	cur, _ := r.snap.Load().(*Snapshot)
 	if cur == nil || r.db == nil {
 		return cur
 	}
-	if r.fingerprint() != cur.Fingerprint {
-		_ = r.reload()
-		cur, _ = r.snap.Load().(*Snapshot)
+	if !r.fingerprintDue() {
+		return cur
 	}
+	fp, err := r.fingerprint()
+	if err != nil {
+		// 查不到（表还没建 / 库抖动）时保留上一份快照。宁可短暂用旧配置，
+		// 也不能因为一次查询失败就让所有租户的上传走不通。
+		return cur
+	}
+	if fp == cur.Fingerprint {
+		return cur
+	}
+	if err := r.reload(); err != nil {
+		return cur
+	}
+	cur, _ = r.snap.Load().(*Snapshot)
 	return cur
 }
 
-// fingerprint 同时取三张表的行数与 MAX(version)：
+// fingerprintDue 判断是否到了下一次查库的时间，并推进时间戳。
+// 必须在这里推进（而不是拿到结果之后），否则并发请求会同时穿透去查库。
+func (r *Resolver) fingerprintDue() bool {
+	if r.fpTTL <= 0 {
+		return true
+	}
+	r.fpMu.Lock()
+	defer r.fpMu.Unlock()
+	if time.Since(r.fpAt) < r.fpTTL {
+		return false
+	}
+	r.fpAt = time.Now()
+	return true
+}
+
+// fingerprint 用**一条** SQL 取三张表的行数与 MAX(version)。
+//
 // 行数抓新增 / 删除，MAX(version) 抓修改，缺一不可（见 Snapshot.Fingerprint 注释）。
-func (r *Resolver) fingerprint() string {
+// 合并成一条是因为这条路径在每个取 origin / 判配额 / 构造上传器的请求上都会走，
+// 六次往返换成一次是这一层最直接的性能收益。
+func (r *Resolver) fingerprint() (string, error) {
+	const q = `SELECT
+ (SELECT COALESCE(MAX(version),0) FROM storage_profiles),
+ (SELECT COALESCE(MAX(version),0) FROM delivery_profiles),
+ (SELECT COALESCE(MAX(version),0) FROM storage_bindings),
+ (SELECT COUNT(*) FROM storage_profiles),
+ (SELECT COUNT(*) FROM delivery_profiles),
+ (SELECT COUNT(*) FROM storage_bindings)`
 	var maxS, maxD, maxB, countS, countD, countB int64
-	_ = r.db.Raw("SELECT COALESCE(MAX(version),0) FROM storage_profiles").Scan(&maxS).Error
-	_ = r.db.Raw("SELECT COALESCE(MAX(version),0) FROM delivery_profiles").Scan(&maxD).Error
-	_ = r.db.Raw("SELECT COALESCE(MAX(version),0) FROM storage_bindings").Scan(&maxB).Error
-	_ = r.db.Model(&model.StorageProfile{}).Count(&countS).Error
-	_ = r.db.Model(&model.DeliveryProfile{}).Count(&countD).Error
-	_ = r.db.Model(&model.StorageBinding{}).Count(&countB).Error
-	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", maxS, maxD, maxB, countS, countD, countB)
+	if err := r.db.Raw(q).Row().Scan(&maxS, &maxD, &maxB, &countS, &countD, &countB); err != nil {
+		return "", fmt.Errorf("读取档案指纹失败：%w", err)
+	}
+	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", maxS, maxD, maxB, countS, countD, countB), nil
 }
 
 func (r *Resolver) reload() error {
@@ -131,9 +219,36 @@ func (r *Resolver) reload() error {
 		b := bs[i]
 		s.Bindings[b.TenantID] = &b
 	}
-	s.Fingerprint = r.fingerprint()
+	// 指纹从**刚读到的这份数据**反算，而不是再查一次库：两次查询之间若有写入，
+	// 重算会得到一个与内存数据不匹配的指纹，下次比较必然不等，白重载一轮。
+	s.Fingerprint = snapshotFingerprint(sps, dps, bs)
 	r.snap.Store(s)
+	// 刚查过库，重置节流时间戳，避免紧接着的第一次 snapshot() 又白查一遍。
+	r.fpMu.Lock()
+	r.fpAt = time.Now()
+	r.fpMu.Unlock()
 	return nil
+}
+
+// snapshotFingerprint 从已读出的行算指纹，口径与 fingerprint 的 SQL 一致。
+func snapshotFingerprint(sps []model.StorageProfile, dps []model.DeliveryProfile, bs []model.StorageBinding) string {
+	var maxS, maxD, maxB int64
+	for i := range sps {
+		if sps[i].Version > maxS {
+			maxS = sps[i].Version
+		}
+	}
+	for i := range dps {
+		if dps[i].Version > maxD {
+			maxD = dps[i].Version
+		}
+	}
+	for i := range bs {
+		if bs[i].Version > maxB {
+			maxB = bs[i].Version
+		}
+	}
+	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", maxS, maxD, maxB, len(sps), len(dps), len(bs))
 }
 
 // Resolve 按企业解析生效档案。cid<=0 按全局默认处理。
@@ -142,6 +257,16 @@ func (r *Resolver) Resolve(cid int64) (Effective, error) {
 	if s == nil {
 		return Effective{}, fmt.Errorf("档案快照未就绪")
 	}
+	if v, ok := s.resolved.Load(cid); ok {
+		rr := v.(resolveResult)
+		return rr.eff, rr.err
+	}
+	eff, err := s.resolve(cid)
+	s.resolved.Store(cid, resolveResult{eff: eff, err: err})
+	return eff, err
+}
+
+func (s *Snapshot) resolve(cid int64) (Effective, error) {
 	b := s.Bindings[0]
 	if cid > 0 {
 		if own := s.Bindings[cid]; own != nil {
@@ -168,8 +293,44 @@ func (r *Resolver) Resolve(cid int64) (Effective, error) {
 	return Effective{Storage: sp, Delivery: dp, Version: b.Version + sp.Version}, nil
 }
 
-// UploaderFor 按生效档案构造（并缓存）Uploader。缓存键含档案版本，
-// 保存档案时 version 递增，下一次请求自然重建，不需要重启进程。
+// For 见 storage.Resolver.For。没有档案绑定时走平台实例——那是「明确没配」，
+// 不是降级；有绑定但构造失败时**报错**，绝不回退平台，否则文件会落错位置。
+func (r *Resolver) For(cid int64) (storage.Uploader, error) {
+	up, err := r.UploaderFor(cid)
+	if err != nil {
+		return nil, err
+	}
+	if up != nil {
+		return up, nil
+	}
+	return r.Platform(), nil
+}
+
+// Platform 恒返回平台自身那一份实例，**不参与**档案解析。
+// 理由见 SetPlatform 与 storage.Resolver.Platform 的注释。
+func (r *Resolver) Platform() storage.Uploader {
+	if r.platform == nil {
+		return nil
+	}
+	return r.platform
+}
+
+// DriverFor 回报该租户实际生效的驱动名，只用于后台能力探测展示。
+// 取不到档案时回平台驱动：它不影响任何写入路径，真正的失败会在 For 里报出来。
+func (r *Resolver) DriverFor(cid int64) string {
+	if cid > 0 {
+		if eff, err := r.Resolve(cid); err == nil && eff.Storage != nil {
+			return eff.Storage.Driver
+		}
+	}
+	if r.platformDriver == "" {
+		return "local"
+	}
+	return r.platformDriver
+}
+
+// UploaderFor 按生效档案构造（并缓存）Uploader。没有绑定时返回 (nil, nil)。
+// 缓存键含档案版本，保存档案时 version 递增，下一次请求自然重建，不需要重启进程。
 func (r *Resolver) UploaderFor(cid int64) (storage.Uploader, error) {
 	eff, err := r.Resolve(cid)
 	if err != nil {
@@ -178,8 +339,8 @@ func (r *Resolver) UploaderFor(cid int64) (storage.Uploader, error) {
 	if eff.Storage == nil {
 		return nil, nil
 	}
-	if eff.Storage.Driver == "local" {
-		return r.localUploader(), nil
+	if eff.Storage.Driver == nginxsnippet.DriverLocal {
+		return r.localUploader(eff.Storage), nil
 	}
 	key := fmt.Sprintf("%d:%d", eff.Storage.ID, eff.Storage.Version)
 	r.upMu.RLock()
@@ -188,10 +349,10 @@ func (r *Resolver) UploaderFor(cid int64) (storage.Uploader, error) {
 	if ok {
 		return up, nil
 	}
-	cfg := uploadConfig(eff.Storage, cid, eff.Version)
-	up, err = uploadroute.Build(cfg)
+	up, err = buildUploader(uploaderConfigFor(eff.Storage, cid))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf(
+			"企业 %d 的自有存储不可用（已按要求不回退平台存储，以免文件落错位置）：%w", cid, err)
 	}
 	r.upMu.Lock()
 	r.uploader[key] = up
@@ -199,95 +360,10 @@ func (r *Resolver) UploaderFor(cid int64) (storage.Uploader, error) {
 	return up, nil
 }
 
-// DynamicResolver 在既有 uploadroute.Resolver（兼容 tenant_storage_configs）之上
-// 插入档案解析：有绑定就走档案，没有绑定就沿用旧实现。
-// 这样旧部署升级后零突变，切换档案后下一个请求即生效。
-type DynamicResolver struct {
-	base storage.Resolver
-	prof *Resolver
-}
-
-func NewDynamic(base storage.Resolver, prof *Resolver) *DynamicResolver {
-	return &DynamicResolver{base: base, prof: prof}
-}
-
-func (d *DynamicResolver) For(cid int64) (storage.Uploader, error) {
-	if d.prof != nil {
-		if up, err := d.prof.UploaderFor(cid); err != nil {
-			return nil, err
-		} else if up != nil {
-			return up, nil
-		}
-	}
-	return d.base.For(cid)
-}
-
-// Platform 必须原样交回平台实例，**绝不能**走档案解析。
-//
-// 有一类对象键前缀写死了平台：p/library/...（素材采用）、p/wxacode/...（小程序码）。
-// 它们的 URL 由平台 nginx 的 /uploads/ 回退段托管；若被全局档案指到客户桶，
-// 字节进了客户桶、URL 仍是平台域名，取图必然 404。键前缀与实例必须同源
-// （见 storage.Resolver.Platform 的注释与 TestPlatformScopedWritesUsePlatformInstance）。
-func (d *DynamicResolver) Platform() storage.Uploader { return d.base.Platform() }
-
-func (d *DynamicResolver) DriverFor(cid int64) string {
-	if d.prof != nil {
-		if eff, err := d.prof.Resolve(cid); err == nil && eff.Storage != nil {
-			return eff.Storage.Driver
-		}
-	}
-	return d.base.DriverFor(cid)
-}
-
-// CDNRefresherFor 按 URL 里的 /uploads/t/<cid>/ 前缀选租户分发档案；
-// 解析不到租户时用全局绑定。返回 nil 表示没有配置 CDN 刷新。
-// 这样既支持多套 CDN，又不必改动所有 refreshCDN 调用签名。
-func (r *Resolver) CDNRefresherFor(urls ...string) storage.CDNRefresher {
-	cid := int64(0)
-	for _, u := range urls {
-		if i := strings.Index(u, "/uploads/t/"); i >= 0 {
-			tail := u[i+len("/uploads/t/"):]
-			if j := strings.IndexAny(tail, "/?#"); j > 0 {
-				if n, err := strconv.ParseInt(tail[:j], 10, 64); err == nil {
-					cid = n
-					break
-				}
-			}
-		}
-	}
-	eff, err := r.Resolve(cid)
-	if err != nil || eff.Delivery == nil || eff.Delivery.Provider == "none" || eff.Delivery.Provider == "" {
-		return nil
-	}
-	dp := eff.Delivery
-	rf, err := storage.NewCDNRefresher(storage.CDNConfig{
-		Provider: dp.Provider, AccessKeyID: dp.AccessKey, AccessKeySecret: dp.SecretKey,
-		Endpoint: dp.Endpoint, ResourceID: dp.ResourceID,
-	})
-	if err != nil {
-		return nil
-	}
-	return rf
-}
-
-// PublicURL 按分发档案拼出对外 URL；没有分发档案时返回空串（调用方回退既有逻辑）。
-func (r *Resolver) PublicURL(cid int64, key string) string {
-	eff, err := r.Resolve(cid)
-	if err != nil || eff.Delivery == nil || eff.Delivery.Domain == "" {
-		return ""
-	}
-	domain := strings.TrimRight(eff.Delivery.Domain, "/")
-	prefix := strings.Trim(eff.Delivery.PathPrefix, "/")
-	if prefix != "" {
-		return domain + "/" + prefix + "/" + strings.TrimLeft(key, "/")
-	}
-	return domain + "/" + strings.TrimLeft(key, "/")
-}
-
-func (r *Resolver) localUploader(sp ...*model.StorageProfile) storage.Uploader {
+func (r *Resolver) localUploader(sp *model.StorageProfile) storage.Uploader {
 	dir := r.localDir
-	if len(sp) > 0 && sp[0] != nil && strings.TrimSpace(sp[0].LocalDir) != "" {
-		dir = strings.TrimSpace(sp[0].LocalDir)
+	if sp != nil && strings.TrimSpace(sp.LocalDir) != "" {
+		dir = strings.TrimSpace(sp.LocalDir)
 	}
 	if dir == "" {
 		dir = "./uploads"
@@ -295,15 +371,15 @@ func (r *Resolver) localUploader(sp ...*model.StorageProfile) storage.Uploader {
 	return &storage.LocalUploader{Dir: dir, BaseURL: "/uploads", MaxBytes: 10 << 20, AllowExt: storage.DefaultAllowExt}
 }
 
-// uploadConfig 把档案转成 uploadroute.Config。自检查询和运行时上传共用这一个函数，
+// uploaderConfigFor 把档案转成构造参数。自检查询和运行时上传共用这一个函数，
 // 避免「自检说配置 OK、真上传却因字段口径不同而失败」这种最难查的漂移。
-func uploadConfig(sp *model.StorageProfile, cid, version int64) *uploadroute.Config {
+func uploaderConfigFor(sp *model.StorageProfile, cid int64) *uploaderConfig {
 	ep, useSSL := splitEndpointScheme(sp.Endpoint, sp.UseSSL)
-	return &uploadroute.Config{
+	return &uploaderConfig{
 		CompanyID: cid, Driver: sp.Driver, Endpoint: ep, Bucket: sp.Bucket,
 		Region: sp.Region, UseSSL: useSSL, HostHeader: sp.HostHeader,
 		AccessKey: sp.AccessKey, SecretKey: sp.SecretKey, BaseURL: sp.BaseURL,
-		PublicRead: sp.PublicRead, Version: version,
+		PublicRead: sp.PublicRead,
 	}
 }
 
@@ -313,7 +389,7 @@ func uploadConfig(sp *model.StorageProfile, cid, version int64) *uploadroute.Con
 // `proxy_pass https://<endpoint>`，带 scheme 会得到 `https://https://...`；
 // OSS SDK 又反过来要求带 scheme。所以两个消费方都从这里取，别各自判一次。
 //
-// 大小写不敏感地剥：手填 `HTTPS://` 在旧实现里剥不掉，会静默留下一个坏 endpoint。
+// 大小写不敏感地剥：手填 `HTTPS://` 在老实现里剥不掉，会静默留下一个坏 endpoint。
 func splitEndpointScheme(endpoint string, useSSL bool) (host string, ssl bool) {
 	ep := strings.TrimSpace(endpoint)
 	low := strings.ToLower(ep)
@@ -328,9 +404,9 @@ func splitEndpointScheme(endpoint string, useSSL bool) (host string, ssl bool) {
 
 // NginxTarget 把「某家企业的生效存储档案」映射成 nginx 渲染用的 Target。
 //
-// 与 uploadroute.Build 里的那份映射必须同口径（同一套 driver / endpoint / bucket /
+// 与 buildUploader 里的那份映射必须同口径（同一套 driver / endpoint / bucket /
 // host_header），否则会出现「上传按虚拟主机风格发、nginx 按路径风格回源」——
-// 那是第六十三轮真桶实测里最贵的一个坑（400 InvalidBucketName，后台看起来全对）。
+// 那是真桶实测里最贵的一个坑（400 InvalidBucketName，后台看起来全对）。
 //
 // Enabled 恒 true：档案没有 enabled 列，「要不要生成 location」由
 // Target.NeedsSnippet 按 driver 判定（local 档案没有桶可回源，自然不生成）。
@@ -354,10 +430,10 @@ func (r *Resolver) UploaderForProfile(id int64) (storage.Uploader, error) {
 	if err := r.db.First(&sp, id).Error; err != nil {
 		return nil, fmt.Errorf("读取存储档案 %d 失败：%w", id, err)
 	}
-	if sp.Driver == "local" {
+	if sp.Driver == nginxsnippet.DriverLocal {
 		return r.localUploader(&sp), nil
 	}
-	return uploadroute.Build(uploadConfig(&sp, 0, sp.Version))
+	return buildUploader(uploaderConfigFor(&sp, 0))
 }
 
 // Profile 按 id 读一份存储档案（只读模型，查询层不在此包重复实现）。
@@ -370,26 +446,23 @@ func (r *Resolver) Profile(id int64) (*model.StorageProfile, error) {
 }
 
 // Touch 供写接口在保存档案 / 绑定后主动重载，保证紧接着的下一次解析看到新值。
+// 同时清掉节流时间戳，否则 TTL 内的下一次 snapshot() 会继续用旧快照。
 func (r *Resolver) Touch() error {
+	r.fpMu.Lock()
+	r.fpAt = time.Time{}
+	r.fpMu.Unlock()
 	return r.reload()
 }
-
-var _ storage.Resolver = (*DynamicResolver)(nil)
 
 // OriginFor 回答两个问题，一次答完：这家企业此刻该用哪个出参 origin，
 // 以及档案有没有接管它的对象写入。
 //
-//	handled=false  档案没有接管（无绑定 / cid 不合法）→ 调用方继续走既有
-//	               tenant_storage_configs 判定，本轮行为不变。
-//	handled=true   档案接管了写入。此时 Base 为空表示「应当使用平台统一入口」，
-//	               调用方**不得**再回落旧口径——旧口径里那个 public_base_url
-//	               指向的是旧桶，对象已经不在那里了，回落就是全站裂图。
+//	handled=false  没有绑定（cid 不合法 / 未绑定）→ 调用方按平台统一入口处理。
+//	handled=true   档案接管了写入。此时 Base 为空表示「应当使用平台统一入口」。
 //
-// 为什么要合并成一次判定（第七十四轮）：以前这里是「分发档案有合法域名就返回」，
-// 而旧路径要过 tenantStorageActive（开关 / 启用 / 非 local / 凭据完整 / 公开读）
-// 五道关。两套标准并存时，一家企业绑了 local 档案、分发档案又填了域名，
-// 出参就会指到那个域名——而对象明明还在平台盘上。判定必须按「谁在写对象」分叉，
-// 不能按「谁配了域名」分叉。
+// 判定必须按「谁在写对象」分叉，不能按「谁配了域名」分叉：一家企业绑了 local
+// 档案、分发档案又填了域名时，若只看域名就会把出参指到那个域名上，
+// 而对象明明还在平台盘上——全站裂图且无人报错。
 func (r *Resolver) OriginFor(cid int64) (model.Origin, bool) {
 	if cid <= 0 {
 		// Origin 的不变式是「Base 非空则 CompanyID > 0」。cid 未知时不能凭全局
@@ -418,6 +491,38 @@ func (r *Resolver) OriginFor(cid int64) (model.Origin, bool) {
 	return model.Origin{Base: base, CompanyID: cid}, true
 }
 
+// Diagnose 是 OriginFor 的诊断版：除了结论还给出「为什么没生效」。
+// 只有运维诊断接口（/api/public/settings?companyId=）用它，出参路径一律走 OriginFor。
+func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string) {
+	if cid <= 0 {
+		return "", false, "企业 id 不合法"
+	}
+	eff, err := r.Resolve(cid)
+	if err != nil {
+		return "", false, "读取存储档案失败：" + err.Error()
+	}
+	if eff.Storage == nil {
+		return "", false, "该企业未绑定存储档案：对象走平台统一入口"
+	}
+	if eff.Storage.Driver == nginxsnippet.DriverLocal {
+		return "", false, "生效档案是本地磁盘：对象在平台盘上，没有可用的客户域名"
+	}
+	if eff.Delivery == nil || eff.Delivery.Domain == "" {
+		return "", false, "生效档案没有绑定分发域名：对象 URL 仍以平台统一入口开头"
+	}
+	clean, err := storage.ValidatePublicOrigin(eff.Delivery.Domain)
+	if err != nil {
+		return "", false, "分发域名不合法：" + err.Error()
+	}
+	if clean == "" {
+		return "", false, "生效档案没有绑定分发域名：对象 URL 仍以平台统一入口开头"
+	}
+	if !eff.Storage.PublicRead {
+		return "", false, "桶未开启公开读（publicRead=false）：客户域名直连私有桶会 403"
+	}
+	return clean, true, ""
+}
+
 // TenantFromURLs 从对象 URL 里解析 /uploads/t/<cid>/ 前缀里的企业 id；
 // 解析不到返回 0（按全局绑定处理）。多副本下这个判定是纯字符串运算，无 DB 查询。
 func TenantFromURLs(urls ...string) int64 {
@@ -434,15 +539,11 @@ func TenantFromURLs(urls ...string) int64 {
 	return 0
 }
 
-// OwnerOf 回报「档案有没有接管这家企业的对象写入」，以及生效档案的身份。
+// OwnerOf 回报档案有没有接管这家企业的对象写入，以及生效档案的身份。
 //
-//	ok=false → 没有绑定，调用方继续走 tenant_storage_configs 的既有判定
+//	ok=false → 没有绑定，调用方按「走平台存储」处理。
 //	ok=true  → 档案接管。Driver 可能是 local，那**同样是接管**：对象落在平台盘，
-//	           调用方不能把它当成「没接管」再回落到旧表——旧表里可能还留着一条
-//	           指向客户桶的启用行，回落就会得出「在用客户桶」的错误结论。
-//
-// 与 OriginFor 刻意不互相调用：Resolve 每次都会打一遍指纹查询（6 条聚合），
-// 串起来等于一个请求查两遍。两者各自 Resolve 一次，调用方按需选一个。
+//	           配额与平台域名仍适用，调用方不能把它当成「没接管」再猜一次。
 func (r *Resolver) OwnerOf(cid int64) (model.StorageOwner, bool) {
 	if cid <= 0 {
 		return model.StorageOwner{}, false
@@ -458,16 +559,36 @@ func (r *Resolver) OwnerOf(cid int64) (model.StorageOwner, bool) {
 	}, true
 }
 
-// DynamicCDN 在既有全局刷新器外侧插入档案分发配置：
-// 有分发绑定就按绑定走；绑定了 provider=none 是明确「不刷新」，
-// 不能落到全局刷新器上（那会让运营以为已经关掉、实际还在刷）。
-type DynamicCDN struct {
-	base storage.CDNRefresher
-	prof *Resolver
+// CDNRefresherFor 按 URL 里的 /uploads/t/<cid>/ 前缀选租户分发档案；
+// 解析不到租户时用全局绑定。返回 nil 表示没有配置 CDN 刷新。
+func (r *Resolver) CDNRefresherFor(urls ...string) storage.CDNRefresher {
+	eff, err := r.Resolve(TenantFromURLs(urls...))
+	if err != nil || eff.Delivery == nil || eff.Delivery.Provider == "none" || eff.Delivery.Provider == "" {
+		return nil
+	}
+	dp := eff.Delivery
+	rf, err := storage.NewCDNRefresher(storage.CDNConfig{
+		Provider: dp.Provider, AccessKeyID: dp.AccessKey, AccessKeySecret: dp.SecretKey,
+		Endpoint: dp.Endpoint, ResourceID: dp.ResourceID,
+	})
+	if err != nil {
+		return nil
+	}
+	return rf
 }
 
-func NewDynamicCDN(base storage.CDNRefresher, prof *Resolver) storage.CDNRefresher {
-	return &DynamicCDN{base: base, prof: prof}
+// PublicURL 按分发档案拼出对外 URL；没有分发档案时返回空串（调用方回退既有逻辑）。
+func (r *Resolver) PublicURL(cid int64, key string) string {
+	eff, err := r.Resolve(cid)
+	if err != nil || eff.Delivery == nil || eff.Delivery.Domain == "" {
+		return ""
+	}
+	domain := strings.TrimRight(eff.Delivery.Domain, "/")
+	prefix := strings.Trim(eff.Delivery.PathPrefix, "/")
+	if prefix != "" {
+		return domain + "/" + prefix + "/" + strings.TrimLeft(key, "/")
+	}
+	return domain + "/" + strings.TrimLeft(key, "/")
 }
 
 // HasDeliveryBinding 回报是否至少有一套可用的分发档案绑定。
@@ -487,6 +608,18 @@ func (r *Resolver) HasDeliveryBinding() bool {
 		}
 	}
 	return false
+}
+
+// DynamicCDN 在平台全局刷新器外侧插入档案分发配置：
+// 有分发绑定就按绑定走；绑定了 provider=none 是明确「不刷新」，
+// 不能落到全局刷新器上（那会让运营以为已经关掉、实际还在刷）。
+type DynamicCDN struct {
+	base storage.CDNRefresher
+	prof *Resolver
+}
+
+func NewDynamicCDN(base storage.CDNRefresher, prof *Resolver) storage.CDNRefresher {
+	return &DynamicCDN{base: base, prof: prof}
 }
 
 // Configured 让 handler 能区分「没配 CDN」与「配了但这次刷新失败」。
@@ -517,3 +650,4 @@ func (d *DynamicCDN) Refresh(urls []string) error {
 }
 
 var _ storage.CDNRefresher = (*DynamicCDN)(nil)
+var _ storage.Resolver = (*Resolver)(nil)

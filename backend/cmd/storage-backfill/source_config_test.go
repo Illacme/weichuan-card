@@ -131,7 +131,7 @@ func TestSourceForS3NeverFallsBackToLocalDisk(t *testing.T) {
 func TestBuildStoresS3SourceWithTenantTarget(t *testing.T) {
 	envPlatformS3(t)
 	testPiiKey(t)
-	db := settingsDB(t) // 故意不建 tenant_storage_configs：目标应整批停下
+	db := settingsDB(t) // 故意不建存储档案与绑定：目标应整批停下
 	stores, err := buildStores("s3", "tenant", "", "", db)
 	require.NoError(t, err, "源可用、目标配置在 TargetFor 时才解析")
 	require.IsType(t, &refmigrate.PlatformS3Source{}, stores.Source)
@@ -149,7 +149,7 @@ func TestBuildStoresS3SourceWithLocalTarget(t *testing.T) {
 	target, err := stores.TargetFor(7)
 	require.NoError(t, err)
 	require.IsType(t, &refmigrate.LocalStore{}, target,
-		"本地目标不需要 PII_ENC_KEY，也不该读 tenant_storage_configs")
+		"本地目标不需要凭据，也不该读存储档案")
 }
 
 // TestSourceConfigIsReadOnlyAndSingleTruthTable 是源码级守门：

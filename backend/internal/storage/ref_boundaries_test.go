@@ -142,9 +142,10 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 // 名字里带 url/image/logo/cover/avatar/icon/bg/file/album 的 json 字段，
 // 必须是「8 个资源字段 + 8 个已写明理由的非资源字段」——新增同类字段必红。
 //
-// 这条守门在第五十八轮真拦下过一次：新增 model.TenantStorageConfig 时带了
-// publicBaseUrl，没人会主动想到「配置表里的基址算不算资源引用」。红一次，
-// 逼着把「它是 origin 的候选值、是解析器输入」写进清单，比事后回忆可靠。
+// 这条守门在第五十八轮真拦下过一次：新增的存储配置模型带了 publicBaseUrl，
+// 没人会主动想到「配置表里的基址算不算资源引用」。红一次，逼着把
+// 「它是 origin 的候选值、是解析器输入」写进清单，比事后回忆可靠。
+// 第七十五轮该模型被删除，字段随之消失——清单同步收紧，不是放宽。
 func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 	tagRe := regexp.MustCompile(`json:"([^"]+)"`)
 	kw := regexp.MustCompile(`(?i)(url|image|logo|cover|avatar|icon|bg|file|album)`)
@@ -191,13 +192,8 @@ func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 		// 第七十轮新增时被这条守门抓到，登记在案。
 		"logoSize":  true,
 		"logoAlign": true,
-		// publicBaseUrl 是唯一「确实是 URL、但角色相反」的一条：它是租户自有访问域名，
-		// 也就是 ResolveRef(raw, origin) 里 origin 的候选值——解析器的**输入**，不是输出。
-		// 对它调 ResolveRef 不会裂图，只会把配置页显示的基址悄悄改形，而且要到客户
-		// 启用自有域名之后才暴露。第五十八轮新增模型时被这条守门抓到，登记在案。
-		"publicBaseUrl": true,
 		// 0054 存储档案化新增：四个 *ProfileId 是外键整数（正则命中了 profile 里的 file），
-		// baseUrl 是上传返回基址（与 publicBaseUrl 同属解析器输入，不是资源字段）。
+		// baseUrl 是上传返回基址——解析器的**输入**，不是资源字段。
 		"storageProfileId": true, "deliveryProfileId": true,
 		"sourceProfileId": true, "targetProfileId": true, "baseUrl": true,
 	}

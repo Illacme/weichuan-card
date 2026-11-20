@@ -24,7 +24,6 @@ func All() []interface{} {
 		&MediaCheck{},            // 图片/音频内容安全检测记录（异步送检 → 消息推送回调 → 后台下架）
 		&TenantLicense{},         // 按租户（企业）的授权记录：席位 / 到期 / 功能开关（Phase 4）
 		&StorageUsage{},          // 按租户累计的存储用量（上传字节数 / 文件数，配额检查用）
-		&TenantStorageConfig{},   // 租户自有对象桶配置（按企业登记 endpoint/bucket/凭据密文，只有平台超管可写）
 		&StorageBackfillRef{},    // 存量回填台账（P3；old_value 是回滚依据，见 migrations/0045）
 		&StorageProfile{},        // 存储档案：多套连接配置，供绑定引用（0054）
 		&DeliveryProfile{},       // CDN 分发档案：域名与刷新凭据，独立于存储（0054）

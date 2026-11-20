@@ -72,7 +72,7 @@ func RegisterSettings(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 若在没有 companyId 时按缺省企业下发，所有访客都会拿到 1 号企业的域名，
 		// 那就是跨租户串号。宁可不回传，也不猜。
 		if q, err := strconv.ParseInt(c.Query("companyId"), 10, 64); err == nil && q > 0 {
-			base, active, reason := publicOriginStateFor(db, q)
+			base, active, reason := publicOriginDiagnosis(q)
 			resp["assetOrigin"] = base
 			resp["assetOriginActive"] = active
 			resp["assetOriginNote"] = reason

@@ -3615,13 +3615,13 @@ paths:
                   assetOriginActive:
                     type: boolean
                     description: >-
-                      该企业的自有域名此刻是否真的改变了公开出参 URL。与后台视图的
-                      publicBaseUrlActive 同出 publicOriginState，不会漂移。
+                      该企业的自有域名此刻是否真的改变了公开出参 URL。
+                      判定只有一份：storageprofile.Resolver.Diagnose（按「谁在写对象」分叉）。
                   assetOriginNote:
                     type: string
                     description: >-
                       未生效原因（可直接给运维看）；生效时为空串。典型原因是
-                      TENANT_STORAGE_ROUTE 未开 / 配置未启用 / 凭据不全 / 私有桶。
+                      未绑定存储档案 / 生效档案是本地磁盘 / 没绑分发域名 / 私有桶。
 
   /api/admin/settings:
     get:
@@ -4287,121 +4287,6 @@ paths:
         "200":
           description: code=0；code=1 参数错误 / AppID 格式不对 / 保存失败
 
-  # ── 租户自有对象桶（P1 后半段，迁移 0044）───────────────────────────────
-  # 权限：**只有平台超级管理员**（PlatformAdminMiddleware）。企业管理员 role 也是 admin，
-  # 用 AuthMiddleware 会直接放行，因此四个接口都不能照抄 /api/admin/storage 那批的写法。
-  # 原因：这条配置里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶。
-  # 边界：写入与自检一直是可用的；**是否承载流量**由进程的 TENANT_STORAGE_ROUTE 决定
-  # （第六十一轮接入，默认 off）。出参 trafficEnabled 回报进程开关，activeForTenant
-  # 回报「这家此刻是不是真的在用自有桶」——两者不是一回事，别只取一个。
-  /api/admin/companies/{id}/storage:
-    get:
-      summary: 某企业的自有对象桶配置（平台超管，凭据只回掩码）
-      description: |
-        未配置时返回 `configured=false` 的完整空视图（不是 404、也不是错误），
-        界面据此进入「新建」态——「没配过」与「读失败」必须能分开。
-
-        **AccessKey 只回掩码**（前4****后4），用于核对「现在生效的是不是新那把」；
-        `SecretKey 连掩码都不给`，只回 `secretKeyConfigured`。
-        库里密文解不开时（`PII_ENC_KEY` 换过）回 `credentialError`，界面据此要求重填。
-      tags: [租户]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      responses:
-        "200":
-          description: code=0（data 见 TenantStorageConfig）；企业管理员调用为 code=403
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  code: { $ref: "#/components/schemas/Code" }
-                  data: { $ref: "#/components/schemas/TenantStorageConfig" }
-    put:
-      summary: 新建 / 覆盖某企业的自有对象桶配置（平台超管）
-      description: |
-        布尔与凭据**用「有没有这个字段」区分意图**：省略 = 保持原值，传值 = 覆盖。
-        凭据三态：省略 = 保留、空串 = 清空、有值 = 覆盖（服务端 `pii.Encrypt` 加密后落库，
-        不接受客户端提交密文）。
-
-        校验复用 `nginxsnippet.Target.Validate` 单点（endpoint 不许带 scheme、bucket 不许含
-        路径或 `..`、hostHeader 不许含引号，且必须能判断出路径风格——见 `hostHeader` 字段说明）；
-        另加两条**产品边界**：
-        第一阶段只支持公开读桶；启用时必须同时具备 AccessKey 与 SecretKey。
-
-        保存成功会把上一次自检结论重置为 `unknown`——否则后台会一直显示一个过期的绿点。
-      tags: [租户]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/TenantStorageSave" }
-      responses:
-        "200":
-          description: code=0（data 为保存后的视图）；code=1 参数错误 / 企业不存在 / 校验不通过 / 保存失败；code=403 非平台超管
-    delete:
-      summary: 切回平台存储（平台超管）
-      description: |
-        删掉该企业的配置行 = 新上传回到平台盘。**已传进客户桶的对象不会被搬回来**
-        （那属于存量搬迁 P3），审计里会显式记 `objectsLeftInBucket=true`。
-        没配过时幂等返回 code=0。
-      tags: [租户]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      responses:
-        "200":
-          description: code=0；code=1 删除失败；code=403 非平台超管
-  /api/admin/companies/{id}/storage/check:
-    post:
-      summary: 自有桶连通性自检（平台超管）
-      description: |
-        **带凭据**去探桶（S3 语义下 HEAD bucket）：不带签名时「不存在」与「存在但无权访问」
-        都回 403，探不出任何东西。结果回写 `status` / `last_checked_at` / `last_error`，
-        并留审计（成功失败都记）。
-
-        覆盖范围仅有「凭据有效 + 桶可达」：`checkedScope` 字段会明说**不含** nginx 侧
-        Host/SNI（漏 SNI 会被桶以 421 拒绝）、CDN 与证书链。
-      tags: [租户]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      responses:
-        "200":
-          description: code=0（data.ok / data.detail / data.error / data.status / data.checkedScope）；未配置时 code=1
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  code: { $ref: "#/components/schemas/Code" }
-                  data:
-                    type: object
-                    properties:
-                      ok: { type: boolean }
-                      detail: { type: string, description: 成功时的一句话说明 }
-                      error: { type: string, description: 失败原因（已脱敏，不含凭据与桶方响应原文） }
-                      status: { type: string, enum: [unknown, ok, error] }
-                      lastCheckedAt: { type: string, format: date-time }
-                      checkedScope: { type: string, description: 本次自检的覆盖范围与不覆盖项 }
-
-  # ── 文件存储与分发档案（迁移 0054）──────────────────────────────────────
-  # 三层模型：storage_profiles（连接信息）/ delivery_profiles（CDN 分发）
-  # / storage_bindings（谁用哪套，tenant_id=0 是全局默认、企业无行即继承）。
-  # 档案写操作全是平台超管；企业管理员只能给自己选绑定（看不到凭据）。
-  # 保存后 resolver.Touch() 主动失效缓存，全局切换下一个请求就生效，不重启。
   /api/admin/storage-profiles:
     get:
       summary: 存储档案列表（平台超管）
@@ -4427,34 +4312,6 @@ paths:
       responses:
         "200":
           description: code=0（data 为新建档案）；code=1 校验不通过 / 名称重复
-  /api/admin/storage-profiles/adopt-legacy:
-    post:
-      summary: 把旧的自有存储配置转成存储档案并绑定（平台超管）
-      description: |
-        读 `tenant_storage_configs` 的一行，把凭据从 PII 密文解出来后建成一套存储档案，
-        再绑定给该企业。**不修改旧表**——它是回滚通道，删掉绑定即可回到旧配置。
-
-        四条拒绝条件（都源于「接管会立刻改行为」）：
-        旧配置未启用（档案不受 `TENANT_STORAGE_ROUTE` 控制，接管等于偷偷上线）、
-        驱动为 local（没有桶可接管）、未开启公开读（档案只支持公开读桶）、
-        该企业已有绑定（重复接管会造出第二套同源档案）。
-
-        默认先做桶连通性自检，失败即拒绝；确认无误时可用 `force=true` 跳过。
-        凭据会以明文写进档案（当前产品决策），审计记录里注明来源与是否跳过探桶。
-      tags: [平台管理]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [companyId]
-              properties:
-                companyId: { type: integer, format: int64, description: 要接管的企业 id }
-                force: { type: boolean, description: 跳过桶连通性自检（默认 false） }
-      responses:
-        "200":
-          description: code=0（data 为新建档案）；code=1 拒绝接管（原因见 msg）
   /api/admin/storage-profiles/{id}:
     put:
       summary: 修改存储档案（平台超管）
@@ -5932,124 +5789,6 @@ components:
       type: integer
       description: 0=成功；1=业务失败；2=特殊状态；401=未登录/失效；403=无权限；429=限流
       enum: [0, 1, 2, 401, 403, 429]
-
-    TenantStorageConfig:
-      type: object
-      description: |
-        某企业的自有对象桶配置视图（迁移 0044）。**凭据永不出参**：AccessKey 只回掩码，
-        SecretKey 只回「是否已配置」。
-      properties:
-        companyId: { type: integer, format: int64 }
-        configured:
-          type: boolean
-          description: 是否已配置。false 不是错误，只表示该企业走平台存储
-        driver:
-          type: string
-          enum: [local, minio, oss, s3]
-          description: local = 不生成接入层 snippet，对象留在平台盘
-        endpoint:
-          type: string
-          description: host[:port]，**不带 scheme**（同时喂给 nginx snippet）
-        bucket: { type: string }
-        region: { type: string, description: 仅 OSS / S3 需要；MinIO 可空 }
-        useSsl:
-          type: boolean
-          description: 为 true 时接入层必须给 proxy_ssl_server_name + proxy_ssl_name，否则被桶 421 拒绝
-        hostHeader:
-          type: string
-          description: >-
-            Host 头（也是 TLS SNI 取值）。**它同时决定路径风格**：留空或等于 endpoint =
-            路径风格（生成器把桶名写进 path，即 `/<bucket>/<key>`）；以 `<bucket>.` 开头 =
-            虚拟主机风格（Host 已带桶名，path 只留对象键）。两者都不是的取值会被拒绝——
-            猜错的那一侧不会报错，只会让该企业的图全部裂开。
-            hostHeader 是回源侧发给桶的 Host / TLS SNI；客户自有访问域名填 publicBaseUrl，
-            两者正交，不要拿自有域名来解释这条拒绝（旧版文案的「下一阶段」是误导）。
-        publicRead:
-          type: boolean
-          description: >-
-            第一阶段必须为 true：私有桶需要预签名链路，尚未实现。
-            写入侧 validateTenantStorageRow 与上传侧 uploadroute.build 都会显式拒绝 false
-            （回填侧不受影响：凭据在手就能写对象，公开读与否只影响端上能否直接取）。
-        enabled: { type: boolean, description: 关掉即回平台存储；driver=local 时同样不生成 snippet }
-        publicBaseUrl:
-          type: string
-          description: >-
-            客户自有访问域名，纯 origin（http(s)://host[:port]）；空串 = 走平台统一入口。
-            写入时由 storage.ValidatePublicOrigin 归一化，与出参 ResolveRef 的 origin 校验同源。
-            它是访客侧 origin，与 hostHeader（回源侧 Host / TLS SNI）正交。
-        publicBaseUrlActive:
-          type: boolean
-          description: >-
-            该域名此刻是否真的改变了公开出参 URL（第六十九轮起按实况回报，不再恒 false）。
-            后端由 publicOriginState 单点判定，需同时满足：域名经 ValidatePublicOrigin
-            合法、本进程开启 TENANT_STORAGE_ROUTE、配置 enabled=true、driver 非 local、
-            凭据完整、publicRead=true——也就是「对象必须真的写进了客户桶」。
-            界面按它切换 success / warning 两套文案，不许写死「尚未接入」或「已生效」。
-        publicBaseUrlNote:
-          type: string
-          description: >-
-            publicBaseUrl 非空时给超管看的文案：已生效说明 / 未生效原因与下一步动作；
-            空值时为空串。生效与未生效是两套内容，不是同一句话改几个字。
-        status:
-          type: string
-          enum: [unknown, ok, error]
-          description: unknown = 配了但没验过（不要渲染成「正常」）
-        lastError:
-          type: string
-          description: 最近一次自检的脱敏摘要；不含凭据、不含桶方响应原文
-        lastCheckedAt: { type: string, format: date-time, nullable: true }
-        updatedAt: { type: string, format: date-time, nullable: true }
-        accessKeyConfigured: { type: boolean }
-        secretKeyConfigured: { type: boolean }
-        accessKeyMasked: { type: string, description: 前4****后4；为让运维核对生效的是哪一把 }
-        credentialError:
-          type: string
-          description: 非空说明库里密文解不开（PII_ENC_KEY 与写入时不一致），需重新填一次密钥
-        trafficEnabled:
-          type: boolean
-          description: >-
-            本进程是否已开启租户存储路由（TENANT_STORAGE_ROUTE），进程级。默认 false。
-            它回答的是「配置保存后能不能生效」，**不是**「这家企业此刻在不在用自有桶」。
-        activeForTenant:
-          type: boolean
-          description: >-
-            该企业此刻的文件是否真的写进自己的桶。与 trafficEnabled 不是一回事：
-            开关开着但这家的 enabled=false 时仍为 false。
-        inactiveReason:
-          type: string
-          description: >-
-            activeForTenant=false 时的原因（未配置 / 未启用 / 驱动是 local /
-            进程未开路由 / 凭据不完整）。五种成因处置方式不同，故直接回文案。
-
-    TenantStorageSave:
-      type: object
-      description: |
-        布尔与凭据用「有没有这个字段」区分意图：**省略 = 保持原值**，传值 = 覆盖。
-        这与企业小程序凭据的 releaseEnabled 同一条纪律——界面只改一项时，
-        不带其他字段不能等于把它们重置掉。
-      required: [driver, endpoint, bucket]
-      properties:
-        driver: { type: string, enum: [local, minio, oss, s3] }
-        endpoint: { type: string, description: "host[:port]，不要带 scheme" }
-        bucket: { type: string }
-        region: { type: string }
-        useSsl: { type: boolean }
-        hostHeader: { type: string }
-        publicRead: { type: boolean }
-        enabled: { type: boolean }
-        publicBaseUrl:
-          type: string
-          description: >-
-            客户自有访问域名，纯 origin（http(s)://host[:port]）。省略 = 保留原值；
-            空串 = 清空；有值 = 服务端归一化后覆盖。出参侧按租户选 origin 已接入
-            （第六十九轮），但**填了不等于立刻生效**，条件见
-            TenantStorageConfig.publicBaseUrlActive；界面按实况给两套提示。
-        accessKey:
-          type: string
-          description: 省略 = 保留原值；空串 = 清空；有值 = 覆盖（服务端加密后落库，不接受密文）
-        secretKey:
-          type: string
-          description: 同 accessKey 三态
 
     MediaCheck:
       type: object

@@ -35,6 +35,9 @@ import (
 // 新增此类表时在此登记，别让守门测试变成漏报。
 var extraMigrationTables = map[string]string{
 	"sys_setting": "internal/setting.Setting（显式 TableName）",
+	// 0044 建、0055 删的历史表：模型已随第七十五轮（存储配置单模型化）移除，
+	// 但迁移文件保留（已应用过 0044 的库与全新安装需要走到同一终态）。
+	"tenant_storage_configs": "历史表，migrations/0055 已 DROP",
 }
 
 // tableRefRe 匹配迁移脚本里出现表名的语句：CREATE TABLE [IF NOT EXISTS] x /

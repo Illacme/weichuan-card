@@ -1,8 +1,7 @@
 // Command s3-e2e 是「真桶端到端验收」（第六十三轮）里由 Go 负责的那一半。
 //
-// 它跑的就是线上那条链：一份真实配置行（凭据经 pii.Encrypt 加密）→
-// uploadroute.DBLoader 读回并解密 → Resolver.For(company) 构造出 MinioUploader →
-// Save 真的往桶里 PutObject → 再把对象取回来比对字节。
+// 它跑的就是线上那条链：一套真实存储档案 + 绑定 → storageprofile 解析器
+// 构造出 MinioUploader → Save 真的往桶里 PutObject → 再把对象取回来比对字节。
 //
 // 为什么是独立命令而不是 _test.go：
 //   - 它要求**真实的 S3 端点**（tools/s3-e2e/run.sh 起 versitygw）。写成 test
@@ -32,9 +31,8 @@ import (
 	"time"
 
 	"weichuan/internal/model"
-	"weichuan/internal/pii"
 	"weichuan/internal/storage"
-	"weichuan/internal/uploadroute"
+	"weichuan/internal/storageprofile"
 
 	"github.com/glebarez/sqlite"
 	"github.com/minio/minio-go/v7"
@@ -69,7 +67,6 @@ func main() {
 		platformDi = flag.String("platform-dir", "", "平台盘目录（负例要证明它没被写）")
 		useSSL     = flag.Bool("use-ssl", false, "是否 https")
 		out        = flag.String("emit", "", "把结果写成 KEY=VALUE 文件（供 run.sh 读取）")
-		piiKey     = flag.String("pii-key", "", "PII_ENC_KEY（base64，32 字节）；留空用 pii 内置 dev 密钥")
 	)
 	flag.Parse()
 	if *endpoint == "" || *accessKey == "" || *secretKey == "" || *bucket == "" || *baseURL == "" {
@@ -77,11 +74,6 @@ func main() {
 	}
 	if *platformDi == "" {
 		*platformDi = filepath.Join(os.TempDir(), "s3-e2e-platform")
-	}
-	if *piiKey != "" {
-		if err := pii.SetKey(*piiKey); err != nil {
-			fail("设置 PII_ENC_KEY 失败：%v", err)
-		}
 	}
 
 	ctx := context.Background()
@@ -96,39 +88,40 @@ func main() {
 	}
 	ok("桶 %s 就绪（公开读策略已设置）", *bucket)
 
-	// ── 2. 配置行 → DBLoader → Resolver ────────────────────────────────────
+	// ── 2. 档案 + 绑定 → 解析器 ────────────────────────────────────────────
 	db := openDB()
-	row := model.TenantStorageConfig{
-		CompanyID: *companyID,
+	sp := model.StorageProfile{
+		Name:      fmt.Sprintf("e2e-%d", time.Now().UnixNano()),
 		Driver:    "minio",
 		Endpoint:  *endpoint,
 		Bucket:    *bucket,
 		Region:    *region,
 		UseSSL:    *useSSL,
-		Enabled:   true,
+		BaseURL:   *baseURL,
+		AccessKey: *accessKey, SecretKey: *secretKey,
+		PublicRead: true, Status: "unknown", Version: 1,
 	}
-	var err error
-	if row.AccessKeyEnc, err = pii.Encrypt(*accessKey); err != nil {
-		fail("加密 AccessKey 失败：%v", err)
+	if err := db.Create(&sp).Error; err != nil {
+		fail("写入存储档案失败：%v", err)
 	}
-	if row.SecretKeyEnc, err = pii.Encrypt(*secretKey); err != nil {
-		fail("加密 SecretKey 失败：%v", err)
-	}
-	if err = db.Create(&row).Error; err != nil {
-		fail("写入配置行失败：%v", err)
+	if err := db.Create(&model.StorageBinding{
+		TenantID: *companyID, StorageProfileID: sp.ID, Version: 1,
+	}).Error; err != nil {
+		fail("写入档案绑定失败：%v", err)
 	}
 
 	platform := &storage.LocalUploader{
 		Dir: *platformDi, MaxBytes: 64 << 20, AllowExt: storage.DefaultAllowExt,
 	}
-	res := uploadroute.New(platform, "local", uploadroute.DBLoader(db, *baseURL))
+	res := storageprofile.NewWithLocal(db, *platformDi)
+	res.SetPlatform(platform, "local")
 
 	up, err := res.For(*companyID)
 	if err != nil {
 		fail("Resolver.For(%d) 失败：%v", *companyID, err)
 	}
 	if _, isMinio := up.(*storage.MinioUploader); !isMinio {
-		fail("Resolver 回的不是租户实例（拿到的类型 %T）——配置行没生效", up)
+		fail("Resolver 回的不是租户实例（拿到的类型 %T）——档案绑定没生效", up)
 	}
 	ok("Resolver.For 取到租户实例（%T），驱动 %s", up, res.DriverFor(*companyID))
 
@@ -224,12 +217,17 @@ func main() {
 	platformBefore := countFiles(*platformDi)
 
 	// 6a. 密钥错（能构造出客户端，但签名会被拒）
-	if err := db.Model(&model.TenantStorageConfig{}).Where("company_id = ?", *companyID).
+	// 必须同时递增 version：解析器按「档案 id:版本」缓存实例，
+	// 只改字段不升版本会拿回旧客户端，测的就不是新凭据了。
+	if err := db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
 		Updates(map[string]any{
-			"secret_key_enc": mustEnc("wrong-secret-" + stamp()),
-			"updated_at":     time.Now().Add(time.Second),
+			"secret_key": "wrong-secret-" + stamp(),
+			"version":    sp.Version + 1,
 		}).Error; err != nil {
 		fail("改错凭据失败：%v", err)
+	}
+	if err := res.Touch(); err != nil {
+		fail("重载档案失败：%v", err)
 	}
 	upBad, err := res.For(*companyID)
 	if err != nil {
@@ -241,21 +239,24 @@ func main() {
 		ok("凭据错误时 Save 显式失败：%v", err)
 	}
 
-	// 6b. 密文坏（PII_ENC_KEY 换过 / 被篡改）：必须 For 就失败，且文案点明不回退
-	if err := db.Model(&model.TenantStorageConfig{}).Where("company_id = ?", *companyID).
+	// 6b. 凭据缺失：必须 For 就失败，且文案点明不回退
+	if err := db.Model(&model.StorageProfile{}).Where("id = ?", sp.ID).
 		Updates(map[string]any{
-			"secret_key_enc": mustEnc(*secretKey),
-			"access_key_enc": "v1:not-a-real-ciphertext",
-			"updated_at":     time.Now().Add(2 * time.Second),
+			"secret_key": *secretKey,
+			"access_key": "",
+			"version":    sp.Version + 2,
 		}).Error; err != nil {
-		fail("改坏密文失败：%v", err)
+		fail("清空凭据失败：%v", err)
+	}
+	if err := res.Touch(); err != nil {
+		fail("重载档案失败：%v", err)
 	}
 	if _, err := res.For(*companyID); err == nil {
-		fail("密文损坏时 Resolver.For 竟然成功——解密失败被吞掉了")
-	} else if !strings.Contains(err.Error(), "不回退平台存储") && !strings.Contains(err.Error(), "解密失败") {
-		fail("密文损坏时的报错文案没点明原因：%v", err)
+		fail("凭据缺失时 Resolver.For 竟然成功——校验被跳过了")
+	} else if !strings.Contains(err.Error(), "不回退平台存储") && !strings.Contains(err.Error(), "凭据不完整") {
+		fail("凭据缺失时的报错文案没点明原因：%v", err)
 	} else {
-		ok("密文损坏时显式失败并点明原因：%v", err)
+		ok("凭据缺失时显式失败并点明原因：%v", err)
 	}
 
 	if after := countFiles(*platformDi); after != platformBefore {
@@ -324,7 +325,7 @@ func openDB() *gorm.DB {
 	if err != nil {
 		fail("打开 sqlite 失败：%v", err)
 	}
-	if err := db.AutoMigrate(&model.TenantStorageConfig{}); err != nil {
+	if err := db.AutoMigrate(&model.StorageProfile{}, &model.StorageBinding{}); err != nil {
 		fail("建表失败：%v", err)
 	}
 	return db
@@ -402,14 +403,6 @@ func pngBytes() []byte {
 		fail("内置 PNG 解码失败：%v", err)
 	}
 	return b
-}
-
-func mustEnc(plain string) string {
-	s, err := pii.Encrypt(plain)
-	if err != nil {
-		fail("加密失败：%v", err)
-	}
-	return s
 }
 
 func stamp() string { return fmt.Sprintf("%d", time.Now().UnixNano()/1000%1e9) }

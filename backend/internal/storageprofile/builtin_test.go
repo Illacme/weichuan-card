@@ -45,7 +45,7 @@ func TestEnsureBuiltinLocalNameConflict(t *testing.T) {
 }
 
 // 没有绑定档案时，内置档案只是「可用选项」，不能自动变成全局默认：
-// 那会覆盖租户已有的 tenant_storage_configs，静默改变文件落点。
+// 那会覆盖企业已有的云档案绑定，静默改变文件落点。
 func TestEnsureBuiltinLocalDoesNotBind(t *testing.T) {
 	db := testDB(t)
 	_, err := EnsureBuiltinLocal(db, "/tmp/u", "")

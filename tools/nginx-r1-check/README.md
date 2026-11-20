@@ -29,7 +29,7 @@
 | `nginx.conf` | 容器主配置：4 个桩上游（平台 Go + 两个桶 + 一个恒 500 桶）+ TLS 桩桶，最后 include `site.conf` 与 `probes.conf` |
 | `site.conf` | **手写入库的站点壳**：`$uploads_cache` map + `server{}` + `/uploads/` 回退段 + `include snippets/*.conf` |
 | `snippets/` | **生成物（gitignored）**：由 `backend/cmd/nginx-snippets` 产出的租户 location 段 |
-| `tenants.json` | 模拟 `tenant_storage_configs` 的 enabled 行（含一条停用，用于验回退） |
+| `tenants.json` | 模拟存储档案绑定行（含一条绑 local 档案，用于验回退） |
 | `probes.conf` | **手写的对照探针，非产品形态**：只用来证明某条指令是「必需」而不是「可选优化」 |
 | `nginx-dns-probe.conf` | 桶域名不可解析时的 `nginx -t` 行为（G1） |
 | `make_fixtures.py` | 生成桩对象（gitignored，避免往仓库塞二进制） |
@@ -40,7 +40,7 @@
 **生成器不在这个目录里**，在 `backend/internal/nginxsnippet`（纯函数 + 单测）
 与 `backend/cmd/nginx-snippets`（CLI）。这么放的三个理由：
 
-1. 它最终要读 `tenant_storage_configs`、要被配置接口调用，属于后端代码而不是运维脚本；
+1. 它最终要读存储档案（`storage_profiles` + `storage_bindings`）、要被配置接口调用，属于后端代码而不是运维脚本；
 2. snippet 里每一行都对应一个静默失败的坑，必须能用单测钉住（三条不变量见包注释）；
 3. **只有一份生成器**。以前这里有个 `gen_site.py` 做同样的事，两个实现必然漂移，
    而漂移的表现是「本地全绿、线上裂图」。

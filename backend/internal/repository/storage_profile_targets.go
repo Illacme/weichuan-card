@@ -2,12 +2,11 @@ package repository
 
 // 档案（storage_profiles + storage_bindings）→ nginx 回源目标的读取层。
 //
-// 为什么需要这一层：`cmd/nginx-snippets --dsn` 一直只读 tenant_storage_configs，
-// 于是「客户自有桶的 /uploads/t/<cid>/ 回源段」只能由旧表生成。档案化之后，
-// 一家企业到底该回源到哪个桶，答案在绑定里——不补这条读取路径，档案就永远
-// 只能改上传、改不了接入层（见 docs/tenant-storage-design.md §0.1 阶段二）。
+// `cmd/nginx-snippets --dsn` 的唯一数据源：一家企业到底该回源到哪个桶，
+// 答案在 storage_bindings 里。历史上还有一条只读 tenant_storage_configs 的
+// ListStorageTargets，第七十五轮随旧表一起删除。
 //
-// 三条纪律与 ListStorageTargets 完全一致，别在这里放松：
+// 三条纪律，别在这里放松：
 //
 //	表不存在  → ErrProfileTablesMissing（运维按它给的步骤处理）
 //	查询出错  → 原样包装返回，**绝不**返回空切片 + nil
@@ -27,11 +26,10 @@ import (
 
 // ErrProfileTablesMissing 表示迁移 0054 还没跑。
 //
-// 与 ErrStorageConfigMissing 分开成两个哨兵：它们的处置步骤不同（0044 / 0054），
-// 合成一个的话运维会照着旧提示重跑一遍已经跑过的迁移。
+// 文案自带完整处置步骤，调用方原样上抛，不要再包一层前缀。
 var ErrProfileTablesMissing = errors.New(
 	`存储档案表不存在（迁移 0054 未应用）：请先执行 ./server migrate；` +
-		`未升级的部署请用 --source=legacy 只读 tenant_storage_configs`)
+		`若发布包里没有 0054_storage_profiles.sql，说明发布包不完整`)
 
 // ProfileTarget 是「按档案 + 绑定解析出的一家企业的回源目标」。
 //
@@ -57,7 +55,7 @@ type ProfileTarget struct {
 // 无害，漏一家才是裂图）。
 func ListProfileTargets(db *gorm.DB) ([]ProfileTarget, error) {
 	// 先探连接，再问表在不在：gorm 的 HasTable 把 error 吞成 false，
-	// 「库连不上」会被误报成「没跑迁移」（与 ListStorageTargets 同一个坑）。
+	// 「库连不上」会被误报成「没跑迁移」。
 	if err := db.Exec("SELECT 1").Error; err != nil {
 		return nil, fmt.Errorf("数据库不可达，无法读取存储档案：%w", err)
 	}
@@ -103,7 +101,7 @@ func ListProfileTargets(db *gorm.DB) ([]ProfileTarget, error) {
 			return nil, fmt.Errorf("企业 %d 的存储档案绑定不可用（请先修好再生成 snippet）：%w", cid, err)
 		}
 		if eff.Storage == nil {
-			continue // 没有全局绑定、也没有自己的绑定行 → 交回旧表 / 平台
+			continue // 没有全局绑定、也没有自己的绑定行 → 对象在平台盘
 		}
 		_, global := bindingFor(bindings, cid)
 		out = append(out, ProfileTarget{

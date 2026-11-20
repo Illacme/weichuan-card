@@ -154,7 +154,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 头像静默裂图——请求 200、无报错。e 是本次查询的局部变量，解析不影响 DB。
 		// 这是**端上消费点**（小程序「我的」页），与 9 条公开 GET 一样按员工归属
 		// 企业选 origin；用平台零值会让「我的」页头像与其它页走不同域名。
-		e.ResolveRefs(publicOriginFor(db, e.CompanyID))
+		e.ResolveRefs(publicOriginFor(e.CompanyID))
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "data": e, "pendingModify": pending > 0,
 			// 是否已绑定微信：「我的」页据此显示「已绑定 / 点击绑定」。

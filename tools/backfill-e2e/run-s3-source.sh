@@ -145,7 +145,7 @@ step "1. 复位：真 MySQL + 平台源桶（A / C）+ 本地诱饵 B"
 docker exec -i wc-mysql-ci mysql -uroot -proot --default-character-set=utf8mb4 weichuan_backfill_demo \
   < "$REPO_ROOT/tools/backfill-fixture/seed.sql" > /dev/null 2>&1
 ck "seed.sql 灌入成功" "0" "$?"
-mysqlq "DELETE FROM storage_backfill_refs; DELETE FROM tenant_storage_configs;" > /dev/null
+mysqlq "DELETE FROM storage_backfill_refs;" > /dev/null
 # 三种字节两两不同：先证明量尺自己有区分度，否则「等于 A、不等于 B」可能恒绿。
 printf '0123456789abcdefghij' > "$WORK/bytes-A.bin"        # 20B，第六十六轮同款
 printf 'LOCAL-DISK-DECOY-B!' > "$WORK/bytes-B.bin"         # 20B
