@@ -68,9 +68,10 @@ func TestStorageProfilesRejectCompanyAdmin(t *testing.T) {
 	require.EqualValues(t, 401, body["code"])
 }
 
-// 内置本地档案可以改名、改目录，但驱动必须锁死为 local——
-// 否则「不可删除」只是假安全：管理员能把它改成一套不可用的云配置。
-func TestBuiltinStorageProfileDriverLocked(t *testing.T) {
+// 内置本地档案的驱动与目录都锁死：驱动要留着做云存储不可用时的兜底；
+// 目录则与静态路由 r.Static("/uploads", cfg.UploadDir) 共用一个真值源。
+// 否则「不可删除」只是假安全——管理员能把它改成一套不可用的配置。
+func TestBuiltinStorageProfileDriverAndDirLocked(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(model.All()...))
@@ -93,9 +94,24 @@ func TestBuiltinStorageProfileDriverLocked(t *testing.T) {
 	require.EqualValues(t, 1, body["code"])
 	require.Contains(t, body["msg"], "驱动不可更改")
 
-	// 改名字是允许的（管理员可能想区分「主站本地盘」与其它本地目录）。
+	// 改名字是允许的（管理员可能想区分多个内置档案的展示名）。
 	_, body = c.do("PUT", "/api/admin/storage-profiles/"+strconv.FormatInt(row.ID, 10),
 		map[string]any{"name": "主站本地盘"}, token)
+	require.EqualValues(t, 0, body["code"], body["msg"])
+
+	// 目录单独改必须拒绝：静态路由仍绑在 cfg.UploadDir，分叉会把租户写到
+	// 静态路由读不到的目录，结果是全站裂图且没有任何报错。
+	_, body = c.do("PUT", "/api/admin/storage-profiles/"+strconv.FormatInt(row.ID, 10),
+		map[string]any{"localDir": "/mnt/elsewhere"}, token)
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "本地上传目录")
+	var after model.StorageProfile
+	require.NoError(t, db.First(&after, row.ID).Error)
+	require.Empty(t, after.LocalDir, "被拒的请求不能先把目录写进库再报错")
+
+	// 提交与当前值相同的目录不算改动，应该放行（前端 disabled 后仍可能回显提交）。
+	_, body = c.do("PUT", "/api/admin/storage-profiles/"+strconv.FormatInt(row.ID, 10),
+		map[string]any{"localDir": ""}, token)
 	require.EqualValues(t, 0, body["code"], body["msg"])
 }
 

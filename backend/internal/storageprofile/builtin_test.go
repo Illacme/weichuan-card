@@ -19,14 +19,16 @@ func TestEnsureBuiltinLocal(t *testing.T) {
 	require.Equal(t, "/data/uploads", first.LocalDir)
 	require.Equal(t, "https://card.example.com/uploads", first.BaseURL)
 
-	// 重复启动：不能重复插入，也不能覆盖管理员改过的目录与名字。
+	// 重复启动：展示名保留管理员改过的；local_dir 必须被 cfg.UploadDir 纠正回来。
+	// 静态路由 r.Static 绑在 cfg.UploadDir 上，档案目录若分叉，绑定它的租户
+	// 写到新目录、静态路由却从旧目录读 → 全站裂图且两边都不报错。
 	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", first.ID).
 		Updates(map[string]any{"name": "我的本地盘", "local_dir": "/mnt/custom"}).Error)
 	second, err := EnsureBuiltinLocal(db, "/data/uploads", "https://card.example.com/uploads")
 	require.NoError(t, err)
 	require.Equal(t, first.ID, second.ID)
-	require.Equal(t, "我的本地盘", second.Name)
-	require.Equal(t, "/mnt/custom", second.LocalDir)
+	require.Equal(t, "我的本地盘", second.Name, "展示名是管理员可改的")
+	require.Equal(t, "/data/uploads", second.LocalDir, "目录必须纠正回 cfg.UploadDir，不能保留分叉值")
 
 	var count int64
 	require.NoError(t, db.Model(&model.StorageProfile{}).Where("builtin = ?", true).Count(&count).Error)

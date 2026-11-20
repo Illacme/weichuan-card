@@ -115,11 +115,14 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
 			return
 		}
+		origLocalDir := strings.TrimSpace(row.LocalDir)
 		var req storageProfileReq
 		if c.ShouldBindJSON(&req) != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
+		// local_dir 若随请求改动，下面 builtin 分支要能识别出来（apply 已覆盖 row）。
+		reqChangedLocalDir := req.LocalDir != nil && strings.TrimSpace(*req.LocalDir) != origLocalDir
 		applyStorageProfileReq(&row, &req)
 		// 内置档案的驱动锁死为 local：它是「云配置全坏时还能上传」的唯一退路。
 		// 允许改成 minio/oss 等于让管理员可以亲手删掉这条退路（而删除按钮又被禁用，
@@ -129,6 +132,15 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的驱动不可更改：它是云存储不可用时的兜底"})
 				return
 			}
+			// 目录同样锁死：静态路由 r.Static("/uploads", cfg.UploadDir) 与平台实例都
+			// 绑在 cfg.UploadDir 上。若内置档案单独改成别的目录，绑定它的租户写新目录、
+			// 静态路由却从旧目录读，全站裂图且两边都不报错。要换目录请改系统设置的
+			// upload_dir 并重启，启动时 EnsureBuiltinLocal 会把它同步到这个档案。
+			if reqChangedLocalDir {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的目录不可单独修改：请到「系统设置 → 文件存储与 CDN → 本地上传目录」修改后重启服务"})
+				return
+			}
+			row.LocalDir = origLocalDir
 			row.Builtin = true
 		}
 		if msg := validateStorageProfile(&row); msg != "" {

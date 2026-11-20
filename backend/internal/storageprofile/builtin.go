@@ -20,10 +20,17 @@ const builtinLocalName = "平台本地存储"
 // EnsureBuiltinLocal 保证内置本地档案存在，返回该档案（已存在则原样返回）。
 //
 // 三条边界：
-//  1. 幂等：重复启动不会重复插入，也不会覆盖管理员改过的名称 / 目录；
+//  1. 幂等：重复启动不会重复插入，也不会覆盖管理员改过的展示名；
 //  2. 只认 builtin=true 的行；若历史手工数据里已有同名非内置行，换一个不冲突的名字；
 //  3. 不自动创建全局绑定——把 local 绑成全局默认会覆盖租户已有的自有桶配置
 //     属于静默改变文件落点。绑不绑由管理员在界面决定。
+//
+// **local_dir 必须同步为传入的 dir，不能保留库里的旧值**：静态路由
+// `r.Static("/uploads", cfg.UploadDir)` 与平台实例都绑在 cfg.UploadDir 上，
+// 而 LocalUploader 返回的 URL 恒为相对路径 /uploads/<key>。若内置档案的目录
+// 与它分叉，绑定该档案的租户写进新目录、静态路由却从旧目录读，结果是全站裂图
+// 且没有任何一边报错。本地盘只允许一个真值源，即 cfg.UploadDir（系统设置的
+// 「本地上传目录」）；handler 同时锁死内置档案的 local_dir 编辑，防止运行期再分叉。
 func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile, error) {
 	if db == nil {
 		return nil, fmt.Errorf("数据库为空")
@@ -34,10 +41,12 @@ func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile
 		return nil, fmt.Errorf("读取内置本地档案失败：%w", res.Error)
 	}
 	if res.RowsAffected > 0 {
-		// 已存在：只在字段为空时补默认值，绝不覆盖管理员改过的目录。
+		// 已存在：展示名保留管理员改过的值；local_dir 必须跟随 cfg.UploadDir，
+		// 否则与静态路由 / 平台实例分叉（原因见函数注释）。仅在值确实不同时更新，
+		// 避免每次启动都无谓地写库并惊动档案版本。
 		updates := map[string]any{}
-		if strings.TrimSpace(row.LocalDir) == "" && strings.TrimSpace(dir) != "" {
-			updates["local_dir"] = strings.TrimSpace(dir)
+		if want := strings.TrimSpace(dir); want != "" && strings.TrimSpace(row.LocalDir) != want {
+			updates["local_dir"] = want
 		}
 		if strings.TrimSpace(row.BaseURL) == "" && strings.TrimSpace(baseURL) != "" {
 			updates["base_url"] = strings.TrimSpace(baseURL)

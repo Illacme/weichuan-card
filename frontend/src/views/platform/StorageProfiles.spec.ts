@@ -139,6 +139,12 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('驱动锁定为「本地磁盘」')
     expect(w.text()).toContain('不可删除')
+    // 目录也必须锁死：它与静态路由共用一个真值源，单独改会让租户对象写进
+    // /uploads 读不到的目录，全站裂图且不报错。
+    expect(w.text()).toContain('内置档案的目录跟随')
+    const dirInput = w.find('input[placeholder="留空使用平台 uploads 目录"]')
+    expect(dirInput.exists()).toBe(true)
+    expect(dirInput.attributes('disabled')).toBeDefined()
   })
 
   it('路由与菜单必须同时登记（新增页面不能漏一处）', () => {

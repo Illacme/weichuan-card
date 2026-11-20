@@ -201,7 +201,7 @@
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
           <span v-if="storageForm.builtin" class="field-note">
-            内置本地档案的驱动锁定为「本地磁盘」：它是云存储不可用时的兜底，不可删除、不可改成云驱动。可修改展示名与本地目录。
+            内置本地档案的驱动锁定为「本地磁盘」：它是云存储不可用时的兜底，不可删除、不可改成云驱动。只能修改展示名。
           </span>
         </el-form-item>
         <template v-if="storageForm.driver !== 'local'">
@@ -225,8 +225,11 @@
         </template>
         <template v-else>
           <el-form-item label="本地根目录">
-            <el-input v-model="storageForm.localDir" placeholder="留空使用平台 uploads 目录" />
-            <span class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
+            <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
+            <span v-if="storageForm.builtin" class="field-note">
+              内置档案的目录跟随「系统设置 → 本地上传目录」：静态文件服务也绑在同一目录，单独改这里会导致图片 404。要换目录请改系统设置后重启。
+            </span>
+            <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
           </el-form-item>
         </template>
       </el-form>

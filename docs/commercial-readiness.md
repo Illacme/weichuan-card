@@ -5660,7 +5660,7 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 
 ## 存储 / CDN 多档案（迁移 0054，已落地）
 
-`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。档案、全局默认、企业绑定**全部只对平台超管开放**（企业管理员连读都 403：绑定决定「文件写进哪个桶」，档案里装的是别家客户的桶名与凭据，企业侧能改就能把本企业对象写进别人的桶且两边都不报错）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
+`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。档案、全局默认、企业绑定**全部只对平台超管开放**（企业管理员连读都 403：绑定决定「文件写进哪个桶」，档案里装的是别家客户的桶名与凭据，企业侧能改就能把本企业对象写进别人的桶且两边都不报错）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。内置档案的 `local_dir` 与系统设置 `upload_dir` **必须是同一个真值源**（静态路由 `r.Static` 与平台实例都绑在后者）：handler 拒绝内置档案单独改目录，启动时 `EnsureBuiltinLocal` 把目录同步回 `cfg.UploadDir`；换目录要改系统设置后重启，否则租户写新目录、静态路由读旧目录会导致全站裂图且无报错。
 
 **存储配置只剩一套模型（2026-11-20 定稿，第七十五轮执行）**：`tenant_storage_configs` 旧表与
 `TENANT_STORAGE_ROUTE` 开关**已彻底删除**——模型、repository、handler、`server tenant-storage-rekey`
