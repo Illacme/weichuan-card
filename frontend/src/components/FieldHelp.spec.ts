@@ -1,13 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import FieldHelp from './FieldHelp.vue'
 
 // el-tooltip 的 popper 由 Element Plus 挂在 body 下；单测里只关心
 // 「什么时候要求它显示」和「它拿到什么内容」，用桩把控制面暴露出来。
 const ElTooltipStub = defineComponent({
   name: 'ElTooltip',
-  props: ['visible', 'trigger', 'placement', 'popperClass'],
+  props: ['effect', 'visible', 'trigger', 'placement', 'popperClass'],
   emits: ['update:visible'],
   template: `<span class="tip"><slot name="content" /><slot /></span>`,
 })
@@ -85,6 +88,18 @@ describe('components/FieldHelp', () => {
       global: { stubs: { 'el-tooltip': ElTooltipStub } },
     })
     expect(minimal.findAll('.fh-key').map((k) => k.text())).toEqual(['功能'])
+  })
+
+  it('用浅色弹层：深色底配深色字会让长说明看不清', async () => {
+    const w = await mountHelp()
+    expect(w.findComponent(ElTooltipStub).props('effect')).toBe('light')
+
+    const sfc = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'FieldHelp.vue'),
+      'utf8'
+    )
+    expect(sfc).toContain('.field-help-popper.el-popper')
+    expect(sfc).toContain('background: #fff')
   })
 
   it('键盘聚焦也能展开，并带可读的无障碍标签', async () => {

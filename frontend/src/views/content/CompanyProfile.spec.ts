@@ -178,7 +178,7 @@ const ElRadio = defineComponent({
 // 这样「默认不占版面」的分段说明依旧可被断言；真实界面里它在 hover / 点击后才出现。
 const ElTooltip = defineComponent({
   name: 'ElTooltip',
-  props: ['visible', 'trigger', 'placement', 'popperClass'],
+  props: ['effect', 'visible', 'trigger', 'placement', 'popperClass'],
   emits: ['update:visible'],
   template: `<span class="el-tooltip"><slot name="content" /><slot /></span>`,
 })
@@ -1542,6 +1542,78 @@ describe('content/CompanyProfile', () => {
       )
       await flush()
       expect(w.find('.inline-notice.hint-warn').exists()).toBe(true)
+    })
+  })
+
+  // 用户截图里就是这套配置：ID / feedId 都空、token 只有 AThgKwzk、默认内嵌。
+  // 页面必须当场告诉他「这样不会播」，而不是等真机体验版才发现只有封面。
+  describe('视频号接入引导与配置体检', () => {
+    const channels = (extra: any = {}) => ({ ...profile('channels', ''), ...extra })
+
+    it('视频号档常驻三条接入路径，内嵌的条件在填字段之前就讲清', async () => {
+      const w = await mountPage(channels())
+      await flush()
+
+      const guide = w.find('.channels-guide')
+      expect(guide.exists()).toBe(true)
+      const text = guide.text()
+      expect(text).toContain('先选一条路')
+      expect(text).toContain('同主体')
+      expect(text).toContain('非个人主体')
+      expect(text).toContain('无主体限制')
+      expect(text).toContain('feedId')
+    })
+
+    it('缺凭证的内嵌配置当场红色告警，说明「只会显示封面」', async () => {
+      const w = await mountPage(channels())
+      await flush()
+
+      const notice = w.findAll('.inline-notice.hint-warn').map((n: any) => n.text()).join('\n')
+      expect(notice).toContain('当前内嵌播放不会播视频')
+      expect(notice).toContain('只会看到封面图')
+    })
+
+    it('短 token 被识别为复制不全，界面告警且保存被拦下', async () => {
+      const w = await mountPage(channels({ videoFeedToken: 'AThgKwzk' }))
+      await flush()
+
+      const notice = w.findAll('.inline-notice.hint-warn').map((n: any) => n.text()).join('\n')
+      expect(notice).toContain('没复制完整')
+      expect(notice).toContain('token/')
+
+      await saveButton(w).trigger('click')
+      await flush()
+      expect(ElMessage.warning).toHaveBeenCalledWith(
+        'feed-token 不完整：完整值应以 token/ 开头，请按接入指引重新复制'
+      )
+      expect(mocks.saveCompanyProfile).not.toHaveBeenCalled()
+    })
+
+    it('完整 token 不再误报，能正常保存', async () => {
+      const w = await mountPage(channels({ videoFeedToken: 'token/abcdefghijkl' }))
+      await flush()
+
+      expect(w.text()).not.toContain('没复制完整')
+      await saveButton(w).trigger('click')
+      await flush()
+      expect(mocks.saveCompanyProfile).toHaveBeenCalled()
+    })
+
+    it('跳转档不检查 feed-token 格式（该接口本来就不认它）', async () => {
+      const w = await mountPage(
+        channels({
+          videoChannelId: 'sphABC',
+          videoFeedId: 'feed-1',
+          videoFeedToken: 'AThgKwzk',
+          videoChannelPlayMode: 'redirect',
+        })
+      )
+      await flush()
+
+      expect(w.text()).not.toContain('没复制完整')
+      await saveButton(w).trigger('click')
+      await flush()
+      expect(mocks.saveCompanyProfile).toHaveBeenCalled()
     })
   })
 })

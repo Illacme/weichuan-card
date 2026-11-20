@@ -31,6 +31,24 @@
            凭证区内部也是依赖顺序：ID 定位视频号 → feedId 定位视频 → token 是同主体的替代品，
            放最后且与 feedId 相邻说明「二选一」。 -->
       <template v-if="form.videoSource === 'channels'">
+        <!-- 视频号是四档里条件最绕的一档：内嵌看着体验最好，但同主体 / 跨主体走的是两条完全不同的凭证路径。
+             把「先选哪条路」摆在字段前面，客户才不会拿一个不完整的 token 配出一张只显示封面的名片。 -->
+        <div class="channels-guide">
+          <div class="channels-guide-title">先选一条路：视频号怎么接进来</div>
+          <div class="channels-guide-row is-best">
+            <span class="channels-guide-tag">推荐 · 同主体</span>
+            <span>视频号与小程序<strong>同主体</strong>（或已在开放平台关联）：填 <code>feedId</code>，内嵌播放最稳定。</span>
+          </div>
+          <div class="channels-guide-row is-token">
+            <span class="channels-guide-tag">跨主体</span>
+            <span>小程序须为<strong>非个人主体</strong>，且要拿到完整的 <code>feed-token</code>；条件多、不能自动播放。</span>
+          </div>
+          <div class="channels-guide-row is-redirect">
+            <span class="channels-guide-tag">最省事</span>
+            <span>只求能播、接受访客跳出去：填<strong>视频号 ID + feedId</strong> 并选「跳转打开」，无主体限制。</span>
+          </div>
+        </div>
+
         <el-form-item label="视频号 ID">
           <template #label>视频号 ID <FieldHelp v-bind="HELP.videoChannelId" /></template>
           <el-input v-model="form.videoChannelId" placeholder="sph 开头，视频号助手首页可查看" />
@@ -55,6 +73,10 @@
           <InlineNotice v-if="isChannelsRedirect" class="hint hint-warn" tone="warn">
             跳转播放用不到它。已填内容会保留，<strong>切回内嵌播放后继续生效</strong>。
           </InlineNotice>
+          <InlineNotice v-if="tokenLooksBroken" class="hint hint-warn" tone="danger">
+            feed-token 看起来<strong>没复制完整</strong>：完整值应以 <code>token/</code> 开头，是一长串。
+            请按上面的接入指引重新获取；不完整的 token 在真机上只会显示封面。
+          </InlineNotice>
         </el-form-item>
 
         <el-form-item label="播放方式">
@@ -65,6 +87,11 @@
           </el-radio-group>
           <InlineNotice v-if="!canRedirect" class="hint hint-warn" tone="warn">
             还缺<strong>{{ missingForRedirect }}</strong>，补齐后「跳转打开」才可选。
+          </InlineNotice>
+          <InlineNotice v-if="embedMissingCredential" class="hint hint-warn" tone="danger">
+            <strong>当前内嵌播放不会播视频。</strong>
+            至少要填 feedId（同主体）或完整的 feed-token（跨主体）；现在保存，访客在真机上只会看到封面图。
+            不确定怎么选，请看上方的接入指引。
           </InlineNotice>
         </el-form-item>
       </template>
@@ -475,6 +502,25 @@ const missingForRedirect = computed(() => {
   return missing.join(' 和 ')
 })
 
+// 内嵌播放看着是「默认档」，实际凭证要求比跳转苛刻：
+// 同主体要有 feedId，跨主体要有完整的 feed-token。截图里客户填的是
+// `AThgKwzk` 这种短值（没有 token/ 前缀），几乎必然是复制被截断，
+// 真机只会显示封面。所以界面实时告知 + 保存前再拦一道，不能让这种配置静默存下去。
+const tokenLooksBroken = computed(
+  () =>
+    form.videoSource === 'channels' &&
+    !isChannelsRedirect.value &&
+    !!form.videoFeedToken.trim() &&
+    !/^token\//i.test(form.videoFeedToken.trim())
+)
+const embedMissingCredential = computed(
+  () =>
+    form.videoSource === 'channels' &&
+    !isChannelsRedirect.value &&
+    !form.videoFeedId.trim() &&
+    !form.videoFeedToken.trim()
+)
+
 // 当前会写进库、也最终交给小程序 <video src> 的那个地址。
 // 保存与「最终播放地址」展示必须取同一个值，所以抽成一份：
 // 两处各写一遍三元表达式，改一处漏一处就是「显示的和存的不是一回事」。
@@ -666,6 +712,11 @@ async function save() {
     ElMessage.warning(`跳转播放需要同时填写${missingForRedirect.value}`)
     return
   }
+  // 不完整的 token 必然播不出来，别让它带着「已保存」的假象留在库里
+  if (tokenLooksBroken.value) {
+    ElMessage.warning('feed-token 不完整：完整值应以 token/ 开头，请按接入指引重新复制')
+    return
+  }
   // feedId（同主体）与 feed-token（跨主体）二选一，feedId 优先；两个都空则播不了任何东西
   if (form.videoSource === 'channels' && !form.videoFeedId.trim() && !form.videoFeedToken.trim()) {
     ElMessage.warning('视频号档需要填写 feedId（同主体）或 feed-token（跨主体）')
@@ -742,6 +793,57 @@ onMounted(() => {
 }
 .page-bar h3 {
   margin: 0;
+}
+/* 视频号接入指引：这块是决策信息，必须常驻可见，
+   否则客户拿着不完整的 token 一路配到底，真机只看到封面还不知道为什么。
+   左边距跟表单 label-width 对齐，视觉上归属于这一档而不是飘在页面顶部。 */
+.channels-guide {
+  margin: 0 0 16px 140px;
+  padding: 10px 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #fafcff;
+}
+.channels-guide-title {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+.channels-guide-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #303133;
+}
+.channels-guide-tag {
+  flex: 0 0 82px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+.channels-guide-row.is-best .channels-guide-tag {
+  color: #2f8f4e;
+  background: #f0f9eb;
+}
+.channels-guide-row.is-token .channels-guide-tag {
+  color: #a9701b;
+  background: #fdf6ec;
+}
+.channels-guide-row.is-redirect .channels-guide-tag {
+  color: #2f6fb5;
+  background: #ecf5ff;
+}
+.channels-guide code {
+  padding: 0 3px;
+  border-radius: 2px;
+  background: #eef1f6;
+  font-size: 11px;
 }
 .hint {
   margin-top: 6px;
