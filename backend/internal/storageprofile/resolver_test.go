@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"weichuan/internal/model"
+	"weichuan/internal/storage"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -70,4 +71,18 @@ func TestTenantFromURLsAndDynamicCDN(t *testing.T) {
 	cdn := NewDynamicCDN(nil, r)
 	require.False(t, cdn.(*DynamicCDN).Configured(), "没配 CDN 时动态壳不能冒充已配置")
 	require.NoError(t, cdn.Refresh([]string{"https://x.com/uploads/t/12/a.png"}))
+}
+
+// 平台对象（p/ 前缀）必须始终写平台实例，不能被全局档案接管：
+// 字节进了客户桶、URL 仍是平台域名，取图必然 404。
+func TestDynamicPlatformNeverUsesProfile(t *testing.T) {
+	db := testDB(t)
+	sp := model.StorageProfile{Name: "global", Driver: "minio", Endpoint: "s.example.com", Bucket: "b", BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, Version: 1, UseSSL: true}
+	require.NoError(t, db.Create(&sp).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{TenantID: 0, StorageProfileID: sp.ID, Version: 1}).Error)
+
+	plat := &storage.LocalUploader{Dir: t.TempDir()}
+	base := storage.NewStaticResolver(plat, "local")
+	dyn := NewDynamic(base, New(db))
+	require.Same(t, plat, dyn.Platform(), "Platform() 不能被档案接管")
 }

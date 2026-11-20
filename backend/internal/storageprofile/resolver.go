@@ -221,14 +221,13 @@ func (d *DynamicResolver) For(cid int64) (storage.Uploader, error) {
 	return d.base.For(cid)
 }
 
-func (d *DynamicResolver) Platform() storage.Uploader {
-	if d.prof != nil {
-		if up, err := d.prof.UploaderFor(0); err == nil && up != nil {
-			return up
-		}
-	}
-	return d.base.Platform()
-}
+// Platform 必须原样交回平台实例，**绝不能**走档案解析。
+//
+// 有一类对象键前缀写死了平台：p/library/...（素材采用）、p/wxacode/...（小程序码）。
+// 它们的 URL 由平台 nginx 的 /uploads/ 回退段托管；若被全局档案指到客户桶，
+// 字节进了客户桶、URL 仍是平台域名，取图必然 404。键前缀与实例必须同源
+// （见 storage.Resolver.Platform 的注释与 TestPlatformScopedWritesUsePlatformInstance）。
+func (d *DynamicResolver) Platform() storage.Uploader { return d.base.Platform() }
 
 func (d *DynamicResolver) DriverFor(cid int64) string {
 	if d.prof != nil {
