@@ -71,6 +71,40 @@ func TestResolveInheritanceAndImmediateVersion(t *testing.T) {
 	require.Contains(t, err.Error(), "不存在")
 }
 
+// Diagnose 的 reason 会进无需登录的 /api/public/settings，绝不能回显底层错误：
+// 里面可能带管理员填的原始域名、内部路径或档案 id。原实现直接拼 err.Error()，
+// 让任意访客 ?companyId=1 就能读到这些内部信息。
+func TestDiagnoseNeverEchoesUnderlyingErrors(t *testing.T) {
+	const marker = "SECRET-INTERNAL-DOMAIN-4a1b"
+	db := testDB(t)
+	sp := model.StorageProfile{Name: "cloud", Driver: "minio", Endpoint: "s.example.com", Bucket: "b",
+		BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, Version: 1, UseSSL: true}
+	dp := model.DeliveryProfile{Name: "bad", Provider: "aliyun",
+		Domain: "javascript:alert('" + marker + "')", Version: 1}
+	require.NoError(t, db.Create(&sp).Error)
+	require.NoError(t, db.Create(&dp).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{
+		TenantID: 7, StorageProfileID: sp.ID, DeliveryProfileID: dp.ID, Version: 1,
+	}).Error)
+	r := newTestResolver(t, db)
+
+	// ① 域名非法：原始域名（含标记与协议）都不许出现在 reason 里。
+	base, active, reason := r.Diagnose(7)
+	require.Empty(t, base)
+	require.False(t, active)
+	require.Contains(t, reason, "不合法", "仍要给出可照做的分类原因")
+	require.NotContains(t, reason, marker)
+	require.NotContains(t, reason, "javascript:")
+
+	// ② 解析失败：底层错误里的档案 id 与细节也不许下发。
+	require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 7).
+		Update("storage_profile_id", 9999).Error)
+	require.NoError(t, r.Touch())
+	_, _, reason = r.Diagnose(7)
+	require.Contains(t, reason, "读取存储档案失败")
+	require.NotContains(t, reason, "9999", "底层错误的档案 id 属于内部信息")
+}
+
 func TestTenantFromURLsAndDynamicCDN(t *testing.T) {
 	require.EqualValues(t, 12, TenantFromURLs("https://x.com/uploads/t/12/a.png"))
 	require.EqualValues(t, 0, TenantFromURLs("https://x.com/uploads/p/a.png"))

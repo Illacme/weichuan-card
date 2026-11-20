@@ -363,7 +363,6 @@ const allMenuGroups = [
       { path: '/content/categories', title: '业绩分类' },
       { path: '/content/projects', title: '项目案例' },
       { path: '/content/services', title: '业务服务' },
-      // 企业自助选择平台准备好的存储 / CDN 档案（看不到凭据）
       // 小程序设置：访客第一眼看到什么（入口 + 名片首页样式）合成一页两页签。
       // 两者接口与保存各自独立，但对客户是同一件事「我的小程序长什么样」。
       { path: '/content/mp-settings', title: '小程序设置' },

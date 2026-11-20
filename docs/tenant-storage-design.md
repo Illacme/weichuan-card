@@ -79,6 +79,7 @@
 
 - `OriginFor(cid)` 回答出参该用哪个 origin，并回报 `handled`；
 - `Diagnose(cid)` 是同一判定的诊断版（带原因），只服务 `/api/public/settings`；
+  该接口无需登录，所以 reason 只用固定分类文案，原始域名与底层错误只进服务端日志；
 - `OwnerOf(cid)` 回答配额与后台状态该不该按「自有桶」处理；
 - `NginxTarget(cid, sp)` 给生成器用，与上传侧共用同一套 driver / endpoint /
   bucket / host_header 口径（含 scheme 剥离）。
@@ -965,7 +966,9 @@ type Resolver interface {
 > 接入层 cache key 含租户维度、客户域名证书与 `/uploads/t/<企业id>/` 回源规则、
 > 以及 R1-b 的「谁 Purge 租户自有边缘」——这三条在开关删除后**依然要逐条确认**，
 > 只是从「打开前的检查单」变成「绑定客户域名时的检查单」。
-> **仍未做**：`key_id` 轮换、配额口径、解约后清理策略；
+> **仍未做**：`key_id` 轮换、解约后清理策略；
+> （「配额口径」当时列在这里，现已由 `storage_quota.go` 解决：自有桶企业不计量、不受平台配额硬拦；
+> 剩下没定的是**按量计费规则**，属商务问题不是代码缺口。）
 > `driver=oss` 源与「虚拟主机风格且 hostHeader 与 endpoint 不同域名」仍显式拒绝。
 
 **门禁纪律照旧**：`gofmt` → `golangci-lint` → `go test ./...` → `vue-tsc --noEmit`

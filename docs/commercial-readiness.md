@@ -41,7 +41,7 @@
 
 **本轮新增的发布阻断级（P0）两条，均已修复**：
 1. **微信隐私授权完全未实现**（代码级）—— 已落地：新增 `miniprogram/utils/privacy.ts`（授权状态查询与编排）+ `components/privacy-consent`（自绘授权弹窗，同意按钮用官方 `open-type="agreePrivacyAuthorization"`），三个调隐私接口的页面接入，`app.json` 补 `__usePrivacyCheck__: true`，另加隐私政策页与 apply 表单明示同意勾选。
-2. **授权验签公钥仍是占位演示密钥**（`backend/internal/license/embed.go:16`）—— 已落地：公钥改为**环境变量 `LICENSE_PUB` 可覆盖**（不必改代码重编译），并新增 `IsPlaceholderPublicKey()` 自检——私有部署仍用占位密钥时**拒绝启动**并给出换钥指引（集中/平台模式不受影响，保证开源仓库「clone 就能跑」）。
+2. **授权验签公钥仍是占位演示密钥**（`backend/internal/license/embed.go` 的 `embeddedPublicKeyB64`）—— 已落地：公钥改为**环境变量 `LICENSE_PUB` 可覆盖**（不必改代码重编译），并新增 `IsPlaceholderPublicKey()` 自检——私有部署仍用占位密钥时**拒绝启动**并给出换钥指引（集中/平台模式不受影响，保证开源仓库「clone 就能跑」）。
 
 > 实施时发现本报告初稿把接口名与隐私接口范围写错了，详见文末「实施记录与事实订正」。
 
@@ -58,7 +58,7 @@
 | **A4** | **微信隐私授权接口完全未实现（✅ 已修复）** | **修复前**：`app.json` 无 `__usePrivacyCheck__`、全仓零命中隐私授权接口。**修复后**：① `app.json` 补 `"__usePrivacyCheck__": true`；② 新增 `miniprogram/utils/privacy.ts`——`queryPrivacy()` 查 `wx.getPrivacySetting`、`needConsent()` 判定是否需授权、`requestConsent()/settle()` 编排等待、`ensurePrivacy(page)` 供页面统一调用；③ 新增 `components/privacy-consent` 自绘授权弹窗，**同意按钮用官方 `open-type="agreePrivacyAuthorization"`**（基础库会校验按钮确被点击过，普通按钮无效）；④ 三个调隐私接口的页面接入：`apply/open`（`chooseMedia`/`getUserProfile`）、`employee/edit`（`chooseMedia`）、`poster`（`chooseMedia` + `saveImageToPhotosAlbum`） | 未实现时：真机隐私接口直接 `fail: require privacy authorize`（昵称采集与头像上传不可用）、提审驳回 | 官方要求「注册监听后**必须**调 resolve，否则原接口永久挂起」——本实现走 `getPrivacySetting` **主动查询**路线且**不注册**监听，漏网调用由微信官方弹窗兜底，不会出现「点了没反应」；`openid` 虽不在隐私接口表内，但属需在 MP 后台声明的「用户标识信息」 |
 | **A5** | **小程序内无隐私政策页 / 协议入口（✅ 已修复）** | **修复前**：全小程序无任何隐私政策页面。**修复后**：新增 `pages/privacy/privacy`（六节完整正文：收集哪些信息 / 如何使用 / 如何保护 / 你的权利 / 联系我们 / 微信平台隐私指引），`app.json` 注册路由；「我的」页**未登录与已登录两态都放了入口**（访客也要能查阅）；页内可一键打开微信侧配置的《小程序用户隐私保护指引》原文 | 微信审核要求用户可在应用内查阅隐私保护指引，缺此即不通过 | 已落地。政策正文口径与产品真实行为一致（收集 openid / 填写的联系方式 / 上传图片 / 访问埋点；存储在部署方自有服务器；权利含查阅复制更正删除注销撤回同意） |
 | **A6** | **apply/open 采集个人信息无告知同意（✅ 已修复）** | **修复前**：`open.ts` 收集 `name/phone/phone2/title/landline/email/avatar/nickname` + 静默 `openid`，`onSubmit` 仅校验姓名手机即提交，无任何告知与同意。**修复后**：表单末尾加**自定义勾选框 + 告知文案**（「我已阅读并同意《隐私政策》，同意本小程序收集上述信息用于生成与展示我的电子名片」，其中《隐私政策》可点跳隐私政策页）；`onSubmit` 前校验 `agreed`，**未勾选直接拒绝提交并提示**（该校验必须在端上做——后端拿不到「用户是否真的看过并勾了」这个事实） | PIPL「告知—同意」原则的直接违反点，也是微信审核高频驳回项（与 A4 弹窗互补：弹窗是平台级前置，此处是表单级明示同意） | 已落地。勾选状态独立于 `form`（不进提交载荷），配 5 条守护用例（未勾选拒提交 / 勾选可提交 / 可来回切换 / 跳隐私政策页） |
-| **A7** | **授权验签公钥仍为占位演示密钥（✅ 已修复）** | **修复前**：`embed.go:16` 是编译期常量，无任何覆盖途径。**修复后**：① 公钥支持**环境变量 `LICENSE_PUB` 覆盖**（base64，优先于内嵌值）——发布时注入真公钥**不必改代码重新编译**；② 新增 `license.IsPlaceholderPublicKey()` 自检；③ `cmd/server/main.go` 启动时**私有部署仍用占位密钥即拒绝启动**并打印换钥指引（含 `license keygen` 用法与「私钥绝不入仓」提醒）；④ 环境变量写错（非法 base64 / 长度不对）时**不静默退回内嵌公钥**，而是让自检发现（否则「以为用的是环境变量那把、实际是内嵌那把」是最难查的一类错） | 占位密钥的配对私钥写在签发工具注释里 → 任何拿到二进制的人都能伪造「永久 / 无限席位」的许可证 | 已落地。**只在私有部署模式拦**：集中/平台模式不验本地许可证文件，而开源仓库需要「clone 就能跑」，一刀切拦会让本地开发无从下手。自检排在 `license.Verify` **之前**——否则用户只会看到「授权校验失败」而不知道真正原因是「公钥没换」 |
+| **A7** | **授权验签公钥仍为占位演示密钥（✅ 已修复）** | **修复前**：`internal/license/embed.go` 的 `embeddedPublicKeyB64` 是编译期常量，无任何覆盖途径。**修复后**：① 公钥支持**环境变量 `LICENSE_PUB` 覆盖**（base64，优先于内嵌值）——发布时注入真公钥**不必改代码重新编译**；② 新增 `license.IsPlaceholderPublicKey()` 自检；③ `cmd/server/main.go` 启动时**私有部署仍用占位密钥即拒绝启动**并打印换钥指引（含 `license keygen` 用法与「私钥绝不入仓」提醒）；④ 环境变量写错（非法 base64 / 长度不对）时**不静默退回内嵌公钥**，而是让自检发现（否则「以为用的是环境变量那把、实际是内嵌那把」是最难查的一类错） | 占位密钥的配对私钥写在签发工具注释里 → 任何拿到二进制的人都能伪造「永久 / 无限席位」的许可证 | 已落地。**只在私有部署模式拦**：集中/平台模式不验本地许可证文件，而开源仓库需要「clone 就能跑」，一刀切拦会让本地开发无从下手。自检排在 `license.Verify` **之前**——否则用户只会看到「授权校验失败」而不知道真正原因是「公钥没换」 |
 
 > A1 是三者中唯一"写代码能解决"的，已做完。A2/A4/A5/A6 一半流程一半产品功能；A7 是构建期一道换钥工序。
 
@@ -84,9 +84,9 @@
 | C2 | **备份/恢复/演练脚本已落地 + 演练已实跑留档（✅ 已闭环，2026-11-02 补全为「三件套」）** | `backup.sh`（SQLite `VACUUM INTO` 在线快照 + MySQL `mysqldump --single-transaction` + 轮转 + 体检）**→ 追加调用 `backup_files.sh`**：`uploads-*.tar.gz`（图片）+ `secrets-*.tar.gz.enc`（`runtime.env` 含 `PII_ENC_KEY` + `license.key`，AES-256 + PBKDF2 20 万轮，口令 `BACKUP_ENC_KEY` 单独保管，落盘即自检可解）；`restore.sh`（恢复前自动备份 + WAL 清理 + 回滚指引）+ `restore_files.sh`（图片/密钥恢复，覆盖前另存安全网）；`restore_drill.sh`（不碰生产的演练，未真正校验不得报 PASS，**第 5 项验图片与密钥包**，结尾打印可粘贴留档正文）。**已实跑**：2026-10-27 SQLite/MySQL 各一次；2026-11-02 容器与宿主两种形态各跑通「备份→恢复→逐字节比对」，并验证「缺口令整次失败且不留产物」。记录存档在 `docs/drill-records/`。**同日后台补了「备份与恢复」面板**（`handler/backup.go` + `views/platform/Backup.vue`）：三件套各自最新一份的文件名/大小/新鲜度（缺失也占一行并明说）、SQLite 形态可「立即备份」、库与图片可流式下载；**密钥包不提供下载**（后端直接拒，否则等于把钥匙和数据放回同一故障域）、**恢复不在后台做**（必须走 `restore.sh` 的确认流程）。面板补的是「看不见」这个洞，不替代 crontab——按钮不会自己按，失败也不告警 | 没演练过的备份不算备份；**只备库 = 恢复出来缺图 + PII 解不开** | **已闭环**。剩余是节奏问题：每季度一次（升级迁移 / 改备份脚本 / 换部署形态后补跑），记录继续存 `docs/drill-records/YYYY-MM-DD-<形态>.md`。**`alert_check.sh` R3 已扩展到图片/密钥包新鲜度**（各自独立告警键，避免共用冷却窗口互相吞掉） |
 | C3 | **审计日志保留期（✅ 已落地）** | **修复前**：`auditlog.go` 只 `Record`，无归档/清理。**修复后**：① 设置新增 `audit_retention_days`（Group security，**默认 0 = 永不自动清理**）；② 新增 `internal/audit/purge.go`——`PurgeAuditLogs` 分批删除（每批 2000、单 tick 上限 10 万，避免大事务长时间持锁）、`StartAuditLogPurge` 定期跑（间隔 `AUDIT_PURGE_MINUTES`，默认 12h，启动时先清一次）；③ 保留天数**每次重新读设置**（界面改完即时生效），并回落环境变量 `AUDIT_RETENTION_DAYS`；④ 清理动作本身记一条 `audit.purge` 审计（新增 `ActorSystem` 操作者类型，前端显示「系统」），失败也留痕但**不落错误文本**（DB 错误可能带连接串） | 两三年后单表拖慢查询，且长期留存 PII 本身是合规负担 | **已落地**。默认 0 是刻意的：删审计不可逆，升级当天清掉存量＝把本来就有的证据变成再也拿不回来（与 B3/B4 同一条「升级不得突变存量」纪律）。要合规留存策略由运维显式填 180/365 |
 | C4 | **不能水平扩展** | 小程序码/access_token 进程内存缓存（`wechat.go:50-53`）；`license.Current()` 亦为进程内存 | 多副本各算各的 token/授权态，限流按实例分桶 | 商用多副本前必须先上 Redis（token + 限流桶 + 授权态 + 缓存） |
-| C5 | **数据静态加密（✅ 已落地）** | **修复前**：PII 明文落库。**修复后**：新增 `internal/pii` 包（AES-256-GCM + `v1:` 版本前缀 + 随机 nonce；盲索引 `HMAC-SHA256` 密钥由主密钥域分离派生）。范围**全量**：`employees`（姓名/手机/手机2/邮箱/昵称）、`open_applies`（同五列）、`card_modify_applies.snapshot` 整段。模型三段式（明文 `gorm:"-"` + 密文列沿用原列名 + `*_bidx`），配 `BeforeCreate` 加密 / `AfterFind` 解密钩子；`BackfillPII` 幂等回填（空跳过 / 明文加密 / 密文补索引）；迁移 `0030`/`0031`（含 `snapshot` 改 LONGTEXT——密文是 base64 不是合法 JSON）。登录按 `phone_bidx` 等值；后台搜索对加密列改盲索引等值（`title/landline/openid` 仍 LIKE） | 备份盘/数据库文件泄露 = 大规模个人信息泄露 | **已落地**。生产必须设 `PII_ENC_KEY`（base64 32 字节）；未设时回落内置 dev 密钥并打 `[SECURITY][WARN]`（不拒启，保证 clone 即可跑）。已知取舍：加密字段的后台搜索由模糊收窄为精确。**备份件加密（2026-11-02 部分补上）**：`runtime.env` 等密钥单独打成 `secrets-*.tar.gz.enc`（口令 `BACKUP_ENC_KEY` 与备份分离保管），库备份本身仍是 gzip 明文——但 PII 列在库里就是密文，没有那把钥匙不可读；客户若要求「整包加密」，需再叠一层（备份目录 / 对象存储 SSE） |
+| C5 | **数据静态加密（✅ 已落地）** | **修复前**：PII 明文落库。**修复后**：新增 `internal/pii` 包（AES-256-GCM + `v1:` 版本前缀 + 随机 nonce；盲索引 `HMAC-SHA256` 密钥由主密钥域分离派生）。范围**全量**：`employees`（姓名/手机/手机2/邮箱/昵称）、`open_applies`（同五列）、`card_modify_applies.snapshot` 整段。模型三段式（明文 `gorm:"-"` + 密文列沿用原列名 + `*_bidx`），配 `BeforeCreate` 加密 / `AfterFind` 解密钩子；`BackfillPII` 幂等回填（空跳过 / 明文加密 / 密文补索引）；迁移 `0030`/`0031`（含 `snapshot` 改 LONGTEXT——密文是 base64 不是合法 JSON）。登录按 `phone_bidx` 等值；后台搜索对加密列改盲索引等值（`title/landline/openid` 仍 LIKE） | 备份盘/数据库文件泄露 = 大规模个人信息泄露 | **已落地**。生产必须设 `PII_ENC_KEY`（base64 32 字节）；**现行口径：未设或格式非法时 `cmd/server` 的 `piiKeyGate()` 拒绝启动**（早期版本只打 `[SECURITY][WARN]` 不拒启，现已改为硬门槛）；本地联调确需放行加 `ALLOW_INSECURE=1`，启动日志会打 `[SECURITY][ALLOW_INSECURE]` 留痕。已知取舍：加密字段的后台搜索由模糊收窄为精确。**备份件加密（2026-11-02 部分补上）**：`runtime.env` 等密钥单独打成 `secrets-*.tar.gz.enc`（口令 `BACKUP_ENC_KEY` 与备份分离保管），库备份本身仍是 gzip 明文——但 PII 列在库里就是密文，没有那把钥匙不可读；客户若要求「整包加密」，需再叠一层（备份目录 / 对象存储 SSE） |
 | C6 | **CI 密钥扫描（✅ 已落地）** | **修复前**：五 job 无任何密钥扫描。**修复后**：新增 `.gitleaks.toml`（`[extend] useDefault = true` + `[allowlist].regexes` 精确抑制测试假值，**单表不是 `[[allowlist]]`**）+ `ci.yml` 新增 `secrets-scan` job（`fetch-depth: 0` 才能扫历史提交）。本地 8.30.1 实测：无白名单时 6 处命中全为 `generic-api-key` 假值（`middleware-test-key-*`、伪 AppSecret、`from-env-key-*`、文档占位 JWT），加白名单后 **0 leaks** | 密钥一旦进 git 历史极难彻底清除 | **已落地**。仍须遵守「PR 禁止提交真实密钥」；测试内嵌微信上传私钥为假 fixture（`mp_release_upload_test.go:39` `MII-fake-global-key`） |
-| C7 | **EXIF/GPS 剥离（✅ 已落地；缩略图仍缺）** | **修复前**：`upload.go` 全文无 `exif`/`Strip`（Grep 零命中），用户上传原样落盘。**修复后**：`internal/storage/image.go` 新增 `ProcessImage(ext, data)`——jpg/jpeg/png **解码再编码**即剥离全部元数据（含 GPS）；gif/webp/mp4 透传；解码失败 fail-open（不因坏图阻断上传）。**缩略图仍未做**（见 E4） | 用户照片带 GPS = PIPL「行踪轨迹/精确定位」敏感个人信息 | **EXIF 部分已落地**；缩略图/压缩见 E4 |
+| C7 | **EXIF/GPS 剥离（✅ 已落地；缩略图见 E4，也已落地）** | **修复前**：`upload.go` 全文无 `exif`/`Strip`（Grep 零命中），用户上传原样落盘。**修复后**：`internal/storage/image.go` 新增 `ProcessImage(ext, data)`——jpg/jpeg/png **解码再编码**即剥离全部元数据（含 GPS）；gif/webp/mp4 透传；解码失败 fail-open（不因坏图阻断上传）。缩略图由 E4 的 `storage.ProcessUpload` 生成（三驱动均写 `<hash>_thumb.<ext>`，**不是**「仍未做」） | 用户照片带 GPS = PIPL「行踪轨迹/精确定位」敏感个人信息 | **EXIF 与缩略图均已落地**；细节见 E4 |
 | C8 | **集中日志 + PITR（✅ 已落地）** | **修复前**：日志仅后端本地文件、纯文本；`backup.sh` 不含 binlog（RPO=日备）；`/metrics` 无来源限制。**修复后**：① 新增 `internal/logx`——`LOG_FORMAT=json` 时**包装标准 log 的输出目标**，既有 `log.Printf` 一行不用改就变成 JSONL（级别从既有的 `[WARN]` 等方括号标签推断，认不出按 info、绝不丢行；连续标签取最严重的一个，避免 `[MIGRATE][FATAL]` 被当成 info）；访问日志字段化（`method/path/status/latency_ms/request_id`），文本模式下格式一字不改；② compose 三个服务都配了 `json-file` 日志轮转（10m×7，防止容器日志撑爆磁盘），另附 `deploy/promtail/config.yml`（Loki）与 `deploy/logrotate/weichuan.conf`（非容器部署）；③ **PITR**：compose 的 mysqld 默认带 `--log-bin --server-id=1 --binlog-format=ROW`，新增 `scripts/backup_binlog.sh`（FLUSH 滚动 → 逐个复制并 `gzip -t` 校验 → 校验全过才 `PURGE`，顺序不能换；`log_bin=OFF` 时报错退出而不是空跑成功）；④ `/metrics` 加第二道门 `METRICS_ALLOW_CIDR`（**写错即整体拒绝**，fail-closed） | 多副本/跨机排障受限；误删只能回到日备点 | **已落地**。已知取舍：SQLite 形态无 PITR（没有 binlog 这类增量日志），对数据零丢失有要求的客户应走 MySQL；binlog 回放（PITR 的后半段）尚未做演练——在那之前可承诺的是「恢复到最近一次备份」 |
 
 ---
@@ -119,8 +119,8 @@
 
 - `backend/internal/config/config.go:13-18`：`DefaultJWTKey="change-me"`、`DefaultAdminPass="admin123456"`，但二者都原样写在公开文档里（已知凭据）。
 - `config.go:200-211` `InsecureGates()`：当 `JWT_KEY==默认` 或 `AdminPass==默认`（或长度不足）时返回硬门槛项。
-- `cmd/server/main.go:82-93`：**启动时若 `InsecureGates` 非空且 `ALLOW_INSECURE!=1`，逐条打印 `[SECURITY][FATAL]` 并 `log.Fatal` 拒绝启动**（自检方式：改一个环境变量重启，不会弄丢"改回来的入口"）。
-- `cmd/server/main.go:172-174`：`license.Verify` 失败同样 `log.Fatalf` 拒绝启动。
+- `cmd/server/main.go` 的 `cfg.InsecureGates()` 启动块：**启动时若 `InsecureGates` 非空且 `ALLOW_INSECURE!=1`，逐条打印 `[SECURITY][FATAL]` 并 `log.Fatal` 拒绝启动**（自检方式：改一个环境变量重启，不会弄丢"改回来的入口"）。
+- `cmd/server/main.go` 中 `license.Verify` 失败分支：`license.Verify` 失败同样 `log.Fatalf` 拒绝启动。
 
 **剩余风险（请知悉，非 P0）**：
 1. `ALLOW_INSECURE=1` 是逃生门（注释"仅本地联调用"），若生产误设即绕过全部门槛——发布 runbook 应明确禁止生产设此值。
@@ -132,7 +132,7 @@
 ## 建议的推进顺序（本轮修订）
 
 1. **A4 微信隐私授权（P0，代码级，必须最先做）** —— `app.json` 加 `__usePrivacyCheck__:true` + `app.ts` 注册 `onNeedPrivacyAuthorize` + 调用前 `requirePrivacyAuthorize` + 隐私政策页 + apply 表单同意勾选 + MP 后台补全《隐私保护指引》。
-2. **A7 替换占位授权公钥（P0）** —— 发布构建前把 `embed.go:16` 换成自有公钥 + runbook 加比对断言。
+2. **A7 替换占位授权公钥（P0）** —— 发布构建前把 `internal/license/embed.go` 的 `embeddedPublicKeyB64` 换成自有公钥 + runbook 加比对断言。
 3. **A5/A6 隐私政策页 + apply 明示同意（P0/P1）**。
 4. **A1-b / B1-a（P1）** —— 匿名上传加限流+送检；席位上限抽到共享函数覆盖审批路径。
 5. **A2 PIPL 自助权利入口（P1）** —— 小程序「我的数据」+「注销」+ 后台按员工导出。
@@ -157,7 +157,7 @@
 - 上线合规前置（域名 ICP 备案 + 小程序备案）：`docs/deploy-runbook.md` §0 + `docs/launch-checklist.md` 阻断级（小程序备案 preflight 不覆盖，需人工确认备案号）
 - 前端报错上报（无鉴权 `POST /api/client-error`，每 IP 限流 + 64KB + 日志 `[CLIENT-ERROR]` 关联 `X-Request-Id`）→ `frontend/src/main.ts` · `frontend/src/api/clientError.ts` · `backend/internal/handler/clienterror.go`
 - 内容安全（A1）：文本 `MsgSecCheck` v2 + 图片 `media_check_async` + 消息推送回调落库 + 后台一键下架
-- 授权地基 + 强制层 + 多租户授权：`internal/license`（`Entitlement`/`LicenseResolver`/Ed25519 验签/启动校验/运行时 `EnforceLicense`/`RequireFeature`/`tenant_license` 表/`cmd/license` 签发工具）；**启动硬门槛** `InsecureGates` + `license.Verify` 已接入 `cmd/server` boot 序列（`main.go:82` / `:172`）
+- 授权地基 + 强制层 + 多租户授权：`internal/license`（`Entitlement`/`LicenseResolver`/Ed25519 验签/启动校验/运行时 `EnforceLicense`/`RequireFeature`/`tenant_license` 表/`cmd/license` 签发工具）；**启动硬门槛** `InsecureGates` + `license.Verify` 已接入 `cmd/server` boot 序列（`cfg.InsecureGates()` 启动块 / `license.Verify` 失败分支）
 - 许可策略（B2）：`LICENSE` 商业专有许可 + `NOTICES.md` + `docs/third-party-licenses.md`；签发私钥文件加载、未进仓库
 - **默认凭据已非 P0**：`InsecureGates` 拒绝以默认 `JWT_KEY`/`ADMIN_PASS` 启动（见「修正说明」）
 - **测试内嵌微信上传私钥为假 fixture**：`mp_release_upload_test.go:39` 含 `MII-fake-global-key`，非真实泄露（见 C6）
@@ -5701,3 +5701,23 @@ OpenAPI 的签名接口补归属口径描述。
 
 验证：gofmt / vet / build / go test ./... 全绿，golangci-lint 0 issues；
 前端 type-check / lint / **1881 tests** / build 全过；openapi 134 paths + selftest；audit-labels 通过。
+
+## 第七十七轮：体检后续低成本清理（2026-11-20）
+
+A 档六项修完后，把 C/D 档里「不需要改架构、但会持续误导人」的项一次收掉。
+
+| 项 | 原状 | 收敛后 |
+| --- | --- | --- |
+| 文档事实 | C5 写「PII 密钥未设不拒启」、C7 写「缩略图仍缺」；行号引用随每次改动漂移 | 按代码改正；行号换成符号锚点（`embeddedPublicKeyB64` / `piiKeyGate()` / `license.Verify`） |
+| 前端过期项 | 设置页仍写「让企业在管理页自选」；菜单留悬空注释；`publicRead` 开关可点却只支持 true | 文案改成「给企业绑定档案（仅平台超管）」；开关 `disabled` 并说明私有桶会被后端拒绝；spec 反向断言 `company-storage` 路由/菜单不存在 |
+| 死代码 | `frontend/src/api/storage.ts` 的 `signUrls()` 全仓无调用方（签名接口只留在后端运维链路） | 删除，保留在用的 `cdnRefresh()` |
+| 空断言 | `TestKeyShape` 注释谎称有 `t.Skip` 保护，函数体只留 `_ = strings.TrimSpace` 撑 import | 改成真实用例：占位/非法 base64/非 32 字节/合法密钥四条路径，断言指纹与错误位；不依赖 CI 环境变量 |
+| 守门盲区 | `migrations_guard_test.go` 正则只认 `CREATE/ALTER/INSERT/UPDATE`，不认 `DROP/RENAME TABLE` | 补齐 `DROP TABLE [IF EXISTS]` / `RENAME TABLE` / `RENAME TO`；新增 `TestTableRefReRecognizesDropAndRename`，**反向验证**删掉分支必红 |
+| 公开诊断泄露 | `Resolver.Diagnose` 把 `err.Error()` 拼进 `assetOriginNote`，`/api/public/settings` 无需登录即可读到管理员填的原始域名与底层错误 | reason 改固定分类文案，原始域名/底层错误只进服务端日志；storageprofile 与 HTTP 出口各一条守门，反向验证拼回 `err.Error()` 必红 |
+
+OpenAPI 的 `assetOriginNote` 描述同步为「固定分类文案，不回显原始配置」；
+`backend/README.md` 与 `docs/tenant-storage-design.md` 同步这条边界。
+
+验证：gofmt / vet / build / `go test ./...` 全绿，golangci-lint 0 issues；
+前端 type-check / lint / **1881 tests** / build 全过；openapi 134 paths + selftest；
+third-party notices 与迁移清单一致；audit-labels 真检查与自检通过。

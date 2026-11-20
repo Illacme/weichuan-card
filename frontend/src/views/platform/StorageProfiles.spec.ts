@@ -158,5 +158,11 @@ describe('文件存储与分发模块', () => {
     expect(settings).toContain('saveGlobalBinding')
     expect(companies).toContain("openProfiles(row)")
     expect(companies).toContain('saveCompanyBinding')
+
+    // 文案与开关不能回退到「企业自选」：该页与 options 接口已下线（平台超管专属）。
+    expect(settings).not.toContain('让企业在管理页自选')
+    const profiles = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(profiles).toMatch(/label="公开读桶">\s*<el-switch[^>]*disabled/)
+    expect(profiles).toContain('后端会拒绝 publicRead=false')
   })
 })

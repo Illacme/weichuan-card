@@ -156,6 +156,26 @@ func TestPublicSettingsAssetOrigin(t *testing.T) {
 	}
 }
 
+// assetOriginNote 出现在无需登录的公开接口上：诊断原因只能是固定分类文案，
+// 不能把档案里的原始域名或底层错误原文带给任意访客。
+func TestPublicSettingsAssetOriginNoteNeverEchoesRawConfig(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	const marker = "SECRET-INTERNAL-DOMAIN-8c2d"
+	_, deliveryID := seedCloudBinding(t, db)
+	require.NoError(t, db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).
+		Updates(map[string]any{"domain": "javascript:alert('" + marker + "')", "version": 2}).Error)
+
+	_, env := c.do("GET", "/api/public/settings?companyId=1", nil, "")
+	require.EqualValues(t, 0, env["code"])
+	require.Equal(t, "", env["assetOrigin"])
+	require.Equal(t, false, env["assetOriginActive"])
+	note, _ := env["assetOriginNote"].(string)
+	require.Contains(t, note, "不合法", "要保留可照做的分类原因")
+	require.NotContains(t, note, marker, "公开接口不得回显档案里的原始域名")
+	require.NotContains(t, note, "javascript:")
+}
+
 // setCompanyLogo 把 1 号企业的 logo 改成指定形态（表可能已有行，也可能没有）。
 func setCompanyLogo(t *testing.T, db *gorm.DB, logo string) {
 	t.Helper()

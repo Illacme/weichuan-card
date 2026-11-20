@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -150,11 +149,32 @@ func TestReloadPicksUpNewKey(t *testing.T) {
 }
 
 func TestKeyShape(t *testing.T) {
-	// 未设置 PII_ENC_KEY 时应报告占位密钥（供启动自检拒绝生产使用）。
-	// 本测试假定测试环境未设置该环境变量；若 CI 设了则该断言自然不成立——
-	// 用 t.Skip 保护，避免误报。
-	if KeyError() != nil {
-		t.Fatalf("默认 dev 密钥不应有加载错误：%v", KeyError())
-	}
-	_ = strings.TrimSpace // 保留 strings 依赖，避免未来删测试时 import 飘红
+	// 用 SetKey 固定包级状态，不依赖 CI 是否设了 PII_ENC_KEY；
+	// 退出时恢复 dev 密钥，避免污染同包其它用例。
+	defer SetKey("")
+
+	require.NoError(t, SetKey(""))
+	require.True(t, UsingPlaceholderKey(), "空密钥应回落内置 dev 密钥并标记为占位")
+	require.NoError(t, KeyError())
+	require.Len(t, CurrentKeyID(), 16, "指纹是 sha256 hex 的前 16 位")
+
+	// 非法 base64：报错、清空指纹，且不准继续加解密。
+	require.Error(t, SetKey("not-a-valid-base64!"))
+	require.Error(t, KeyError())
+	require.Empty(t, CurrentKeyID(), "坏密钥不能留下旧指纹")
+	_, err := Encrypt("张三")
+	require.Error(t, err, "坏密钥下必须拒绝加密")
+
+	// 合法 base64 但不是 32 字节（AES-256 要求）。
+	short := base64.StdEncoding.EncodeToString([]byte("too-short"))
+	require.Error(t, SetKey(short))
+	require.Error(t, KeyError())
+	require.Empty(t, CurrentKeyID())
+
+	// 合法 32 字节：装载成功，占位标记与错误位都要清掉。
+	good := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x33}, 32))
+	require.NoError(t, SetKey(good))
+	require.False(t, UsingPlaceholderKey())
+	require.NoError(t, KeyError())
+	require.Len(t, CurrentKeyID(), 16)
 }

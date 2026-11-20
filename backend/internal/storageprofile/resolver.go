@@ -13,6 +13,7 @@ package storageprofile
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -493,13 +494,17 @@ func (r *Resolver) OriginFor(cid int64) (model.Origin, bool) {
 
 // Diagnose 是 OriginFor 的诊断版：除了结论还给出「为什么没生效」。
 // 只有运维诊断接口（/api/public/settings?companyId=）用它，出参路径一律走 OriginFor。
+//
+// 本函数的 reason 会出现在**无需登录**的公开接口上，所以只用固定文案：
+// 底层错误、管理员填的原始域名、内部路径都只进服务端日志，绝不拼进 reason。
 func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string) {
 	if cid <= 0 {
 		return "", false, "企业 id 不合法"
 	}
 	eff, err := r.Resolve(cid)
 	if err != nil {
-		return "", false, "读取存储档案失败：" + err.Error()
+		log.Printf("[STORAGE-PROFILE] diagnose cid=%d resolve_failed: %v", cid, err)
+		return "", false, "读取存储档案失败：请联系管理员检查服务端日志"
 	}
 	if eff.Storage == nil {
 		return "", false, "该企业未绑定存储档案：对象走平台统一入口"
@@ -512,7 +517,8 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 	}
 	clean, err := storage.ValidatePublicOrigin(eff.Delivery.Domain)
 	if err != nil {
-		return "", false, "分发域名不合法：" + err.Error()
+		log.Printf("[STORAGE-PROFILE] diagnose cid=%d invalid_delivery_domain: %v", cid, err)
+		return "", false, "分发域名不合法：需为 http(s)://host[:port]，且不带路径 / 查询 / 片段"
 	}
 	if clean == "" {
 		return "", false, "生效档案没有绑定分发域名：对象 URL 仍以平台统一入口开头"

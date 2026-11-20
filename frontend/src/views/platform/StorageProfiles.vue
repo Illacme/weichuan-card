@@ -211,7 +211,10 @@
           <el-form-item label="上传返回基址"><el-input v-model="storageForm.baseUrl" placeholder="https://your-domain/uploads" /></el-form-item>
           <el-form-item label="Host Header"><el-input v-model="storageForm.hostHeader" placeholder="留空=路径风格；<bucket>.域名=虚拟主机风格" /></el-form-item>
           <el-form-item label="使用 HTTPS"><el-switch v-model="storageForm.useSsl" /></el-form-item>
-          <el-form-item label="公开读桶"><el-switch v-model="storageForm.publicRead" /></el-form-item>
+          <el-form-item label="公开读桶">
+            <el-switch v-model="storageForm.publicRead" disabled />
+            <span class="field-note">当前只支持公开读桶：私有桶需要限时签名链路，后端会拒绝 publicRead=false</span>
+          </el-form-item>
           <el-form-item label="AccessKey">
             <el-input v-model="storageForm.accessKey" :placeholder="storageForm.id ? '留空表示不修改' : '必填'" />
             <span v-if="storageForm.accessKeyMasked" class="field-note">当前：{{ storageForm.accessKeyMasked }}</span>

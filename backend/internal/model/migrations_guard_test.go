@@ -41,13 +41,38 @@ var extraMigrationTables = map[string]string{
 }
 
 // tableRefRe 匹配迁移脚本里出现表名的语句：CREATE TABLE [IF NOT EXISTS] x /
-// ALTER TABLE x / INSERT INTO x / UPDATE x / CREATE [UNIQUE] INDEX i ON x。
+// ALTER TABLE x / ALTER TABLE x RENAME TO y / DROP TABLE [IF EXISTS] x /
+// RENAME TABLE x TO y / INSERT INTO x / UPDATE x / CREATE [UNIQUE] INDEX i ON x。
+// DROP / RENAME 也要登记：迁移只删表或改名时，守门仍须认得这张表，否则
+// 「库里已经没有、模型也没有」会被误判成漏登记而放行真正的表名漂移。
 var tableRefRe = regexp.MustCompile(
 	`(?i)(?:CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?` +
-		`|ALTER\s+TABLE\s+|INSERT\s+INTO\s+|UPDATE\s+` +
+		`|ALTER\s+TABLE\s+|DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?` +
+		`|RENAME\s+TABLE\s+|RENAME\s+TO\s+` +
+		`|INSERT\s+INTO\s+|UPDATE\s+` +
 		`|CREATE\s+(?:UNIQUE\s+)?INDEX\s+` + "`?" + `[a-z0-9_]+` + "`?" + `\s+ON\s+)` +
 		"`?" + `([a-z_][a-z0-9_]*)` + "`?",
 )
+
+// TestTableRefReRecognizesDropAndRename 防止上面的正则被改回「只认 CREATE」。
+// 反向验证：删掉 DROP / RENAME 分支，这个用例必然红。
+func TestTableRefReRecognizesDropAndRename(t *testing.T) {
+	for _, tc := range []struct {
+		sql  string
+		want []string
+	}{
+		{"DROP TABLE IF EXISTS tenant_storage_configs;", []string{"tenant_storage_configs"}},
+		{"RENAME TABLE old_thing TO new_thing;", []string{"old_thing"}},
+		{"ALTER TABLE old_thing RENAME TO new_thing;", []string{"old_thing", "new_thing"}},
+		{"CREATE TABLE IF NOT EXISTS fresh_thing (id INT);", []string{"fresh_thing"}},
+	} {
+		var got []string
+		for _, m := range tableRefRe.FindAllStringSubmatch(tc.sql, -1) {
+			got = append(got, m[1])
+		}
+		require.Equal(t, tc.want, got, "正则漏了或取错表名：%s", tc.sql)
+	}
+}
 
 func TestMigrationsTableNamesMatchModels(t *testing.T) {
 	// 1) 模型侧表名（gorm 命名策略，含复数化；显式 TableName 优先）
