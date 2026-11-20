@@ -57,7 +57,7 @@ func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile
 	}
 	row = model.StorageProfile{
 		Name: name, Driver: "local", LocalDir: strings.TrimSpace(dir),
-		BaseURL: strings.TrimSpace(baseURL), PublicRead: true,
+		BaseURL: strings.TrimSpace(baseURL), PublicRead: true, UseSSL: true,
 		Status: "unknown", Builtin: true, Version: 1,
 	}
 	if err := db.Create(&row).Error; err != nil {

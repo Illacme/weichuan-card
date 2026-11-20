@@ -98,3 +98,39 @@ func TestBuiltinStorageProfileDriverLocked(t *testing.T) {
 		map[string]any{"name": "主站本地盘"}, token)
 	require.EqualValues(t, 0, body["code"], body["msg"])
 }
+
+// 新建档案时显式选 false 的布尔项必须真的落成 false。
+//
+// 回归背景：模型上曾给 use_ssl / public_read 挂 `default:true`，GORM 会把零值从
+// INSERT 里省略、交给库默认值，于是「新建时选 useSsl=false」保存后仍是 true——
+// 自检与上传都会按 https 发，而运营以为配的是 http（自建 MinIO 走 80 时必然连不上，
+// 报的却是「凭据错误」）。public_read 同理，虽然接口目前拒绝 false，
+// 但靠「接口恰好拦住」来保模型正确性是脆的，两列一起摘掉 default 标签。
+func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
+	r, db := bindingEngine(t)
+	c := newTestClient(r, t)
+	token := loginAdmin(t, c)
+
+	_, body := c.do("POST", "/api/admin/storage-profiles", map[string]any{
+		"name": "plain-http-bucket", "driver": "minio", "endpoint": "s.example.com", "bucket": "assets",
+		"baseUrl": "https://card.example.com/uploads", "useSsl": false, "publicRead": true,
+		"accessKey": "AK", "secretKey": "SK",
+	}, token)
+	require.EqualValues(t, 0, body["code"], body["msg"])
+	id := int64(body["data"].(map[string]interface{})["id"].(float64))
+
+	var row model.StorageProfile
+	require.NoError(t, db.First(&row, id).Error)
+	require.False(t, row.UseSSL, "useSsl=false 必须真的落成 false")
+	require.True(t, row.PublicRead)
+
+	// 私有桶目前被接口显式拒绝（第一阶段只支持公开读桶）。
+	// 这条断言同时钉住「拒绝的理由要说清」，否则运营只会看到一句没头没尾的失败。
+	_, body = c.do("POST", "/api/admin/storage-profiles", map[string]any{
+		"name": "private-bucket", "driver": "minio", "endpoint": "s.example.com", "bucket": "assets",
+		"baseUrl": "https://card.example.com/uploads", "publicRead": false,
+		"accessKey": "AK", "secretKey": "SK",
+	}, token)
+	require.EqualValues(t, 1, body["code"])
+	require.Contains(t, body["msg"], "公开读")
+}

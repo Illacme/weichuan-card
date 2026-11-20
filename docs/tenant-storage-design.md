@@ -39,18 +39,22 @@
 | 层 | 落点 | 现在的真实角色 | 能否删 |
 | --- | --- | --- | --- |
 | ① 平台级平铺配置 | `sys_setting` 的 `storage_driver` / `storage_endpoint` / `storage_bucket` / `storage_*` | `DynamicResolver` 的 `base`：**没有任何绑定时**的兜底；同时是 `STORAGE_*` / `MINIO_*` 环境变量的界面映射（`internal/setting/setting.go` 每项都带 `EnvVar`） | **不能**。私有部署靠改 env 起服务时走的正是这条 |
-| ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | 客户自有桶 + 自有访问域名 + 凭据（PII 密文） | **暂不能**，见下方四项独有能力 |
+| ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | 客户自有桶 + 自有访问域名 + 凭据（PII 密文） | **暂不能**，见下方三项独有能力 |
 | ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings`（迁移 0054） | 多套可复用、按企业继承、即时生效、一键迁移、CDN 分发 | 这是新功能唯一该去的地方 |
 
-### ② 目前仍不可替代的四项能力
+### ② 目前仍不可替代的能力（阶段二之后只剩三项）
 
-1. **nginx 回源 snippet 的唯一数据源。** `cmd/nginx-snippets --dsn` 调的是
-   `repository.ListStorageTargets`，只读 `tenant_storage_configs`；
-   `storage_profiles` 至今没有任何 snippet 生成路径。删掉 ② 等于客户自有桶的
-   `/uploads/t/<cid>/` 回源段再也生不出来，那家租户全站图 404。
-2. **按租户公网 origin 的判定源。** `publicOriginFor` 现在是「档案分发域名优先，
-   没有则回落旧口径」（`internal/handler/publicorigin.go`），回落段依赖
-   `publicOriginState → tenantStorageActive`。没配分发域名的企业全靠它。
+1. ~~**nginx 回源 snippet 的唯一数据源。**~~ **已在阶段二解除**：
+   `cmd/nginx-snippets --source=auto` 现在优先读 `storage_profiles` + `storage_bindings`，
+   旧表给没有档案绑定的企业补位；`--source=legacy` 保留纯旧表通道作回滚。
+   档案侧的目标映射在 `storageprofile.NginxTarget`，与上传侧共用同一套
+   driver / endpoint / bucket / host_header 口径（含 scheme 剥离），
+   避免「上传按虚拟主机风格发、nginx 按路径风格回源」。
+2. **按租户公网 origin 的判定源。** `publicOriginFor` 是「档案接管写入则只看档案，
+   否则走 `publicOriginState → tenantStorageActive`」。**阶段二已把双口径合并**：
+   `storageprofile.Resolver.OriginFor` 现在回报 `handled`，按「谁在写对象」分叉
+   （非 local / 公开读 / 域名合法），档案接管时不再回落旧域名。
+   旧路径保留给没有档案绑定的企业，仍然是它们的唯一判定源。
 3. **凭据是 PII 密文且可 re-key。** ② 的 `access_key_enc` / `secret_key_enc` 走
    `pii.Encrypt` 并带 `key_id`，有 `server tenant-storage-rekey` 可换密钥；
    ③ 的凭据按当前产品决策**明文入库**（仅回显掩码）。把 ② 并进 ③ 等于把
@@ -67,10 +71,17 @@
   - 企业管理行内按钮 `存储` → `自有桶`，弹窗标题改为「自有桶接入」并在顶部说明
     「这里配的是客户自己的桶，会生成 nginx 回源段；只想换后端请用存储档案」。
   - 本节即该阶段的文档落点。
-- **阶段二（未执行）· 让 ② 从「唯一数据源」降为「兼容数据源」**
-  - `cmd/nginx-snippets` 增加数据源开关（`--source=profiles|legacy|auto`），
-    auto 下档案优先、旧表补位。
-  - `publicOriginState` 的「生效判定」与档案侧合并，去掉双口径。
+- **阶段二（已执行）· 让 ② 从「唯一数据源」降为「兼容数据源」**
+  - `cmd/nginx-snippets` 新增 `--source=auto|legacy|profiles`（默认 auto），
+    render 与 check 必须同源。档案优先、旧表补位；`driver=local` 的档案绑定会
+    **覆盖**旧表那一行（否则 nginx 会去客户桶取一个不存在的对象）。
+    档案表整体缺失时 auto 降级到旧表并打警告；显式 `profiles` 直接报错。
+  - `publicOriginState` 的双口径合并进 `storageprofile.Resolver.OriginFor`，
+    按「谁在写对象」分叉，档案接管时不再回落旧域名。
+  - 顺带修掉一个真实缺陷：`storage_profiles` 的 `use_ssl` / `public_read` 曾挂
+    gorm `default:true`，导致「新建时选 false」被库默认值翻回 true
+    （自检与上传按 https 发、私有桶被当公开桶）。两列已摘掉 default 标签，
+    默认值改由创建方显式给出。
 - **阶段三（未执行，收益低风险高，近期不建议碰）· 数据迁移与退役**
   - `tenant_storage_configs` → `storage_profiles` + `storage_bindings` 一次性迁移；
     同时决定新档案是否引入 `*_enc` 列，否则 `tenant-storage-rekey` 会随之退役。

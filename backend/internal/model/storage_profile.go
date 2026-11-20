@@ -23,13 +23,18 @@ type StorageProfile struct {
 	HostHeader string `gorm:"column:host_header;size:255" json:"hostHeader"`
 	// UseSSL 决定 S3 / OSS 构造与连通性自检用 http 还是 https。
 	// 与旧 tenant_storage_configs 保持同名字段，避免「档案说走 https、实际按 http 签」。
-	UseSSL bool `gorm:"column:use_ssl;default:true" json:"useSsl"`
+	//
+	// 刻意**不加** gorm 的 default 标签：带 default 时 GORM 会把零值从 INSERT 里省略、
+	// 交给库默认值，于是「新建时选 false」被翻回 true。use_ssl 与 public_read 都踩过
+	// 这个坑（public_read 被翻回 true 等于把私有桶当公开桶用，uploadroute 会放行）。
+	// 默认值一律由创建方显式给出：handler 的 create 与 EnsureBuiltinLocal。
+	UseSSL bool `gorm:"column:use_ssl" json:"useSsl"`
 	// LocalDir 仅 driver=local 使用：该档案自己的根目录。
 	// 不填表示沿用平台 uploads 目录（内置档案的默认值）；迁移要区分源/目标时必须填。
 	LocalDir    string     `gorm:"column:local_dir;size:512" json:"localDir"`
 	AccessKey   string     `gorm:"column:access_key;size:512" json:"accessKey,omitempty"`
 	SecretKey   string     `gorm:"column:secret_key;size:1024" json:"secretKey,omitempty"`
-	PublicRead  bool       `gorm:"column:public_read;default:true" json:"publicRead"`
+	PublicRead  bool       `gorm:"column:public_read" json:"publicRead"`
 	Status      string     `gorm:"size:16;default:unknown" json:"status"`
 	LastProbeAt *time.Time `gorm:"column:last_probe_at" json:"lastProbeAt,omitempty"`
 	LastError   string     `gorm:"column:last_error;size:512" json:"lastError,omitempty"`

@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 
 	"weichuan/internal/model"
+	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/storage"
 	"weichuan/internal/uploadroute"
 
@@ -297,20 +298,52 @@ func (r *Resolver) localUploader(sp ...*model.StorageProfile) storage.Uploader {
 // uploadConfig 把档案转成 uploadroute.Config。自检查询和运行时上传共用这一个函数，
 // 避免「自检说配置 OK、真上传却因字段口径不同而失败」这种最难查的漂移。
 func uploadConfig(sp *model.StorageProfile, cid, version int64) *uploadroute.Config {
-	ep := strings.TrimSpace(sp.Endpoint)
-	useSSL := sp.UseSSL
-	if strings.HasPrefix(strings.ToLower(ep), "https://") {
-		useSSL = true
-		ep = strings.TrimPrefix(ep, "https://")
-	} else if strings.HasPrefix(strings.ToLower(ep), "http://") {
-		useSSL = false
-		ep = strings.TrimPrefix(ep, "http://")
-	}
+	ep, useSSL := splitEndpointScheme(sp.Endpoint, sp.UseSSL)
 	return &uploadroute.Config{
 		CompanyID: cid, Driver: sp.Driver, Endpoint: ep, Bucket: sp.Bucket,
 		Region: sp.Region, UseSSL: useSSL, HostHeader: sp.HostHeader,
 		AccessKey: sp.AccessKey, SecretKey: sp.SecretKey, BaseURL: sp.BaseURL,
 		PublicRead: sp.PublicRead, Version: version,
+	}
+}
+
+// splitEndpointScheme 把 endpoint 拆成「host[:port] + 是否走 https」。
+//
+// 档案的 endpoint 允许带 scheme（界面没强拦），但 nginx 侧拼的是
+// `proxy_pass https://<endpoint>`，带 scheme 会得到 `https://https://...`；
+// OSS SDK 又反过来要求带 scheme。所以两个消费方都从这里取，别各自判一次。
+//
+// 大小写不敏感地剥：手填 `HTTPS://` 在旧实现里剥不掉，会静默留下一个坏 endpoint。
+func splitEndpointScheme(endpoint string, useSSL bool) (host string, ssl bool) {
+	ep := strings.TrimSpace(endpoint)
+	low := strings.ToLower(ep)
+	switch {
+	case strings.HasPrefix(low, "https://"):
+		return ep[len("https://"):], true
+	case strings.HasPrefix(low, "http://"):
+		return ep[len("http://"):], false
+	}
+	return ep, useSSL
+}
+
+// NginxTarget 把「某家企业的生效存储档案」映射成 nginx 渲染用的 Target。
+//
+// 与 uploadroute.Build 里的那份映射必须同口径（同一套 driver / endpoint / bucket /
+// host_header），否则会出现「上传按虚拟主机风格发、nginx 按路径风格回源」——
+// 那是第六十三轮真桶实测里最贵的一个坑（400 InvalidBucketName，后台看起来全对）。
+//
+// Enabled 恒 true：档案没有 enabled 列，「要不要生成 location」由
+// Target.NeedsSnippet 按 driver 判定（local 档案没有桶可回源，自然不生成）。
+func NginxTarget(cid int64, sp *model.StorageProfile) nginxsnippet.Target {
+	host, useSSL := splitEndpointScheme(sp.Endpoint, sp.UseSSL)
+	return nginxsnippet.Target{
+		CompanyID:  cid,
+		Driver:     sp.Driver,
+		Endpoint:   host,
+		Bucket:     sp.Bucket,
+		UseSSL:     useSSL,
+		HostHeader: sp.HostHeader,
+		Enabled:    true,
 	}
 }
 
@@ -343,16 +376,44 @@ func (r *Resolver) Touch() error {
 
 var _ storage.Resolver = (*DynamicResolver)(nil)
 
-// OriginFor 给公开出参提供分发档案的 origin。
-// 只在分发档案登记了合法域名时接管；没有绑定则交回既有 tenant_storage_configs 判定。
+// OriginFor 回答两个问题，一次答完：这家企业此刻该用哪个出参 origin，
+// 以及档案有没有接管它的对象写入。
+//
+//	handled=false  档案没有接管（无绑定 / cid 不合法）→ 调用方继续走既有
+//	               tenant_storage_configs 判定，本轮行为不变。
+//	handled=true   档案接管了写入。此时 Base 为空表示「应当使用平台统一入口」，
+//	               调用方**不得**再回落旧口径——旧口径里那个 public_base_url
+//	               指向的是旧桶，对象已经不在那里了，回落就是全站裂图。
+//
+// 为什么要合并成一次判定（第七十四轮）：以前这里是「分发档案有合法域名就返回」，
+// 而旧路径要过 tenantStorageActive（开关 / 启用 / 非 local / 凭据完整 / 公开读）
+// 五道关。两套标准并存时，一家企业绑了 local 档案、分发档案又填了域名，
+// 出参就会指到那个域名——而对象明明还在平台盘上。判定必须按「谁在写对象」分叉，
+// 不能按「谁配了域名」分叉。
 func (r *Resolver) OriginFor(cid int64) (model.Origin, bool) {
+	if cid <= 0 {
+		// Origin 的不变式是「Base 非空则 CompanyID > 0」。cid 未知时不能凭全局
+		// 绑定去猜域名，交回调用方按平台入口处理。
+		return model.PlatformOrigin(), false
+	}
 	eff, err := r.Resolve(cid)
-	if err != nil || eff.Delivery == nil || eff.Delivery.Domain == "" {
-		return model.Origin{}, false
+	if err != nil || eff.Storage == nil {
+		return model.PlatformOrigin(), false
+	}
+	// 以下都是「档案接管了写入、但这个域名不能用」：统一回平台入口。
+	// 本地档案没有桶可回源；私有桶直连会 403；域名不合法会被 ResolveRefForTenant 拒。
+	if eff.Storage.Driver == nginxsnippet.DriverLocal {
+		return model.PlatformOrigin(), true
+	}
+	if !eff.Storage.PublicRead {
+		return model.PlatformOrigin(), true
+	}
+	if eff.Delivery == nil || eff.Delivery.Domain == "" {
+		return model.PlatformOrigin(), true
 	}
 	base, err := storage.ValidatePublicOrigin(eff.Delivery.Domain)
 	if err != nil || base == "" {
-		return model.Origin{}, false
+		return model.PlatformOrigin(), true
 	}
 	return model.Origin{Base: base, CompanyID: cid}, true
 }

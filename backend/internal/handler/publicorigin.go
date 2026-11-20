@@ -17,6 +17,11 @@ package handler
 // 所以判定直接复用 tenantStorageActive（它按「谁会先挡住上传」的顺序检查），
 // 而不是另写一份「只看 public_base_url 有没有值」的乐观判断。
 //
+// 第七十四轮起这条边界有**两个执行者**，但只有一份规则：档案接管了写入的企业
+// 由 storageprofile.Resolver.OriginFor 按同一组条件（非 local / 公开读 / 域名合法）
+// 判定并回报 handled=true，本文件不再看旧表；没有档案接管的企业才走下面的旧口径。
+// 「按谁在写对象分叉」是这一层的核心，别退化成「按谁配了域名分叉」。
+//
 // 这条边界同时保证本轮是**零行为变更的纯代码侧改动**：开关默认 off 时，
 // 每一家的 publicOriginFor 都返回平台零值，出参与第六十八轮完全一致。
 // 翻开关属于运营动作，不在本轮。
@@ -35,7 +40,17 @@ import (
 //
 // 为什么用函数变量而不是在 publicOriginFor 里直接读 storageprofile：handler 包
 // 不该依赖具体解析器实现，测试也要能在不建档案表的情况下保持旧行为。
-// 返回 false 表示「档案没有接管这家企业」，继续走既有自有域名判定。
+//
+// 返回值语义（第七十四轮改过一次，改之前是「档案配了合法域名」）：
+//
+//	handled=false → 档案**没有接管**这家企业的对象写入，继续走下面的旧口径；
+//	handled=true  → 档案接管了写入。此时 origin.Base 为空表示应当使用平台统一入口，
+//	                **不得**再回落旧口径——旧口径里那个 public_base_url 指向旧桶，
+//	                对象已经不在那里了（详见 storageprofile.Resolver.OriginFor）。
+//
+// 这条语义是本文件「单点判定」的最后一块：以前档案侧只看「有没有域名」，
+// 旧口径要过五道关，两套标准并存时一家绑了本地档案、分发档案又填了域名的企业
+// 会被指到那个域名上，而对象明明还在平台盘。判定必须按「谁在写对象」分叉。
 var profileOriginResolver func(cid int64) (model.Origin, bool)
 
 // SetProfileOriginResolver 注入档案出参判定（幂等，重复调用以最后一次为准）。
@@ -93,14 +108,18 @@ func publicOriginStateFor(db *gorm.DB, cid int64) (base string, active bool, rea
 
 // publicOriginFor 给公开出参取该企业此刻应使用的 Origin。
 //
-// 刻意**不缓存**：配置一改（PUT 会刷 updated_at）出参必须立刻跟着变，
-// 再加一层 TTL / 版本缓存就要多维护一套失效逻辑；这里只是主键上的一次轻量查询，
-// 而 9 条公开 GET 里 5 条本来就有 60 秒边缘缓存。
+// 一家企业**只有一个权威来源**：谁在写它的对象，就由谁决定域名。
+//
+//	档案接管了写入 → 只看档案分发域名；档案没配域名就是平台入口，
+//	                绝不回落旧口径（旧域名指向旧桶，回落必裂图）。
+//	档案没接管     → 走 tenant_storage_configs 的既有五道关判定，行为不变。
+//
+// 刻意**不缓存**：配置一改（档案保存 / 绑定切换 / 旧表 PUT 刷 updated_at）
+// 出参必须立刻跟着变，再加一层 TTL / 版本缓存就要多维护一套失效逻辑；
+// 这里只是主键上的一次轻量查询，而 9 条公开 GET 里 5 条本来就有 60 秒边缘缓存。
 func publicOriginFor(db *gorm.DB, cid int64) model.Origin {
-	// 档案绑定的分发域名优先：它是用户在新模块里选的那套 CDN。
-	// 没有绑定 / 域名不合法时继续走旧口径，不把配置错误变成裂图。
 	if profileOriginResolver != nil {
-		if origin, ok := profileOriginResolver(cid); ok {
+		if origin, handled := profileOriginResolver(cid); handled {
 			return origin
 		}
 	}

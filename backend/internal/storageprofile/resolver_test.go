@@ -86,3 +86,56 @@ func TestDynamicPlatformNeverUsesProfile(t *testing.T) {
 	dyn := NewDynamic(base, New(db))
 	require.Same(t, plat, dyn.Platform(), "Platform() 不能被档案接管")
 }
+
+// OriginFor 的判定必须按「谁在写对象」分叉，而不是按「谁配了域名」分叉。
+//
+// 这是第七十四轮合并双口径的核心：以前只要分发档案有合法域名就返回，
+// 于是一家绑了本地档案（对象在平台盘）、分发档案又填了域名的企业，
+// 出参会被指到那个域名上——全站裂图且没有任何一边报错。
+func TestOriginForFollowsWriteOwnership(t *testing.T) {
+	db := testDB(t)
+	dp := model.DeliveryProfile{Name: "cdn", Provider: "aliyun", Domain: "https://cdn.example.com", Version: 1}
+	require.NoError(t, db.Create(&dp).Error)
+
+	cloud := model.StorageProfile{Name: "cloud", Driver: "minio", Endpoint: "s.example.com", Bucket: "b",
+		BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, Version: 1, UseSSL: true}
+	local := model.StorageProfile{Name: "local", Driver: "local", Version: 1}
+	private := model.StorageProfile{Name: "private", Driver: "minio", Endpoint: "s2.example.com", Bucket: "b2",
+		BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: false, Version: 1, UseSSL: true}
+	require.NoError(t, db.Create(&cloud).Error)
+	require.NoError(t, db.Create(&local).Error)
+	require.NoError(t, db.Create(&private).Error)
+
+	r := New(db)
+
+	// 没有任何绑定：档案不接管，交回旧口径（旧表的 public_base_url 仍要能生效）。
+	origin, handled := r.OriginFor(7)
+	require.False(t, handled, "无绑定必须交回旧口径")
+	require.Empty(t, origin.Base)
+
+	// 云档案 + 分发域名：接管，且用分发域名。
+	require.NoError(t, db.Create(&model.StorageBinding{TenantID: 7, StorageProfileID: cloud.ID, DeliveryProfileID: dp.ID, Version: 1}).Error)
+	origin, handled = r.OriginFor(7)
+	require.True(t, handled)
+	require.Equal(t, "https://cdn.example.com", origin.Base)
+	require.EqualValues(t, 7, origin.CompanyID)
+
+	// 本地档案 + 分发域名：接管，但域名不能用（对象在平台盘）。
+	require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = 7").Updates(map[string]any{"storage_profile_id": local.ID}).Error)
+	require.NoError(t, r.Touch())
+	origin, handled = r.OriginFor(7)
+	require.True(t, handled, "本地档案也是接管：它明确表达了「对象在平台盘」")
+	require.Empty(t, origin.Base, "本地档案没有桶可回源，配了域名也只能回平台入口")
+
+	// 私有桶：接管，但直连会 403。
+	require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = 7").Updates(map[string]any{"storage_profile_id": private.ID}).Error)
+	require.NoError(t, r.Touch())
+	origin, handled = r.OriginFor(7)
+	require.True(t, handled)
+	require.Empty(t, origin.Base, "私有桶直连 403，出参必须回平台入口")
+
+	// cid 未知：不能凭全局绑定猜域名（Origin 的不变式要求 CompanyID>0）。
+	origin, handled = r.OriginFor(0)
+	require.False(t, handled)
+	require.Empty(t, origin.Base)
+}

@@ -68,16 +68,29 @@ WHERE enabled = 1 AND driver <> 'local';
 ```
 有结果 → 继续；空 → 先去后台给租户配存储，再回来。
 
+> **已经用「文件存储与分发」档案的部署**：`--dsn` 默认 `--source=auto`，
+> 会先读 `storage_profiles` + `storage_bindings`（档案优先），再用
+> `tenant_storage_configs` 给没有档案绑定的企业补位。此时上面那条 SQL 查不到东西
+> 是正常的，改查绑定：
+> ```sql
+> SELECT b.tenant_id, p.name, p.driver, p.bucket
+> FROM storage_bindings b JOIN storage_profiles p ON p.id = b.storage_profile_id;
+> ```
+> `tenant_id = 0` 是全局默认，生成器会把它展开成逐家企业。
+> 需要回滚到「只读旧表」时加 `--source=legacy`；只信档案时加 `--source=profiles`
+> （档案表缺失会直接报错，不降级）。stderr 首行会打印本次实际用的数据源与两边行数。
+
 ### 1. 生成 snippet（在生产服务器上，用二进制）
 
 ```bash
 ssh user@<生产服务器>
 /tmp/nginx-snippets-linux render \
     --dsn '<生产DSN，形如 root:xxx@tcp(127.0.0.1:3306)/weichuan>' \
+    --source auto \
     --out /tmp/tenant-storage.conf \
     --dns-precheck
 # 落盘前会解析每个桶域名；解析失败直接拒绝（否则 nginx -t 会 emerg 卡住整份配置）。
-# stderr 摘要：已接管 / 未接管（回落平台盘）的 company_id 列表。
+# stderr 摘要：数据源与行数、已接管 / 未接管（回落平台盘）的 company_id 列表。
 ```
 
 - 输出**只有 `location` 段**，不含 `map`、不含 `server`（`snippet.go:172` 注释）。
@@ -92,8 +105,10 @@ ssh user@<生产服务器>
 ```bash
 /tmp/nginx-snippets-linux check \
     --dsn '<同上DSN>' \
+    --source auto \
     --snippet /tmp/tenant-storage.conf
 # 输出「✓ 配置表与 snippet 一致」= 该有 location 的租户都有、不该有的（已停用）都没。
+# check 与 render 必须用同一个 --source，否则对账的是两份不同的配置。
 ```
 
 ### 3. 落盘 + include 进线上 server{}
