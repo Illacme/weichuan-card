@@ -133,5 +133,13 @@ describe('文件存储与分发模块', () => {
     expect(router).toContain("path: 'company-storage'")
     expect(menu).toContain("path: '/platform/storage-profiles'")
     expect(menu).toContain("path: '/company-storage'")
+    // 系统设置里必须有「默认档案」选择块（不是只留一条指路链接），
+    // 企业管理行内必须有「存储档案」入口——这是用户明确要求的两个操作位置。
+    const settings = readFileSync('src/views/platform/Settings.vue', 'utf8')
+    const companies = readFileSync('src/views/Companies.vue', 'utf8')
+    expect(settings).toContain('默认档案（推荐）')
+    expect(settings).toContain('saveGlobalBinding')
+    expect(companies).toContain("openProfiles(row)")
+    expect(companies).toContain('saveCompanyBinding')
   })
 })

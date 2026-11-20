@@ -73,11 +73,12 @@
         <el-table-column label="创建时间" width="180" show-overflow-tooltip v-if="!isPhone">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="520" fixed="right" align="center">
+        <el-table-column label="操作" width="600" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openAdmins(row)">管理员</el-button>
             <el-button type="primary" link @click="openWX(row)">凭据</el-button>
             <el-button type="primary" link @click="openStorage(row)">存储</el-button>
+            <el-button type="primary" link @click="openProfiles(row)">存储档案</el-button>
             <el-button type="primary" link @click="openReleases(row)">版本</el-button>
             <el-button type="primary" link @click="openLicense(row)">授权</el-button>
             <el-button type="primary" link :disabled="locked" @click="openEdit(row)">编辑</el-button>
@@ -431,6 +432,40 @@
     <!-- 租户自有对象桶：客户的云凭据只在这里填（平台超管代填）。
          单独抽成组件是因为这段表单有「凭据只写不读 / 三态 / 自检」三块独立逻辑，
          塞进本文件会把已经 1100 多行的企业管理页推到无法阅读。 -->
+    <!-- 存储档案：从平台已建好的多套档案里给这家企业选一套。
+         与上面的「存储」区分：那一个是代填客户自己的桶与凭据（单套），
+         这里是选择平台统一维护的档案（可多套、可切换、看不到凭据）。 -->
+    <el-dialog v-model="profileVisible" :title="`存储档案 · ${profileCompany?.name || ''}`" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        class="profile-dialog-alert"
+        title="选择本企业使用哪一套档案"
+        description="保存后新上传立即生效，历史对象不会自动搬迁。不选则继承「系统设置 → 文件存储与 CDN」里的默认档案。"
+      />
+      <el-form label-width="110px" size="small">
+        <el-form-item label="存储档案">
+          <el-select v-model="profileStorageId" placeholder="继承全局默认" clearable style="width: 100%">
+            <el-option v-for="p in profileOptions.storages" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="分发档案">
+          <el-select v-model="profileDeliveryId" placeholder="不启用 CDN" clearable style="width: 100%">
+            <el-option v-for="p in profileOptions.deliveries" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="profile-dialog-note">
+        当前：{{ profileHasBinding ? '本企业单独绑定' : '继承全局默认' }}
+      </div>
+      <template #footer>
+        <el-button @click="profileVisible = false">取消</el-button>
+        <el-button :disabled="!profileHasBinding" @click="resetProfiles">恢复继承</el-button>
+        <el-button type="primary" :loading="profileSaving" @click="saveProfiles">保存</el-button>
+      </template>
+    </el-dialog>
+
     <TenantStorageDialog v-model="storageVisible" :company="storageCompany" />
   </div>
 </template>
@@ -457,6 +492,10 @@ import {
   type CompanyItem,
   type CompanyLicense,
 } from '@/api/tenants'
+import {
+  listStorageProfiles, listDeliveryProfiles, listStorageBindings,
+  saveCompanyBinding, resetCompanyBinding,
+} from '@/api/storageProfiles'
 import MPReleaseDialog from '@/components/MPReleaseDialog.vue'
 import TenantStorageDialog from '@/components/TenantStorageDialog.vue'
 import WechatBindingCell from '@/components/WechatBindingCell.vue'
@@ -763,6 +802,62 @@ const storageCompany = ref<{ id: number; name: string } | null>(null)
 function openStorage(row: any) {
   storageCompany.value = { id: row.id, name: row.name }
   storageVisible.value = true
+}
+
+// 存储档案选择：平台超管代企业从多套档案里选一套。
+const profileVisible = ref(false)
+const profileCompany = ref<any>(null)
+const profileOptions = ref<{ storages: { id: number; name: string }[]; deliveries: { id: number; name: string }[] }>({
+  storages: [],
+  deliveries: [],
+})
+const profileStorageId = ref<number | undefined>(undefined)
+const profileDeliveryId = ref<number | undefined>(undefined)
+const profileHasBinding = ref(false)
+const profileSaving = ref(false)
+
+async function openProfiles(row: any) {
+  profileCompany.value = row
+  profileVisible.value = true
+  const [ss, ds, bindings] = await Promise.all([
+    listStorageProfiles(), listDeliveryProfiles(), listStorageBindings(),
+  ])
+  profileOptions.value = {
+    storages: ss.map((p) => ({ id: p.id, name: p.name })),
+    deliveries: ds.map((p) => ({ id: p.id, name: p.name })),
+  }
+  const own = (bindings.companies || []).find((b: any) => b.tenantId === row.id)
+  profileHasBinding.value = !!own
+  profileStorageId.value = own?.storageProfileId
+  profileDeliveryId.value = own?.deliveryProfileId || undefined
+}
+
+async function saveProfiles() {
+  if (!profileCompany.value) return
+  if (!profileStorageId.value) {
+    ElMessage.warning('请选择存储档案；要继承全局默认请点「恢复继承」')
+    return
+  }
+  profileSaving.value = true
+  try {
+    await saveCompanyBinding(profileCompany.value.id, profileStorageId.value, profileDeliveryId.value || 0)
+    ElMessage.success('已保存，新上传立即生效')
+    profileVisible.value = false
+  } finally {
+    profileSaving.value = false
+  }
+}
+
+async function resetProfiles() {
+  if (!profileCompany.value) return
+  profileSaving.value = true
+  try {
+    await resetCompanyBinding(profileCompany.value.id)
+    ElMessage.success('已恢复继承全局默认')
+    profileVisible.value = false
+  } finally {
+    profileSaving.value = false
+  }
 }
 
 async function openWX(row: any) {
@@ -1179,6 +1274,8 @@ function todayStr(): string {
 .muted {
   color: #c0c4cc;
 }
+.profile-dialog-alert { margin-bottom: 14px; }
+.profile-dialog-note { font-size: 12px; color: #909399; padding-left: 110px; }
 </style>
 
 <!-- 非 scoped：凭据弹窗（el-dialog 默认 teleport 到 body，scoped 选择器够不到）

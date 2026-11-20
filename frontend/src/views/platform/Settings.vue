@@ -196,6 +196,40 @@
              draft 仍由本页持有（:model-value + @change），避免两处各存一份值。
              组内分区与配置向导 steps 的 groups 同结构：项多的组按主题分堆，
              小标题 + 尾部细线；无分区的组平铺 -->
+        <!-- 默认档案（推荐）：多套存储 / CDN 的全局默认在这里直接选，保存即时生效。
+             下面的平铺项是兼容旧部署的全局单值配置，只在「没有绑定任何档案」时生效。 -->
+        <div v-if="g.key === 'storage' && !keyword.trim()" class="profile-default">
+          <div class="profile-default-head">
+            <div>
+              <div class="profile-default-title">默认档案（推荐）</div>
+              <div class="profile-default-desc">
+                选一套存储档案与分发档案作为全平台默认，保存后立即生效、不需要重启。
+                企业可在「企业管理 → 存储档案」单独改选；没有单独选择的企业自动继承这里。
+              </div>
+            </div>
+            <a href="/platform/storage-profiles" class="profile-default-link">管理档案与迁移 →</a>
+          </div>
+          <div v-if="!profileOptions.storages.length" class="profile-default-empty">
+            还没有存储档案。请先到「文件存储与分发」新建并自检通过，再回来选默认。
+          </div>
+          <div v-else class="profile-default-form">
+            <label>存储档案</label>
+            <el-select v-model="profileStorageId" placeholder="选择存储档案" style="width: 240px">
+              <el-option v-for="p in profileOptions.storages" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <label>分发档案</label>
+            <el-select v-model="profileDeliveryId" placeholder="不启用 CDN" clearable style="width: 240px">
+              <el-option v-for="p in profileOptions.deliveries" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-button type="primary" :loading="profileSaving" @click="saveProfileDefault">保存默认档案</el-button>
+            <span class="profile-default-source">{{ profileSourceText }}</span>
+          </div>
+          <div class="profile-default-legacy">
+            下面的「存储位置 / 访问方式 / CDN 刷新」是兼容旧部署的全局单值配置：
+            <b>已选默认档案时不再生效</b>，仅在没有绑定任何档案时兜底，且改动需要重启。
+          </div>
+        </div>
+
         <template v-for="sec in sectionsOf(g.items)" :key="sec.label">
           <div class="group-sub">{{ sec.label }}</div>
           <SettingRow
@@ -378,6 +412,9 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
+import {
+  listStorageProfiles, listDeliveryProfiles, listStorageBindings, saveGlobalBinding,
+} from '@/api/storageProfiles'
 import { useSettingsStore } from '@/store/settings'
 import SettingRow from '@/components/SettingRow.vue'
 import { clearWizardDraft, loadWizardDraft, saveWizardDraft } from '@/utils/wizardDraft'
@@ -1427,7 +1464,57 @@ async function save(): Promise<boolean> {
   }
 }
 
+// 默认档案：与上面的平铺配置并存，但优先级更高（有绑定即接管）。
+// 这里只做「选哪一套」，档案本身的增删改与迁移在独立模块里。
+const profileOptions = reactive<{ storages: { id: number; name: string }[]; deliveries: { id: number; name: string }[] }>({
+  storages: [],
+  deliveries: [],
+})
+const profileStorageId = ref<number | undefined>(undefined)
+const profileDeliveryId = ref<number | undefined>(undefined)
+const profileSaving = ref(false)
+const profileSourceText = ref('当前：未绑定档案，沿用下面的兼容配置')
+
+async function loadProfileDefault() {
+  try {
+    const [ss, ds, bindings] = await Promise.all([
+      listStorageProfiles(), listDeliveryProfiles(), listStorageBindings(),
+    ])
+    profileOptions.storages = ss.map((p) => ({ id: p.id, name: p.name }))
+    profileOptions.deliveries = ds.map((p) => ({ id: p.id, name: p.name }))
+    const g: any = bindings.global
+    if (g?.storageProfileId) {
+      profileStorageId.value = g.storageProfileId
+      profileDeliveryId.value = g.deliveryProfileId || undefined
+      const sName = profileOptions.storages.find((p) => p.id === g.storageProfileId)?.name || `#${g.storageProfileId}`
+      const dName = profileOptions.deliveries.find((p) => p.id === g.deliveryProfileId)?.name
+      profileSourceText.value = `当前默认：${sName}${dName ? ' + ' + dName : '（不启用 CDN）'}`
+    } else {
+      profileSourceText.value = '当前：未绑定档案，沿用下面的兼容配置'
+    }
+  } catch {
+    // 档案接口失败不能挡住系统设置本身：下面的兼容配置仍可正常维护。
+    profileSourceText.value = '档案信息读取失败，可稍后刷新重试'
+  }
+}
+
+async function saveProfileDefault() {
+  if (!profileStorageId.value) {
+    ElMessage.warning('请选择存储档案')
+    return
+  }
+  profileSaving.value = true
+  try {
+    await saveGlobalBinding(profileStorageId.value, profileDeliveryId.value || 0)
+    ElMessage.success('默认档案已保存，立即生效')
+    await loadProfileDefault()
+  } finally {
+    profileSaving.value = false
+  }
+}
+
 onMounted(load)
+onMounted(loadProfileDefault)
 </script>
 
 <style scoped>
@@ -2046,4 +2133,20 @@ onMounted(load)
 }
 .storage-module-entry { margin-bottom: 14px; }
 .storage-module-link { display: inline-block; margin-top: 6px; color: #409eff; font-weight: 600; }
+.profile-default {
+  border: 1px solid #d9ecff;
+  background: #f4f9ff;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.profile-default-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.profile-default-title { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 4px; }
+.profile-default-desc { font-size: 12px; color: #606266; line-height: 1.7; max-width: 760px; }
+.profile-default-link { font-size: 12px; color: #409eff; white-space: nowrap; }
+.profile-default-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.profile-default-form label { font-size: 13px; color: #606266; }
+.profile-default-source { font-size: 12px; color: #909399; }
+.profile-default-empty { margin-top: 10px; font-size: 13px; color: #e6a23c; }
+.profile-default-legacy { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #c6e2ff; font-size: 12px; color: #909399; line-height: 1.7; }
 </style>

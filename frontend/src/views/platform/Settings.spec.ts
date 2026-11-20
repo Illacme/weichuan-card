@@ -3,6 +3,12 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
+vi.mock('@/api/storageProfiles', () => ({
+  listStorageProfiles: vi.fn().mockResolvedValue([]),
+  listDeliveryProfiles: vi.fn().mockResolvedValue([]),
+  listStorageBindings: vi.fn().mockResolvedValue({ global: {}, companies: [] }),
+  saveGlobalBinding: vi.fn().mockResolvedValue({}),
+}))
 vi.mock('@/api/settings', () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(async () => ({ code: 0, data: { restartKeys: [] } })),
