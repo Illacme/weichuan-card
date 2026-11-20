@@ -5653,4 +5653,4 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 
 ## 存储 / CDN 多档案（迁移 0054，已落地）
 
-`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
+`storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。

@@ -18,7 +18,12 @@
           <el-button type="primary" @click="openStorageDialog(null)">新建存储档案</el-button>
         </div>
         <el-table :data="storages" v-loading="loading" size="small" border>
-          <el-table-column prop="name" label="档案名" min-width="130" />
+          <el-table-column label="档案名" min-width="150">
+            <template #default="{ row }">
+              {{ row.name }}
+              <el-tag v-if="row.builtin" size="small" type="info">内置</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="driver" label="驱动" width="90" />
           <el-table-column prop="endpoint" label="Endpoint" min-width="160" />
           <el-table-column prop="bucket" label="Bucket" min-width="120" />
@@ -191,9 +196,12 @@
       <el-form label-width="130px" size="small">
         <el-form-item label="档案名"><el-input v-model="storageForm.name" placeholder="例如：主站 OSS" /></el-form-item>
         <el-form-item label="驱动">
-          <el-select v-model="storageForm.driver" style="width: 100%">
+          <el-select v-model="storageForm.driver" style="width: 100%" :disabled="storageForm.builtin">
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
+          <span v-if="storageForm.builtin" class="field-note">
+            内置本地档案的驱动锁定为「本地磁盘」：它是云存储不可用时的兜底，不可删除、不可改成云驱动。可修改展示名与本地目录。
+          </span>
         </el-form-item>
         <template v-if="storageForm.driver !== 'local'">
           <el-form-item label="Endpoint"><el-input v-model="storageForm.endpoint" placeholder="host[:port]，不要带 http://" /></el-form-item>

@@ -1466,7 +1466,7 @@ async function save(): Promise<boolean> {
 
 // 默认档案：与上面的平铺配置并存，但优先级更高（有绑定即接管）。
 // 这里只做「选哪一套」，档案本身的增删改与迁移在独立模块里。
-const profileOptions = reactive<{ storages: { id: number; name: string }[]; deliveries: { id: number; name: string }[] }>({
+const profileOptions = reactive<{ storages: { id: number; name: string; builtin?: boolean }[]; deliveries: { id: number; name: string }[] }>({
   storages: [],
   deliveries: [],
 })
@@ -1480,7 +1480,7 @@ async function loadProfileDefault() {
     const [ss, ds, bindings] = await Promise.all([
       listStorageProfiles(), listDeliveryProfiles(), listStorageBindings(),
     ])
-    profileOptions.storages = ss.map((p) => ({ id: p.id, name: p.name }))
+    profileOptions.storages = ss.map((p) => ({ id: p.id, name: p.name, builtin: p.builtin }))
     profileOptions.deliveries = ds.map((p) => ({ id: p.id, name: p.name }))
     const g: any = bindings.global
     if (g?.storageProfileId) {
@@ -1490,7 +1490,13 @@ async function loadProfileDefault() {
       const dName = profileOptions.deliveries.find((p) => p.id === g.deliveryProfileId)?.name
       profileSourceText.value = `当前默认：${sName}${dName ? ' + ' + dName : '（不启用 CDN）'}`
     } else {
-      profileSourceText.value = '当前：未绑定档案，沿用下面的兼容配置'
+      // 未绑定：默认预选内置本地档案，让「默认加载一套可用配置」成立。
+      // 但只预选、不自动保存——保存才会真正切换，避免升级后静默把文件写到本地。
+      const builtin = profileOptions.storages.find((p) => p.builtin)
+      profileStorageId.value = builtin?.id
+      profileSourceText.value = builtin
+        ? '当前未绑定档案，已预选内置本地存储；点「保存默认档案」才会切换（历史对象不会搬迁）'
+        : '当前：未绑定档案，沿用下面的兼容配置'
     }
   } catch {
     // 档案接口失败不能挡住系统设置本身：下面的兼容配置仍可正常维护。

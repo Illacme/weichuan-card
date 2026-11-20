@@ -1602,6 +1602,8 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 
 ## 存储 / CDN 档案化运行时（迁移 0054）
 
+`internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称与目录；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖租户已有的 `tenant_storage_configs`，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
+
 `internal/storageprofile` 是档案绑定的运行时解析层：`Resolver.snapshot()` 用三张表的行数 + `MAX(version)` 作指纹，变化即重载（只用 `MAX(version)` 会漏掉「新增一行绑定但版本还是 1」）。`DynamicResolver` 包在 `uploadroute.Resolver` 外侧——有绑定走档案、没绑定沿用 `tenant_storage_configs` 与平台配置；`DynamicCDN` 同理，且明确区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` 把分发档案的域名接进公开出参 origin。
 
 一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。

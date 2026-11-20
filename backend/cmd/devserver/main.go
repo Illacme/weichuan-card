@@ -184,6 +184,11 @@ func main() {
 	handler.RegisterStorageQuota(r, db)   // 按租户存储用量与配额
 	handler.RegisterCompanyWXApp(r, db)   // 租户小程序凭据：GET/PUT /api/admin/companies/:id/wechat
 	handler.RegisterTenantStorage(r, db)  // 租户自有对象桶配置：GET/PUT/DELETE .../storage + POST .../check
+	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
+	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
+	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
+		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响旧配置，但「文件存储与分发」缺少兜底）：%v", err)
+	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.RegisterStorageProfiles(r, db, profiles)

@@ -4433,6 +4433,8 @@ paths:
       description: |
         字段省略即保留原值。保存后 `version` 递增、自检状态重置为 unknown，
         所有绑定该档案的企业在下一次请求就拿到新配置。
+        内置本地档案（`builtin=true`）的 `driver` 锁定为 local，改成云驱动会被拒绝；
+        它不可删除，是云存储不可用时的兜底。
       tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }

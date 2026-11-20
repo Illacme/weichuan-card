@@ -358,6 +358,11 @@ func main() {
 	// 租户自有对象桶配置（平台超管专属）：GET/PUT/DELETE .../storage + POST .../storage/check。
 	// 与上面那条分开放：这里是客户的云凭据 + 桶地址，泄露面比小程序凭据更大。
 	handler.RegisterTenantStorage(r, db)
+	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
+	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
+	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
+		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响旧配置，但「文件存储与分发」缺少兜底）：%v", err)
+	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.RegisterStorageProfiles(r, db, profiles)  // 存储 / 分发档案 + 全局与企业绑定

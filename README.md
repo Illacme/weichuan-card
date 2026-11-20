@@ -297,7 +297,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 
 后台新增独立模块「平台管理 → 文件存储与分发」（`/platform/storage-profiles`），把过去平铺在系统设置里的单值配置升级成三层：
 
-- **存储档案**：连接信息与凭据只存一份，多家企业共享（`storage_profiles`）；
+- **存储档案**：连接信息与凭据只存一份，多家企业共享（`storage_profiles`）；启动时会自动确保有一套**内置本地档案**（`builtin=true`），不可删除、驱动锁定为 local，作为云桶欠费 / 凭据配错时的兜底；
 - **分发档案**：CDN 域名与刷新凭据独立保存（`delivery_profiles`），同一桶可配多套 CDN；
 - **绑定关系**：`tenant_id=0` 是全局默认，企业无绑定行时自动继承（`storage_bindings`）。保存后各进程按指纹重载，全局切换**即时生效**，不需要重启。
 

@@ -120,6 +120,16 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		applyStorageProfileReq(&row, &req)
+		// 内置档案的驱动锁死为 local：它是「云配置全坏时还能上传」的唯一退路。
+		// 允许改成 minio/oss 等于让管理员可以亲手删掉这条退路（而删除按钮又被禁用，
+		// 形成「删不掉但能改成不可用」的假安全）。
+		if row.Builtin {
+			if row.Driver != nginxsnippet.DriverLocal {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的驱动不可更改：它是云存储不可用时的兜底"})
+				return
+			}
+			row.Builtin = true
+		}
 		if msg := validateStorageProfile(&row); msg != "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
 			return

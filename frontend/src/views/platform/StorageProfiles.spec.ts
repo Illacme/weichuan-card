@@ -126,6 +126,21 @@ describe('文件存储与分发模块', () => {
     expect(ElMessage.warning).toHaveBeenCalledWith('源与目标不能相同')
   })
 
+  it('内置本地档案标记为「内置」，编辑时驱动锁定并说明兜底用途', async () => {
+    vi.mocked(api.listStorageProfiles).mockResolvedValue([
+      { ...storage(1, '平台本地存储'), builtin: true, driver: 'local' },
+    ] as any)
+    const w = mountPage()
+    await flush()
+    expect(w.text()).toContain('平台本地存储')
+    expect(w.text()).toContain('内置')
+    const edit = w.findAll('button').find((b) => b.text() === '编辑')!
+    await edit.trigger('click')
+    await flush()
+    expect(w.text()).toContain('驱动锁定为「本地磁盘」')
+    expect(w.text()).toContain('不可删除')
+  })
+
   it('路由与菜单必须同时登记（新增页面不能漏一处）', () => {
     const router = readFileSync('src/router/index.ts', 'utf8')
     const menu = readFileSync('src/layout/AdminLayout.vue', 'utf8')
