@@ -4407,24 +4407,15 @@ paths:
           description: code=0（data.ok / detail / error / status）
   /api/admin/storage-bindings:
     get:
-      summary: 绑定关系总览
+      summary: 绑定关系总览（平台超管）
       description: |
         回 `global`（tenant_id=0）与企业绑定数组。企业没有绑定行时继承全局；
         `source` 为 inherit / global / platform，如实说明当前生效来源。
+        绑定决定「文件写进哪个桶」，属平台级信息，企业侧一律 403。
       tags: [平台管理]
       responses:
         "200":
           description: code=0
-  /api/admin/storage-bindings/options:
-    get:
-      summary: 档案选择项（所有后台管理员）
-      description: |
-        只回档案 `id` + `name`。企业管理员要给本企业选绑定，但不能读桶地址与凭据，
-        因此这是唯一对企业侧开放的档案信息端点。
-      tags: [平台管理]
-      responses:
-        "200":
-          description: code=0（data.storageProfiles / data.deliveryProfiles）
   /api/admin/storage-bindings/global:
     put:
       summary: 设置全局默认档案（平台超管）
@@ -4442,11 +4433,13 @@ paths:
           description: code=0；code=1 档案不存在
   /api/admin/storage-bindings/companies/{id}:
     put:
-      summary: 设置某企业的档案绑定
+      summary: 设置某企业的档案绑定（平台超管）
       description: |
-        平台超管可代任意企业设置，企业管理员只能设置自己（越权 code=403）。
-        这里只选「用哪一套」，看不到也改不了凭据。删除本行即恢复继承全局。
-      tags: [租户]
+        平台超管专属，企业管理员一律 code=403。理由是越权后果具体：
+        档案里装的是**别家客户**的桶名与凭据，企业管理员若能改自己的绑定，
+        就能把本企业上传写进别人的桶，而两边后台都显示正常。
+        删除本行即恢复继承全局。
+      tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
       requestBody:
@@ -4456,15 +4449,15 @@ paths:
             schema: { $ref: "#/components/schemas/StorageBindingSave" }
       responses:
         "200":
-          description: code=0；code=1 档案不存在；code=403 越权
+          description: code=0；code=1 档案不存在；code=403 非平台超管
     delete:
-      summary: 清除某企业的绑定，恢复继承全局
-      tags: [租户]
+      summary: 清除某企业的绑定，恢复继承全局（平台超管）
+      tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
       responses:
         "200":
-          description: code=0；code=403 越权
+          description: code=0；code=403 非平台超管
   /api/admin/storage-migration-jobs:
     get:
       summary: 迁移任务列表（平台超管，最多 200 条）

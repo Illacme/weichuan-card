@@ -425,14 +425,13 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 配置入口：后台「**存储档案**」。三张表之间是多对多，同一套桶可以给多家企业用，
 换桶只改绑定，不用逐家改凭据。
 
-- **档案本身只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连档案读接口
-  都是 403：档案里装的是客户的云凭据，能改它就能把该企业的文件指到任意桶，而平台从业务侧
-  察觉不到。**不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
-  登录 + `role=admin`，而企业管理员的 role 也是 admin，会直接放行。有源码级守门盯着这个。
-- **绑定**的口径不同：全局默认绑定（`/storage-bindings/global`）平台超管专属；
-  企业绑定（`/storage-bindings/companies/:id`）允许该企业的管理员自己设置，
-  但只能设**自己的** `:id`（`canManageBinding` 校验 `CurrentCompanyID(c) == cid`）。
-  企业侧只拿得到档案的 `id` + `name`（`/storage-bindings/options`），拿不到桶地址与凭据。
+- **档案与绑定全部只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连读
+  都是 403。**不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
+  登录 + `role=admin`，而企业管理员的 role 也是 admin，会直接放行。有源码级守门盯着这个
+  （`TestStorageBindingIsPlatformAdminOnly`）。
+- 为什么绑定也不放给企业侧：档案里装的是**别家客户**的桶名与凭据。企业管理员若能改自己的
+  绑定，就能把本企业上传写进别人的桶——数据落到第三方基础设施、对方能直接读到，
+  而两边后台都显示「配置正常」，没有任何人会察觉。企业要换存储走工单让平台改。
 - **凭据按产品决策明文入库、只回显掩码**（`AKIA****MPLE`，SecretKey 连掩码都不给）。
   这是 2026-11-20 的明确取舍：档案凭据要能被运维直接查、直接改，加密只会带来
   「密钥丢了桶就打不开」的单点故障，而它并不比库本身更敏感（同库同权限）。

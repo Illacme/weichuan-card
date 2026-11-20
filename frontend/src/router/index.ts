@@ -129,13 +129,6 @@ export const routes = [
         meta: { title: 'CDN 刷新', group: '平台管理', platformOnly: true },
       },
       {
-        // 企业自己的存储选择：企业管理员只能选平台准备好的档案，看不到凭据。
-        path: 'company-storage',
-        name: 'company-storage',
-        component: () => import('@/views/CompanyStorage.vue'),
-        meta: { title: '存储档案', group: '企业内容' },
-      },
-      {
         // 文件存储与分发：多套存储 / CDN 档案 + 全局与企业绑定 + 一键迁移。
         // 与系统设置里遗留的平铺存储项并存：新部署走本模块，旧项保留给存量配置。
         path: 'platform/storage-profiles',

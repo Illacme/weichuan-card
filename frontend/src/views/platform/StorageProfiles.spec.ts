@@ -145,9 +145,11 @@ describe('文件存储与分发模块', () => {
     const router = readFileSync('src/router/index.ts', 'utf8')
     const menu = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(router).toContain("path: 'platform/storage-profiles'")
-    expect(router).toContain("path: 'company-storage'")
     expect(menu).toContain("path: '/platform/storage-profiles'")
-    expect(menu).toContain("path: '/company-storage'")
+    // 企业自选页已下线：绑定是平台级动作，企业管理员能改它就能把对象写进别家客户的桶。
+    // 反向断言防止有人「顺手把页面加回来」——页面一旦存在，后端那组 403 就成了摆设。
+    expect(router).not.toContain("path: 'company-storage'")
+    expect(menu).not.toContain("path: '/company-storage'")
     // 系统设置里必须有「默认档案」选择块（不是只留一条指路链接），
     // 企业管理行内必须有「存储档案」入口——这是用户明确要求的两个操作位置。
     const settings = readFileSync('src/views/platform/Settings.vue', 'utf8')

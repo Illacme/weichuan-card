@@ -60,8 +60,9 @@ type deliveryProfileReq struct {
 
 // RegisterStorageProfiles 挂载存储档案 / 分发档案 / 绑定关系接口。
 func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofile.Resolver) {
+	// 全部接口只对平台超管开放：档案里装的是客户的云凭据，绑定决定「文件写进哪个桶」。
+	// 企业管理员连读都不给（§1.1 的权限模型），因此这里不需要第二档中间件。
 	plat := middleware.PlatformAdminMiddleware(db)
-	admin := middleware.AuthMiddleware(db, "admin")
 
 	// ---- 存储档案 ----
 	r.GET("/api/admin/storage-profiles", plat, func(c *gin.Context) {
@@ -359,7 +360,12 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 	})
 
 	// ---- 绑定关系 ----
-	r.GET("/api/admin/storage-bindings", admin, func(c *gin.Context) {
+	//
+	// 绑定决定「文件写进哪个桶」，属于平台级动作：企业管理员能改它，就能把自己企业的
+	// 对象写进**别家客户的桶**（档案里有别家的桶名与凭据），而两边都不会报错。
+	// 所以这一组接口一律挂 PlatformAdminMiddleware，企业侧不开放。
+	// 企业管理员要换存储，走工单让平台改——这是产品决策，不是实现偷懒。
+	r.GET("/api/admin/storage-bindings", plat, func(c *gin.Context) {
 		var rows []model.StorageBinding
 		var storageRows []model.StorageProfile
 		var deliveryRows []model.DeliveryProfile
@@ -377,17 +383,6 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		for i := range deliveryRows {
 			deliveryNames[deliveryRows[i].ID] = deliveryRows[i].Name
 		}
-		// 企业管理员只能看自己那一条；列表里其他企业的绑定与全局默认属于平台信息。
-		if !middleware.IsPlatformAdmin(c) {
-			cid := middleware.CurrentCompanyID(c)
-			own := rows[:0]
-			for _, b := range rows {
-				if b.TenantID == cid {
-					own = append(own, b)
-				}
-			}
-			rows = own
-		}
 		global := map[string]any{"bound": false, "source": "platform", "note": "未配置档案绑定，沿用系统设置里的平台存储 / CDN"}
 		out := make([]gin.H, 0, len(rows))
 		for i := range rows {
@@ -399,28 +394,8 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			}
 			out = append(out, v)
 		}
-		if !middleware.IsPlatformAdmin(c) {
-			// 企业页不该看到全局默认的具体档案，避免把平台拓扑暴露出去。
-			global = map[string]any{"bound": false, "source": "platform", "note": "企业未单独绑定时自动继承全局默认"}
-		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"global": global, "companies": out,
 			"storageProfiles": storageNames, "deliveryProfiles": deliveryNames}})
-	})
-
-	// 选择项：企业管理员要能选「用哪套」，但不能读档案详情（里面有桶地址与 AK）。
-	// 只回 id + name，是权限收敛后唯一需要开放给企业侧的档案信息。
-	r.GET("/api/admin/storage-bindings/options", admin, func(c *gin.Context) {
-		var storages []model.StorageProfile
-		var deliveries []model.DeliveryProfile
-		if err := db.Select("id", "name").Order("id ASC").Find(&storages).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储档案选项失败"})
-			return
-		}
-		if err := db.Select("id", "name").Order("id ASC").Find(&deliveries).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取分发档案选项失败"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"storageProfiles": storages, "deliveryProfiles": deliveries}})
 	})
 
 	r.PUT("/api/admin/storage-bindings/global", plat, func(c *gin.Context) {
@@ -445,14 +420,13 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
-	// 企业自选：只允许管理自己企业；平台超管可以代任意企业选。
-	r.PUT("/api/admin/storage-bindings/companies/:id", admin, func(c *gin.Context) {
+	// 给某家企业绑定档案。平台超管专属（理由见本节开头的注释）。
+	r.PUT("/api/admin/storage-bindings/companies/:id", plat, func(c *gin.Context) {
 		if writeLocked(c) {
 			return
 		}
 		cid, ok := storageTargetCompanyID(c)
-		if !ok || !canManageBinding(c, cid) {
-			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "只能设置本企业的存储绑定"})
+		if !ok {
 			return
 		}
 		id, deliveryID, ok := bindingIDs(c)
@@ -473,13 +447,13 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
 
-	r.DELETE("/api/admin/storage-bindings/companies/:id", admin, func(c *gin.Context) {
+	// 删掉企业绑定（回落到全局默认）。同样平台超管专属。
+	r.DELETE("/api/admin/storage-bindings/companies/:id", plat, func(c *gin.Context) {
 		if writeLocked(c) {
 			return
 		}
 		cid, ok := storageTargetCompanyID(c)
-		if !ok || !canManageBinding(c, cid) {
-			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "只能设置本企业的存储绑定"})
+		if !ok {
 			return
 		}
 		if err := db.Where("tenant_id = ?", cid).Delete(&model.StorageBinding{}).Error; err != nil {
@@ -521,10 +495,6 @@ func bindingIDs(c *gin.Context) (int64, int64, bool) {
 		return 0, 0, false
 	}
 	return req.StorageProfileID, req.DeliveryProfileID, true
-}
-
-func canManageBinding(c *gin.Context, cid int64) bool {
-	return middleware.IsPlatformAdmin(c) || middleware.CurrentCompanyID(c) == cid
 }
 
 func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
