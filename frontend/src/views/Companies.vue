@@ -77,7 +77,7 @@
           <template #default="{ row }">
             <el-button type="primary" link @click="openAdmins(row)">管理员</el-button>
             <el-button type="primary" link @click="openWX(row)">凭据</el-button>
-            <el-button type="primary" link @click="openStorage(row)">存储</el-button>
+            <el-button type="primary" link @click="openStorage(row)">自有桶</el-button>
             <el-button type="primary" link @click="openProfiles(row)">存储档案</el-button>
             <el-button type="primary" link @click="openReleases(row)">版本</el-button>
             <el-button type="primary" link @click="openLicense(row)">授权</el-button>
@@ -432,9 +432,13 @@
     <!-- 租户自有对象桶：客户的云凭据只在这里填（平台超管代填）。
          单独抽成组件是因为这段表单有「凭据只写不读 / 三态 / 自检」三块独立逻辑，
          塞进本文件会把已经 1100 多行的企业管理页推到无法阅读。 -->
-    <!-- 存储档案：从平台已建好的多套档案里给这家企业选一套。
-         与上面的「存储」区分：那一个是代填客户自己的桶与凭据（单套），
-         这里是选择平台统一维护的档案（可多套、可切换、看不到凭据）。 -->
+    <!-- 两个入口的分工（别再合并成一个）：
+         · 「自有桶」= 客户自己的对象桶 + 凭据 + 自有访问域名。它同时是
+           cmd/nginx-snippets 生成 /uploads/t/<cid>/ 回源段的**唯一数据源**
+           （tenant_storage_configs），所以只要客户桶还在接流量，这个入口就不能下线。
+         · 「存储档案」= 平台统一维护的多套档案（可切换、看不到凭据、即时生效、可迁移）。
+         想让这家企业换存储后端，正常路径是「存储档案」；「自有桶」只在客户坚持
+         用自己的桶、或需要保留 nginx 回源段时才用。 -->
     <el-dialog v-model="profileVisible" :title="`存储档案 · ${profileCompany?.name || ''}`" width="520px">
       <el-alert
         type="info"
@@ -793,9 +797,13 @@ function wxTip(row: any) {
     : '未配置独立小程序，当前回落到平台全局小程序；点「凭据」可代填'
 }
 
-// 自有存储配置（平台超管代填客户的桶地址与凭据）。
+// 自有桶配置（平台超管代填客户的桶地址与凭据）。
 // 与「凭据」那一栏（小程序 AppID/Secret）分开：那是代发小程序的凭证，
 // 这一个是「客户的图存在自己的桶里」的数据主权配置，泄漏面与后果都不同。
+//
+// 与「存储档案」也不是同一件事：档案是平台维护的多套可切换配置，改完即时生效；
+// 这里是单企业一套、落 tenant_storage_configs、凭据走 pii 加密，
+// 且是 nginx 回源段（/uploads/t/<cid>/）的唯一来源。两条路都留着，不要合并。
 const storageVisible = ref(false)
 const storageCompany = ref<{ id: number; name: string } | null>(null)
 

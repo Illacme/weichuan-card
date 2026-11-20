@@ -30,6 +30,57 @@
 
 ---
 
+## 0.1 三层配置的职责边界（2026-12 补充，务必先读）
+
+存储档案（`storage_profiles` / `delivery_profiles` / `storage_bindings`，迁移 0054）落地后，
+系统里同时存在**三套**看起来都能「换存储」的配置。它们不是重复实现，也不能互相删除。
+判断「某个需求该改哪一层」只看下面这张表：
+
+| 层 | 落点 | 现在的真实角色 | 能否删 |
+| --- | --- | --- | --- |
+| ① 平台级平铺配置 | `sys_setting` 的 `storage_driver` / `storage_endpoint` / `storage_bucket` / `storage_*` | `DynamicResolver` 的 `base`：**没有任何绑定时**的兜底；同时是 `STORAGE_*` / `MINIO_*` 环境变量的界面映射（`internal/setting/setting.go` 每项都带 `EnvVar`） | **不能**。私有部署靠改 env 起服务时走的正是这条 |
+| ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | 客户自有桶 + 自有访问域名 + 凭据（PII 密文） | **暂不能**，见下方四项独有能力 |
+| ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings`（迁移 0054） | 多套可复用、按企业继承、即时生效、一键迁移、CDN 分发 | 这是新功能唯一该去的地方 |
+
+### ② 目前仍不可替代的四项能力
+
+1. **nginx 回源 snippet 的唯一数据源。** `cmd/nginx-snippets --dsn` 调的是
+   `repository.ListStorageTargets`，只读 `tenant_storage_configs`；
+   `storage_profiles` 至今没有任何 snippet 生成路径。删掉 ② 等于客户自有桶的
+   `/uploads/t/<cid>/` 回源段再也生不出来，那家租户全站图 404。
+2. **按租户公网 origin 的判定源。** `publicOriginFor` 现在是「档案分发域名优先，
+   没有则回落旧口径」（`internal/handler/publicorigin.go`），回落段依赖
+   `publicOriginState → tenantStorageActive`。没配分发域名的企业全靠它。
+3. **凭据是 PII 密文且可 re-key。** ② 的 `access_key_enc` / `secret_key_enc` 走
+   `pii.Encrypt` 并带 `key_id`，有 `server tenant-storage-rekey` 可换密钥；
+   ③ 的凭据按当前产品决策**明文入库**（仅回显掩码）。把 ② 并进 ③ 等于把
+   「可轮换密钥的加密存储」降级成明文，必须单独书面决策，不能顺手做。
+4. **配额判定的同源依赖。** `internal/handler/storage_quota.go` 复用
+   `tenantStorageActive` 判「谁会先挡住上传」，改判定要一起改。
+
+### 收敛路线（2026-12 定，分三阶段，不一次砍）
+
+- **阶段一（已执行）· 只改产品口径，不动数据**
+  - 系统设置「文件存储与 CDN」组的三个分区标题统一加「兜底 · 」前缀，分组导语改成
+    「兜底（高级）：只有在没有绑定任何档案时才生效」；配置向导内**不加**前缀
+    （首配时它确实就是当前生效配置）。
+  - 企业管理行内按钮 `存储` → `自有桶`，弹窗标题改为「自有桶接入」并在顶部说明
+    「这里配的是客户自己的桶，会生成 nginx 回源段；只想换后端请用存储档案」。
+  - 本节即该阶段的文档落点。
+- **阶段二（未执行）· 让 ② 从「唯一数据源」降为「兼容数据源」**
+  - `cmd/nginx-snippets` 增加数据源开关（`--source=profiles|legacy|auto`），
+    auto 下档案优先、旧表补位。
+  - `publicOriginState` 的「生效判定」与档案侧合并，去掉双口径。
+- **阶段三（未执行，收益低风险高，近期不建议碰）· 数据迁移与退役**
+  - `tenant_storage_configs` → `storage_profiles` + `storage_bindings` 一次性迁移；
+    同时决定新档案是否引入 `*_enc` 列，否则 `tenant-storage-rekey` 会随之退役。
+  - 之后才谈删表、删 handler、删前端入口。
+
+**新功能一律只进 ③。** ① 与 ② 只维护、不加功能——这是三个阶段共同的约束。
+
+---
+
+
 ## 0. 解决什么，不解决什么
 
 **解决**：让每个企业能把图片 / 视频物理存到自己的对象存储账号里，凭据由平台安全保管，

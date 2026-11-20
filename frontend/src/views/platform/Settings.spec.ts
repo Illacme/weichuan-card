@@ -806,8 +806,14 @@ describe('Settings 系统设置', () => {
         .find((c: any) => c.find('.group-title').text() === title)!
         .findAll('.group-sub')
         .map((s: any) => s.text())
-    // 存储组：位置 / 访问方式 / CDN（可选）——公私总闸与 CDN 不再混在主凭据里
-    expect(subs('文件存储与 CDN')).toEqual(['存储位置', '访问方式', 'CDN 刷新（可选）'])
+    // 存储组：位置 / 访问方式 / CDN（可选）——公私总闸与 CDN 不再混在主凭据里。
+    // 三个分区都带「兜底 · 」前缀：它们与上方「默认档案」是两套东西，
+    // 只在没有任何档案绑定时生效（配置向导里不加前缀，首配时它确实就是当前生效配置）。
+    expect(subs('文件存储与 CDN')).toEqual([
+      '兜底 · 存储位置',
+      '兜底 · 访问方式',
+      '兜底 · CDN 刷新（可选）',
+    ])
     // local 态：CDN 区只剩开关本身，凭据不占版面
     expect(rowExists(w, 'cdn_enabled')).toBe(true)
     expect(rowExists(w, 'cdn_access_key_id')).toBe(false)

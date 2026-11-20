@@ -5654,3 +5654,5 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 ## 存储 / CDN 多档案（迁移 0054，已落地）
 
 `storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
+
+**三层配置的职责边界（2026-12 补充）**：档案（③）落地后，系统里仍有 ① 系统设置 `storage_*` 全局单值与 ② `tenant_storage_configs` 两套旧配置，**都不能删**。① 是 `DynamicResolver` 的 `base`（无绑定时的兜底）兼 `STORAGE_*` / `MINIO_*` 环境变量的界面映射；② 仍是 `cmd/nginx-snippets` 生成 `/uploads/t/<cid>/` 回源段的**唯一数据源**，且凭据走 `pii.Encrypt` + `tenant-storage-rekey`（新档案是明文）。收敛按三阶段推进，**阶段一已执行**：系统设置存储组三个分区标题加「兜底 · 」前缀、导语改为「兜底（高级）」，企业管理行内按钮 `存储` → `自有桶` 并在弹窗顶部说明「这里配客户自己的桶，只想换后端请用存储档案」。阶段二（让 `cmd/nginx-snippets` 支持从 `storage_bindings` + `storage_profiles` 生成、合并 `publicOriginState` 双口径）与阶段三（数据迁移 + 退役）**未执行**。完整边界见 `docs/tenant-storage-design.md` §0.1。**新功能一律只进档案，① 与 ② 只维护不加功能。**

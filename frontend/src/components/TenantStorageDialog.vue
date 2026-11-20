@@ -1,11 +1,21 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="`自有存储 - ${company?.name || ''}`"
+    :title="`自有桶接入 - ${company?.name || ''}`"
     width="660px"
     class="tenant-storage-dialog"
     @closed="reset"
   >
+    <!-- 定位说明必须放在最上面：这里填的是「客户自己的桶」，不是「平台用哪套存储」。
+         两个入口挨在一起时，运营最容易走错的就是这里——本来只想换后端，
+         却顺手填了客户的凭据，结果对象进了客户桶、配额判定也跟着变。
+         一句话把人分流回「存储档案」，比事后排查便宜得多。 -->
+    <div class="scope-note">
+      这里配置的是<b>客户自己的对象桶</b>（凭据走 PII 加密，保存后会生成 nginx 的
+      <code>/uploads/t/&lt;企业id&gt;/</code> 回源段）。
+      只想把这家企业切到平台已维护的存储 / CDN，请用<b>「存储档案」</b>，不必在这里填凭据。
+    </div>
+
     <!-- 生效状态必须写在最上面，且要说清是哪一种「没生效」。
          写死一句话会在开关打开后继续骗人；只回一个 bool 则会让超管拿着
          "未生效"去猜是没填凭据、没勾启用，还是运维没开路由。 -->
@@ -428,6 +438,22 @@ async function onReset() {
 </script>
 
 <style scoped>
+.scope-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-lighter);
+  border-left: 3px solid var(--el-color-primary-light-5);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.scope-note code {
+  font-family: var(--el-font-family-mono, monospace);
+  background: var(--el-fill-color);
+  padding: 0 3px;
+  border-radius: 2px;
+}
 .hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
