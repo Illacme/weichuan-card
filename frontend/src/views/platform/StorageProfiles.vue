@@ -14,6 +14,7 @@
         <div class="tab-head">
           <span class="tab-tip">
             同一份 endpoint / AK / SK 只填一次，多家企业共享。改一次桶地址，所有绑定它的企业立刻跟着变。
+            还在用旧「自有桶接入」配置的企业，可到「企业管理 → 自有桶 → 转为存储档案」一键搬过来（旧配置保留作回滚）。
           </span>
           <el-button type="primary" @click="openStorageDialog(null)">新建存储档案</el-button>
         </div>

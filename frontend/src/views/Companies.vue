@@ -470,7 +470,9 @@
       </template>
     </el-dialog>
 
-    <TenantStorageDialog v-model="storageVisible" :company="storageCompany" />
+    <!-- 接管成功后要刷新列表：这家的存储口径从「旧表」变成「档案」，
+         平台配额是否适用与用量展示都会跟着变，不刷新会看到旧结论。 -->
+    <TenantStorageDialog v-model="storageVisible" :company="storageCompany" @adopted="load" />
   </div>
 </template>
 

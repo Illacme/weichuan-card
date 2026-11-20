@@ -591,17 +591,47 @@ func tenantStorageActive(row *model.TenantStorageConfig) (bool, string) {
 	return true, ""
 }
 
+// profileOwnerResolver 由三处启动入口注入（cmd/server、cmd/devserver、测试 harness）。
+//
+// 语义见 model.StorageOwner：ok=false 表示档案没接管，继续走旧表判定；
+// ok=true 表示档案接管，Driver 为 local 时对象仍在平台盘（配额与平台域名仍适用）。
+//
+// 与 profileOriginResolver 分开注入而不是合成一个结构：两者的消费方不同
+// （出参侧要域名，配额侧要驱动），合成后每个消费方都得忽略一半字段。
+var profileOwnerResolver func(cid int64) (model.StorageOwner, bool)
+
+// SetProfileOwnerResolver 注入档案归属判定（幂等，重复调用以最后一次为准）。
+func SetProfileOwnerResolver(fn func(cid int64) (model.StorageOwner, bool)) {
+	profileOwnerResolver = fn
+}
+
+// profileOwnerOf 是注入点的空安全封装：未接档案的部署与部分单测里它是 nil。
+func profileOwnerOf(cid int64) (model.StorageOwner, bool) {
+	if profileOwnerResolver == nil {
+		return model.StorageOwner{}, false
+	}
+	return profileOwnerResolver(cid)
+}
+
 // tenantUsesOwnBucket 判断该租户此刻的文件是否真的写进自己的桶（即平台配额不应再硬拦截）。
 //
-// 直接复用 tenantStorageActive 的同一份判定（路由开关 on + 已启用 + 驱动非 local + 凭据完整），
-// 与「谁会先挡住上传」同源——避免「上传侧豁免了硬拦截、出参侧却还当平台对象」这种漂移。
+// 判定顺序：**先档案，后旧表**。档案绑定之后上传直接走档案
+// （DynamicResolver 先问档案，见 internal/storageprofile），旧表那条路根本不会命中；
+// 此时若仍按旧表判定，会得出「对象在平台盘」的错误结论，继续用平台配额硬拦客户。
 //
-// 热点短路：先判进程级开关（纯内存、无 DB 查询），关着直接返回 false；
-// 只有 TENANT_STORAGE_ROUTE 真的打开时才会去读这家企业的配置行。
-// 开关默认 off，所以这个改动在功能启用之前是**零行为变更**——标准部署（开关关着）
-// 的 checkStorageQuota 走不到这一支，硬拦截语义与改造前逐字节一致。
+// 特别注意：档案这一支**不看 TENANT_STORAGE_ROUTE**。那是旧表通道的开关，
+// 档案不依赖它——按开关短路会重现上面那个错误结论。
+//
+// 旧表这一支保持原样：先判进程级开关（纯内存、无 DB 查询），关着直接返回 false，
+// 标准部署（开关关着）的 checkStorageQuota 与改造前逐字节一致。
 func tenantUsesOwnBucket(db *gorm.DB, cid int64) bool {
-	if cid <= 0 || !tenantStorageTrafficEnabled() {
+	if cid <= 0 {
+		return false
+	}
+	if owner, ok := profileOwnerOf(cid); ok {
+		return owner.UsesOwnBucket()
+	}
+	if !tenantStorageTrafficEnabled() {
 		return false
 	}
 	row, err := loadTenantStorage(db, cid)
@@ -626,7 +656,7 @@ func tenantUsesOwnBucket(db *gorm.DB, cid int64) bool {
 // 不返回 null：前端拿到 null 要在每个字段上判空，而「没配」与「配了空值」
 // 在界面上应该是同一套渲染（都是空表单）。
 func emptyTenantStorageView(cid int64) gin.H {
-	return gin.H{
+	view := gin.H{
 		"companyId":     cid,
 		"configured":    false,
 		"driver":        nginxsnippet.DriverLocal,
@@ -655,7 +685,24 @@ func emptyTenantStorageView(cid int64) gin.H {
 		// 放在这里是为了让「没配过」与「配了」走同一个渲染路径（前端少一个分支）。
 		"activeForTenant": false,
 		"inactiveReason":  "尚未配置该企业的自有存储",
+		// 档案接管标记：这张表可能已经是历史遗留。
+		//
+		// 不说的话，超管会对着一个「已生效」的绿勾去改这里，改完发现毫无效果——
+		// 因为上传早已走 storage_bindings 指向的档案（档案优先于旧表，见
+		// tenantUsesOwnBucket 与 publicOriginFor）。没有行时也要给：企业只要绑定了
+		// 档案就能用自有桶，完全不必填这张表，此时界面更不能说「尚未配置」。
+		"supersededByProfile":     false,
+		"supersededByProfileId":   int64(0),
+		"supersededByProfileName": "",
 	}
+	// 放在这里而不是 tenantStorageView：有行 / 没行两条路径都经过本函数，
+	// 写在一处才不会出现「没填过这张表时看不到接管提示」。
+	if owner, ok := profileOwnerOf(cid); ok {
+		view["supersededByProfile"] = true
+		view["supersededByProfileId"] = owner.ProfileID
+		view["supersededByProfileName"] = owner.ProfileName
+	}
+	return view
 }
 
 // tenantStorageTrafficEnabled 回报「本进程是否已打开租户存储路由」。

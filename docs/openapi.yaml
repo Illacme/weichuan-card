@@ -4427,6 +4427,34 @@ paths:
       responses:
         "200":
           description: code=0（data 为新建档案）；code=1 校验不通过 / 名称重复
+  /api/admin/storage-profiles/adopt-legacy:
+    post:
+      summary: 把旧的自有存储配置转成存储档案并绑定（平台超管）
+      description: |
+        读 `tenant_storage_configs` 的一行，把凭据从 PII 密文解出来后建成一套存储档案，
+        再绑定给该企业。**不修改旧表**——它是回滚通道，删掉绑定即可回到旧配置。
+
+        四条拒绝条件（都源于「接管会立刻改行为」）：
+        旧配置未启用（档案不受 `TENANT_STORAGE_ROUTE` 控制，接管等于偷偷上线）、
+        驱动为 local（没有桶可接管）、未开启公开读（档案只支持公开读桶）、
+        该企业已有绑定（重复接管会造出第二套同源档案）。
+
+        默认先做桶连通性自检，失败即拒绝；确认无误时可用 `force=true` 跳过。
+        凭据会以明文写进档案（当前产品决策），审计记录里注明来源与是否跳过探桶。
+      tags: [平台管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [companyId]
+              properties:
+                companyId: { type: integer, format: int64, description: 要接管的企业 id }
+                force: { type: boolean, description: 跳过桶连通性自检（默认 false） }
+      responses:
+        "200":
+          description: code=0（data 为新建档案）；code=1 拒绝接管（原因见 msg）
   /api/admin/storage-profiles/{id}:
     put:
       summary: 修改存储档案（平台超管）

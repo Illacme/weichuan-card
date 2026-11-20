@@ -434,6 +434,30 @@ func TenantFromURLs(urls ...string) int64 {
 	return 0
 }
 
+// OwnerOf 回报「档案有没有接管这家企业的对象写入」，以及生效档案的身份。
+//
+//	ok=false → 没有绑定，调用方继续走 tenant_storage_configs 的既有判定
+//	ok=true  → 档案接管。Driver 可能是 local，那**同样是接管**：对象落在平台盘，
+//	           调用方不能把它当成「没接管」再回落到旧表——旧表里可能还留着一条
+//	           指向客户桶的启用行，回落就会得出「在用客户桶」的错误结论。
+//
+// 与 OriginFor 刻意不互相调用：Resolve 每次都会打一遍指纹查询（6 条聚合），
+// 串起来等于一个请求查两遍。两者各自 Resolve 一次，调用方按需选一个。
+func (r *Resolver) OwnerOf(cid int64) (model.StorageOwner, bool) {
+	if cid <= 0 {
+		return model.StorageOwner{}, false
+	}
+	eff, err := r.Resolve(cid)
+	if err != nil || eff.Storage == nil {
+		return model.StorageOwner{}, false
+	}
+	return model.StorageOwner{
+		Driver:      eff.Storage.Driver,
+		ProfileID:   eff.Storage.ID,
+		ProfileName: eff.Storage.Name,
+	}, true
+}
+
 // DynamicCDN 在既有全局刷新器外侧插入档案分发配置：
 // 有分发绑定就按绑定走；绑定了 provider=none 是明确「不刷新」，
 // 不能落到全局刷新器上（那会让运营以为已经关掉、实际还在刷）。

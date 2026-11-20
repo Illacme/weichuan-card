@@ -59,6 +59,17 @@ export interface TenantStorageConfig {
   activeForTenant: boolean
   /** activeForTenant=false 时的原因，可直接展示给超管（五种成因处置方式不同） */
   inactiveReason: string
+  /**
+   * 该企业是否已被「存储档案」接管（storage_bindings 指向某套 storage_profiles）。
+   *
+   * 为 true 时本页这份配置**不再决定任何行为**：上传走档案、公开出参也走档案。
+   * 界面必须把它顶到最前面说清楚，否则超管会对着一个「已生效」的绿勾改这里，
+   * 改完发现毫无效果。没有旧表行时同样可能为 true（绑定档案即可用自有桶）。
+   */
+  supersededByProfile: boolean
+  supersededByProfileId: number
+  /** 接管的档案名，供界面点名；未接管时为空串 */
+  supersededByProfileName: string
 }
 
 export interface TenantStorageSavePayload {

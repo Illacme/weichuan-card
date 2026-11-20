@@ -167,7 +167,8 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	RegisterTenantStorage(r, db)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	SetProfileOriginResolver(profiles.OriginFor)
-	RegisterStorageProfiles(r, db, profiles)
+	SetProfileOwnerResolver(profiles.OwnerOf)
+	RegisterStorageProfiles(r, db, profiles, cfg.UploadBaseURL)
 	RegisterStorageMigration(r, db, profiles)
 	RegisterMPRelease(r, db, cfg) // 小程序版本发布（代租户提审 / 发布 / 撤回）
 	RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）

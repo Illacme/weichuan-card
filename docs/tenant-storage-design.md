@@ -82,10 +82,23 @@
     gorm `default:true`，导致「新建时选 false」被库默认值翻回 true
     （自检与上传按 https 发、私有桶被当公开桶）。两列已摘掉 default 标签，
     默认值改由创建方显式给出。
+- **阶段二点五（已执行）· 补齐两处「只认旧表」的判定 + 旧配置接管桥**
+  - 配额与后台状态接档案：`tenantUsesOwnBucket` 改为「先档案、后旧表」，
+    且档案这一支**不看 `TENANT_STORAGE_ROUTE`**（那是旧表通道的开关，档案不依赖它）。
+    之前绑到云档案的企业仍被平台配额硬拦、后台还显示「使用平台存储」。
+    `GET /api/admin/companies/:id/storage` 新增 `supersededByProfile` /
+    `supersededByProfileId` / `supersededByProfileName`，界面据此把「已被档案接管、
+    本页不再生效」顶到最前面。
+  - `POST /api/admin/storage-profiles/adopt-legacy`：把 `tenant_storage_configs`
+    一行（凭据从 PII 密文解出）建成一套档案并绑定给该企业。四条拒绝条件——
+    未启用 / 驱动 local / 未公开读 / 已有绑定；默认先探桶，`force` 可跳过并留审计。
+    **不修改旧表**，删掉绑定即可回滚。
 - **阶段三（未执行，收益低风险高，近期不建议碰）· 数据迁移与退役**
   - `tenant_storage_configs` → `storage_profiles` + `storage_bindings` 一次性迁移；
     同时决定新档案是否引入 `*_enc` 列，否则 `tenant-storage-rekey` 会随之退役。
   - 之后才谈删表、删 handler、删前端入口。
+  - 注意：接管桥（阶段二点五）已经把「单企业逐个搬」这件事做完了，
+    阶段三剩下的只是「批量 + 删表」，价值主要是省几次点击，不足以抵消风险。
 
 **新功能一律只进 ③。** ① 与 ② 只维护、不加功能——这是三个阶段共同的约束。
 

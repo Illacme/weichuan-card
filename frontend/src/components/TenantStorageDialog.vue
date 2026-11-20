@@ -185,6 +185,18 @@
         >
           切回平台存储
         </el-button>
+        <!-- 旧配置转档案：两套模型之间唯一的单向桥。
+             只在「真有一条可接管的旧配置」时出现——没启用 / 本地驱动 / 已被接管
+             这三种情况后端都会拒，摆出来只会让人白点一次。 -->
+        <el-button
+          v-if="canAdoptLegacy"
+          type="success"
+          plain
+          :loading="adopting"
+          @click="onAdoptLegacy"
+        >
+          转为存储档案
+        </el-button>
         <span class="spacer" />
         <el-button @click="visible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
@@ -205,14 +217,19 @@ import {
   type TenantStorageCheckResult,
   type TenantStorageConfig,
 } from '@/api/tenantStorage'
+import { adoptLegacyStorage } from '@/api/storageProfiles'
 
 const props = defineProps<{ company: { id: number; name: string } | null }>()
 const visible = defineModel<boolean>({ default: false })
+// 接管成功后通知父组件刷新列表：这家的存储口径从「旧表」变成了「档案」，
+// 配额是否适用、列表里的用量展示都会跟着变，不刷新会看到旧结论。
+const emit = defineEmits<{ adopted: [] }>()
 
 const loading = ref(false)
 const saving = ref(false)
 const checking = ref(false)
 const resetting = ref(false)
+const adopting = ref(false)
 const cfg = ref<TenantStorageConfig | null>(null)
 const checkResult = ref<TenantStorageCheckResult | null>(null)
 // 「清空已存凭据」不是立即生效的动作，要跟表单一起保存。
@@ -224,6 +241,18 @@ const clearCredentialsPending = ref(false)
 //   路由开了但这家没生效 → 按 inactiveReason 去改（没勾启用 / 驱动是 local / 凭据缺）
 //   路由没开 → 这是部署决策，改配置没用，要找运维
 const alertView = computed(() => {
+  // 档案接管优先于下面所有分支：上传与公开出参都按档案走，本页的开关 / 驱动 /
+  // 自有域名都不再决定任何行为。不顶到最前面，超管会对着「已生效」的绿勾改这里。
+  if (cfg.value?.supersededByProfile) {
+    const name = cfg.value.supersededByProfileName || '（未命名档案）'
+    return {
+      type: 'info' as const,
+      title: `该企业已由存储档案「${name}」接管`,
+      desc:
+        '上传与公开出参都按档案走，本页这份配置不再生效。要换后端请到「文件存储与分发」改那套档案，' +
+        '或在「企业管理 → 存储档案」给这家换一套；要让这里重新生效，先在「存储档案」里恢复继承 / 解绑。',
+    }
+  }
   if (cfg.value?.activeForTenant) {
     return {
       type: 'success' as const,
@@ -433,6 +462,66 @@ async function onReset() {
     visible.value = false
   } finally {
     resetting.value = false
+  }
+}
+
+// 「转为存储档案」只在这条旧配置真的可接管时出现。
+// 三种情况后端必拒，摆出来只会让人白点一次：没启用（接管等于偷偷上线）、
+// 驱动是 local（没有桶可接管）、已经被档案接管（重复接管会造出第二套同源档案）。
+const canAdoptLegacy = computed(
+  () =>
+    !!cfg.value?.configured &&
+    !cfg.value?.supersededByProfile &&
+    cfg.value?.enabled === true &&
+    cfg.value?.driver !== 'local'
+)
+
+async function onAdoptLegacy() {
+  const id = props.company?.id
+  if (!id) return
+  try {
+    await ElMessageBox.confirm(
+      '会新建一套存储档案并接管本企业：上传立即改走该桶（档案不受 TENANT_STORAGE_ROUTE 控制），' +
+        '本页这份配置会原样保留作回滚通道。确定开始？',
+      '转为存储档案',
+      { type: 'warning', confirmButtonText: '开始接管', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  adopting.value = true
+  try {
+    await runAdopt(id, false)
+  } finally {
+    adopting.value = false
+  }
+}
+
+// runAdopt 抽出来是因为「探桶失败 → 确认后跳过重试」要复用同一段收尾逻辑。
+async function runAdopt(id: number, force: boolean) {
+  try {
+    const p = await adoptLegacyStorage(id, force)
+    ElMessage.success(`已接管为存储档案「${p.name}」${force ? '（已跳过探桶）' : ''}`)
+    emit('adopted')
+    visible.value = false
+  } catch (e: any) {
+    const msg = e?.response?.data?.msg || '接管失败'
+    if (msg.includes('连通性')) {
+      // 桶暂时探不通但配置可能确实是对的（内网白名单、临时故障）：
+      // 把选择权交给操作者，并且这次跳过会写进审计。
+      try {
+        await ElMessageBox.confirm(`${msg}\n\n确认桶配置无误、要跳过探桶继续接管吗？`, '桶连通性自检失败', {
+          type: 'warning',
+          confirmButtonText: '跳过并接管',
+          cancelButtonText: '取消',
+        })
+      } catch {
+        return
+      }
+      await runAdopt(id, true)
+      return
+    }
+    ElMessage.error(msg)
   }
 }
 </script>

@@ -165,3 +165,77 @@ func TestStorageQuotaPutRejectsOwnBucketTenant(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 50, row.QuotaMB)
 }
+
+// 档案绑定必须与旧表同等地豁免平台配额。
+//
+// 这是新模型下最容易漏的一处：上传早已进客户桶（DynamicResolver 先问档案），
+// 配额却还在按 tenant_storage_configs 判定 → 客户被平台上限卡住，
+// 而「已用 / 上限」那根进度条画的还是平台盘的数字。
+//
+// 特别注意这里把 TENANT_STORAGE_ROUTE 设为 off：那是**旧表通道**的开关，
+// 档案不依赖它。按开关短路就会重现上面那个错误结论。
+func TestCheckStorageQuotaExemptsProfileBoundTenant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, db := setupEngineWithDB(t)
+
+	old := globalStorageQuotaMBFn
+	globalStorageQuotaMBFn = func() int64 { return 1 } // 1MB 全局配额
+	t.Cleanup(func() { globalStorageQuotaMBFn = old })
+
+	const cid = 4
+	cloud := model.StorageProfile{Name: "客户桶", Driver: "minio", Endpoint: "s.example.com", Bucket: "b",
+		BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, UseSSL: true, Version: 1}
+	require.NoError(t, db.Create(&cloud).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{TenantID: cid, StorageProfileID: cloud.ID, Version: 1}).Error)
+
+	t.Setenv("TENANT_STORAGE_ROUTE", "off")
+	ok, msg := checkStorageQuota(db, cid, 10*1024*1024)
+	require.True(t, ok, "档案绑定后对象已进客户桶，平台配额不应再拦：%v", msg)
+
+	// 反向一：没有绑定的企业仍受平台配额拦截（豁免不能扩大化）。
+	ok, msg = checkStorageQuota(db, 5, 10*1024*1024)
+	require.False(t, ok, "没绑档案的企业必须仍受平台配额拦截")
+	require.Contains(t, msg, "存储空间已用尽")
+
+	// 反向二：绑到本地档案 = 对象仍在平台盘，平台配额照常适用。
+	// 这一支证明豁免是由「驱动非 local」驱动，不是「只要绑了档案就放行」。
+	local := model.StorageProfile{Name: "平台盘", Driver: "local", PublicRead: true, UseSSL: true, Version: 1}
+	require.NoError(t, db.Create(&local).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{TenantID: 6, StorageProfileID: local.ID, Version: 1}).Error)
+	ok, msg = checkStorageQuota(db, 6, 10*1024*1024)
+	require.False(t, ok, "本地档案的对象仍在平台盘，平台配额必须照常适用")
+	require.Contains(t, msg, "存储空间已用尽")
+}
+
+// GET /api/admin/companies/:id/storage 必须说明「这张表已被存储档案接管」。
+//
+// 不说的话，超管会对着一个「已生效」的绿勾改这里，改完发现毫无效果——
+// 上传与出参早已走档案。没有旧表行时更要说：企业只要绑了档案就能用自有桶，
+// 此时界面写「尚未配置该企业的自有存储」是纯粹的误导。
+func TestTenantStorageViewReportsProfileSupersede(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r, db := setupEngineWithDB(t)
+	c := newTestClient(r, t)
+	admin := loginAdmin(t, c)
+
+	const cid = 2
+	sp := model.StorageProfile{Name: "已接管档案", Driver: "minio", Endpoint: "s.example.com", Bucket: "b",
+		BaseURL: "https://x/uploads", AccessKey: "AK", SecretKey: "SK", PublicRead: true, UseSSL: true, Version: 1}
+	require.NoError(t, db.Create(&sp).Error)
+	require.NoError(t, db.Create(&model.StorageBinding{TenantID: cid, StorageProfileID: sp.ID, Version: 1}).Error)
+
+	// 没有 tenant_storage_configs 行：视图仍要报「已被档案接管」。
+	_, body := c.do("GET", "/api/admin/companies/2/storage", nil, admin)
+	require.EqualValues(t, 0, body["code"], "%v", body["msg"])
+	d := body["data"].(map[string]any)
+	require.Equal(t, false, d["configured"], "这家没填过旧表")
+	require.Equal(t, true, d["supersededByProfile"], "绑定档案后必须提示已接管")
+	require.Equal(t, "已接管档案", d["supersededByProfileName"])
+
+	// 反向：另一家没有绑定 → 不提示接管。
+	_, body = c.do("GET", "/api/admin/companies/3/storage", nil, admin)
+	require.EqualValues(t, 0, body["code"], "%v", body["msg"])
+	d = body["data"].(map[string]any)
+	require.Equal(t, false, d["supersededByProfile"])
+	require.Equal(t, "", d["supersededByProfileName"])
+}

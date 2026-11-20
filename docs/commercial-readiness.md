@@ -12,7 +12,7 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **137 paths**，最后同步 2026-11-20。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **138 paths**，最后同步 2026-11-20。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
@@ -5655,4 +5655,4 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
 
 `storage_profiles` / `delivery_profiles` / `storage_bindings` / `storage_migration_jobs` / `storage_migration_errors` 五张表；接口 14 个路径已纳入 `docs/openapi.yaml` 契约基线。平台超管管档案与全局默认，企业管理员只选自己的绑定（接口返回按企业过滤）。启动时 `EnsureBuiltinLocal` 幂等补齐一套不可删除的本地兜底档案（驱动锁定 local，不自动绑定全局）；`storageprofile.Resolver` 以「行数 + MAX(version)」指纹检测变更，档案保存与绑定切换下一个请求即生效；`uploadroute.DynamicResolver` 与 `DynamicCDN` 保证没有绑定时零行为变更地沿用旧配置。迁移任务流式复制对象、逐条记录失败、断点续跑、零失败才自动切绑定。凭据明文入库是当前产品决策，回显掩码且不回传 SecretKey。
 
-**三层配置的职责边界（2026-12 补充）**：档案（③）落地后，系统里仍有 ① 系统设置 `storage_*` 全局单值与 ② `tenant_storage_configs` 两套旧配置，**都不能删**。① 是 `DynamicResolver` 的 `base`（无绑定时的兜底）兼 `STORAGE_*` / `MINIO_*` 环境变量的界面映射；② 的凭据走 `pii.Encrypt` + `tenant-storage-rekey`（新档案是明文），且配额判定与它同源。收敛按三阶段推进，**阶段一、二已执行**：阶段一改产品口径（存储组三个分区标题加「兜底 · 」前缀、导语改「兜底（高级）」，企业管理按钮 `存储` → `自有桶` 并在弹窗说明定位）；阶段二让 ② 从「唯一数据源」降为「兼容数据源」——`cmd/nginx-snippets` 新增 `--source=auto|legacy|profiles`（默认 auto，档案优先、旧表补位，`driver=local` 的档案绑定覆盖旧表行，render 与 check 必须同源），并把 `publicOriginState` 的双口径合并进 `storageprofile.Resolver.OriginFor`（按「谁在写对象」分叉，档案接管时不再回落旧域名）。阶段二同时修掉 `storage_profiles` 的 `use_ssl` / `public_read` 因 gorm `default:true` 导致「新建选 false 被翻回 true」的缺陷。阶段三（数据迁移 + 退役旧表）**未执行**。完整边界见 `docs/tenant-storage-design.md` §0.1。**新功能一律只进档案，① 与 ② 只维护不加功能。**
+**三层配置的职责边界（2026-12 补充）**：档案（③）落地后，系统里仍有 ① 系统设置 `storage_*` 全局单值与 ② `tenant_storage_configs` 两套旧配置，**都不能删**。① 是 `DynamicResolver` 的 `base`（无绑定时的兜底）兼 `STORAGE_*` / `MINIO_*` 环境变量的界面映射；② 的凭据走 `pii.Encrypt` + `tenant-storage-rekey`（新档案是明文），且配额判定与它同源。收敛按三阶段推进，**阶段一、二已执行**：阶段一改产品口径（存储组三个分区标题加「兜底 · 」前缀、导语改「兜底（高级）」，企业管理按钮 `存储` → `自有桶` 并在弹窗说明定位）；阶段二让 ② 从「唯一数据源」降为「兼容数据源」——`cmd/nginx-snippets` 新增 `--source=auto|legacy|profiles`（默认 auto，档案优先、旧表补位，`driver=local` 的档案绑定覆盖旧表行，render 与 check 必须同源），并把 `publicOriginState` 的双口径合并进 `storageprofile.Resolver.OriginFor`（按「谁在写对象」分叉，档案接管时不再回落旧域名）。阶段二同时修掉 `storage_profiles` 的 `use_ssl` / `public_read` 因 gorm `default:true` 导致「新建选 false 被翻回 true」的缺陷。**阶段二点五已执行**：配额与后台状态判定接档案（`tenantUsesOwnBucket` 改为先档案后旧表，档案这一支不看 `TENANT_STORAGE_ROUTE`；存储视图新增 `supersededByProfile*` 三个字段），并新增 `POST /api/admin/storage-profiles/adopt-legacy` 把旧表一行（凭据由 PII 密文解出）转成档案 + 绑定，默认先探桶、`force` 可跳过且留审计、**不修改旧表**（删绑定即回滚）。阶段三（批量迁移 + 退役旧表）**未执行**，且接管桥已覆盖「单企业逐个搬」，其剩余价值不足以抵消风险。完整边界见 `docs/tenant-storage-design.md` §0.1。**新功能一律只进档案，① 与 ② 只维护不加功能。**

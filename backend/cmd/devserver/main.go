@@ -191,7 +191,8 @@ func main() {
 	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	handler.SetProfileOriginResolver(profiles.OriginFor)
-	handler.RegisterStorageProfiles(r, db, profiles)
+	handler.SetProfileOwnerResolver(profiles.OwnerOf)
+	handler.RegisterStorageProfiles(r, db, profiles, cfg.UploadBaseURL)
 	handler.RegisterStorageMigration(r, db, profiles)
 	handler.RegisterMPRelease(r, db, cfg) // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)         // 平台超管账号管理（列表 / 新增 / 改用户名 / 重置密码 / 删除）
