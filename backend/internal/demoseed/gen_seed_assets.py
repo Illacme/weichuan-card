@@ -8,7 +8,6 @@ OUT = os.path.join(os.path.dirname(__file__), "seedassets")
 
 PRIMARY = (26, 140, 255)   # #1A8CFF 科技亮蓝
 DARK = (14, 111, 224)      # #0E6FE0
-LIGHT = (232, 243, 255)    # #E8F3FF
 WHITE = (255, 255, 255)
 
 FONT_PATH = "/System/Library/Fonts/STHeiti Medium.ttc"
@@ -55,15 +54,6 @@ def make_logo():
     save(img, "logo.png")
 
 
-def make_avatar(char):
-    img = gradient(200, 200, LIGHT, (210, 232, 255))
-    d = ImageDraw.Draw(img)
-    d.ellipse([20, 20, 180, 180], fill=PRIMARY)
-    d.ellipse([34, 34, 166, 166], outline=WHITE, width=4)
-    center_text(d, [20, 20, 180, 180], char, font(96), WHITE)
-    save(img, "avatar-gaolixin.png")
-
-
 def make_icon(name, label):
     img = gradient(160, 160, PRIMARY, DARK)
     d = ImageDraw.Draw(img)
@@ -99,7 +89,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     # logo.png 已换成客户真实 LOGO（去白底透明版），**不要再生成占位图覆盖**。
     print("skip: logo.png 为真实 LOGO，不生成占位图")
-    make_avatar("高")
+    # avatar-gaolixin.png 已换成高立新真实照片（等比压到 400×400 PNG），不再生成占位图。
+    # 文件名保持不动：预览脚本的身份黑名单、库里的 /uploads/... 路径都按它认。
+    print("skip: avatar-gaolixin.png 为真实头像，不生成占位图")
     # 分类图标 cat-*.png 与业务服务 svc-*.png 已换成真实设计图，不生成。
     print("skip: cat-*.png / svc-*.png 为真实设计图，不生成占位图")
     # 公司简介封面 cover-company.jpg 已换成 AI 实景照片（蓝色玻璃观光电梯，

@@ -30,6 +30,7 @@ import (
 	"weichuan/internal/cattemplate"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
+	"weichuan/internal/setting"
 	"weichuan/internal/storage"
 )
 
@@ -123,13 +124,19 @@ func Load(db *gorm.DB, opt Options) (Result, error) {
 		Address: "廊坊市广阳区紫金城商住楼1-2-1911", Tel: "0316-8023950", Logo: assets["logo.png"],
 	}).Error)
 	add("创建企业简介", db.Where("company_id = ?", DemoCompanyID).FirstOrCreate(&model.CompanyProfile{
-		// 视频号档（跨主体）：用 feed-token；feed-id 留空 → 组件走 channels-token 分支
-		// （强制 autoplay=false，用户点一下再播）。
+		// 视频号档（同主体）：同时带上 feedId / 视频号 ID / feed-token 三份凭证，
+		// 端上 pickMode 的优先级是 feedId > feed-token，所以实际走同主体路径；
+		// token 保留作跨主体切换时的备用值，后台会提示「已填 feedId 时 token 不生效」。
 		CompanyID: DemoCompanyID,
-		IntroText: "成立于 2015 年 11 月，专注于电梯销售、安装、维修保养与改造服务，" +
+		// 两个全角空格是文案排版约定：简介区左对齐时留出视觉缩进，别当空白删掉。
+		IntroText: "\u3000\u3000成立于 2015 年 11 月，专注于电梯销售、安装、维修保养与改造服务，" +
 			"为住宅、政务中心、医疗、商业、公共交通、生产制造与仓储物流等多场景提供机电一体化解决方案。",
 		VideoSource:    model.VideoSourceChannels,
-		VideoFeedToken: "AThgKivzk",
+		VideoChannelID: "sphKWMbPjskCCKz",
+		VideoFeedID:    "export/UzFfBgAAxK-rDC5YAQKwk8zT4DCaMqbNxBuNPlRLSP0n3Z20VQ",
+		VideoFeedToken: "token/A235iUAnf",
+		// 简介文字档位跟着简介走（见 model.CompanyProfile.IntroFontScale），不归首页布局表。
+		IntroFontScale: model.IntroFontSmall,
 		Cover:          assets["cover-company.jpg"],
 	}).Error)
 
@@ -214,8 +221,25 @@ func Load(db *gorm.DB, opt Options) (Result, error) {
 	}
 
 	// ---- 首页布局 ----
+	// 演示数据按最终验收稿配齐：小字简介、每页 1 张精选、横向滚动、宝蓝主色 80% 浓度。
+	// 这些是**演示初始值**，不是全局缺省：现有租户的存量行 FirstOrCreate 命中后不会被改写。
+	demoBrand := "brand-royal"
 	add("创建首页布局", db.Where("company_id = ?", DemoCompanyID).FirstOrCreate(
-		&model.HomeLayout{CompanyID: DemoCompanyID, Order: `["achievement","service"]`}).Error)
+		&model.HomeLayout{
+			CompanyID: DemoCompanyID, Order: `["achievement","service"]`,
+			FeaturedCount: 1, FeaturedEffect: model.FeaturedEffectScroll,
+			BgGradientStrength: 80, BrandColorID: &demoBrand,
+		}).Error)
+
+	// 腾讯视频档：只在「加载演示数据」时打开（本地联调 / 安装向导勾选项）。
+	// 生产安装不加载演示数据时不碰这行，仍由运维确认插件授权后自行开启——
+	// 插件没授权却打开会让整个小程序编译失败，所以绝不能把它写进 registry 的全局默认。
+	// 测试库只 AutoMigrate 了业务表、没有 sys_setting，故先探表再更新。
+	if db.Migrator().HasTable("sys_setting") {
+		// Upsert 会同时写库并刷新进程内设置缓存，不必再由调用方 Reload；
+		// 未初始化时它返回错误而不是 panic（单测的裸业务库就走不到这里）。
+		add("开启演示腾讯视频档", setting.Upsert("video_tencent_enabled", "true"))
+	}
 
 	// ---- 演示员工（小程序登录） ----
 	// 注意：phone_bidx 由 Employee 的 BeforeCreate 钩子按当时的 PII 密钥计算。

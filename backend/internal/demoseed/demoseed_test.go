@@ -119,6 +119,57 @@ func TestLoadWritesFullPackage(t *testing.T) {
 	}
 }
 
+// 演示稿的呈现参数是客户逐项确认过的，不是「随便给个值」：
+// 简介缩进 / 视频号三份凭证 / 小字 + 单图横滚 + 宝蓝 80% 浓度。
+// 少一项真机就不会长成验收稿的样子，而且不会报任何错。
+func TestLoadDemoPresentationDefaults(t *testing.T) {
+	db := openDB(t)
+	upDir := t.TempDir()
+	if _, err := Load(db, Options{UploadDir: upDir, Quiet: true}); err != nil {
+		t.Fatalf("写入演示数据失败：%v", err)
+	}
+
+	var cp model.CompanyProfile
+	if err := db.Where("company_id = ?", DemoCompanyID).First(&cp).Error; err != nil {
+		t.Fatalf("读取企业简介失败：%v", err)
+	}
+	if !strings.HasPrefix(cp.IntroText, "\u3000\u3000") {
+		t.Errorf("简介开头应有两个全角空格，got %q", cp.IntroText[:min(12, len(cp.IntroText))])
+	}
+	if cp.VideoChannelID != "sphKWMbPjskCCKz" ||
+		cp.VideoFeedID != "export/UzFfBgAAxK-rDC5YAQKwk8zT4DCaMqbNxBuNPlRLSP0n3Z20VQ" ||
+		cp.VideoFeedToken != "token/A235iUAnf" {
+		t.Errorf("视频号三份凭证不是验收稿的值：%+v", cp)
+	}
+
+	if cp.IntroFontScale != model.IntroFontSmall {
+		t.Errorf("简介字号档位应为 small，got %q", cp.IntroFontScale)
+	}
+
+	var hl model.HomeLayout
+	if err := db.Where("company_id = ?", DemoCompanyID).First(&hl).Error; err != nil {
+		t.Fatalf("读取首页布局失败：%v", err)
+	}
+	if hl.FeaturedCount != 1 || hl.FeaturedEffect != model.FeaturedEffectScroll ||
+		hl.BgGradientStrength != 80 {
+		t.Errorf("首页布局呈现参数不对：%+v", hl)
+	}
+	if hl.BrandColorID == nil || *hl.BrandColorID != "brand-royal" {
+		t.Errorf("品牌配色应为宝蓝 brand-royal，got %v", hl.BrandColorID)
+	}
+
+	var emp model.Employee
+	if err := db.Where("company_id = ?", DemoCompanyID).First(&emp).Error; err != nil {
+		t.Fatalf("读取演示员工失败：%v", err)
+	}
+	if emp.Avatar != "/uploads/avatar-gaolixin.png" {
+		t.Errorf("演示员工头像路径不对：%q", emp.Avatar)
+	}
+	if _, err := os.Stat(filepath.Join(upDir, "avatar-gaolixin_thumb.png")); err != nil {
+		t.Errorf("演示头像缩略图缺失：%v", err)
+	}
+}
+
 // 演示账号：口令不能写死（商用版装出来的库不能有「文档里写明的已知口令」），
 // 必须随机生成、能真的登录进去，并且库里存的是哈希。
 func TestLoadGeneratesUsableAccounts(t *testing.T) {
