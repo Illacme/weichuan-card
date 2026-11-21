@@ -59,12 +59,12 @@
       type="success"
       :closable="false"
       show-icon
-      title="多套存储 / CDN、全局默认档案、企业绑定：都在「文件存储与分发」"
-      description="在那里保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定，并用迁移任务搬运历史对象。本页只保留平台兜底的启动配置：平台对象（素材采用 / 小程序码 / 访客头像等 p/ 对象）与尚未绑定档案的企业用它，改动需重启；已绑档案的企业不受这里影响。"
+      title="所有存储与分发配置都在「文件存储与分发」"
+      description="那里可以保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定、用迁移任务搬运历史对象；原在本页的存储 / 上传启动配置也已搬到该模块的「平台兜底配置」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
       class="storage-module-entry"
     >
       <template #default>
-        <a href="/platform/storage-profiles" class="storage-module-link">打开「文件存储与分发」 →</a>
+        <a href="/platform/storage-profiles?tab=platform" class="storage-module-link">打开「文件存储与分发」 →</a>
       </template>
     </el-alert>
 
@@ -544,6 +544,9 @@ const restartDismissed = ref(false)
 const groups = computed(() => {
   const map = new Map<string, SettingItem[]>()
   for (const it of items.value) {
+    // 存储 / 上传两组已集中到「文件存储与分发 → 平台兜底配置」，
+    // 主列表不再重复展示。items.value 仍是全量：配置向导首装时照常要用这些项。
+    if (it.group === 'storage' || it.group === 'upload') continue
     if (!map.has(it.group)) map.set(it.group, [])
     map.get(it.group)!.push(it)
   }
@@ -591,29 +594,13 @@ function ungroupedOf(items: SettingItem[]): SettingItem[] {
   return items.filter((it) => !covered.has(it.key))
 }
 
-// 从档案页跳过来时带 ?focus=<key>，加载完自动定位到对应行。
-// 读 location.search 而不是 useRoute()：本页在单测里不挂 router，
-// 引 vue-router 会让所有现有用例炸在 setup 阶段。
-const focusKey = ref('')
-if (typeof window !== 'undefined') {
-  try {
-    focusKey.value = new URLSearchParams(window.location.search).get('focus')?.trim() || ''
-  } catch {
-    focusKey.value = ''
-  }
-}
-
 // 非搜索态：按依赖联动过滤——当前存储方式 / 未填 AppID 下用不上的项不占版面
 // （与配置向导 stepVisible 同一套 depState 规则，两边行为一致：向导里切 minio
 // 后 upload_dir 会消失，主列表以前只是置灰，现在一致地「只显示相关的」）。
 // 注意只过滤「呈现」：草稿按 key 全量持有，被过滤掉的项保存时照样进载荷，
 // 切回另一种方式时值还在——过滤是视图，不是删除。
-// 带 focus 参数时整组不过滤：内置档案的目录在云驱动下本会被藏起来，
-// 跳过去却找不到行，等于给了一条死路。
 const visibleGroups = computed(() =>
-  focusKey.value
-    ? groups.value
-    : groups.value.map((g) => ({ ...g, items: g.items.filter((it) => !depState(it.key).dim) })),
+  groups.value.map((g) => ({ ...g, items: g.items.filter((it) => !depState(it.key).dim) })),
 )
 
 // ---- 上线就绪检查 ----
@@ -764,6 +751,13 @@ function toggleReady() {
 // 定位到对应配置行（行上锚点 id="set-<key>"）。
 // 防御 scrollIntoView 缺失：jsdom 等环境没有该方法（真实浏览器均有），缺省时静默跳过。
 function jumpTo(key: string) {
+  // 存储 / 上传项已搬到「文件存储与分发 → 平台兜底配置」，本页不再有对应行。
+  // 就绪清单里的「去配置」必须跟着走，否则点了没有任何反应（又一条死路）。
+  const it = items.value.find((i) => i.key === key)
+  if (it && (it.group === 'storage' || it.group === 'upload')) {
+    window.location.href = `/platform/storage-profiles?tab=platform&focus=${key}`
+    return
+  }
   const el = document.getElementById('set-' + key)
   if (el && typeof el.scrollIntoView === 'function') {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -847,7 +841,6 @@ watch(loading, (v) => {
     measureToolbar()
     attachToolbarObserver()
     computeActive()
-    if (focusKey.value) jumpTo(focusKey.value)
   })
 })
 

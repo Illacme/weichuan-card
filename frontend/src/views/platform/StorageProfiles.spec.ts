@@ -25,6 +25,10 @@ vi.mock('@/api/storageProfiles', () => ({
   listMigrationErrors: vi.fn(),
 }))
 vi.mock('@/api/tenants', () => ({ listCompanies: vi.fn() }))
+vi.mock('@/api/settings', () => ({
+  getSettings: vi.fn().mockResolvedValue({ code: 0, data: [] }),
+  updateSettings: vi.fn().mockResolvedValue({ code: 0, data: { restartKeys: [] } }),
+}))
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), info: vi.fn() },
   ElMessageBox: { confirm: vi.fn().mockResolvedValue(true) },
@@ -33,6 +37,7 @@ vi.mock('element-plus', () => ({
 import { ElMessage } from 'element-plus'
 import * as api from '@/api/storageProfiles'
 import { listCompanies } from '@/api/tenants'
+import { getSettings } from '@/api/settings'
 import StorageProfiles from './StorageProfiles.vue'
 import { elStubs, flush } from '@/test/elStubs'
 
@@ -77,6 +82,9 @@ function mountPage() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 新「平台兜底配置」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
+  // 这里显式给实现，避免 clearAllMocks 后拿不到返回值。
+  vi.mocked(getSettings).mockResolvedValue({ code: 0, data: [] } as any)
   vi.mocked(api.listStorageProfiles).mockResolvedValue([storage(1, '主站 OSS'), storage(2, '备份桶')] as any)
   vi.mocked(api.listDeliveryProfiles).mockResolvedValue([delivery(3, '国内 CDN')] as any)
   vi.mocked(api.listStorageBindings).mockResolvedValue({
@@ -197,7 +205,7 @@ describe('文件存储与分发模块', () => {
     expect(tip1.props('content')).toContain('这里改不了')
     const builtinLink = w.find('a.builtin-setting-link')
     expect(builtinLink.exists()).toBe(true)
-    expect(builtinLink.attributes('href')).toBe('/platform/settings?focus=upload_dir')
+    expect(builtinLink.attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=upload_dir')
     expect(builtinLink.text()).toContain('跟随系统设置')
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
@@ -245,8 +253,8 @@ describe('文件存储与分发模块', () => {
     // 两套内置档案分别跳到各自的真值源，不能都指向 upload_dir
     const links = w.findAll('a.builtin-setting-link')
     expect(links).toHaveLength(2)
-    expect(links[0].attributes('href')).toBe('/platform/settings?focus=upload_dir')
-    expect(links[1].attributes('href')).toBe('/platform/settings?focus=mirror_dir')
+    expect(links[0].attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=upload_dir')
+    expect(links[1].attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=mirror_dir')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
     // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
@@ -317,6 +325,13 @@ describe('文件存储与分发模块', () => {
     const startBtn = w.findAll('button').find((b) => b.text() === '启动 / 续跑')!
     expect(startBtn).toBeTruthy()
     expect(startBtn.attributes('disabled')).toBeDefined()
+  })
+
+  it('新增「平台兜底配置」标签，把系统设置的存储/上传项收进同一模块', () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain('label="平台兜底配置"')
+    expect(src).toContain('name="platform"')
+    expect(src).toContain('StorageSettingsPanel')
   })
 
   it('僵尸字段 pathStyle 不再出现在前端类型与表单里', () => {

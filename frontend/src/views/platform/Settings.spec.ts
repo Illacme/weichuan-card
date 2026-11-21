@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/api/storageProfiles', () => ({
@@ -207,10 +208,6 @@ function textInputOf(w: any, key: string) {
 function numberInputOf(w: any, key: string) {
   return rowOf(w, key).find('input.el-input-number')
 }
-// 断言组件 props（min 只存在于组件上，DOM 上没有对应属性）
-function numberComponentOf(w: any, key: string) {
-  return rowOf(w, key).findComponent({ name: 'ElInputNumber' })
-}
 function selectOf(w: any, key: string) {
   return rowOf(w, key).find('select.el-select')
 }
@@ -272,7 +269,7 @@ describe('Settings 系统设置', () => {
   it('按分组渲染全部配置项与说明（含存储与只读分组）', async () => {
     const { w } = await setup()
     const text = w.text()
-    ;['通用', '小程序', '上传', '微信', '后台上传小程序代码', '登录与令牌', '平台兜底存储（启动配置）', '安全与基础设施', '功能开关'].forEach(
+    ;['通用', '小程序', '微信', '后台上传小程序代码', '登录与令牌', '安全与基础设施', '功能开关'].forEach(
       (g) => expect(text).toContain(g),
     )
     expect(text).toContain('brand_name')
@@ -285,7 +282,7 @@ describe('Settings 系统设置', () => {
     expect(text).toContain('mp_source_dir')
     expect(text).toContain('MP_SOURCE_DIR')
     // 需重启 / 只读 / 敏感 标记都渲染出来
-    expect(rowOf(w, 'storage_driver').text()).toContain('需重启')
+    expect(rowOf(w, 'db_dsn').text()).toContain('需重启')
     expect(rowOf(w, 'db_dsn').text()).toContain('只读')
     expect(rowOf(w, 'jwt_key').text()).toContain('敏感')
     // 环境变量名提示（只读项只告诉改法）
@@ -382,27 +379,6 @@ describe('Settings 系统设置', () => {
     expect(updateSettings).toHaveBeenCalledWith({ metrics_enabled: 'true' })
   })
 
-  it('保存含「需重启」项后给出常驻待重启提示（含重启命令），可手动关闭', async () => {
-    // 后端会点名哪些项需重启；这里模拟改了存储方式
-    vi.mocked(updateSettings).mockImplementationOnce(async () => ({
-      code: 0,
-      data: { restartKeys: ['storage_driver'] },
-    }) as any)
-    const { w } = await setup()
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await saveButton(w).trigger('click')
-    await vi.waitFor(() => expect(w.find('.restart-alert').exists()).toBe(true))
-    const t = w.find('.restart-alert').text()
-    // 显示中文名而不是 key，且给出可直接照做的重启命令
-    expect(t).toContain('存储方式')
-    expect(t).not.toContain('storage_driver')
-    expect(t).toContain('docker compose restart backend')
-    // 关掉后不再占用注意力
-    await w.find('.restart-alert .el-alert__close').trigger('click')
-    await nextTick()
-    expect(w.find('.restart-alert').exists()).toBe(false)
-  })
-
   it('没有需重启项时不显示待重启提示', async () => {
     const { w } = await setup()
     // 必须改成与当前值不同的内容，否则 dirty=false、保存按钮是禁用的
@@ -412,14 +388,6 @@ describe('Settings 系统设置', () => {
     expect(w.find('.restart-alert').exists()).toBe(false)
   })
 
-  it('改整数项：以字符串提交，避免后端类型校验失败', async () => {
-    const { w } = await setup()
-    await numberInputOf(w, 'upload_max_mb').setValue('25')
-    await saveButton(w).trigger('click')
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
-    expect(updateSettings).toHaveBeenCalledWith({ upload_max_mb: '25' })
-  })
-
   it('改品牌名保存后即时同步侧边栏品牌（store）', async () => {
     const { w, store } = await setup()
     await textInputOf(w, 'brand_name').setValue('朗汇机电')
@@ -427,26 +395,6 @@ describe('Settings 系统设置', () => {
     await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
     expect(updateSettings).toHaveBeenCalledWith({ brand_name: '朗汇机电' })
     expect(store.brandName).toBe('朗汇机电')
-  })
-
-  it('保存返回需重启项时给出告警提示，避免误以为没生效', async () => {
-    vi.mocked(updateSettings).mockImplementation(async () => ({
-      code: 0,
-      msg: '保存成功；其中 1 项需重启服务后生效：storage_driver',
-      data: { restartKeys: ['storage_driver'] },
-    }))
-    const { w } = await setup()
-    await selectOf(w, 'storage_driver').setValue('oss')
-    await saveButton(w).trigger('click')
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(ElMessage.warning).mock.calls[0][0]).toContain('1 项需重启服务后才生效')
-    expect(vi.mocked(ElMessage.success)).not.toHaveBeenCalled()
-    // 具体是哪几项、怎么重启交给常驻提示条（toast 几秒就消失，说不完）
-    await nextTick()
-    const bar = w.find('.restart-alert')
-    expect(bar.exists()).toBe(true)
-    expect(bar.text()).toContain('存储方式')
-    expect(bar.text()).toContain('docker compose restart backend')
   })
 
   it('重置：把改动改回服务端原值，不再有变更', async () => {
@@ -475,27 +423,6 @@ describe('Settings 系统设置', () => {
     expect(rowOf(w, 'db_dsn').text()).toContain('重启')
   })
 
-  it('有安全下限的整数项：上传上限最小为 1，界面就选不到 0', async () => {
-    const { w } = await setup()
-    expect(numberComponentOf(w, 'upload_max_mb').props('min')).toBe(1)
-    // 视频上限同样有下限 1（后端 intRange(1,2048)）：2026-10-22 全量核查时补上，
-    // 此前界面允许 0，保存才被后端拒
-    expect(numberComponentOf(w, 'upload_video_max_mb').props('min')).toBe(1)
-    // 其它整数项（如小程序码 TTL）仍允许 0：后端有回落逻辑，不该在界面硬拦
-    expect(numberComponentOf(w, 'wxacode_ttl_hours').props('min')).toBe(0)
-  })
-
-  it('枚举项渲染为下拉：存储方式带 local / minio / oss / s3 候选，不再手打字符串', async () => {
-    const { w } = await setup()
-    const row = rowOf(w, 'storage_driver')
-    // 后端 oneOf 校验的候选值通过 options 下发：界面渲染三态下拉
-    // （未设置 + 4 候选），而不是文本框——手打候选值毫无意义，填错只能等保存时报错
-    expect(row.find('input.el-input').exists()).toBe(false)
-    expect(row.find('select.el-select').exists()).toBe(true)
-    expect(row.findAll('option')).toHaveLength(5)
-  })
-
-  // ---- P0：商业产品可读性（中文名 / 分组导语 / 上线就绪面板）----
   it('配置项以中文名为主标签，key 降级为灰字仍可对照', async () => {
     const { w } = await setup()
     const row = rowOf(w, 'brand_name')
@@ -518,14 +445,10 @@ describe('Settings 系统设置', () => {
   it('每个分组展示导语：一句话说清管什么、什么时候动', async () => {
     const { w } = await setup()
     expect(w.text()).toContain('产品的基础展示信息') // general
-    expect(w.text()).toContain('p/ 平台对象') // storage：明确是兜底，不是多套档案
-    expect(w.text()).toContain('启动期配置')
+    expect(w.text()).toContain('所有存储与分发配置都在') // 指路已改到新模块
     expect(w.text()).toContain('首次部署必配') // miniprogram
-    // 上传组导语要说清两条链接各自的适用条件：直传预签名公私桶都走，
-    // 只有私有桶下载签名仅在公开访问关掉时才涉及（2026-10-22 核查 UploadField 总是先试预签名）
-    expect(w.text()).toContain('公私桶都会走')
-    // 10 个分组各一条导语（通用 / 存储 / 上传 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计）
-    expect(w.findAll('.group-blurb')).toHaveLength(10)
+    // 8 个分组各一条导语（通用 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计）
+    expect(w.findAll('.group-blurb')).toHaveLength(8)
   })
 
   it('上线就绪清单默认收起为摘要条：点「查看详情」才展开，并记住选择', async () => {
@@ -642,155 +565,12 @@ describe('Settings 系统设置', () => {
   })
 
   // ---- P1：依赖联动（非搜索态按分支过滤） + 分组顺序 ----
-  it('依赖联动：local 下云凭据不占版面，切 minio 后反之；搜索态全量可见', async () => {
+  it('分组按依赖链排序：小程序与微信相邻，存储已搬走', async () => {
     const { w } = await setup()
-    // 非搜索态：local 只显示本地上传目录（待配置），云凭据整批不渲染——
-    // 置灰保留是旧行为，半透明行仍占版面，与向导「切 minio 后 upload_dir 消失」也不一致
-    expect(rowOf(w, 'upload_dir').text()).toContain('待配置')
-    ;['storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key'].forEach((k) => {
-      expect(rowExists(w, k), `${k} 在 local 下不应占版面`).toBe(false)
-    })
-    // CDN 未开：CDN 凭据同样不渲染（开关本身仍在，开了才出现凭据区）
-    expect(rowExists(w, 'cdn_access_key_id')).toBe(false)
-    expect(rowExists(w, 'cdn_enabled')).toBe(true)
-    // AppID 未填：AppSecret 也不占版面（填了 AppID 才需要配 Secret）
-    expect(rowExists(w, 'wx_appsecret')).toBe(false)
-
-    // 切到 minio：云凭据转亮出现（待配置），本地上传目录不再占版面
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await nextTick()
-    expect(rowOf(w, 'storage_endpoint').text()).toContain('待配置')
-    expect(rowExists(w, 'upload_dir')).toBe(false)
-    // 填了 AppID：AppSecret 转亮出现
-    await textInputOf(w, 'wx_appid').setValue('wx123')
-    await nextTick()
-    expect(rowOf(w, 'wx_appsecret').exists()).toBe(true)
-
-    // 搜索态例外：两种方式的项都要能搜到（带置灰标记）——local 时搜 minio_endpoint
-    // 必须命中，否则用户会以为系统里没有这项
-    await w.find('input.head-search').setValue('minio_endpoint')
-    await nextTick()
-    expect(rowExists(w, 'storage_endpoint')).toBe(true)
-    expect(rowExists(w, 'upload_dir')).toBe(false)
-    await w.find('input.head-search').setValue('upload_dir')
-    await nextTick()
-    expect(rowExists(w, 'upload_dir')).toBe(true)
-    expect(rowOf(w, 'upload_dir').text()).toContain('当前选项下不需要')
-    await w.find('input.head-search').setValue('')
-    await nextTick()
-  })
-
-  it('云存储专属项：local 下 upload_base_url 不占版面，切 minio / oss 后出现', async () => {
-    const { w } = await setup()
-    // 只有对象存储用 BaseURL 拼公开 URL（minio.go / oss.go 的 Save/Presign）；
-    // local 驱动 Save 返回相对地址 /uploads/...，小程序端用 miniprogram_base_url
-    // 拼、浏览器按页面源解析——local 下点亮这项是空操作（2026-10-22 全量核查）
-    expect(rowExists(w, 'upload_base_url')).toBe(false)
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await nextTick()
-    expect(rowOf(w, 'upload_base_url').text()).toContain('待配置')
-    // oss 同样需要：OSS 上传器也用 BaseURL 拼公开 URL
-    await selectOf(w, 'storage_driver').setValue('oss')
-    await nextTick()
-    expect(rowExists(w, 'upload_base_url')).toBe(true)
-  })
-
-  it('storage_use_ssl / storage_region 是 S3 兼容驱动（minio / s3）专属：oss 驱动下不占版面', async () => {
-    const { w } = await setup()
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await nextTick()
-    expect(rowExists(w, 'storage_use_ssl')).toBe(true)
-    expect(rowExists(w, 'storage_region')).toBe(true)
-    // 阿里云 OSS 客户端固定 https 且没有区域参数（NewOssUploader 两个都不收）：
-    // oss 下这两项填了不产生任何效果，不能跟着端点那批一起亮
-    await selectOf(w, 'storage_driver').setValue('oss')
-    await nextTick()
-    expect(rowExists(w, 'storage_use_ssl')).toBe(false)
-    expect(rowExists(w, 'storage_region')).toBe(false)
-    // s3 驱动与 minio 共用同一套 S3 客户端实现（main.go 的 case "minio","s3"）：
-    // useSSL / region 两个入参对它俩都真正生效，必须亮
-    await selectOf(w, 'storage_driver').setValue('s3')
-    await nextTick()
-    expect(rowExists(w, 'storage_use_ssl')).toBe(true)
-    expect(rowOf(w, 'storage_region').text()).toContain('待配置')
-    // 搜索态仍能搜到：置灰标记就是「当前选项下不需要」的答案
-    await selectOf(w, 'storage_driver').setValue('oss')
-    await nextTick()
-    await w.find('input.head-search').setValue('storage_use_ssl')
-    await nextTick()
-    expect(rowExists(w, 'storage_use_ssl')).toBe(true)
-    expect(rowOf(w, 'storage_use_ssl').text()).toContain('当前选项下不需要')
-    await w.find('input.head-search').setValue('')
-    await nextTick()
-  })
-
-  it('CDN 厂商联动：资源标识只给 Cloudflare / CloudFront，Cloudflare 用不到 AccessKeyId', async () => {
-    const { w } = await setup()
-    // 未启用 CDN：整区不占版面（开关本身仍在）
-    expect(rowExists(w, 'cdn_provider')).toBe(false)
-    expect(rowExists(w, 'cdn_resource_id')).toBe(false)
-    await selectOf(w, 'cdn_enabled').setValue('true')
-    await nextTick()
-
-    // 默认 aliyun（留空回落）：AK/SK 三家用不到资源标识
-    expect(rowExists(w, 'cdn_provider')).toBe(true)
-    expect(rowExists(w, 'cdn_access_key_id')).toBe(true)
-    expect(rowExists(w, 'cdn_resource_id')).toBe(false)
-
-    // CloudFront：要 Distribution ID（资源标识），也要 AK/SK
-    await selectOf(w, 'cdn_provider').setValue('cloudfront')
-    await nextTick()
-    expect(rowOf(w, 'cdn_resource_id').text()).toContain('待配置')
-    expect(rowExists(w, 'cdn_access_key_id')).toBe(true)
-
-    // Cloudflare：要 Zone ID，但只用 API Token——AccessKeyId 不占版面
-    await selectOf(w, 'cdn_provider').setValue('cloudflare')
-    await nextTick()
-    expect(rowExists(w, 'cdn_resource_id')).toBe(true)
-    expect(rowExists(w, 'cdn_access_key_id')).toBe(false)
-    expect(rowExists(w, 'cdn_access_key_secret')).toBe(true)
-
-    // 搜索态仍能搜到被收窄的项，并带「当前选项下不需要」标记
-    await w.find('input.head-search').setValue('cdn_access_key_id')
-    await nextTick()
-    expect(rowOf(w, 'cdn_access_key_id').text()).toContain('当前选项下不需要')
-    await w.find('input.head-search').setValue('')
-    await nextTick()
-  })
-
-  it('就绪清单按存储方式驱动感知：local 无文件访问基址项，minio 出现且未配则不就绪', async () => {
-    const { w } = await setup()
-    const expandReady = async () => {
-      if (!w.find('.ready-card').exists()) {
-        await w.find('.ready-bar-toggle').trigger('click')
-        await nextTick()
-      }
-    }
-    await expandReady()
-    // local：文件访问基址不进清单——本地存储用相对地址，要求它 = 永远划不掉的假警报
-    expect(w.findAll('.ready-row').some((r: any) => r.text().includes('文件访问基址'))).toBe(false)
-
-    // 切 minio：基址项出现（未配 → 不就绪）
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await nextTick()
-    await expandReady()
-    const rows = w.findAll('.ready-row')
-    expect(rows.some((r: any) => r.text().includes('文件访问基址'))).toBe(true)
-    // 云驱动下凭据也纳入「存储方式与凭据」判定：缺端点/桶/密钥上传会在运行时才坏，
-    // 就绪检查必须提前拦（提示语同时讲清要补哪几项）
-    const credRow = rows.find((r: any) => r.text().includes('存储方式与凭据'))!
-    expect(credRow.text()).toContain('端点 / 存储桶 / AccessKey / SecretKey')
-  })
-
-  it('分组按依赖链排序：存储在上传之前，小程序与微信相邻', async () => {
-    const { w } = await setup()
-    // 存储是上传的前提（限「文件多大」之前先定「存哪」），必须排在前；
-    // 小程序与微信是同一条业务线，相邻配置不用跳组
+    // 存储 / 上传两组已搬到文件存储与分发模块；这里只校验剩余组的顺序
     const order = w.findAll('.group-card').map((c: any) => c.find('.group-title').text())
     expect(order).toEqual([
       '通用',
-      '平台兜底存储（启动配置）',
-      '上传',
       '小程序',
       '微信',
       '后台上传小程序代码',
@@ -801,7 +581,7 @@ describe('Settings 系统设置', () => {
     ])
   })
 
-  it('组内分区：存储三分区、上传两分区、微信两分区，无分区组平铺', async () => {
+  it('组内分区：微信两分区，无分区组平铺', async () => {
     const { w } = await setup()
     const subs = (title: string) =>
       w
@@ -809,47 +589,11 @@ describe('Settings 系统设置', () => {
         .find((c: any) => c.find('.group-title').text() === title)!
         .findAll('.group-sub')
         .map((s: any) => s.text())
-    // 存储组：位置 / 访问方式 / CDN（可选）——公私总闸与 CDN 不再混在主凭据里。
-    // 三个分区都带「平台存储 · 」前缀：它们定的是平台兜底落点（p/ 对象 + 未绑档案企业），
-    // 与档案模块的多套存储是两件事。旧文案说「没绑档案才生效」是错的——平台对象永远走这里。
-    expect(subs('平台兜底存储（启动配置）')).toEqual([
-      '平台存储 · 存储位置',
-      '平台存储 · 访问方式',
-      '平台存储 · CDN 刷新（可选）',
-      '本地镜像备份（可选）',
-    ])
-    // 镜像两项必须落在「本地镜像备份」区，不能混进「平台存储」——
-    // 前者只决定备份副本存哪，后者决定主写入与出参落点，混在一起会让人
-    // 以为改镜像目录会切换对外地址。
-    expect(rowExists(w, 'local_mirror_enabled')).toBe(true)
-    expect(rowExists(w, 'mirror_dir')).toBe(true)
-    // local 态：CDN 区只剩开关本身，凭据不占版面
-    expect(rowExists(w, 'cdn_enabled')).toBe(true)
-    expect(rowExists(w, 'cdn_access_key_id')).toBe(false)
-    // 上传组：大小与类型 / 临时链接有效期（主列表与向导 steps 同结构）
-    expect(subs('上传')).toEqual(['大小与类型', '临时链接有效期'])
     // 微信组：凭据 / 小程序码（缓存时长 + 签名时效 + 生成限流）
     expect(subs('微信')).toEqual(['小程序凭据', '小程序码'])
     // 无分区元数据的组（通用 / 小程序 / 令牌 / 只读 / 开关）不画小标题
     expect(subs('通用')).toEqual([])
     expect(subs('小程序')).toEqual([])
-  })
-
-  it('组内按逻辑顺序排列：存储方式 → 分支项 → 公私开关 → CDN', async () => {
-    const { w } = await setup()
-    const keys = w
-      .findAll('.group-card')
-      .find((c: any) => c.find('.group-title').text().includes('平台兜底存储'))!
-      .findAll('.row')
-      // 取行内灰色 key 文本（.label-key）：整行 text() 会先吞到悬浮徽标里的
-      // 「https://」示例串，按 key 定位才对
-      .map((r: any) => r.find('.label-key').text())
-    // local 态可见项的顺序：driver → upload_dir → public → cdn_enabled。
-    // upload_base_url 是云存储专属（local 用相对地址不经过它），local 下不占版面
-    expect(keys).toEqual([
-      'storage_driver', 'upload_dir', 'storage_public', 'cdn_enabled',
-      'local_mirror_enabled', 'mirror_dir',
-    ])
   })
 
   it('配置向导：默认落在第一个未完成步骤，条件显隐与主列表一致', async () => {
@@ -883,7 +627,6 @@ describe('Settings 系统设置', () => {
     await nextTick()
     // 对话框关闭、草稿复原、不提交
     expect(w.find('.el-dialog').exists()).toBe(false)
-    expect((textInputOf(w, 'upload_dir').element as HTMLInputElement).value).toBe('')
     expect(saveButton(w).attributes('disabled')).toBeDefined()
     expect(updateSettings).not.toHaveBeenCalled()
   })
@@ -1096,7 +839,6 @@ describe('Settings 系统设置', () => {
     // 就绪数保持 4/7（不伪造进度），但该行「待配置」标记应随之消失
     expect(w.find('.el-dialog').exists()).toBe(false)
     expect(w.text()).toContain('4 / 7 项就绪')
-    expect(rowOf(w, 'upload_dir').text()).not.toContain('待配置')
   })
 
   it('全新部署（一项都没就绪）进入页面自动拉起配置向导', async () => {
@@ -1268,17 +1010,16 @@ describe('Settings 系统设置', () => {
   it('搜索过滤：环境变量名可搜，未命中分组整组隐藏，无匹配给空态提示', async () => {
     const { w } = await setup()
     const search = w.find('input.head-search')
-    // 环境变量名搜索（大小写不敏感）：MINIO_ENDPOINT → 只命中存储服务端点
-    await search.setValue('minio_endpoint')
+    // 环境变量名搜索（大小写不敏感）：DB_DSN → 只命中数据库连接串
+    await search.setValue('db_dsn')
     await nextTick()
     expect(w.text()).toContain('匹配 1 /')
-    expect(rowExists(w, 'storage_endpoint')).toBe(true)
+    expect(rowExists(w, 'db_dsn')).toBe(true)
     expect(rowExists(w, 'brand_name')).toBe(false)
-    // 分组中文名也参与匹配：搜「存储」出整个存储组
-    await search.setValue('存储')
+    // 分组中文名也参与匹配：搜「小程序」出整个小程序组
+    await search.setValue('小程序')
     await nextTick()
-    expect(rowExists(w, 'storage_endpoint')).toBe(true)
-    expect(rowExists(w, 'upload_dir')).toBe(true)
+    expect(rowExists(w, 'miniprogram_base_url')).toBe(true)
     expect(rowExists(w, 'brand_name')).toBe(false)
     // 无匹配：空态提示 + 分组全部隐藏
     await search.setValue('zzz-不存在')
@@ -1288,7 +1029,7 @@ describe('Settings 系统设置', () => {
     // 清空搜索恢复全量
     await search.setValue('')
     await nextTick()
-    expect(w.findAll('.group-card')).toHaveLength(10)
+    expect(w.findAll('.group-card')).toHaveLength(8)
     expect(rowExists(w, 'brand_name')).toBe(true)
   })
 
@@ -1301,30 +1042,6 @@ describe('Settings 系统设置', () => {
     await saveButton(w).trigger('click')
     await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
     expect(updateSettings).toHaveBeenCalledWith({ brand_name: '朗汇机电' })
-  })
-
-  it('破坏性更改二次确认：存储方式变更弹确认，取消则不提交、草稿保留', async () => {
-    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
-    const { w } = await setup()
-    await selectOf(w, 'storage_driver').setValue('minio')
-    await saveButton(w).trigger('click')
-    await vi.waitFor(() => expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1))
-    const [msg, title] = vi.mocked(ElMessageBox.confirm).mock.calls[0]
-    expect(title).toBe('破坏性更改确认')
-    expect(msg).toContain('存储方式')
-    expect(msg).toContain('历史文件')
-    // 未确认前不提交；草稿保留（保存按钮仍可用，可改回去或再次确认）
-    expect(updateSettings).not.toHaveBeenCalled()
-    expect(saveButton(w).attributes('disabled')).toBeUndefined()
-  })
-
-  it('破坏性确认通过后正常提交（确认即保存）', async () => {
-    const { w } = await setup()
-    await selectOf(w, 'storage_driver').setValue('oss')
-    await saveButton(w).trigger('click')
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
-    expect(updateSettings).toHaveBeenCalledWith({ storage_driver: 'oss' })
-    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
   })
 
   it('无害改动不弹确认：品牌名随时可改，不该被二次确认骚扰', async () => {
@@ -1437,35 +1154,15 @@ describe('平台兜底与档案模块的边界', () => {
     const { w } = await setup()
     expect(w.text()).not.toContain('保存默认档案')
     expect(w.text()).not.toContain('默认档案（推荐）')
-    expect(w.text()).toContain('都在「文件存储与分发」')
+    expect(w.text()).toContain('所有存储与分发配置都在「文件存储与分发」')
     const link = w.find('a.storage-module-link')
     expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toBe('/platform/storage-profiles')
+    expect(link.attributes('href')).toBe('/platform/storage-profiles?tab=platform')
   })
 
-  it('从内置档案跳来时按 focus 定位，并临时放开依赖过滤', async () => {
-    // minio 驱动下 upload_dir 本会被 depState 过滤隐藏；带 focus 必须仍能定位到，
-    // 否则「跟随系统设置 →」就是一条点过去扑空的死路。
-    vi.mocked(getSettings).mockImplementationOnce(async () => ({
-      code: 0,
-      data: items.map((it) => it.key === 'storage_driver' ? { ...it, value: 'minio' } : { ...it }),
-    }) as any)
-    const oldHref = window.location.href
-    window.history.replaceState({}, '', '/platform/settings?focus=upload_dir')
-    let anchor: HTMLDivElement | null = null
-    const spy = vi.fn()
-    try {
-      anchor = document.createElement('div')
-      anchor.id = 'set-upload_dir'
-      Object.defineProperty(anchor, 'scrollIntoView', { value: spy, configurable: true })
-      document.body.appendChild(anchor)
-      const { w } = await setup()
-      await nextTick()
-      expect(w.text()).toContain('upload_dir')
-      expect(spy).toHaveBeenCalled()
-    } finally {
-      anchor?.remove()
-      window.history.replaceState({}, '', oldHref)
-    }
+  it('就绪清单里的存储项「去配置」跳到新模块，不在本页扑空', () => {
+    const src = readFileSync('src/views/platform/Settings.vue', 'utf8')
+    expect(src).toContain('it.group === \'storage\' || it.group === \'upload\'')
+    expect(src).toContain('/platform/storage-profiles?tab=platform&focus=')
   })
 })

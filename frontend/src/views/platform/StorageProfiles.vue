@@ -216,6 +216,12 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- 平台兜底：系统设置里的存储/上传项集中到这里，管理员只进一个模块。
+           后端仍走 sys_setting + 重启（静态路由与上传器启动期构造），首装向导仍在系统设置。 -->
+      <el-tab-pane label="平台兜底配置" name="platform">
+        <StorageSettingsPanel />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 存储档案表单 -->
@@ -325,8 +331,14 @@ import {
   type StorageProfile, type DeliveryProfile, type StorageBinding, type MigrationJob, type MigrationError,
 } from '@/api/storageProfiles'
 import { listCompanies, type CompanyItem } from '@/api/tenants'
+import StorageSettingsPanel from '@/components/StorageSettingsPanel.vue'
 
-const tab = ref('storage')
+// 支持 ?tab=platform 直达「平台兜底配置」，?focus=<key> 由新面板消费。
+// 白名单挡住乱传的 tab，避免落到一个空白页。
+const initialTab = typeof window !== 'undefined'
+  ? (new URLSearchParams(window.location.search).get('tab') || 'storage')
+  : 'storage'
+const tab = ref(['storage', 'delivery', 'binding', 'migration', 'platform'].includes(initialTab) ? initialTab : 'storage')
 const loading = ref(false)
 const saving = ref(false)
 const storages = ref<StorageProfile[]>([])
@@ -386,11 +398,10 @@ function statusText(s: string) {
 }
 // 内置档案的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
-// focus 参数由系统设置页消费：加载完自动滚到对应行，并临时放开依赖过滤，
-// 否则云存储驱动下 upload_dir 被隐藏，跳过去会扑空。
+// 配置已集中到本模块的「平台兜底配置」标签；focus 参数让面板加载后滚到对应行。
 function builtinSettingHref(row: { purpose?: string }) {
   const key = row.purpose === 'platform_mirror' ? 'mirror_dir' : 'upload_dir'
-  return `/platform/settings?focus=${key}`
+  return `/platform/storage-profiles?tab=platform&focus=${key}`
 }
 function profileName(id: number) {
   return storages.value.find((s) => s.id === id)?.name || `#${id}`
