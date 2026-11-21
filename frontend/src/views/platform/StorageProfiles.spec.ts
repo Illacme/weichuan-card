@@ -96,6 +96,9 @@ describe('文件存储与分发模块', () => {
     expect(api.listStorageBindings).toHaveBeenCalled()
     expect(api.listMigrationJobs).toHaveBeenCalled()
     expect(w.text()).toContain('配置只存一份，谁用由绑定决定')
+    // 管理员看不懂 tenant_id=0 这类内部术语，顶部说明要说人话
+    expect(w.text()).not.toContain('tenant_id')
+    expect(w.text()).toContain('所有人默认用同一套')
     expect(w.text()).toContain('主站 OSS')
   })
 
@@ -155,6 +158,13 @@ describe('文件存储与分发模块', () => {
     const dirInput = w.find('input[placeholder="留空使用平台 uploads 目录"]')
     expect(dirInput.exists()).toBe(true)
     expect(dirInput.attributes('disabled')).toBeDefined()
+    // 内置档案不渲染可点的删除按钮，只显示灰色「系统自带 · 不可删」提示：
+    // 之前用 danger link + disabled，禁用态仍是红字，管理员以为能点却点不动。
+    expect(w.text()).toContain('系统自带 · 不可删')
+    // 只看内置档案这一行：它不该有可点的删除按钮（别的企业档案仍有）
+    const builtinRow = w.findAll('.el-table-row').find((r) => r.text().includes('平台本地存储'))!
+    expect(builtinRow.text()).toContain('系统自带 · 不可删')
+    expect(builtinRow.findAll('button').filter((b) => b.text() === '删除')).toHaveLength(0)
   })
 
   it('两套内置档案用途可辨，镜像档案不参与绑定与迁移', async () => {

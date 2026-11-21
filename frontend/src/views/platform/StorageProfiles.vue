@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       title="文件存储与分发：配置只存一份，谁用由绑定决定"
-      description="三层关系：存储档案保存桶的连接信息；分发档案保存 CDN 域名；绑定决定谁用哪一套。tenant_id=0 是全局默认，企业没有自己的绑定行时自动继承全局。保存后下一个请求即生效，无需重启。档案与绑定都含云凭据或决定文件落点，只有平台超管能增删改；企业管理员看不到也改不了。"
+      description="三层关系：存储档案保存桶的连接信息；分发档案保存 CDN 域名；绑定决定谁用哪一套。不给任何企业单独指定时，所有人默认用同一套（全局默认）；企业也能单独指定自己的一套。保存后下一个请求即生效，无需重启。档案与绑定都含云凭据或决定文件落点，只有平台超管能增删改；企业管理员看不到也改不了。"
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
@@ -45,7 +45,8 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="openStorageDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkStorage(row)">自检</el-button>
-              <el-button link type="danger" :disabled="row.builtin" @click="removeStorage(row)">删除</el-button>
+              <span v-if="row.builtin" class="builtin-no-delete">系统自带 · 不可删</span>
+              <el-button v-else link type="danger" @click="removeStorage(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -91,7 +92,7 @@
           description="请先确认新档案已「自检通过」，并且历史对象仍在旧桶中可读；否则切换后访客会拿到裂图。需要搬运历史对象请用「迁移任务」。"
         />
         <div class="binding-card">
-          <h4>全局默认（tenant_id = 0）</h4>
+          <h4>全局默认（所有企业的共同设置）</h4>
           <p v-if="!boundGlobal" class="muted">
             当前未配置档案绑定，继续沿用「系统设置」里的平台存储与 CDN（改动需重启）。
           </p>
@@ -523,4 +524,5 @@ function exportErrors() {
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
 .builtin-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
+.builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
 </style>
