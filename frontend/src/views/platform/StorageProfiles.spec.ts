@@ -134,9 +134,19 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('平台本地存储')
     expect(w.text()).toContain('内置')
+    // 管理员看不懂内部术语：列表要有一句人话说明「这是系统自带、别删」
+    expect(w.text()).toContain('系统自带的备用盘')
+    expect(w.text()).toContain('请勿删除')
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
     await flush()
+    // 编辑弹窗顶部要有「应急备用盘 vs 备份保险柜」的对照说明，管理员一眼看懂两者区别
+    expect(w.text()).toContain('这是系统自带的档案，通常不用改动')
+    expect(w.text()).toContain('应急备用盘')
+    expect(w.text()).toContain('备份保险柜')
+    // 开发者术语不能出现在给管理员看的说明里
+    expect(w.text()).not.toContain('静态文件服务也绑在同一目录')
+    expect(w.text()).not.toContain('会导致图片 404')
     expect(w.text()).toContain('驱动锁定为「本地磁盘」')
     expect(w.text()).toContain('不可删除')
     // 目录也必须锁死：它与静态路由共用一个真值源，单独改会让租户对象写进
@@ -156,6 +166,10 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('租户退路')
     expect(w.text()).toContain('平台镜像')
+    // 两条内置档案各自有区分得开的人话说明，管理员不会混为一谈
+    expect(w.text()).toContain('系统自带的备用盘')
+    expect(w.text()).toContain('系统自带的备份盘')
+    expect(w.text()).toContain('自动运行，请勿改动')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
     // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')

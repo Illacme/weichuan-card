@@ -25,6 +25,9 @@
               <el-tag v-if="row.builtin" size="small" type="info">内置</el-tag>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
               <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
+              <div v-if="row.builtin" class="builtin-hint">
+                {{ row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 自动运行，请勿改动' : '系统自带的备用盘 · 云端出问题时才用，请勿删除' }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column prop="driver" label="驱动" width="90" />
@@ -193,6 +196,9 @@
 
     <!-- 存储档案表单 -->
     <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑存储档案' : '新建存储档案'" width="640px">
+      <el-alert v-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
+        title="这是系统自带的档案，通常不用改动"
+        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动和目录；你一般只需要改下面的展示名，其他保持默认即可。" />
       <el-alert type="warning" :closable="false" show-icon class="dialog-alert"
         title="凭据以明文入库，回显只给掩码"
         description="请确保数据库备份与访问控制到位。SecretKey 一旦保存就不再回传，忘记只能重新填写。" />
@@ -203,7 +209,7 @@
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
           <span v-if="storageForm.builtin" class="field-note">
-            内置本地档案的驱动锁定为「本地磁盘」：它是云存储不可用时的兜底，不可删除、不可改成云驱动。只能修改展示名。
+            驱动锁定为「本地磁盘」，不可删除、也不能改成云存储；这是系统预留的备用盘，你只需改展示名，其余保持默认。
           </span>
         </el-form-item>
         <template v-if="storageForm.driver !== 'local'">
@@ -229,12 +235,12 @@
           <el-form-item label="本地根目录">
             <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
             <span v-if="storageForm.builtin && storageForm.purpose === 'platform_mirror'" class="field-note">
-              平台镜像目录跟随「系统设置 → 本地镜像目录」：它独立于 /uploads 静态目录，
-              专门接收云端对象的本地备份副本，不参与任何租户绑定，也不能用于迁移。
-              目录单独改会让备份脚本与运行期落点分叉，要换目录请改系统设置后重启。
+              这是备份保险柜：备份目录跟随「系统设置 → 本地镜像目录」，图片传到云端后系统自动在这里留一份副本。
+              它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              内置档案的目录跟随「系统设置 → 本地上传目录」：静态文件服务也绑在同一目录，单独改这里会导致图片 404。要换目录请改系统设置后重启。
+              内置档案的目录跟随「系统设置 → 本地上传目录」，网站的图片读取用的也是这个位置。
+              所以这里不用改、也不建议改；真要换位置请改系统设置后重启，单独改这里会让图片找不到。
             </span>
             <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
           </el-form-item>
@@ -516,4 +522,5 @@ function exportErrors() {
 .migration-create { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
+.builtin-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
 </style>
