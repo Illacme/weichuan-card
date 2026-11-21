@@ -49,15 +49,18 @@
       style="margin-bottom: 14px"
     />
 
-    <!-- 新模块入口：下面的「文件存储与 CDN」是遗留平铺项，改完要重启；
-         多套档案、全局即时切换与企业绑定都在独立模块里（仅平台超管），先给一条明确指路。 -->
+    <!-- 两模块边界：本页只留「平台兜底」的启动配置；多套档案 / 全局默认 /
+         企业绑定 / 历史对象迁移全在独立模块。
+         早先在本页内嵌过一个「默认档案」选择器，与档案模块的绑定页重复，
+         且少了 force / 回滚，管理员容易在两处各选一套还以为会同步——已移除，
+         只保留这条指路（见 storage 分组导语与 GROUP_LABELS）。 -->
     <el-alert
       v-if="!keyword.trim()"
       type="success"
       :closable="false"
       show-icon
-      title="要配置多套存储 / CDN？请使用「文件存储与分发」"
-      description="在那里可以保存多套存储档案与 CDN 分发档案、切换全局默认（即时生效）、给企业绑定档案（仅平台超管），并用迁移任务搬运历史对象。本页下面的存储 / CDN 项是平台自身的落点配置：平台对象（素材采用 / 小程序码 / 访客头像等 p/ 对象）始终用它，尚未绑定档案的企业也用它，已绑档案的企业走自己的档案。改动仍需重启。"
+      title="多套存储 / CDN、全局默认档案、企业绑定：都在「文件存储与分发」"
+      description="在那里保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定，并用迁移任务搬运历史对象。本页只保留平台兜底的启动配置：平台对象（素材采用 / 小程序码 / 访客头像等 p/ 对象）与尚未绑定档案的企业用它，改动需重启；已绑档案的企业不受这里影响。"
       class="storage-module-entry"
     >
       <template #default>
@@ -196,43 +199,6 @@
              draft 仍由本页持有（:model-value + @change），避免两处各存一份值。
              组内分区与配置向导 steps 的 groups 同结构：项多的组按主题分堆，
              小标题 + 尾部细线；无分区的组平铺 -->
-        <!-- 默认档案（推荐）：多套存储 / CDN 的全局默认在这里直接选，保存即时生效。
-             下面的平铺项决定平台自身落点（平台对象 + 未绑档案企业），不是旧配置残留。 -->
-        <div v-if="g.key === 'storage' && !keyword.trim()" class="profile-default">
-          <div class="profile-default-head">
-            <div>
-              <div class="profile-default-title">默认档案（推荐）</div>
-              <div class="profile-default-desc">
-                选一套存储档案与分发档案作为全平台默认，保存后立即生效、不需要重启。
-                企业可在「企业管理 → 存储档案」单独改选；没有单独选择的企业自动继承这里。
-              </div>
-            </div>
-            <a href="/platform/storage-profiles" class="profile-default-link">管理档案与迁移 →</a>
-          </div>
-          <div v-if="!profileOptions.storages.length" class="profile-default-empty">
-            还没有存储档案。请先到「文件存储与分发」新建并自检通过，再回来选默认。
-          </div>
-          <div v-else class="profile-default-form">
-            <label>存储档案</label>
-            <el-select v-model="profileStorageId" placeholder="选择存储档案" style="width: 240px">
-              <el-option v-for="p in profileOptions.storages" :key="p.id" :label="p.name" :value="p.id" />
-            </el-select>
-            <label>分发档案</label>
-            <el-select v-model="profileDeliveryId" placeholder="不启用 CDN" clearable style="width: 240px">
-              <el-option v-for="p in profileOptions.deliveries" :key="p.id" :label="p.name" :value="p.id" />
-            </el-select>
-            <el-button type="primary" :loading="profileSaving" @click="saveProfileDefault">保存默认档案</el-button>
-            <span class="profile-default-source">{{ profileSourceText }}</span>
-          </div>
-          <div class="profile-default-legacy">
-            下面的「平台存储 · 存储位置 / 访问方式 / CDN 刷新」决定<b>平台自身</b>的文件落点：
-            素材采用、小程序码、下架占位图、访客未登录头像等 <code>p/</code> 平台对象始终走这里，
-            尚未绑定档案的企业也走这里；已绑档案的企业走自己的档案，与这里无关。
-            这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，改动需要重启服务。
-            企业自有桶由平台超管到「文件存储与分发」里接入并绑定。
-          </div>
-        </div>
-
         <template v-for="sec in sectionsOf(g.items)" :key="sec.label">
           <div class="group-sub">{{ sec.label }}</div>
           <SettingRow
@@ -415,9 +381,6 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
-import {
-  listStorageProfiles, listDeliveryProfiles, listStorageBindings, saveGlobalBinding,
-} from '@/api/storageProfiles'
 import { useSettingsStore } from '@/store/settings'
 import SettingRow from '@/components/SettingRow.vue'
 import { clearWizardDraft, loadWizardDraft, saveWizardDraft } from '@/utils/wizardDraft'
@@ -440,7 +403,7 @@ const GROUP_LABELS: Record<string, string> = {
   wechat: '微信',
   mpupload: '后台上传小程序代码',
   auth: '登录与令牌',
-  storage: '文件存储与 CDN',
+  storage: '平台兜底存储（启动配置）',
   security: '安全与基础设施（只读）',
   feature: '功能开关',
   stats: '数据统计',
@@ -451,7 +414,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '平台自身落点（高级）：图片 / 视频 / 小程序码存哪、怎么访问。这里的配置决定 p/ 平台对象（素材采用 / 小程序码 / 访客头像等）的落点，以及尚未绑定档案企业的落点；已绑档案的企业走自己的档案。它同时是 STORAGE_* / MINIO_* 环境变量的界面映射，私有部署靠改 env 起服务时走的就是这里。⚠️ 本组任一项改动都需重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。',
+    '平台兜底（高级）：p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用这里；已绑档案的企业走「文件存储与分发」里的自己的档案。这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，属于进程启动期配置，任一项改动都要重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，请到「文件存储与分发」——那边保存后下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -518,8 +481,8 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 // 用户在一边看懂的分区，另一边直接认出来。
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
-    // 三个分区标题统一带「平台存储 · 」前缀：它们与上方「默认档案」是两套东西。
-    // 这里定的是平台自身落点（p/ 平台对象 + 未绑档案企业），不是「没绑档案才生效」的旧配置。
+    // 三个分区标题统一带「平台存储 · 」前缀：这里定的是平台兜底的落点
+    // （p/ 平台对象 + 未绑档案企业），与档案模块的多套存储是两件事。
     // local 与云存储两套互斥配置在这一区里按 depState 二选一出现
     { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
     { label: '平台存储 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
@@ -628,13 +591,29 @@ function ungroupedOf(items: SettingItem[]): SettingItem[] {
   return items.filter((it) => !covered.has(it.key))
 }
 
+// 从档案页跳过来时带 ?focus=<key>，加载完自动定位到对应行。
+// 读 location.search 而不是 useRoute()：本页在单测里不挂 router，
+// 引 vue-router 会让所有现有用例炸在 setup 阶段。
+const focusKey = ref('')
+if (typeof window !== 'undefined') {
+  try {
+    focusKey.value = new URLSearchParams(window.location.search).get('focus')?.trim() || ''
+  } catch {
+    focusKey.value = ''
+  }
+}
+
 // 非搜索态：按依赖联动过滤——当前存储方式 / 未填 AppID 下用不上的项不占版面
 // （与配置向导 stepVisible 同一套 depState 规则，两边行为一致：向导里切 minio
 // 后 upload_dir 会消失，主列表以前只是置灰，现在一致地「只显示相关的」）。
 // 注意只过滤「呈现」：草稿按 key 全量持有，被过滤掉的项保存时照样进载荷，
 // 切回另一种方式时值还在——过滤是视图，不是删除。
+// 带 focus 参数时整组不过滤：内置档案的目录在云驱动下本会被藏起来，
+// 跳过去却找不到行，等于给了一条死路。
 const visibleGroups = computed(() =>
-  groups.value.map((g) => ({ ...g, items: g.items.filter((it) => !depState(it.key).dim) })),
+  focusKey.value
+    ? groups.value
+    : groups.value.map((g) => ({ ...g, items: g.items.filter((it) => !depState(it.key).dim) })),
 )
 
 // ---- 上线就绪检查 ----
@@ -868,6 +847,7 @@ watch(loading, (v) => {
     measureToolbar()
     attachToolbarObserver()
     computeActive()
+    if (focusKey.value) jumpTo(focusKey.value)
   })
 })
 
@@ -1475,63 +1455,7 @@ async function save(): Promise<boolean> {
   }
 }
 
-// 默认档案：与上面的平铺配置并存，但优先级更高（有绑定即接管）。
-// 这里只做「选哪一套」，档案本身的增删改与迁移在独立模块里。
-const profileOptions = reactive<{ storages: { id: number; name: string; builtin?: boolean }[]; deliveries: { id: number; name: string }[] }>({
-  storages: [],
-  deliveries: [],
-})
-const profileStorageId = ref<number | undefined>(undefined)
-const profileDeliveryId = ref<number | undefined>(undefined)
-const profileSaving = ref(false)
-const profileSourceText = ref('当前：未绑定档案，沿用下面的兼容配置')
-
-async function loadProfileDefault() {
-  try {
-    const [ss, ds, bindings] = await Promise.all([
-      listStorageProfiles(), listDeliveryProfiles(), listStorageBindings(),
-    ])
-    profileOptions.storages = ss.map((p) => ({ id: p.id, name: p.name, builtin: p.builtin }))
-    profileOptions.deliveries = ds.map((p) => ({ id: p.id, name: p.name }))
-    const g: any = bindings.global
-    if (g?.storageProfileId) {
-      profileStorageId.value = g.storageProfileId
-      profileDeliveryId.value = g.deliveryProfileId || undefined
-      const sName = profileOptions.storages.find((p) => p.id === g.storageProfileId)?.name || `#${g.storageProfileId}`
-      const dName = profileOptions.deliveries.find((p) => p.id === g.deliveryProfileId)?.name
-      profileSourceText.value = `当前默认：${sName}${dName ? ' + ' + dName : '（不启用 CDN）'}`
-    } else {
-      // 未绑定：默认预选内置本地档案，让「默认加载一套可用配置」成立。
-      // 但只预选、不自动保存——保存才会真正切换，避免升级后静默把文件写到本地。
-      const builtin = profileOptions.storages.find((p) => p.builtin)
-      profileStorageId.value = builtin?.id
-      profileSourceText.value = builtin
-        ? '当前未绑定档案，已预选内置本地存储；点「保存默认档案」才会切换（历史对象不会搬迁）'
-        : '当前：未绑定档案，沿用下面的兼容配置'
-    }
-  } catch {
-    // 档案接口失败不能挡住系统设置本身：下面的兼容配置仍可正常维护。
-    profileSourceText.value = '档案信息读取失败，可稍后刷新重试'
-  }
-}
-
-async function saveProfileDefault() {
-  if (!profileStorageId.value) {
-    ElMessage.warning('请选择存储档案')
-    return
-  }
-  profileSaving.value = true
-  try {
-    await saveGlobalBinding(profileStorageId.value, profileDeliveryId.value || 0)
-    ElMessage.success('默认档案已保存，立即生效')
-    await loadProfileDefault()
-  } finally {
-    profileSaving.value = false
-  }
-}
-
 onMounted(load)
-onMounted(loadProfileDefault)
 </script>
 
 <style scoped>
@@ -2150,20 +2074,4 @@ onMounted(loadProfileDefault)
 }
 .storage-module-entry { margin-bottom: 14px; }
 .storage-module-link { display: inline-block; margin-top: 6px; color: #409eff; font-weight: 600; }
-.profile-default {
-  border: 1px solid #d9ecff;
-  background: #f4f9ff;
-  border-radius: 6px;
-  padding: 14px 16px;
-  margin-bottom: 16px;
-}
-.profile-default-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.profile-default-title { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 4px; }
-.profile-default-desc { font-size: 12px; color: #606266; line-height: 1.7; max-width: 760px; }
-.profile-default-link { font-size: 12px; color: #409eff; white-space: nowrap; }
-.profile-default-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-.profile-default-form label { font-size: 13px; color: #606266; }
-.profile-default-source { font-size: 12px; color: #909399; }
-.profile-default-empty { margin-top: 10px; font-size: 13px; color: #e6a23c; }
-.profile-default-legacy { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #c6e2ff; font-size: 12px; color: #909399; line-height: 1.7; }
 </style>

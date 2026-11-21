@@ -7023,8 +7023,7 @@ components:
         bucket: { type: string }
         region: { type: string }
         baseUrl: { type: string, description: 上传返回基址（平台统一入口），云端驱动必填 }
-        pathStyle: { type: boolean }
-        hostHeader: { type: string, description: "留空或等于 endpoint 为路径风格；<bucket>.<域名> 为虚拟主机风格" }
+        hostHeader: { type: string, description: "留空或等于 endpoint 为路径风格；<bucket>.<域名> 为虚拟主机风格。S3 路径风格只由本字段推导，没有独立的 pathStyle 开关（0058 已删）" }
         useSsl: { type: boolean }
         localDir: { type: string, description: driver=local 的独立根目录；留空用平台 uploads }
         accessKey: { type: string, description: 明文写入；省略保留，空串清空 }

@@ -38,7 +38,6 @@ type storageProfileReq struct {
 	Bucket     *string `json:"bucket"`
 	Region     *string `json:"region"`
 	BaseURL    *string `json:"baseUrl"`
-	PathStyle  *bool   `json:"pathStyle"`
 	HostHeader *string `json:"hostHeader"`
 	UseSSL     *bool   `json:"useSsl"`
 	LocalDir   *string `json:"localDir"`
@@ -636,9 +635,6 @@ func applyStorageProfileReq(row *model.StorageProfile, req *storageProfileReq) {
 	if req.BaseURL != nil {
 		row.BaseURL = strings.TrimSpace(*req.BaseURL)
 	}
-	if req.PathStyle != nil {
-		row.PathStyle = *req.PathStyle
-	}
 	if req.HostHeader != nil {
 		row.HostHeader = strings.TrimSpace(*req.HostHeader)
 	}
@@ -792,7 +788,7 @@ func storageProfileView(row *model.StorageProfile) gin.H {
 	view := gin.H{
 		"id": row.ID, "name": row.Name, "driver": row.Driver, "endpoint": row.Endpoint,
 		"bucket": row.Bucket, "region": row.Region, "baseUrl": row.BaseURL,
-		"pathStyle": row.PathStyle, "hostHeader": row.HostHeader, "useSsl": row.UseSSL, "localDir": row.LocalDir,
+		"hostHeader": row.HostHeader, "useSsl": row.UseSSL, "localDir": row.LocalDir,
 		"publicRead": row.PublicRead, "status": row.Status, "lastError": row.LastError,
 		"lastProbeAt": row.LastProbeAt, "version": row.Version, "builtin": row.Builtin,
 		"purpose":   row.Purpose,

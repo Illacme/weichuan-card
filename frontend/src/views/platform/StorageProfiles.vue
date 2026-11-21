@@ -22,7 +22,7 @@
           <el-table-column label="档案名" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
-              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 自动运行，请勿改动' : '系统自带的备用盘 · 云端出问题时才用，请勿删除'">
+              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录跟随「系统设置 → 本地镜像目录」，这里改不了；自动运行，请勿删除' : '系统自带的备用盘 · 目录跟随「系统设置 → 本地上传目录」，这里改不了；云端出问题时才用，请勿删除'">
                 <el-tag size="small" type="info">内置</el-tag>
               </el-tooltip>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
@@ -44,6 +44,7 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="openStorageDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkStorage(row)">自检</el-button>
+              <a v-if="row.builtin" :href="builtinSettingHref(row)" class="builtin-setting-link">跟随系统设置 →</a>
               <span v-if="row.builtin" class="builtin-no-delete">系统自带 · 不可删</span>
               <el-button v-else link type="danger" @click="removeStorage(row)">删除</el-button>
             </template>
@@ -361,7 +362,7 @@ const providers = [
 
 const emptyStorage = () => ({
   id: 0, name: '', driver: 'minio', endpoint: '', bucket: '', region: '', baseUrl: '',
-  pathStyle: false, hostHeader: '', useSsl: true, localDir: '', publicRead: true, purpose: '' as StorageProfile['purpose'],
+  hostHeader: '', useSsl: true, localDir: '', publicRead: true, purpose: '' as StorageProfile['purpose'],
   accessKey: '', secretKey: '', accessKeyMasked: '', builtin: false,
 })
 const emptyDelivery = () => ({
@@ -382,6 +383,14 @@ function statusTag(s: string) {
 }
 function statusText(s: string) {
   return s === 'ok' ? '已验证' : s === 'error' ? '失败' : '未自检'
+}
+// 内置档案的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
+// 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
+// focus 参数由系统设置页消费：加载完自动滚到对应行，并临时放开依赖过滤，
+// 否则云存储驱动下 upload_dir 被隐藏，跳过去会扑空。
+function builtinSettingHref(row: { purpose?: string }) {
+  const key = row.purpose === 'platform_mirror' ? 'mirror_dir' : 'upload_dir'
+  return `/platform/settings?focus=${key}`
 }
 function profileName(id: number) {
   return storages.value.find((s) => s.id === id)?.name || `#${id}`
@@ -571,4 +580,6 @@ function exportErrors() {
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
 .builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
+.builtin-setting-link { margin-right: 10px; font-size: 12px; color: #409eff; text-decoration: none; white-space: nowrap; }
+.builtin-setting-link:hover { text-decoration: underline; }
 </style>

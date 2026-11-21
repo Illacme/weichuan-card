@@ -9,7 +9,7 @@ export interface StorageProfile {
   bucket: string
   region: string
   baseUrl: string
-  pathStyle: boolean
+  /** S3 路径风格由下面的 hostHeader 单点推导，不单独配置（0058 已删该列）。 */
   hostHeader: string
   useSsl: boolean
   localDir: string

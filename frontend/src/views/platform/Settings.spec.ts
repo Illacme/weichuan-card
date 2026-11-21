@@ -272,7 +272,7 @@ describe('Settings 系统设置', () => {
   it('按分组渲染全部配置项与说明（含存储与只读分组）', async () => {
     const { w } = await setup()
     const text = w.text()
-    ;['通用', '小程序', '上传', '微信', '后台上传小程序代码', '登录与令牌', '文件存储与 CDN', '安全与基础设施', '功能开关'].forEach(
+    ;['通用', '小程序', '上传', '微信', '后台上传小程序代码', '登录与令牌', '平台兜底存储（启动配置）', '安全与基础设施', '功能开关'].forEach(
       (g) => expect(text).toContain(g),
     )
     expect(text).toContain('brand_name')
@@ -518,7 +518,8 @@ describe('Settings 系统设置', () => {
   it('每个分组展示导语：一句话说清管什么、什么时候动', async () => {
     const { w } = await setup()
     expect(w.text()).toContain('产品的基础展示信息') // general
-    expect(w.text()).toContain('图片 / 视频 / 小程序码存哪') // storage
+    expect(w.text()).toContain('p/ 平台对象') // storage：明确是兜底，不是多套档案
+    expect(w.text()).toContain('启动期配置')
     expect(w.text()).toContain('首次部署必配') // miniprogram
     // 上传组导语要说清两条链接各自的适用条件：直传预签名公私桶都走，
     // 只有私有桶下载签名仅在公开访问关掉时才涉及（2026-10-22 核查 UploadField 总是先试预签名）
@@ -788,7 +789,7 @@ describe('Settings 系统设置', () => {
     const order = w.findAll('.group-card').map((c: any) => c.find('.group-title').text())
     expect(order).toEqual([
       '通用',
-      '文件存储与 CDN',
+      '平台兜底存储（启动配置）',
       '上传',
       '小程序',
       '微信',
@@ -809,9 +810,9 @@ describe('Settings 系统设置', () => {
         .findAll('.group-sub')
         .map((s: any) => s.text())
     // 存储组：位置 / 访问方式 / CDN（可选）——公私总闸与 CDN 不再混在主凭据里。
-    // 三个分区都带「平台存储 · 」前缀：它们定的是平台自身落点（p/ 对象 + 未绑档案企业），
-    // 与上方「默认档案」是两套东西。旧文案说「没绑档案才生效」是错的——平台对象永远走这里。
-    expect(subs('文件存储与 CDN')).toEqual([
+    // 三个分区都带「平台存储 · 」前缀：它们定的是平台兜底落点（p/ 对象 + 未绑档案企业），
+    // 与档案模块的多套存储是两件事。旧文案说「没绑档案才生效」是错的——平台对象永远走这里。
+    expect(subs('平台兜底存储（启动配置）')).toEqual([
       '平台存储 · 存储位置',
       '平台存储 · 访问方式',
       '平台存储 · CDN 刷新（可选）',
@@ -838,7 +839,7 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     const keys = w
       .findAll('.group-card')
-      .find((c: any) => c.find('.group-title').text().includes('文件存储'))!
+      .find((c: any) => c.find('.group-title').text().includes('平台兜底存储'))!
       .findAll('.row')
       // 取行内灰色 key 文本（.label-key）：整行 text() 会先吞到悬浮徽标里的
       // 「https://」示例串，按 key 定位才对
@@ -1428,5 +1429,43 @@ describe('配置向导步骤条', () => {
     await mpChip!.trigger('click')
     await nextTick()
     expect(w.find('.wizard-progress').text()).toContain('后台上传小程序代码')
+  })
+})
+
+describe('平台兜底与档案模块的边界', () => {
+  it('系统设置不再内嵌默认档案选择器，只留到档案模块的指路', async () => {
+    const { w } = await setup()
+    expect(w.text()).not.toContain('保存默认档案')
+    expect(w.text()).not.toContain('默认档案（推荐）')
+    expect(w.text()).toContain('都在「文件存储与分发」')
+    const link = w.find('a.storage-module-link')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('/platform/storage-profiles')
+  })
+
+  it('从内置档案跳来时按 focus 定位，并临时放开依赖过滤', async () => {
+    // minio 驱动下 upload_dir 本会被 depState 过滤隐藏；带 focus 必须仍能定位到，
+    // 否则「跟随系统设置 →」就是一条点过去扑空的死路。
+    vi.mocked(getSettings).mockImplementationOnce(async () => ({
+      code: 0,
+      data: items.map((it) => it.key === 'storage_driver' ? { ...it, value: 'minio' } : { ...it }),
+    }) as any)
+    const oldHref = window.location.href
+    window.history.replaceState({}, '', '/platform/settings?focus=upload_dir')
+    let anchor: HTMLDivElement | null = null
+    const spy = vi.fn()
+    try {
+      anchor = document.createElement('div')
+      anchor.id = 'set-upload_dir'
+      Object.defineProperty(anchor, 'scrollIntoView', { value: spy, configurable: true })
+      document.body.appendChild(anchor)
+      const { w } = await setup()
+      await nextTick()
+      expect(w.text()).toContain('upload_dir')
+      expect(spy).toHaveBeenCalled()
+    } finally {
+      anchor?.remove()
+      window.history.replaceState({}, '', oldHref)
+    }
   })
 })

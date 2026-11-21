@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -176,4 +177,37 @@ func TestMirrorProfileCannotBeWriteTarget(t *testing.T) {
 	require.Contains(t, validateBindingTargets(db, mirror.ID, 0), "不能绑定")
 	require.False(t, mirrorProfileInvolved(db, normal.ID))
 	require.True(t, mirrorProfileInvolved(db, normal.ID, mirror.ID))
+}
+
+// pathStyle 曾经是「能填但没用」的僵尸字段：S3 路径风格由 nginxsnippet.Target.PathStyle()
+// 从 host_header 单点推导，上传侧与回填侧都不读这一列。0058 已删列，
+// 这里钉住模型和接口都别把它加回来——否则管理员又会以为填它能改变请求风格。
+func TestStorageProfileHasNoZombiePathStyle(t *testing.T) {
+	_, ok := reflect.TypeOf(model.StorageProfile{}).FieldByName("PathStyle")
+	require.False(t, ok, "pathStyle 是僵尸字段：路径风格只由 hostHeader 推导（0058 已删列）")
+}
+
+func TestStorageProfileAPINeverExposesPathStyle(t *testing.T) {
+	r, _ := bindingEngine(t)
+	c := newTestClient(r, t)
+	token := loginAdmin(t, c)
+
+	// 就算老客户端仍往请求里塞 pathStyle，也不能在出参里回显——
+	// 回显会让人以为它还在生效。
+	_, body := c.do("POST", "/api/admin/storage-profiles", map[string]any{
+		"name": "no-path-style", "driver": "minio", "endpoint": "s.example.com", "bucket": "assets",
+		"baseUrl": "https://card.example.com/uploads", "useSsl": false, "publicRead": true,
+		"pathStyle": true, "hostHeader": "", "accessKey": "AK", "secretKey": "SK",
+	}, token)
+	require.EqualValues(t, 0, body["code"], body["msg"])
+
+	_, body = c.do("GET", "/api/admin/storage-profiles", nil, token)
+	require.EqualValues(t, 0, body["code"])
+	list, ok := body["data"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, list)
+	for _, raw := range list {
+		_, leaked := raw.(map[string]any)["pathStyle"]
+		require.False(t, leaked, "出参不该再暴露从未生效的 pathStyle")
+	}
 }

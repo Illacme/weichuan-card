@@ -38,7 +38,7 @@ import { elStubs, flush } from '@/test/elStubs'
 
 const storage = (id: number, name: string) => ({
   id, name, driver: 'minio', endpoint: `s${id}.example.com`, bucket: 'b', region: '',
-  baseUrl: 'https://x/uploads', pathStyle: false, hostHeader: '', useSsl: true,
+  baseUrl: 'https://x/uploads', hostHeader: '', useSsl: true,
   localDir: '', publicRead: true, status: 'ok', lastError: '', lastProbeAt: null,
   version: 1, builtin: false, accessKeyConfigured: true, secretKeyConfigured: true,
   accessKeyMasked: 'AKIA****MPLE',
@@ -191,6 +191,14 @@ describe('文件存储与分发模块', () => {
     expect(tip1.exists()).toBe(true)
     expect(tip1.props('content')).toContain('系统自带的备用盘')
     expect(tip1.props('content')).toContain('请勿删除')
+    // 内置档案改不动目录/基址，必须给一条直达系统设置的链接，
+    // 否则管理员只能在编辑弹窗里对着灰字段干瞪眼。
+    expect(tip1.props('content')).toContain('本地上传目录')
+    expect(tip1.props('content')).toContain('这里改不了')
+    const builtinLink = w.find('a.builtin-setting-link')
+    expect(builtinLink.exists()).toBe(true)
+    expect(builtinLink.attributes('href')).toBe('/platform/settings?focus=upload_dir')
+    expect(builtinLink.text()).toContain('跟随系统设置')
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
     await flush()
@@ -232,7 +240,13 @@ describe('文件存储与分发模块', () => {
     expect(tips).toHaveLength(2)
     expect(tips[0].props('content')).toContain('系统自带的备用盘')
     expect(tips[1].props('content')).toContain('系统自带的备份盘')
-    expect(tips[1].props('content')).toContain('自动运行，请勿改动')
+    expect(tips[1].props('content')).toContain('自动运行')
+    expect(tips[1].props('content')).toContain('本地镜像目录')
+    // 两套内置档案分别跳到各自的真值源，不能都指向 upload_dir
+    const links = w.findAll('a.builtin-setting-link')
+    expect(links).toHaveLength(2)
+    expect(links[0].attributes('href')).toBe('/platform/settings?focus=upload_dir')
+    expect(links[1].attributes('href')).toBe('/platform/settings?focus=mirror_dir')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
     // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
@@ -257,21 +271,23 @@ describe('文件存储与分发模块', () => {
     // 反向断言防止有人「顺手把页面加回来」——页面一旦存在，后端那组 403 就成了摆设。
     expect(router).not.toContain("path: 'company-storage'")
     expect(menu).not.toContain("path: '/company-storage'")
-    // 系统设置里必须有「默认档案」选择块（不是只留一条指路链接），
-    // 企业管理行内必须有「存储档案」入口——这是用户明确要求的两个操作位置。
+    // 系统设置里不再内嵌「默认档案」选择块：它与档案模块的绑定页重复，
+    // 且少了切换前核对 / force / 回滚，管理员在两处各选一套还以为会同步。
+    // 只保留一条指路；企业管理行内「存储档案」入口仍在。
     const settings = readFileSync('src/views/platform/Settings.vue', 'utf8')
     const companies = readFileSync('src/views/Companies.vue', 'utf8')
-    expect(settings).toContain('默认档案（推荐）')
-    expect(settings).toContain('saveGlobalBinding')
+    expect(settings).not.toContain('默认档案（推荐）')
+    expect(settings).not.toContain('saveGlobalBinding')
+    expect(settings).toContain('class="storage-module-link"')
     expect(companies).toContain("openProfiles(row)")
     expect(companies).toContain('saveCompanyBinding')
 
     // 文案与开关不能回退到「企业自选」：该页与 options 接口已下线（平台超管专属）。
     expect(settings).not.toContain('让企业在管理页自选')
-    // 存储组的措辞要按实际生效范围写：平台对象（p/）+ 无绑定企业始终走这组配置，
+    // 存储组的措辞要按实际生效范围写：平台对象（p/）+ 无绑定企业始终走这组启动配置，
     // 不是「没绑档案时才生效」。旧文案会把人误导到「选了默认档案就不用管这里」。
-    expect(settings).toContain('平台自身的落点')
-    expect(settings).toContain('尚未绑定档案的企业也用它')
+    expect(settings).toContain('p/ 平台对象')
+    expect(settings).toContain('启动期配置')
     expect(settings).not.toContain('兼容旧部署')
     expect(settings).not.toContain('已选默认档案时不再生效')
     expect(settings).not.toContain('企业管理 → 自有桶')
@@ -301,5 +317,14 @@ describe('文件存储与分发模块', () => {
     const startBtn = w.findAll('button').find((b) => b.text() === '启动 / 续跑')!
     expect(startBtn).toBeTruthy()
     expect(startBtn.attributes('disabled')).toBeDefined()
+  })
+
+  it('僵尸字段 pathStyle 不再出现在前端类型与表单里', () => {
+    const types = readFileSync('src/api/storageProfiles.ts', 'utf8')
+    const view = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(types).not.toContain('pathStyle')
+    expect(view).not.toContain('pathStyle')
+    // 唯一的路径风格入口是 Host Header：文案要说清留空就是路径风格
+    expect(view).toContain('留空=路径风格')
   })
 })

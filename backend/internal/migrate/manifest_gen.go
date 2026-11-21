@@ -64,4 +64,5 @@ var expectedMigrations = []string{
 	"0055_drop_tenant_storage_configs.sql",
 	"0056_local_mirror.sql",
 	"0057_binding_previous_profile.sql",
+	"0058_drop_storage_path_style.sql",
 }
