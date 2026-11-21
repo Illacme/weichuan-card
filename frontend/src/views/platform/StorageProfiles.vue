@@ -88,7 +88,7 @@
           :closable="false"
           show-icon
           title="切换全局默认是即时生效的高危操作"
-          description="请先确认新档案已「自检通过」，并且历史对象仍在旧桶中可读；否则切换后访客会拿到裂图。需要搬运历史对象请用「迁移任务」。"
+          description="保存前会自动核对：新档案必须已包含旧档案里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新档案里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
         />
         <div class="binding-card">
           <h4>全局默认（所有企业的共同设置）</h4>
@@ -105,9 +105,20 @@
               <el-option v-for="p in deliveries" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
             <el-button type="primary" :loading="saving" @click="saveGlobal">保存全局默认</el-button>
+            <el-button
+              v-if="globalBinding && globalBinding.previousStorageProfileId"
+              :loading="saving"
+              @click="rollbackGlobal"
+            >回滚到上一套（{{ profileName(globalBinding.previousStorageProfileId) }}）</el-button>
+          </div>
+          <div class="force-row">
+            <el-checkbox v-model="forceGlobal">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
           </div>
         </div>
-        <h4 class="company-title">企业覆盖（没有绑定行则继承全局）</h4>
+        <div class="company-head">
+          <h4 class="company-title">企业覆盖（没有绑定行则继承全局）</h4>
+          <el-checkbox v-model="forceCompany">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+        </div>
         <el-table :data="companyBindings" v-loading="loading" size="small" border>
           <el-table-column prop="tenantId" label="企业 ID" width="90" />
           <el-table-column label="企业名称" min-width="160">
@@ -127,12 +138,24 @@
               </el-select>
             </template>
           </el-table-column>
-          <el-table-column label="生效来源" width="100">
+          <el-table-column label="生效来源" width="90">
             <template #default="{ row }">{{ row.source === 'global' ? '全局' : row.source === 'inherit' ? '继承' : row.source }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="150">
+          <el-table-column label="上一套档案" min-width="140">
+            <template #default="{ row }">
+              <span v-if="row.previousStorageProfileId">{{ profileName(row.previousStorageProfileId) }}</span>
+              <span v-else class="muted">无</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="220">
             <template #default="{ row }">
               <el-button link type="primary" @click="saveCompany(row)">保存</el-button>
+              <el-button
+                v-if="row.previousStorageProfileId"
+                link
+                type="warning"
+                @click="rollbackCompany(row)"
+              >回滚</el-button>
               <el-button link type="danger" @click="resetCompany(row)">恢复继承</el-button>
             </template>
           </el-table-column>
@@ -296,6 +319,7 @@ import {
   listStorageProfiles, saveStorageProfile, deleteStorageProfile, checkStorageProfile,
   listDeliveryProfiles, saveDeliveryProfile, deleteDeliveryProfile, checkDeliveryProfile,
   listStorageBindings, saveGlobalBinding, saveCompanyBinding, resetCompanyBinding,
+  rollbackGlobalBinding, rollbackCompanyBinding,
   listMigrationJobs, createMigrationJob, runMigrationJob, cancelMigrationJob, listMigrationErrors,
   type StorageProfile, type DeliveryProfile, type StorageBinding, type MigrationJob, type MigrationError,
 } from '@/api/storageProfiles'
@@ -311,9 +335,13 @@ const deliveries = ref<DeliveryProfile[]>([])
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
 const companyBindings = ref<StorageBinding[]>([])
+const globalBinding = ref<StorageBinding | null>(null)
 const globalStorageId = ref<number | undefined>(undefined)
 const globalDeliveryId = ref<number | undefined>(undefined)
 const boundGlobal = computed(() => !!globalStorageId.value)
+// 强制切换默认关：正常切换必须先迁移完整。只有确认目标本就是新桶时才勾。
+const forceGlobal = ref(false)
+const forceCompany = ref(false)
 const companyNames = ref<Record<number, string>>({})
 
 const drivers = [
@@ -378,6 +406,7 @@ async function load() {
       return m
     }, {} as Record<number, string>)
     const g: any = bs.global
+    globalBinding.value = g && g.storageProfileId ? (g as StorageBinding) : null
     globalStorageId.value = g?.storageProfileId || undefined
     globalDeliveryId.value = g?.deliveryProfileId || undefined
     companyBindings.value = bs.companies || []
@@ -452,8 +481,20 @@ async function saveGlobal() {
   if (!globalStorageId.value) return ElMessage.warning('请选择存储档案')
   saving.value = true
   try {
-    await saveGlobalBinding(globalStorageId.value, globalDeliveryId.value || 0)
+    // force 与后端一致地作用于下一次保存；错误（含缺失对象 key）由请求层原样弹出，
+    // 这里不吞掉，避免「保存失败」变成一句没有信息的空话。
+    await saveGlobalBinding(globalStorageId.value, globalDeliveryId.value || 0, forceGlobal.value)
     ElMessage.success('全局默认已切换，下一个请求即生效')
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
+async function rollbackGlobal() {
+  saving.value = true
+  try {
+    await rollbackGlobalBinding()
+    ElMessage.success('已回滚到切换前的档案')
     await load()
   } finally {
     saving.value = false
@@ -461,8 +502,13 @@ async function saveGlobal() {
 }
 async function saveCompany(row: any) {
   if (!row.storageProfileId) return ElMessage.warning('请选择存储档案')
-  await saveCompanyBinding(row.tenantId, row.storageProfileId, row.deliveryProfileId || 0)
+  await saveCompanyBinding(row.tenantId, row.storageProfileId, row.deliveryProfileId || 0, forceCompany.value)
   ElMessage.success('已保存')
+  await load()
+}
+async function rollbackCompany(row: any) {
+  await rollbackCompanyBinding(row.tenantId)
+  ElMessage.success('已回滚到切换前的档案')
   await load()
 }
 async function resetCompany(row: any) {
@@ -517,6 +563,8 @@ function exportErrors() {
 .binding-card { border: 1px solid #ebeef5; border-radius: 6px; padding: 14px 16px; margin-bottom: 18px; }
 .binding-card h4 { margin: 0 0 10px; font-size: 14px; }
 .binding-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.force-row { margin-top: 10px; }
+.company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .binding-form label, .migration-create label { font-size: 13px; color: #606266; }
 .company-title { font-size: 14px; margin: 0 0 10px; }
 .migration-create { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }

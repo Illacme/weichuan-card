@@ -126,6 +126,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `baseUrl` | 存储档案的上传返回基址（`model/storage_profile.go`，0054）。与 `publicBaseUrl` 同属解析器的**输入**（上传实例构造用的平台统一入口），不是资源字段；不要对它调 `ResolveRef` |
 | `storageProfileId` / `deliveryProfileId` | 绑定表外键整数（0054）；正则因 `profile` 中含 `file` 命中，实际是档案主键，不是文件地址 |
 | `sourceProfileId` / `targetProfileId` | 迁移任务的外键整数（0054）；同上，是档案主键 |
+| `previousStorageProfileId` / `previousDeliveryProfileId` | 绑定表的回滚游标外键整数（0057）；同上因 `profile` 含 `file` 命中，实际是档案主键。只记录「切换前的那一套」供一键回滚，不参与任何出参 URL 拼接 |
 
 > `publicBaseUrl` 与 `baseUrl` 是这批里「长得像资源字段、语义却是解析器输入」的两条。
 > 将来若真有人把它接进 `ResolveRefs`，症状不是裂图，而是**配置页显示的基址被悄悄改形**，

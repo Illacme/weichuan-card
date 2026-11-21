@@ -89,6 +89,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'storage.profile.delete': '删除存储或分发档案',
   'storage.profile.check': '存储 / 分发档案自检',
   'storage.binding.update': '修改存储绑定（全局或企业）',
+  'storage.binding.rollback': '一键回滚存储绑定（切回切换前的档案）',
   'storage.migration': '存储迁移任务（创建 / 启动 / 取消）',
   'storage.config.rekey': '租户存储凭据轮换',
   'mp_release.create': '登记小程序版本',

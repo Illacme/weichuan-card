@@ -89,14 +89,22 @@ func (DeliveryProfile) TableName() string { return "delivery_profiles" }
 // TenantID=0 是全局默认；企业没有绑定行时继承全局。Version 每次变更递增，
 // 运行时解析器按下一次请求比对版本，秒级最终一致（多副本各进程独立缓存）。
 type StorageBinding struct {
-	ID                int64     `gorm:"primaryKey" json:"id"`
-	TenantID          int64     `gorm:"column:tenant_id;uniqueIndex" json:"tenantId"`
-	StorageProfileID  int64     `gorm:"column:storage_profile_id" json:"storageProfileId"`
-	DeliveryProfileID int64     `gorm:"column:delivery_profile_id" json:"deliveryProfileId"`
-	Version           int64     `gorm:"default:1" json:"version"`
-	UpdatedBy         string    `gorm:"column:updated_by;size:64" json:"updatedBy"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                int64 `gorm:"primaryKey" json:"id"`
+	TenantID          int64 `gorm:"column:tenant_id;uniqueIndex" json:"tenantId"`
+	StorageProfileID  int64 `gorm:"column:storage_profile_id" json:"storageProfileId"`
+	DeliveryProfileID int64 `gorm:"column:delivery_profile_id" json:"deliveryProfileId"`
+	// PreviousStorageProfileID / PreviousDeliveryProfileID 记录「本次切换前的那一套」，
+	// 供一键回滚使用。语义与边界见迁移 0057：
+	//   - 前进切换时把旧档案写进来；回滚时与当前值交换（可反复来回切）；
+	//   - 0 表示「绑定首次建立之前没有档案」，回滚接口据此拒绝，退路是删绑定回落全局。
+	// 它们只是回滚游标，**不参与运行时档案解析**——Resolve 只读当前档案，
+	// 绝不能因为这里留了旧值就把对象写回旧桶。
+	PreviousStorageProfileID  int64     `gorm:"column:previous_storage_profile_id" json:"previousStorageProfileId"`
+	PreviousDeliveryProfileID int64     `gorm:"column:previous_delivery_profile_id" json:"previousDeliveryProfileId"`
+	Version                   int64     `gorm:"default:1" json:"version"`
+	UpdatedBy                 string    `gorm:"column:updated_by;size:64" json:"updatedBy"`
+	CreatedAt                 time.Time `json:"createdAt"`
+	UpdatedAt                 time.Time `json:"updatedAt"`
 }
 
 func (StorageBinding) TableName() string { return "storage_bindings" }

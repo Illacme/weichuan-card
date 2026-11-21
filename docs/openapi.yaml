@@ -4486,6 +4486,8 @@ paths:
       description: |
         `storageProfileId` 必填，`deliveryProfileId=0` 表示不启用 CDN。
         保存后即时生效：各进程按指纹重载档案快照，无需重启。
+        切换前会自动核对目标档案是否已包含当前档案在整桶范围内的全部对象；
+        缺失则 code=1 并回显缺失 key 示例，绑定不变。确认无需搬迁可传 `force=true` 跳过。
       tags: [平台管理]
       requestBody:
         required: true
@@ -4494,7 +4496,18 @@ paths:
             schema: { $ref: "#/components/schemas/StorageBindingSave" }
       responses:
         "200":
-          description: code=0；code=1 档案不存在
+          description: code=0；code=1 档案不存在 / 列举失败 / 目标缺对象；code=403 非平台超管
+  /api/admin/storage-bindings/global/rollback:
+    post:
+      summary: 一键回滚全局绑定到切换前的档案（平台超管）
+      description: |
+        交换 current 与 previous（previous → current，被换下的进 previous），
+        因此可反复回滚来回切。previous=0（从未切换过）时 code=1。
+        回滚是应急动作，不核对对象齐全；但切换前的档案必须存在、非镜像、非停用。
+      tags: [平台管理]
+      responses:
+        "200":
+          description: code=0；code=1 无可回滚目标 / 切换前的档案不可用；code=403 非平台超管
   /api/admin/storage-bindings/companies/{id}:
     put:
       summary: 设置某企业的档案绑定（平台超管）
@@ -4503,6 +4516,8 @@ paths:
         档案里装的是**别家客户**的桶名与凭据，企业管理员若能改自己的绑定，
         就能把本企业上传写进别人的桶，而两边后台都显示正常。
         删除本行即恢复继承全局。
+        切换前会自动核对目标档案是否已包含当前档案在 `t/<id>/` 范围内的全部对象；
+        缺失则 code=1 并回显缺失 key 示例。确认无需搬迁可传 `force=true` 跳过。
       tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -4513,7 +4528,7 @@ paths:
             schema: { $ref: "#/components/schemas/StorageBindingSave" }
       responses:
         "200":
-          description: code=0；code=1 档案不存在；code=403 非平台超管
+          description: code=0；code=1 档案不存在 / 列举失败 / 目标缺对象；code=403 非平台超管
     delete:
       summary: 清除某企业的绑定，恢复继承全局（平台超管）
       tags: [平台管理]
@@ -4522,6 +4537,18 @@ paths:
       responses:
         "200":
           description: code=0；code=403 非平台超管
+  /api/admin/storage-bindings/companies/{id}/rollback:
+    post:
+      summary: 一键回滚某企业绑定到切换前的档案（平台超管）
+      description: |
+        语义同全局回滚：交换 current 与 previous，可反复回滚来回切。
+        previous=0（从未切换过）时 code=1，此时用 DELETE 绑定恢复继承。
+      tags: [平台管理]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: code=0；code=1 无绑定 / 无可回滚目标 / 档案不可用；code=403 非平台超管
   /api/admin/storage-migration-jobs:
     get:
       summary: 迁移任务列表（平台超管，最多 200 条）
@@ -7021,6 +7048,7 @@ components:
       properties:
         storageProfileId: { type: integer, format: int64 }
         deliveryProfileId: { type: integer, format: int64, description: 0 = 不启用 CDN }
+        force: { type: boolean, default: false, description: "跳过『目标档案必须包含当前全部对象』的切换前核对；默认 false。仅在确认目标本就是新桶、无需搬迁时才可开启，开启会记审计" }
     StorageMigrationCreate:
       type: object
       required: [sourceProfileId, targetProfileId]

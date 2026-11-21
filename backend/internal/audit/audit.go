@@ -102,6 +102,10 @@ const (
 	// ActionStorageBindingUpdate 改全局默认或某企业的档案绑定。
 	// 这是「文件到底写去哪」的最终开关，即时生效且影响面大，必须留痕。
 	ActionStorageBindingUpdate = "storage.binding.update"
+	// ActionStorageBindingRollback 把绑定一键切回切换前的档案（previous → current，交换）。
+	// 与 update 分开记：回滚是「出事后的应急动作」，审计要能一眼定位谁在什么时候退回去，
+	// 而不是混在一堆正常改绑里逐条翻 detail。
+	ActionStorageBindingRollback = "storage.binding.rollback"
 	// ActionStorageMigration 创建 / 启动 / 取消一键迁移任务。
 	// 迁移会复制对象并可能自动切换绑定，属高危批量动作。
 	ActionStorageMigration = "storage.migration"

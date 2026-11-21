@@ -196,6 +196,9 @@ func TestP0bResourceJSONFieldsMatchBoundaryList(t *testing.T) {
 		// baseUrl 是上传返回基址——解析器的**输入**，不是资源字段。
 		"storageProfileId": true, "deliveryProfileId": true,
 		"sourceProfileId": true, "targetProfileId": true, "baseUrl": true,
+		// 0057 一键回滚新增：两个 previous*ProfileId 同样是外键整数
+		// （正则命中 Profile 里的 file），不是资源地址；只作回滚游标，不进任何 URL。
+		"previousStorageProfileId": true, "previousDeliveryProfileId": true,
 	}
 	require.Equal(t, want, got,
 		"资源相关 json 字段集合变了：新增字段必须判断是不是 URL，并登记到边界清单 §2")

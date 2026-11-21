@@ -50,8 +50,10 @@ func TestStorageProfileCRUDGuard(t *testing.T) {
 		"storageProfileId": 9999,
 	}, token)
 	require.EqualValues(t, 1, body["code"])
+	// force=true：这里测的是「档案存在即可绑定」的 CRUD 通路，目标档案是 never
+	// 连通的假 minio，切换前核对必然失败；核对本身由 storage_switch_test.go 覆盖。
 	_, body = c.do("PUT", "/api/admin/storage-bindings/global", map[string]any{
-		"storageProfileId": 1,
+		"storageProfileId": 1, "force": true,
 	}, token)
 	require.EqualValues(t, 0, body["code"], body["msg"])
 	_, body = c.do("GET", "/api/admin/storage-bindings", nil, token)

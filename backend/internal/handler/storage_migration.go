@@ -305,6 +305,12 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 		status = "done"
 	}
 	if job.AutoSwitch && job.Failed == 0 && len(keys) > 0 {
+		// 复制端说「零失败」还不够——独立从目标档案读一遍，确认对象真的齐全，
+		// 再覆盖绑定。两道门各管一段（写 vs 读），任一不过都不切。
+		if err := guardAutoSwitch(resolver, &job); err != nil {
+			finish("failed", err.Error())
+			return
+		}
 		if err := switchBindingAfterMigration(db, &job); err != nil {
 			finish("failed", "对象已复制完成，但自动切换绑定失败："+err.Error())
 			return
@@ -323,6 +329,11 @@ func switchBindingAfterMigration(db *gorm.DB, job *model.StorageMigrationJob) er
 	}
 	if res.RowsAffected == 0 {
 		b = model.StorageBinding{TenantID: job.TenantID, Version: 1}
+	} else if b.StorageProfileID != job.TargetProfileID {
+		// 与手动 saveBinding 同一条纪律：档案真变了才记 previous，
+		// 让切过去之后还能一键退回迁移前的那套档案。
+		b.PreviousStorageProfileID = b.StorageProfileID
+		b.PreviousDeliveryProfileID = b.DeliveryProfileID
 	}
 	b.StorageProfileID = job.TargetProfileID
 	b.UpdatedBy = "migration:" + strconv.FormatInt(job.ID, 10)

@@ -48,6 +48,9 @@ export interface StorageBinding {
   storageProfileName: string
   deliveryProfileId: number
   deliveryProfileName: string
+  /** 切换前的那一套档案，供一键回滚。0=从未切换过（不可回滚）。 */
+  previousStorageProfileId: number
+  previousDeliveryProfileId: number
   version: number
   updatedBy: string
   updatedAt: string
@@ -118,14 +121,21 @@ export function listStorageBindings() {
     }>(r)
   )
 }
-export function saveGlobalBinding(storageProfileId: number, deliveryProfileId: number) {
-  return http.put('/admin/storage-bindings/global', { storageProfileId, deliveryProfileId })
+export function saveGlobalBinding(storageProfileId: number, deliveryProfileId: number, force = false) {
+  return http.put('/admin/storage-bindings/global', { storageProfileId, deliveryProfileId, force })
 }
-export function saveCompanyBinding(companyId: number, storageProfileId: number, deliveryProfileId: number) {
-  return http.put(`/admin/storage-bindings/companies/${companyId}`, { storageProfileId, deliveryProfileId })
+export function saveCompanyBinding(companyId: number, storageProfileId: number, deliveryProfileId: number, force = false) {
+  return http.put(`/admin/storage-bindings/companies/${companyId}`, { storageProfileId, deliveryProfileId, force })
 }
 export function resetCompanyBinding(companyId: number) {
   return http.delete(`/admin/storage-bindings/companies/${companyId}`)
+}
+/** 一键回滚到切换前的档案（交换语义，可反复回滚来回切）。 */
+export function rollbackGlobalBinding() {
+  return http.post('/admin/storage-bindings/global/rollback')
+}
+export function rollbackCompanyBinding(companyId: number) {
+  return http.post(`/admin/storage-bindings/companies/${companyId}/rollback`)
 }
 
 export function listMigrationJobs() {

@@ -16,6 +16,8 @@ vi.mock('@/api/storageProfiles', () => ({
   saveGlobalBinding: vi.fn(),
   saveCompanyBinding: vi.fn(),
   resetCompanyBinding: vi.fn(),
+  rollbackGlobalBinding: vi.fn(),
+  rollbackCompanyBinding: vi.fn(),
   listMigrationJobs: vi.fn(),
   createMigrationJob: vi.fn(),
   runMigrationJob: vi.fn(),
@@ -102,7 +104,7 @@ describe('文件存储与分发模块', () => {
     expect(w.text()).toContain('主站 OSS')
   })
 
-  it('全局默认只提交两个档案 ID，保存后即时生效', async () => {
+  it('全局默认提交两个档案 ID 与 force（默认 false），保存后即时生效', async () => {
     const w = mountPage()
     await flush()
     // 绑定页签的 el-select 按 id 顺序：全局存储、全局分发
@@ -112,8 +114,55 @@ describe('文件存储与分发模块', () => {
     const saveButton = w.findAll('button').find((b) => b.text() === '保存全局默认')!
     await saveButton.trigger('click')
     await flush()
-    expect(api.saveGlobalBinding).toHaveBeenCalledWith(2, 3)
+    expect(api.saveGlobalBinding).toHaveBeenCalledWith(2, 3, false)
     expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('即生效'))
+  })
+
+  it('强制切换勾选后把 force=true 传给后端，供目标缺对象时逃生', async () => {
+    vi.mocked(api.saveGlobalBinding).mockResolvedValue({} as any)
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    vm.forceGlobal = true
+    const saveButton = w.findAll('button').find((b) => b.text() === '保存全局默认')!
+    await saveButton.trigger('click')
+    await flush()
+    expect(api.saveGlobalBinding).toHaveBeenCalledWith(1, 3, true)
+  })
+
+  it('有上一套档案时显示回滚入口，点击调用回滚接口', async () => {
+    vi.mocked(api.listStorageBindings).mockResolvedValue({
+      global: { storageProfileId: 1, deliveryProfileId: 3, previousStorageProfileId: 2, source: 'profile' },
+      companies: [{
+        tenantId: 9, storageProfileId: 1, deliveryProfileId: 3,
+        previousStorageProfileId: 2, previousDeliveryProfileId: 0,
+        source: 'company', version: 2, updatedBy: 'x', updatedAt: '',
+      }], storageProfiles: {}, deliveryProfiles: {},
+    } as any)
+    vi.mocked(api.rollbackGlobalBinding).mockResolvedValue({} as any)
+    vi.mocked(api.rollbackCompanyBinding).mockResolvedValue({} as any)
+    const w = mountPage()
+    await flush()
+    // 全局与企业两处回滚入口都要出现（上一套档案是「备份桶」）
+    expect(w.text()).toContain('回滚到上一套（备份桶）')
+    // el-table-column 的 label 不在 stub 渲染的 text 里，用源码钉住「上一套档案」列存在
+    expect(readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')).toContain('label="上一套档案"')
+    const globalRollback = w.findAll('button').find((b) => b.text().includes('回滚到上一套'))!
+    await globalRollback.trigger('click')
+    await flush()
+    expect(api.rollbackGlobalBinding).toHaveBeenCalled()
+    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('回滚'))
+    const rowRollback = w.findAll('button').find((b) => b.text() === '回滚')!
+    await rowRollback.trigger('click')
+    await flush()
+    expect(api.rollbackCompanyBinding).toHaveBeenCalledWith(9)
+  })
+
+  it('没有上一套档案时不显示回滚按钮（避免空回滚）', async () => {
+    const w = mountPage()
+    await flush()
+    expect(w.findAll('button').filter((b) => b.text() === '回滚')).toHaveLength(0)
+    expect(w.findAll('button').filter((b) => b.text().includes('回滚到上一套'))).toHaveLength(0)
   })
 
   it('迁移任务拒绝源与目标相同，避免无意义复制', async () => {

@@ -414,7 +414,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		if writeLocked(c) {
 			return
 		}
-		id, deliveryID, ok := bindingIDs(c)
+		id, deliveryID, ok, force := bindingIDs(c)
 		if !ok {
 			return
 		}
@@ -422,12 +422,18 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
 			return
 		}
+		// 切换前核对目标档案是否已包含当前全部对象；漏搬就拒绝，错误文案原样回显
+		// （里面有缺失 key 示例和处置路径，不能被「保存绑定失败」这种空话盖掉）。
+		if err := guardManualSwitch(db, resolver, 0, id, force); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			return
+		}
 		if err := saveBinding(db, 0, id, deliveryID, c.GetString("actorName")); err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存绑定失败"})
 			return
 		}
 		audit.Record(db, c, audit.Entry{Action: audit.ActionStorageBindingUpdate, TargetType: "storage_binding", TargetID: "0",
-			Detail: map[string]any{"storageProfileId": id, "deliveryProfileId": deliveryID, "scope": "global"}})
+			Detail: map[string]any{"storageProfileId": id, "deliveryProfileId": deliveryID, "scope": "global", "force": force}})
 		touchProfileResolver(resolver)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
@@ -441,7 +447,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		if !ok {
 			return
 		}
-		id, deliveryID, ok := bindingIDs(c)
+		id, deliveryID, ok, force := bindingIDs(c)
 		if !ok {
 			return
 		}
@@ -449,12 +455,16 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
 			return
 		}
+		if err := guardManualSwitch(db, resolver, cid, id, force); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+			return
+		}
 		if err := saveBinding(db, cid, id, deliveryID, c.GetString("actorName")); err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存绑定失败"})
 			return
 		}
 		audit.Record(db, c, audit.Entry{Action: audit.ActionStorageBindingUpdate, TargetType: "storage_binding", TargetID: strconv.FormatInt(cid, 10),
-			Detail: map[string]any{"storageProfileId": id, "deliveryProfileId": deliveryID, "scope": "company"}})
+			Detail: map[string]any{"storageProfileId": id, "deliveryProfileId": deliveryID, "scope": "company", "force": force}})
 		touchProfileResolver(resolver)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
@@ -477,6 +487,42 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		touchProfileResolver(resolver)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})
+
+	// 一键回滚：把绑定切回「本次切换前的档案」。两个作用域各一条路由。
+	// 平台超管专属，与改绑同一档权限（理由见本节开头）。
+	r.POST("/api/admin/storage-bindings/global/rollback", plat, func(c *gin.Context) {
+		if writeLocked(c) {
+			return
+		}
+		rollbackBindingHandler(c, db, resolver, 0, "0")
+	})
+	r.POST("/api/admin/storage-bindings/companies/:id/rollback", plat, func(c *gin.Context) {
+		if writeLocked(c) {
+			return
+		}
+		cid, ok := storageTargetCompanyID(c)
+		if !ok {
+			return
+		}
+		rollbackBindingHandler(c, db, resolver, cid, strconv.FormatInt(cid, 10))
+	})
+}
+
+// rollbackBindingHandler 回滚绑定的 HTTP 外壳：只处理响应与审计，
+// 真正的交换逻辑在 rollbackBinding 里，便于单测直接调用不依赖 gin。
+func rollbackBindingHandler(c *gin.Context, db *gorm.DB, resolver *storageprofile.Resolver, tenantID int64, targetID string) {
+	if err := rollbackBinding(db, tenantID, c.GetString("actorName")); err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
+		return
+	}
+	scope := "global"
+	if tenantID > 0 {
+		scope = "company"
+	}
+	audit.Record(db, c, audit.Entry{Action: audit.ActionStorageBindingRollback, TargetType: "storage_binding", TargetID: targetID,
+		Detail: map[string]any{"scope": scope, "toPrevious": true}})
+	touchProfileResolver(resolver)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 }
 
 // touchProfileResolver 保存后主动重载档案快照。
@@ -497,16 +543,20 @@ func profileID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func bindingIDs(c *gin.Context) (int64, int64, bool) {
+func bindingIDs(c *gin.Context) (int64, int64, bool, bool) {
 	var req struct {
 		StorageProfileID  int64 `json:"storageProfileId"`
 		DeliveryProfileID int64 `json:"deliveryProfileId"`
+		// Force 显式跳过「目标档案必须包含当前全部对象」的核对。
+		// 默认 false：正常切换必须先迁移完整；只有运维确认目标本就是新桶、
+		// 或有意不搬存量时才会打开，且打开会被审计记一笔。
+		Force bool `json:"force"`
 	}
 	if c.ShouldBindJSON(&req) != nil || req.StorageProfileID <= 0 {
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请选择一个存储档案"})
-		return 0, 0, false
+		return 0, 0, false, false
 	}
-	return req.StorageProfileID, req.DeliveryProfileID, true
+	return req.StorageProfileID, req.DeliveryProfileID, true, req.Force
 }
 
 func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
@@ -539,6 +589,11 @@ func saveBinding(db *gorm.DB, tenantID, storageID, deliveryID int64, actor strin
 	}
 	if res.RowsAffected == 0 {
 		b = model.StorageBinding{TenantID: tenantID, Version: 1}
+	} else if b.StorageProfileID != storageID || b.DeliveryProfileID != deliveryID {
+		// 档案确实变了才记 previous：重复提交同一绑定不该把「上一套」覆盖成当前值，
+		// 否则回滚会变成 no-op，管理员以为退回去了、其实什么都没动。
+		b.PreviousStorageProfileID = b.StorageProfileID
+		b.PreviousDeliveryProfileID = b.DeliveryProfileID
 	}
 	b.StorageProfileID = storageID
 	b.DeliveryProfileID = deliveryID
