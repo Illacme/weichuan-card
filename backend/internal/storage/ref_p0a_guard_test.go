@@ -58,6 +58,13 @@ func TestRefWiringGate(t *testing.T) {
 		// 「校验用的一次重算」，不是第三个键生成入口；它不产出新键，只否决错的键。
 		filepath.Join(root, "refmigrate", "apply.go"):   true,
 		filepath.Join(root, "refmigrate", "execute.go"): true,
+		// 第七十八轮：本地镜像回拉。它要按对象键里的归属前缀判断「这个键是不是
+		// 这个租户的」，与 thumbEnsureHandler / signHandler 同一口径；否则用 A 的
+		// 凭据把 B 桶里的对象回拉到 A 的备份目录，两边都不报错。
+		// 它不生成新键，只校验与删除已有键，因此不属于「第三个键生成入口」。
+		filepath.Join(root, "mirror", "mirror.go"):            true,
+		filepath.Join(root, "mirror", "mirror_test.go"):       true,
+		filepath.Join(root, "handler", "mirror_hook_test.go"): true,
 	}
 
 	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|NormalizeOrKeep|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)

@@ -147,6 +147,30 @@ describe('文件存储与分发模块', () => {
     expect(dirInput.attributes('disabled')).toBeDefined()
   })
 
+  it('两套内置档案用途可辨，镜像档案不参与绑定与迁移', async () => {
+    vi.mocked(api.listStorageProfiles).mockResolvedValue([
+      { ...storage(1, '平台本地存储'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
+      { ...storage(2, '平台本地镜像'), builtin: true, driver: 'local', purpose: 'platform_mirror', publicRead: false },
+    ] as any)
+    const w = mountPage()
+    await flush()
+    expect(w.text()).toContain('租户退路')
+    expect(w.text()).toContain('平台镜像')
+    // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
+    // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
+    const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
+    await buttons[1].trigger('click')
+    await flush()
+    expect(w.text()).toContain('本地镜像目录')
+    expect(w.text()).toContain('不参与任何租户绑定')
+    expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 本地上传目录」')
+
+    // 下拉里不能出现镜像档案：绑上它等于把备份副本变成主写入目标。
+    expect(w.findAll('option').filter((o) => o.text() === '平台本地镜像')).toHaveLength(0)
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain("row.purpose === 'platform_mirror'")
+  })
+
   it('路由与菜单必须同时登记（新增页面不能漏一处）', () => {
     const router = readFileSync('src/router/index.ts', 'utf8')
     const menu = readFileSync('src/layout/AdminLayout.vue', 'utf8')

@@ -23,6 +23,8 @@
             <template #default="{ row }">
               {{ row.name }}
               <el-tag v-if="row.builtin" size="small" type="info">内置</el-tag>
+              <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
+              <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="driver" label="驱动" width="90" />
@@ -93,7 +95,7 @@
           <div class="binding-form">
             <label>存储档案</label>
             <el-select v-model="globalStorageId" placeholder="选择存储档案" style="width: 260px">
-              <el-option v-for="p in storages" :key="p.id" :label="p.name" :value="p.id" />
+              <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
             <label>分发档案</label>
             <el-select v-model="globalDeliveryId" placeholder="不启用 CDN" clearable style="width: 260px">
@@ -111,7 +113,7 @@
           <el-table-column label="存储档案" min-width="170">
             <template #default="{ row }">
               <el-select v-model="row.storageProfileId" size="small" style="width:100%">
-                <el-option v-for="p in storages" :key="p.id" :label="p.name" :value="p.id" />
+                <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
               </el-select>
             </template>
           </el-table-column>
@@ -152,11 +154,11 @@
           </el-select>
           <label>源档案</label>
           <el-select v-model="newJob.sourceProfileId" style="width: 200px">
-            <el-option v-for="p in storages" :key="p.id" :label="p.name" :value="p.id" />
+            <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
           <label>目标档案</label>
           <el-select v-model="newJob.targetProfileId" style="width: 200px">
-            <el-option v-for="p in storages" :key="p.id" :label="p.name" :value="p.id" />
+            <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
           <el-checkbox v-model="newJob.dryRun">试运行（只统计不复制）</el-checkbox>
           <el-checkbox v-model="newJob.autoSwitch" :disabled="newJob.dryRun">成功后自动切换绑定</el-checkbox>
@@ -226,7 +228,12 @@
         <template v-else>
           <el-form-item label="本地根目录">
             <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
-            <span v-if="storageForm.builtin" class="field-note">
+            <span v-if="storageForm.builtin && storageForm.purpose === 'platform_mirror'" class="field-note">
+              平台镜像目录跟随「系统设置 → 本地镜像目录」：它独立于 /uploads 静态目录，
+              专门接收云端对象的本地备份副本，不参与任何租户绑定，也不能用于迁移。
+              目录单独改会让备份脚本与运行期落点分叉，要换目录请改系统设置后重启。
+            </span>
+            <span v-else-if="storageForm.builtin" class="field-note">
               内置档案的目录跟随「系统设置 → 本地上传目录」：静态文件服务也绑在同一目录，单独改这里会导致图片 404。要换目录请改系统设置后重启。
             </span>
             <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
@@ -292,6 +299,8 @@ const tab = ref('storage')
 const loading = ref(false)
 const saving = ref(false)
 const storages = ref<StorageProfile[]>([])
+// 镜像档案只接收异步备份副本，绝不能出现在绑定 / 迁移下拉里（后端也会拒）。
+const writableStorages = computed(() => storages.value.filter((p) => p.purpose !== 'platform_mirror'))
 const deliveries = ref<DeliveryProfile[]>([])
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
@@ -318,7 +327,7 @@ const providers = [
 
 const emptyStorage = () => ({
   id: 0, name: '', driver: 'minio', endpoint: '', bucket: '', region: '', baseUrl: '',
-  pathStyle: false, hostHeader: '', useSsl: true, localDir: '', publicRead: true,
+  pathStyle: false, hostHeader: '', useSsl: true, localDir: '', publicRead: true, purpose: '' as StorageProfile['purpose'],
   accessKey: '', secretKey: '', accessKeyMasked: '', builtin: false,
 })
 const emptyDelivery = () => ({

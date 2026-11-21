@@ -11,6 +11,8 @@ export interface CompanyItem {
   status: 'enabled' | 'disabled'
   /** 登录页白标码（?company=）；命中后登录页显示该企业简称。空串 = 未配置 */
   loginCode?: string
+  /** 是否开启该租户的「云对象本地镜像备份」（迁移 0056）。默认 false。 */
+  localMirrorEnabled?: boolean
   createdAt: string
   employeeCount: number
   adminCount: number
@@ -92,7 +94,7 @@ export function createCompany(payload: {
 // 编辑企业（名称 / 简称 / 白标码）：简称改后同步侧边栏品牌名，但不回写公司信息里的简称
 // （公司信息简称仅用于小程序展示，由企业管理员在「公司信息」页自行维护）。
 // loginCode 留空表示清除该企业白标码（登录页回落全局品牌）；后端按全量覆盖写入。
-export function updateCompany(id: number, payload: { name: string; shortName?: string; loginCode?: string }) {
+export function updateCompany(id: number, payload: { name: string; shortName?: string; loginCode?: string; localMirrorEnabled?: boolean }) {
   return http.put(`/admin/companies/${id}`, payload)
 }
 

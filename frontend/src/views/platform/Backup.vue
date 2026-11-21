@@ -161,13 +161,14 @@ const status = ref<BackupStatus>({
 const loading = ref(false)
 const running = ref(false)
 
-// 三行固定顺序，缺的那件照样占一行并显示「缺失」——只渲染后端返回的 items
+// 固定顺序渲染，缺的那件照样占一行并显示「缺失」——只渲染后端返回的 items
 // 会让「少了密钥包」这种最该被看见的事从界面上消失。
+// 例外是 optional 行（本地镜像）：没开启镜像的部署不产出它，仅在确有归档时出现。
 const rows = computed(() =>
   BACKUP_KINDS.map((k) => ({
     ...k,
     item: status.value.items.find((i) => i.kind === k.kind) ?? null,
-  })),
+  })).filter((r) => !r.optional || r.item !== null),
 )
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined

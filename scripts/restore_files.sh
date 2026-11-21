@@ -2,13 +2,14 @@
 # ─────────────────────────────────────────────────────────────
 # 文件资产 + 运行时密钥恢复（配套 scripts/backup_files.sh）。
 #
-#   scripts/restore_files.sh --all                          # 恢复最新一批（uploads + secrets）
+#   scripts/restore_files.sh --all                          # 恢复最新一批（uploads + mirror + secrets）
 #   scripts/restore_files.sh --uploads backups/uploads-20261102-030000.tar.gz --yes
 #   scripts/restore_files.sh --secrets backups/secrets-20261102-030000.tar.gz.enc --yes
 #   scripts/restore_files.sh --all --target /tmp/drill      # 只解开到指定目录（演练用，不碰生产）
 #
 # 选项：
 #   --uploads <文件>   恢复上传目录归档（uploads-*.tar.gz）
+#   --mirror <文件>    恢复本地镜像归档（mirror-*.tar.gz）
 #   --secrets <文件>   恢复密钥包（secrets-*.tar.gz.enc，需要 BACKUP_ENC_KEY）
 #   --all              自动取 BACKUP_DIR 里最新的一批（同一时间戳优先配对）
 #   --target <目录>    只解到该目录，不碰容器与生产目录（演练 / 异地检查）
@@ -31,13 +32,16 @@ APP_CONTAINER="${APP_CONTAINER:-weichuan-backend}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 BACKUP_SOURCE="${BACKUP_SOURCE:-auto}"
 UPLOAD_DIR="${UPLOAD_DIR:-./uploads}"
+MIRROR_DIR="${MIRROR_DIR:-./storage/mirror}"
 CONFIG_DIR="${CONFIG_DIR:-./data}"
 BACKUP_ENC_KEY="${BACKUP_ENC_KEY:-}"
 export BACKUP_ENC_KEY
 
 C_UPLOAD_DIR="/app/uploads"
+C_MIRROR_DIR="/app/storage/mirror"
 C_DATA_DIR="/app/data"
 
+RESTORE_MIRROR=""
 RESTORE_UPLOADS=""
 RESTORE_SECRETS=""
 ALL=0
@@ -54,6 +58,7 @@ warn() { echo "[restore-files][WARN] $*" >&2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --uploads) RESTORE_UPLOADS="${2:-}"; [ -n "$RESTORE_UPLOADS" ] || die "--uploads 需要一个文件"; shift 2 ;;
+    --mirror)  RESTORE_MIRROR="${2:-}";  [ -n "$RESTORE_MIRROR" ]  || die "--mirror 需要一个文件"; shift 2 ;;
     --secrets) RESTORE_SECRETS="${2:-}"; [ -n "$RESTORE_SECRETS" ] || die "--secrets 需要一个文件"; shift 2 ;;
     --all)     ALL=1; shift ;;
     --target)  TARGET="${2:-}"; [ -n "$TARGET" ] || die "--target 需要一个目录"; shift 2 ;;
@@ -84,6 +89,7 @@ stamp_of() {
 if [ "$ALL" = "1" ]; then
   latest_secrets="$(ls -t "$BACKUP_DIR"/secrets-*.tar.gz.enc 2>/dev/null | head -1 || true)"
   latest_uploads="$(ls -t "$BACKUP_DIR"/uploads-*.tar.gz 2>/dev/null | head -1 || true)"
+  latest_mirror="$(ls -t "$BACKUP_DIR"/mirror-*.tar.gz 2>/dev/null | head -1 || true)"
 
   # 配对：优先与 secrets 同一时间戳的 uploads（同一次运行产出的才保证一致）
   if [ -n "$latest_secrets" ]; then
@@ -98,10 +104,15 @@ if [ "$ALL" = "1" ]; then
     fi
   fi
 
+  # 镜像归档在旧备份里不存在：拿不到就跳过，不把 --all 变成硬失败。
+  if [ -n "$stamp" ] && [ -f "$BACKUP_DIR/mirror-${stamp}.tar.gz" ]; then
+    latest_mirror="$BACKUP_DIR/mirror-${stamp}.tar.gz"
+  fi
+  [ -n "$latest_mirror" ] && RESTORE_MIRROR="$latest_mirror"
   [ -n "$latest_uploads" ] && RESTORE_UPLOADS="$latest_uploads"
   [ -n "$latest_secrets" ] && RESTORE_SECRETS="$latest_secrets"
 
-  if [ -z "$RESTORE_UPLOADS" ] && [ -z "$RESTORE_SECRETS" ]; then
+  if [ -z "$RESTORE_UPLOADS" ] && [ -z "$RESTORE_MIRROR" ] && [ -z "$RESTORE_SECRETS" ]; then
     die "$BACKUP_DIR 里没有可恢复的文件备份（先跑 scripts/backup_files.sh）"
   fi
 fi
@@ -163,6 +174,38 @@ restore_uploads() {
     mkdir -p "$UPLOAD_DIR"
     cp -R "$stage/." "$UPLOAD_DIR/"
     info "已写入 $UPLOAD_DIR"
+  fi
+}
+
+# ═══════════════ 本地镜像 ═══════════════
+restore_mirror() {
+  local file="$1"
+  [ -f "$file" ] || die "本地镜像归档不存在：$file"
+  gzip -t "$file" 2>/dev/null || die "归档已损坏（gzip -t 未通过）：$file"
+
+  local stage="$TMP_DIR/mirror"
+  mkdir -p "$stage"
+  tar -xzf "$file" -C "$stage" || die "解包失败：$file"
+  local n
+  n="$(find "$stage" -type f | wc -l | tr -d ' ')"
+  info "镜像解包完成：${n} 个文件"
+
+  if [ -n "$TARGET" ]; then
+    mkdir -p "$TARGET/mirror"
+    cp -R "$stage/." "$TARGET/mirror/"
+    info "已解开到 $TARGET/mirror"
+    return 0
+  fi
+
+  if [ "$MODE" = "container" ]; then
+    docker exec "$APP_CONTAINER" mkdir -p "$C_MIRROR_DIR" >/dev/null 2>&1 || true
+    docker cp "$stage/." "$APP_CONTAINER:$C_MIRROR_DIR/" >/dev/null \
+      || die "写入容器失败（$APP_CONTAINER:$C_MIRROR_DIR）"
+    info "已写入 ${APP_CONTAINER}:${C_MIRROR_DIR}"
+  else
+    mkdir -p "$MIRROR_DIR"
+    cp -R "$stage/." "$MIRROR_DIR/"
+    info "已写入 $MIRROR_DIR"
   fi
 }
 
@@ -231,6 +274,9 @@ restore_secrets() {
 
 if [ -n "$RESTORE_UPLOADS" ]; then
   restore_uploads "$RESTORE_UPLOADS"
+fi
+if [ -n "$RESTORE_MIRROR" ]; then
+  restore_mirror "$RESTORE_MIRROR"
 fi
 if [ -n "$RESTORE_SECRETS" ]; then
   restore_secrets "$RESTORE_SECRETS"

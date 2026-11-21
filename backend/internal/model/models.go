@@ -55,9 +55,13 @@ type Company struct {
 	// LoginCode 登录页白标码（?company=）：小写字母/数字/连字符 slug，仅精确匹配。
 	// 命中 enabled 企业时，公开接口回传该企业 ShortName 作为登录页品牌名；未命中回落全局 brand_name。
 	// 空串 = 未配置（多数企业不配，登录页回落全局品牌）。唯一性由后端写入时校验（见 handler/companies.go）。
-	LoginCode string    `gorm:"column:login_code" json:"loginCode"`
-	Status    string    `gorm:"column:status;default:enabled" json:"status"`
-	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+	LoginCode string `gorm:"column:login_code" json:"loginCode"`
+	Status    string `gorm:"column:status;default:enabled" json:"status"`
+	// LocalMirrorEnabled 该企业是否开启「上传成功后从云异步回拉本地镜像」（迁移 0056）。
+	// 默认 false：镜像会占额外磁盘，且只对云桶租户有意义，必须逐家显式打开。
+	// 平台对象（cid=0）不受这一列约束，只看系统总闸 local_mirror_enabled。
+	LocalMirrorEnabled bool      `gorm:"column:local_mirror_enabled" json:"localMirrorEnabled"`
+	CreatedAt          time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
 // TableName 显式指定单数表名：GORM 默认会把 Company 复数化为 companies，

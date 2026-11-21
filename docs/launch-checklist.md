@@ -64,13 +64,14 @@
   **外部拨测**（配 `EXTERNAL_URL`，覆盖反代 / 证书 / 防火墙这类本机探活看不见的故障）/ **授权到期**（R5，见下方授权条目）。
 - **备份任务进 crontab**：`BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh`（或 `DB_DRIVER=mysql`），每天一次。
   一次产出**三件套**：库（`.db.gz` / `.sql.gz`）、图片（`uploads-*.tar.gz`）、
-  密钥包（`secrets-*.tar.gz.enc`）。SQLite 形态**不能直接 `cp` 库文件**
+  密钥包（`secrets-*.tar.gz.enc`）。开启本地镜像（`MIRROR_DIR`）的部署会多一件
+  `mirror-*.tar.gz`，它是云桶对象的本地副本，同样要确认新鲜度。SQLite 形态**不能直接 `cp` 库文件**
   （WAL 里还有未合并的页，cp 出来是坏库），必须走这个脚本。
 - **`BACKUP_ENC_KEY` 必须设，且口令与备份分开保管**：`runtime.env` 里有 `PII_ENC_KEY`，
   没有它库里的姓名/手机就是解不开的密文（业务 PII 无 re-key，见下方 PII 条目）。密钥包用该口令加密后落盘，
   口令请放密码管理器 / 纸质封存，**不要**和备份放同一台机器。
   未设时脚本会**直接失败并删掉本次产物**（确需跳过用 `BACKUP_ALLOW_NO_KEY=1`，会打 WARN）。
-  验证：`ls backups/` 应同时看到 `weichuan-*`、`uploads-*`、`secrets-*` 三类文件，且时间戳一致。
+  验证：`ls backups/` 应同时看到 `weichuan-*`、`uploads-*`、`secrets-*` 三类文件（开启镜像时再加 `mirror-*`），且时间戳一致。
 - **上线后在后台确认三件套**：「平台管理 → 备份与恢复」应看到三行都是绿色（新鲜度 < 26h）、无黄色缺件提示。
   这一页能看到 cron 的产物、也能「立即备份」补一份、并下载库与图片；
   **但密钥包不提供下载**（后端直接拒）——请用 `scp`/`rsync` 从服务器取走，

@@ -18,7 +18,7 @@
 # 用法：
 #   scripts/backup_files.sh                          # 自动识别容器 / 宿主
 #   BACKUP_ENC_KEY=xxx scripts/backup_files.sh       # 加密密钥包（生产必须）
-#   BACKUP_SOURCE=host UPLOAD_DIR=./uploads scripts/backup_files.sh
+#   BACKUP_SOURCE=host UPLOAD_DIR=./uploads MIRROR_DIR=./storage/mirror scripts/backup_files.sh
 #   scripts/backup.sh                                # 通常不用单独跑：DB 备份会带上它
 #
 # 环境变量：
@@ -27,6 +27,7 @@
 #   APP_CONTAINER    应用容器名，默认 weichuan-backend
 #   BACKUP_SOURCE    auto（默认，容器在就用容器）/ container / host
 #   UPLOAD_DIR       宿主上的上传目录，默认 ./uploads（host 模式）
+#   MIRROR_DIR       宿主上的本地镜像备份目录，默认 ./storage/mirror（host 模式）
 #   CONFIG_FILE      宿主上的运行时配置，默认 ./data/runtime.env
 #   LICENSE_FILE     宿主上的许可证，默认 ./data/license.key
 #   BACKUP_ENC_KEY   密钥包口令（openssl rand -base64 24 生成）
@@ -42,6 +43,7 @@ KEEP_DAYS="${KEEP_DAYS:-7}"
 APP_CONTAINER="${APP_CONTAINER:-weichuan-backend}"
 BACKUP_SOURCE="${BACKUP_SOURCE:-auto}"
 UPLOAD_DIR="${UPLOAD_DIR:-./uploads}"
+MIRROR_DIR="${MIRROR_DIR:-./storage/mirror}"
 CONFIG_FILE="${CONFIG_FILE:-./data/runtime.env}"
 LICENSE_FILE="${LICENSE_FILE:-./data/license.key}"
 BACKUP_ENC_KEY="${BACKUP_ENC_KEY:-}"
@@ -52,6 +54,7 @@ export BACKUP_ENC_KEY
 
 # 容器内的固定路径，与 docker-compose.yml 的 UPLOAD_DIR / CONFIG_FILE 一致
 C_UPLOAD_DIR="/app/uploads"
+C_MIRROR_DIR="/app/storage/mirror"
 C_DATA_DIR="/app/data"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -128,6 +131,38 @@ backup_uploads() {
   fi
 
   gzip -t "$out" 2>/dev/null || die "上传目录归档校验失败（gzip -t 未通过）：$out"
+  local n
+  n="$(tar -tzf "$out" | grep -v '/$' | grep -v '^\.$' | wc -l | tr -d ' ')"
+  log "OK -> ${out}（$(du -h "$out" | cut -f1)，文件 ${n} 个）"
+}
+
+# ═══════════════ 1b. 本地镜像副本 ═══════════════
+# 云桶对象上传成功后异步回拉的备份副本（internal/mirror）。不备份它等于
+# 「以为有本地备份，其实只在云厂商那里有一份」——桶被误删就没有回头路。
+backup_mirror() {
+  local out="$BACKUP_DIR/mirror-${STAMP}.tar.gz"
+  local src="$MIRROR_DIR"
+  if [ "$MODE" = "container" ]; then
+    if ! docker exec "$APP_CONTAINER" test -d "$C_MIRROR_DIR" 2>/dev/null; then
+      log "容器内无 ${C_MIRROR_DIR}（尚未开启本地镜像，或旧版镜像未挂载卷），跳过"
+      return 0
+    fi
+    src="$C_MIRROR_DIR"
+  elif [ ! -d "$MIRROR_DIR" ]; then
+    log "未发现本地镜像目录 ${MIRROR_DIR}（尚未开启本地镜像），跳过"
+    return 0
+  fi
+
+  log "打包本地镜像目录（${MODE}）..."
+  CREATED+=("$out")
+  if [ "$MODE" = "container" ]; then
+    docker exec "$APP_CONTAINER" tar -czf - -C "$src" . > "$out" \
+      || die "打包本地镜像目录失败（容器内 tar 非零退出）"
+  else
+    tar -czf "$out" -C "$src" . \
+      || die "打包本地镜像目录失败（${src}）"
+  fi
+  gzip -t "$out" 2>/dev/null || die "本地镜像归档校验失败（gzip -t 未通过）：$out"
   local n
   n="$(tar -tzf "$out" | grep -v '/$' | grep -v '^\.$' | wc -l | tr -d ' ')"
   log "OK -> ${out}（$(du -h "$out" | cut -f1)，文件 ${n} 个）"
@@ -220,11 +255,13 @@ backup_secrets() {
 # ═══════════════ 3. 轮转 ═══════════════
 rotate() {
   find "$BACKUP_DIR" -name "uploads-*.tar.gz"     -type f -mtime +"$KEEP_DAYS" -print -delete 2>/dev/null || true
+  find "$BACKUP_DIR" -name "mirror-*.tar.gz"      -type f -mtime +"$KEEP_DAYS" -print -delete 2>/dev/null || true
   find "$BACKUP_DIR" -name "secrets-*.tar.gz.enc" -type f -mtime +"$KEEP_DAYS" -print -delete 2>/dev/null || true
 }
 
 probe_secrets
 backup_uploads
+backup_mirror
 backup_secrets
 rotate
 

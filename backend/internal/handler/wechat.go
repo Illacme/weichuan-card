@@ -286,6 +286,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": redactWXSecretText(err.Error())})
 			return
 		}
+		scheduleMirror(0, key)
 		e = wxacodeEntry{key: key, publicURL: publicURL, expAt: time.Now().Add(wxacodeTTL(cfg)), env: p.EnvVersion}
 		wxacodePut(cacheKey, e)
 		// 固定对象名的覆盖写：刷新的是公开形态 URL（私有桶下返回的短期签名 URL 每次都变，

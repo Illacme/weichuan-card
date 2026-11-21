@@ -35,6 +35,59 @@ func TestEnsureBuiltinLocal(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
+// 第二套不可删档案：平台本地镜像。它与租户退路档案同属 builtin，但用途完全不同，
+// 必须按 purpose 精确寻址——若查询只按 builtin=true，先创建的退路档案会被
+// 镜像 ensure 当成自己，导致镜像目录写进 uploads（私有对象被静态路由公开）。
+func TestEnsureBuiltinMirror(t *testing.T) {
+	db := testDB(t)
+	fallback, err := EnsureBuiltinLocal(db, "/data/uploads", "https://card.example.com/uploads")
+	require.NoError(t, err)
+	mirror, err := EnsureBuiltinMirror(db, "/data/mirror")
+	require.NoError(t, err)
+
+	require.NotEqual(t, fallback.ID, mirror.ID)
+	require.Equal(t, model.ProfilePurposeTenantFallback, fallback.Purpose)
+	require.Equal(t, model.ProfilePurposePlatformMirror, mirror.Purpose)
+	require.True(t, mirror.Builtin)
+	require.Equal(t, "local", mirror.Driver)
+	require.Equal(t, "/data/mirror", mirror.LocalDir)
+	require.False(t, mirror.PublicRead, "镜像副本不对外公开")
+	require.Empty(t, mirror.BaseURL, "镜像不参与出参")
+
+	// 反向改目录后重复启动必须纠正回来：运行期 MirrorManager 和备份脚本
+	// 都读这条档案的 local_dir，分叉会让备份写进 A、打包打的是 B。
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", mirror.ID).
+		Update("local_dir", "/mnt/wrong").Error)
+	again, err := EnsureBuiltinMirror(db, "/data/mirror")
+	require.NoError(t, err)
+	require.Equal(t, mirror.ID, again.ID)
+	require.Equal(t, "/data/mirror", again.LocalDir)
+
+	fbAgain, err := EnsureBuiltinLocal(db, "/data/uploads", "https://card.example.com/uploads")
+	require.NoError(t, err)
+	require.Equal(t, fallback.ID, fbAgain.ID, "两套档案不能互相覆盖")
+
+	var n int64
+	require.NoError(t, db.Model(&model.StorageBinding{}).Count(&n).Error)
+	require.Zero(t, n, "两套内置档案都不能自动变成全局绑定")
+}
+
+// 升级前的内置行 purpose 为空（SQLite AutoMigrate 不执行迁移里的 UPDATE），
+// ensure 必须自己补齐，否则两套档案会同时以空用途存在。
+func TestEnsureBuiltinBackfillsPurpose(t *testing.T) {
+	db := testDB(t)
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: builtinLocalName, Driver: "local", LocalDir: "/old/uploads",
+		Builtin: true, Version: 1,
+	}).Error)
+
+	fallback, err := EnsureBuiltinLocal(db, "/new/uploads", "")
+	require.NoError(t, err)
+	require.Equal(t, model.ProfilePurposeTenantFallback, fallback.Purpose)
+	_, err = EnsureBuiltinMirror(db, "/new/mirror")
+	require.NoError(t, err)
+}
+
 // 同名非内置档案存在时不能让进程起不来：退让成不冲突的名字。
 func TestEnsureBuiltinLocalNameConflict(t *testing.T) {
 	db := testDB(t)

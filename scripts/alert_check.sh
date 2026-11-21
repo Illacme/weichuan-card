@@ -163,7 +163,7 @@ check_backup() {
   # 用对象存储的部署不会有 uploads-*，密钥由环境变量注入的也不会有 secrets-*，
   # 对它们天天告警只会把人训练成无视告警。
   local kind pat label latest_f m_f age_f key
-  for kind in "uploads-*.tar.gz:上传文件:backup_uploads" "secrets-*.tar.gz.enc:运行时密钥:backup_secrets"; do
+  for kind in "uploads-*.tar.gz:上传文件:backup_uploads" "mirror-*.tar.gz:本地镜像:backup_mirror" "secrets-*.tar.gz.enc:运行时密钥:backup_secrets"; do
     pat="${kind%%:*}"; kind="${kind#*:}"
     label="${kind%%:*}"; key="${kind#*:}"
     latest_f="$(ls -t "$BACKUP_DIR"/$pat 2>/dev/null | head -1 || true)"

@@ -226,9 +226,10 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			}
 			data = append(data, gin.H{
 				"id": comp.ID, "name": comp.Name, "shortName": comp.ShortName, "status": comp.Status,
-				"loginCode":     comp.LoginCode,
-				"createdAt":     comp.CreatedAt,
-				"employeeCount": empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
+				"loginCode":          comp.LoginCode,
+				"localMirrorEnabled": comp.LocalMirrorEnabled,
+				"createdAt":          comp.CreatedAt,
+				"employeeCount":      empCnt[comp.ID], "adminCount": adminCnt[comp.ID],
 				"wxConfigured": wxOK[comp.ID],
 				// storageBytes 是「自本功能启用起累计的上传量」，不是磁盘真实占用（见 model.StorageUsage）
 				"storageBytes":     storeBytes[comp.ID],
@@ -370,6 +371,8 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			Name      string `json:"name"`
 			ShortName string `json:"shortName"`
 			LoginCode string `json:"loginCode"`
+			// 指针：老客户端不带该字段时保持原值，不能被当成「关闭镜像」。
+			LocalMirrorEnabled *bool `json:"localMirrorEnabled"`
 		}
 		if c.ShouldBindJSON(&req) != nil || req.Name == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -400,14 +403,19 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
 			return
 		}
-		if err := db.Model(&model.Company{}).Where("id = ?", id).
-			Updates(map[string]interface{}{"name": req.Name, "short_name": resolveShortName(req.ShortName), "login_code": req.LoginCode}).Error; err != nil {
+		updates := map[string]interface{}{
+			"name": req.Name, "short_name": resolveShortName(req.ShortName), "login_code": req.LoginCode,
+		}
+		if req.LocalMirrorEnabled != nil {
+			updates["local_mirror_enabled"] = *req.LocalMirrorEnabled
+		}
+		if err := db.Model(&model.Company{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			dbWriteFailed(c, "更新企业", "保存失败，请稍后重试", err)
 			return
 		}
 		audit.Record(db, c, audit.Entry{
 			Action: audit.ActionCompanyUpdate, TargetType: "company", TargetID: strconv.FormatInt(id, 10),
-			Detail: map[string]any{"name": req.Name, "shortName": req.ShortName, "loginCode": req.LoginCode},
+			Detail: map[string]any{"name": req.Name, "shortName": req.ShortName, "loginCode": req.LoginCode, "localMirrorEnabled": req.LocalMirrorEnabled},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})

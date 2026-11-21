@@ -23,6 +23,9 @@ type Config struct {
 	Port      string
 	JWTKey    string
 	UploadDir string // 本地上传目录（local 驱动用，小程序码缓存也落这里）
+	// MirrorDir 平台本地镜像目录：上传成功后从云异步回拉的备份副本落这里。
+	// **必须与 UploadDir 完全分离**，否则私有桶对象会被 /uploads 静态路由公开出去。
+	MirrorDir string // MIRROR_DIR，默认 ./storage/mirror
 	// BackupDir 备份产物目录（后台「备份与恢复」面板读它；与 scripts/backup.sh 的
 	// BACKUP_DIR 必须指向同一处，否则面板看到的和 cron 产出的不是同一批文件）
 	BackupDir          string
@@ -175,6 +178,7 @@ func Load() Config {
 		Port:               getEnv("PORT", "8080"),
 		JWTKey:             getEnv("JWT_KEY", DefaultJWTKey),
 		UploadDir:          getEnv("UPLOAD_DIR", "./uploads"),
+		MirrorDir:          getEnv("MIRROR_DIR", "./storage/mirror"),
 		BackupDir:          getEnv("BACKUP_DIR", "./backups"),
 		UploadBaseURL:      getEnv("UPLOAD_BASE_URL", "http://127.0.0.1:8080/uploads"),
 		StorageDriver:      getEnv("STORAGE_DRIVER", "local"),

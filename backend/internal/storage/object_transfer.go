@@ -223,3 +223,32 @@ var (
 	_ ObjectCopier       = (*MinioUploader)(nil)
 	_ ObjectCopier       = (*OssUploader)(nil)
 )
+
+// --- 删除能力（删除双清，见 capabilities.ObjectDeleter）---
+
+// DeleteObject 删除本地对象。不存在按成功处理：清理链路会被重复触发
+// （上传补偿、人工重试），把「已经清过了」报成失败只会制造无效告警。
+func (l *LocalUploader) DeleteObject(key string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	err := os.Remove(filepath.Join(l.Dir, filepath.FromSlash(key)))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (m *MinioUploader) DeleteObject(key string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	return m.Client.RemoveObject(context.Background(), m.Bucket, key, minio.RemoveObjectOptions{})
+}
+
+func (o *OssUploader) DeleteObject(key string) error {
+	if err := validateObjectKey(key); err != nil {
+		return err
+	}
+	return o.Bucket.DeleteObject(key)
+}

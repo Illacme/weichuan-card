@@ -112,6 +112,12 @@ export const ACTION_LABELS: Record<string, string> = {
   // CDN 缓存刷新失败（覆盖写后让边缘旧缓存失效）。异步 best-effort，失败不阻断主流程，
   // 但「文件改了 CDN 却没刷」会让线上仍是旧图，故失败单独留痕；Detail 只记 url_count，不写错误原文或 URL
   'cdn.refresh': 'CDN 缓存刷新失败',
+  // 本地镜像回拉失败：对象已写入云桶，只影响备份完整性，所以不阻断上传；
+  // 但必须留痕，否则运维会一直以为本地有备份。Detail 不写底层错误原文。
+  'storage.mirror_fail': '对象本地镜像回拉失败',
+  // 平台超管删除单个对象（云桶 + 本地镜像双清）：不可逆且会留下引用裂图，
+  // 必须显式二次确认；Detail 不记对象键。
+  'storage.object_delete': '删除对象及本地镜像',
   // 内容管理：客户名片页展示什么的最终决定权在这些接口，此前整份 content.go 零审计。
   // 三张内容表共用动作，Detail 里的 op 区分新建 / 编辑 / 删除。
   'content.info': '修改公司基础信息',

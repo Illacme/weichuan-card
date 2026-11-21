@@ -1065,6 +1065,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | POST | /api/admin/storage/sign | 私有桶：提交已存 URL 列表，返回限时签名 URL（仅 minio/oss 私有桶） |
 | POST | /api/employee/storage/sign | 同上（员工鉴权） |
 | POST | /api/admin/cdn/refresh | 触发 CDN 缓存刷新（body: `{"urls":[...]}`），需 `CDN_ENABLED=1` |
+| POST | /api/admin/storage/object/delete | 删除单个对象并双清（云桶 + 本地镜像）：body `{"key":"t/5/x.png","confirm":"DELETE"}`；先清镜像再删主对象，镜像清不掉整体中止 |
 
 ### 企业管理（仅平台超级管理员，company_id=0）
 | 方法 | 路径 | 说明 |
@@ -1072,7 +1073,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/admin/me | 当前登录身份（用户名 / companyId / companyName / companyShortName / isPlatform；前端刷新后恢复身份用） |
 | GET  | /api/admin/companies | 企业列表（含简称 / 员工数 / 管理员数 / **小程序凭据是否配好** `wxConfigured`） |
 | POST | /api/admin/companies | 开通企业（name 必填；shortName 为企业简称——侧边栏品牌名 + 公司信息简称初始值，留空默认「微传名片」；adminUsername+adminPassword 可选，一并建企业管理员） |
-| PUT  | /api/admin/companies/:id | 编辑企业（name / shortName；shortName 留空回落缺省「微传名片」；只改 company 表，不回写公司信息里的简称） |
+| PUT  | /api/admin/companies/:id | 编辑企业（name / shortName / loginCode / **localMirrorEnabled**；shortName 留空回落缺省「微传名片」；只改 company 表，不回写公司信息里的简称） |
 | POST | /api/admin/companies/:id/status | 停用 / 启用企业（body `{"status":"enabled"\|"disabled"}`；停用后该企业管理员与员工均不能登录） |
 | GET  | /api/admin/companies/:id/admins | 企业管理员列表 |
 | POST | /api/admin/companies/:id/admins | 新增企业管理员（username + password） |
@@ -1642,8 +1643,19 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 
 ## 存储 / CDN 档案化运行时（迁移 0054）
 
-`internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称与目录；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖企业已有的云档案绑定，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
+`internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称，但**目录必须跟随 `UPLOAD_DIR`**（单独改会让租户写新目录、静态路由读旧目录）；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖企业已有的云档案绑定，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
 
 `internal/storageprofile` 是档案绑定的运行时解析层，也是 `storage.Resolver` 的**唯一实现**（`For` / `Platform` / `DriverFor`）：`Resolver.snapshot()` 用三张表的行数与 `MAX(version)` 作指纹（**一条 SQL**），变化即重载；指纹查询有 700ms 节流，稳态每进程每秒最多查一次库；`Snapshot.resolved` 缓存同一请求内的解析结果。有绑定走档案、没绑定走 `SetPlatform` 注入的平台实例。`DynamicCDN` 区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` / `SetProfileOriginDiag` 把分发档案的域名与诊断接进公开出参 origin。
 
 一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。
+
+### 本地镜像备份（迁移 0056）
+
+`EnsureBuiltinMirror` 再建一套 `builtin=true` + `purpose=platform_mirror` 的本地档案，目录取 `MIRROR_DIR`（默认 `./storage/mirror`）。它**只做备份副本**：主写入与出参仍走云桶 / CDN，本地副本不参与任何读取。
+
+- **镜像目录不能放 `UPLOAD_DIR` 下**：`/uploads` 是免鉴权静态服务，私有桶对象一回拉就变成公开可读。compose 用独立卷 `mirror_data`。
+- **镜像档案不能当写入目标**：handler 拒绝把它绑给企业，`storage-backfill` 也拒绝它作源 / 目标；前端下拉同样过滤。
+- **触发**：`handler` 里 `scheduleMirror(cid, key)`，在 multipart 上传、素材采用、小程序码、下架占位图、直传后补缩略图五处调用；走 `safego.Run` 异步，失败只留痕 + 审计 `storage.mirror_fail`。
+- **开关**：`sys_setting.local_mirror_enabled`（总闸，即时生效）与 `company.local_mirror_enabled`（逐家，默认 0）两级相与；平台对象（`p/`）只受总闸。
+- **删除双清**：`POST /api/admin/storage/object/delete` 需输入 `DELETE` 确认，先清镜像再删主对象。
+- **已知边界**：预签名直传后端见不到字节，只有前端调 `/api/admin/upload/thumb` 才触发回拉；出参仍指向云桶，切回本地需另行改造。

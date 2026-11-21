@@ -50,6 +50,7 @@ const backupFreshHours = 26 // 日备 + 2h 余量，与 scripts/alert_check.sh �
 var (
 	reBackupDB      = regexp.MustCompile(`^[A-Za-z0-9._-]+-[0-9]{8}-[0-9]{6}\.(db|sql)\.gz$`)
 	reBackupUploads = regexp.MustCompile(`^uploads-[0-9]{8}-[0-9]{6}\.tar\.gz$`)
+	reBackupMirror  = regexp.MustCompile(`^mirror-[0-9]{8}-[0-9]{6}\.tar\.gz$`)
 	reBackupSecrets = regexp.MustCompile(`^secrets-[0-9]{8}-[0-9]{6}\.tar\.gz\.enc$`)
 )
 
@@ -103,6 +104,8 @@ func backupKindOf(name string) string {
 		return "secrets"
 	case reBackupUploads.MatchString(name):
 		return "uploads"
+	case reBackupMirror.MatchString(name):
+		return "mirror"
 	case reBackupDB.MatchString(name):
 		return "db"
 	}
@@ -112,6 +115,7 @@ func backupKindOf(name string) string {
 var backupKindLabels = map[string]string{
 	"db":      "数据库",
 	"uploads": "上传文件（图片）",
+	"mirror":  "本地镜像（云对象备份）",
 	"secrets": "运行时密钥",
 }
 
@@ -142,6 +146,11 @@ func RegisterBackup(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 有备份却下不了，必须解释一句，否则运维会以为是按钮坏了。
 			notes = append(notes, "「运行时密钥」已有备份，但后台不提供下载：请从服务器用 scp/rsync 取走，并与 BACKUP_ENC_KEY 分开保管（同一个人同时拿到两者，加密就形同虚设）。")
 		}
+		// 镜像目录在用却没有归档：说明备份脚本还是旧版（没纳入 mirror）或最近没跑。
+		// 不说这一句，运维会以为「云桶有本地备份」，实际备份包里一个镜像文件都没有。
+		if dirHasFiles(cfg.MirrorDir) && !hasKind(items, "mirror") {
+			notes = append(notes, "本地镜像目录里已有副本，但备份目录里没有 mirror-*.tar.gz：说明备份脚本未纳入镜像（请更新 scripts/backup.sh）或尚未执行。云桶被误删时这份副本就是唯一的找回来源。")
+		}
 
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"dir":          dir,
@@ -166,7 +175,7 @@ func RegisterBackup(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 
-		dsn, upDir := cfg.DBDSN, cfg.UploadDir
+		dsn, upDir, mirrorDir := cfg.DBDSN, cfg.UploadDir, cfg.MirrorDir
 		backupDispatch(func() {
 			// finish 必须一定执行：runBackupOnce 里任何 panic 若让协程直接死掉，
 			// bkState.running 会永久卡在 true，此后「立即备份」永远回「已有任务在进行」，
@@ -174,7 +183,7 @@ func RegisterBackup(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 会把参数提前求值，成功路径也会记成失败）。safego 负责兜住 panic 并打日志。
 			res := backupRunResult{At: time.Now(), OK: false, Message: "备份任务异常终止"}
 			defer func() { bkState.finish(res) }()
-			res = runBackupOnce(dir, dsn, upDir)
+			res = runBackupOnce(dir, dsn, upDir, mirrorDir)
 		})
 
 		// 审计放在这里（同步、handler 返回前）：备份是数据外带的前置动作，必须留痕。
@@ -292,7 +301,7 @@ func scanBackups(dir string) ([]backupItem, error) {
 		out = append(out, v)
 	}
 	// 固定顺序：数据库 → 图片 → 密钥。前端按这个顺序渲染，不靠 map 的随机序。
-	order := map[string]int{"db": 0, "uploads": 1, "secrets": 2}
+	order := map[string]int{"db": 0, "uploads": 1, "mirror": 2, "secrets": 3}
 	sort.Slice(out, func(i, j int) bool { return order[out[i].Kind] < order[out[j].Kind] })
 	return out, nil
 }
@@ -314,12 +323,32 @@ func hasKind(items []backupItem, kind string) bool {
 	return false
 }
 
+// dirHasFiles 判断目录里是否已有内容。只用于「该不该提示」，
+// 因此任何读取错误都按「没有」处理：读不了目录时不该再叠加一条误导性告警。
+func dirHasFiles(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return true
+		}
+	}
+	// 只有子目录也算在用：镜像键按 t/<cid>/ 分层，根目录下可能全是目录。
+	return len(entries) > 0
+}
+
 // runBackupOnce 产出一份「库 + 图片」备份。
 //
 // 只做这两件，不做密钥包（见 RegisterBackup 的注释）。
 // 任一步失败都要把已产出的半成品删掉：一份「看起来新鲜、其实缺件」的备份会
 // 让备份新鲜度告警闭嘴，比没有备份更危险——这条与 scripts/backup_files.sh 一致。
-func runBackupOnce(dir, dsn, uploadDir string) backupRunResult {
+func runBackupOnce(dir, dsn, uploadDir, mirrorDir string) backupRunResult {
 	now := time.Now()
 	res := backupRunResult{At: now}
 	stamp := now.Format("20060102-150405")
@@ -358,9 +387,31 @@ func runBackupOnce(dir, dsn, uploadDir string) backupRunResult {
 		return res
 	}
 
+	// ── 3. 本地镜像副本 ──
+	// 目录不存在表示尚未开启镜像（旧部署），跳过而不是整次失败——
+	// 但若目录已经在用，缺这个包就等于「备份里没有云对象的本地副本」。
+	mirrorOut := ""
+	if strings.TrimSpace(mirrorDir) != "" {
+		if st, e := os.Stat(mirrorDir); e == nil && st.IsDir() {
+			mirrorOut = filepath.Join(dir, "mirror-"+stamp+".tar.gz")
+			mirrorFiles, e := tarGzDir(mirrorDir, mirrorOut)
+			if e != nil {
+				_ = os.Remove(dbOut)
+				_ = os.Remove(upOut)
+				_ = os.Remove(mirrorOut)
+				res.Message = "打包本地镜像目录失败：" + e.Error()
+				return res
+			}
+			res.Message = fmt.Sprintf("已生成 3 个文件：数据库 %d 张表（%s），图片 %d 个（%s），镜像 %d 个（%s）",
+				rep.Tables, filepath.Base(dbOut), files, filepath.Base(upOut), mirrorFiles, filepath.Base(mirrorOut))
+		}
+	}
+	if res.Message == "" {
+		res.OK = true
+		res.Message = fmt.Sprintf("已生成 2 个文件：数据库 %d 张表（%s），图片 %d 个（%s）",
+			rep.Tables, filepath.Base(dbOut), files, filepath.Base(upOut))
+	}
 	res.OK = true
-	res.Message = fmt.Sprintf("已生成 2 个文件：数据库 %d 张表（%s），图片 %d 个（%s）",
-		rep.Tables, filepath.Base(dbOut), files, filepath.Base(upOut))
 	return res
 }
 

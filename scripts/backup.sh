@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-# 全量备份脚本：数据库 + 上传文件 + 运行时密钥（三件套）。
+# 全量备份脚本：数据库 + 上传文件 + 本地镜像 + 运行时密钥（三件套 + 可选镜像归档）。
 #
 #   DB_DRIVER=mysql （默认）  mysqldump → gzip → 按保留天数轮转
 #   DB_DRIVER=sqlite          容器内 `server backup`（VACUUM INTO 一致性快照）→ gzip → 轮转
-#   文件与密钥                 转交 scripts/backup_files.sh（uploads-*.tar.gz / secrets-*.tar.gz.enc）
+#   文件与密钥                 转交 scripts/backup_files.sh（uploads-*.tar.gz / mirror-*.tar.gz / secrets-*.tar.gz.enc）
 #
 # **为什么必须是三件套**：只有数据库备份救不回两类东西——
 #   ① uploads/ 里的图片：库恢复了图全 404，名片页满屏裂图；
 #   ② /app/data/runtime.env 里的 PII_ENC_KEY：PII 是应用层加密落库的，
 #      没有这把钥匙，备份里的姓名/手机就是解不开的密文（无 re-key 机制）。
 # 密钥包用 BACKUP_ENC_KEY 加密后落盘，口令由运维另行保管——详见 backup_files.sh 头部。
+# 第四件 mirror-*.tar.gz 是云对象的本地镜像副本；未开启本地镜像的部署没有这一件，
+# 一旦曾经产出过就会被 alert_check 的 backup_mirror 规则盯新鲜度。
 #
 # 用法：
 #   BACKUP_ENC_KEY='...' scripts/backup.sh              # 生产标准用法（加密密钥包）

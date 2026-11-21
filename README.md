@@ -235,6 +235,8 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
   WAL 里还有未合并的页，cp 出来是坏库）。**一次产出三件套**：库备份 + `uploads-*.tar.gz`（图片）
   + `secrets-*.tar.gz.enc`（`runtime.env` 含 `PII_ENC_KEY` 与 `license.key`，AES-256 加密，
   口令 `BACKUP_ENC_KEY` 单独保管）——只备库的话，恢复出来会是「图片 404 + PII 解不开」。
+  开启本地镜像（`MIRROR_DIR`）的部署会多一件 `mirror-*.tar.gz`：云桶对象的本地副本，
+  用于桶被误删时找回；它只做备份，不参与出参。
   任一件失败即删掉本次全部产物并非零退出，避免「新鲜但缺件」的备份骗过告警。
   `scripts/restore.sh` 恢复库（**恢复前自动备份当前库**，恢复后校验）；
   `scripts/restore_files.sh` 恢复图片与密钥（覆盖前另存安全网）；

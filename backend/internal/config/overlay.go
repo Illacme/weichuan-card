@@ -45,6 +45,9 @@ func (c *Config) OverlayFromSettings() {
 
 	c.UploadDir = str("upload_dir", c.UploadDir)
 	c.UploadBaseURL = str("upload_base_url", c.UploadBaseURL)
+	// 本地镜像目录与 UploadDir 一样属于部署期事实：界面留空就沿用 MIRROR_DIR，
+	// 启动后由 ValidateMirrorDirs 统一校验两者不重叠。
+	c.MirrorDir = str("mirror_dir", c.MirrorDir)
 
 	// CDN 缓存刷新：厂商 + 通用凭据位 + 资源标识
 	c.CDNEnabled = setting.GetBool("cdn_enabled", c.CDNEnabled)

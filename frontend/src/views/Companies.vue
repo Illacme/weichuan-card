@@ -176,6 +176,15 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="本地备份镜像">
+          <el-switch
+            v-model="editForm.localMirrorEnabled"
+            class="mirror-switch"
+          />
+          <span class="edit-tip">
+            开启后，该企业上传到云桶的图片 / 视频会在上传成功后异步回拉一份到平台本地镜像目录。只做备份，不改变出参地址；关闭不影响已备份的副本。
+          </span>
+        </el-form-item>
         <div class="edit-tip">
           简称修改后同步后台侧边栏品牌名（留空默认「微传名片」）；公司信息里的简称（仅小程序展示）不受影响，由企业管理员在「公司信息」页维护。登录白标码留空将清除该企业白标，登录页回落全局品牌。
         </div>
@@ -576,7 +585,7 @@ async function submitCreate() {
 const editVisible = ref(false)
 const editing = ref(false)
 const editFormRef = ref<FormInstance>()
-const editForm = reactive({ id: 0, name: '', shortName: '', loginCode: '' })
+const editForm = reactive({ id: 0, name: '', shortName: '', loginCode: '', localMirrorEnabled: false })
 
 const editRules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
@@ -588,6 +597,7 @@ function openEdit(row: any) {
   editForm.name = row.name
   editForm.shortName = row.shortName || ''
   editForm.loginCode = row.loginCode || ''
+  editForm.localMirrorEnabled = !!row.localMirrorEnabled
   editVisible.value = true
 }
 
@@ -596,6 +606,7 @@ function resetEdit() {
   editForm.name = ''
   editForm.shortName = ''
   editForm.loginCode = ''
+  editForm.localMirrorEnabled = false
   editFormRef.value?.clearValidate()
 }
 
@@ -609,6 +620,7 @@ async function submitEdit() {
       name: editForm.name,
       shortName: editForm.shortName,
       loginCode: editForm.loginCode.trim(),
+      localMirrorEnabled: editForm.localMirrorEnabled,
     })
     ElMessage.success('已保存')
     editVisible.value = false

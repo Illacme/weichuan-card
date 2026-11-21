@@ -34,6 +34,7 @@ import (
 	"weichuan/internal/handler"
 	"weichuan/internal/license"
 	"weichuan/internal/middleware"
+	"weichuan/internal/mirror"
 	"weichuan/internal/model"
 	"weichuan/internal/setting"
 	"weichuan/internal/setup"
@@ -135,7 +136,11 @@ func main() {
 	stopLicenseRemind := license.StartExpiryReminder(db, cfg.LicenseRemindInterval)
 	defer stopLicenseRemind()
 	cfg.UploadDir = mustDir(filepath.Join(os.TempDir(), "weichuan-dev-uploads"))
+	cfg.MirrorDir = mustDir(filepath.Join(os.TempDir(), "weichuan-dev-mirror"))
 	cfg.UploadBaseURL = uploadBaseURL(port)
+	if err := config.ValidateMirrorDirs(cfg.UploadDir, cfg.MirrorDir); err != nil {
+		log.Fatalf("storage mirror config: %v", err)
+	}
 	cfg.StorageDriver = "local"
 	cfg.StoragePublic = true
 	cfg.JWTKey = "dev-jwt-key"
@@ -187,7 +192,13 @@ func main() {
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
 		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「文件存储与分发」缺少兜底）：%v", err)
 	}
+	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
+	if mirrorErr != nil {
+		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
+	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
+	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.SetProfileOriginDiag(profiles.Diagnose)
 	handler.SetProfileOwnerResolver(profiles.OwnerOf)

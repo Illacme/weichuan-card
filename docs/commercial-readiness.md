@@ -12,7 +12,7 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **134 paths**，最后同步 2026-11-20。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **135 paths**，最后同步 2026-11-21。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
@@ -5721,3 +5721,88 @@ OpenAPI 的 `assetOriginNote` 描述同步为「固定分类文案，不回显�
 验证：gofmt / vet / build / `go test ./...` 全绿，golangci-lint 0 issues；
 前端 type-check / lint / **1881 tests** / build 全过；openapi 134 paths + selftest；
 third-party notices 与迁移清单一致；audit-labels 真检查与自检通过。
+
+## 第七十八轮：本地镜像备份（两套不可删本地落点 + 异步回拉 + 删除双清）（2026-11-21）
+
+存储模型收敛到一套之后还剩一个真实缺口：**云桶里只有一份字节**。桶被误删、欠费清空、
+AK 泄露被人删对象，图片 / 视频就永久消失，而数据库里只剩一堆键。
+
+本轮按用户 2026-11-21 的三条决策落地：**出参不动**、**上传成功后异步从云拉回本地**、
+**按租户开关**。云仍是唯一写入目标与出参来源，本地只做备份副本。
+
+### 两套不可删本地档案
+
+| 档案 | `purpose` | 目录 | 服务谁 |
+| --- | --- | --- | --- |
+| 租户退路 | `tenant_fallback` | `cfg.UploadDir` | 无绑定档案的企业 + 「云配置坏了还能上传」的退路 |
+| 平台本地镜像 | `platform_mirror` | `cfg.MirrorDir` | 云对象的异步备份副本，**不参与读取与出参** |
+
+迁移 `0056` 补 `storage_profiles.purpose` 与 `company.local_mirror_enabled`；
+两套档案都由启动期 `EnsureBuiltinLocal` / `EnsureBuiltinMirror` 建行（目录取决于部署，
+迁移无法知道），并强制把 `local_dir` 同步回各自配置项。
+
+**镜像档案不能当写入目标**：`validateBindingTargets` 直接拒绝绑定，`storage-backfill`
+也拒绝把它作为迁移源 / 目标。理由很具体——一旦绑上，新文件会写进备份目录，
+备份脚本打的是同一处，主出参域名却不认它，管理员看到「已切云桶」实际全落在私有备份盘，
+且没有任何报错。前端绑定 / 迁移下拉也过滤掉它，省得运营白填。
+
+**目录隔离**：镜像目录不能放 `uploads/` 下。`r.Static("/uploads", cfg.UploadDir)` 是免鉴权
+静态服务，私有桶对象一回拉就变成任何人拿到键就能读。compose 新增独立卷 `mirror_data`。
+
+### 异步回拉
+
+新增 `internal/mirror`：`Manager.Schedule(cid, key)` 经开关与归属校验后丢进
+`safego.Run`，走 `ObjectCopier.CopyObjectTo` 流式传输（视频上百 MB 不进内存；
+`ObjectStore.ReadObject` 有 16MB 上限，只服务缩略图链路）。
+
+接线点（写入成功后调用，绝不阻断主流程、绝不回传错误）：
+
+| 位置 | 场景 |
+| --- | --- |
+| `handler/upload.go` | multipart 上传（后端见过字节） |
+| `handler/assets.go` | 素材采用（`p/` 平台对象） |
+| `handler/wechat.go` | 小程序码生成（`p/` 平台对象） |
+| `handler/media_check.go` | 下架占位图重写 |
+| `handler/storage.go` | 预签名直传后补缩略图（`/api/admin/upload/thumb`，唯一的直传回拉触发点） |
+
+**源在本地盘直接跳过**：本地就是副本，再复制一份只会让磁盘翻倍。
+
+**开关**：平台总闸 `sys_setting.local_mirror_enabled`（即时生效）+ 企业列
+`company.local_mirror_enabled`（默认 0，逐家打开），两级相与；平台对象只受总闸。
+不用 `tenant_license.features`：空 features 的语义是「全部开通」，做不出「默认关闭」。
+
+### 删除双清
+
+新增 `POST /api/admin/storage/object/delete`（平台超管），要求显式输入 `DELETE` 二次确认。
+顺序是**先镜像、后云桶**：镜像清不掉整体中止，不留「主对象已删、备份还在」的半清状态；
+云桶删除失败时镜像已清、主对象仍在，重试即可。三个驱动补 `DeleteObject`
+（本地不存在按成功，清理链路会被重复触发）。
+
+不挂在内容删除上的原因：同一张图可能被多个业务行引用，删一条记录就删对象会让其它页面裂图。
+
+### 备份与运维
+
+`backup_files.sh` / `restore_files.sh` 纳入 `mirror-*.tar.gz`；`alert_check.sh` 新增
+`backup_mirror` 新鲜度规则（键名独立，冷却不会与 uploads 串）；后台备份面板新增
+optional 行（未开启镜像的部署不产出，硬占一行会天天显示「缺失」），并在
+「镜像目录已有副本但没有归档」时给明确提示。
+
+### 已知边界（写清楚，别当成证明）
+
+- **预签名直传**：后端从头到尾没见过字节，只有前端调 `/api/admin/upload/thumb` 才会触发回拉。
+  前端不调就没有镜像。
+- **出参不动**：镜像只是备份，URL 仍指向云桶。切回本地需要另行把出参 origin 指到本地
+  并确认副本完整，当前不做。
+- **`storage_*` 主写入链保留**：它构造平台实例，服务 `p/` 对象与无绑定租户，
+  同时是 env 映射与回滚通道。本轮没有下线它。
+
+### 验证
+
+- 后端：gofmt / vet / build / `go test ./...` 全绿，golangci-lint 0 issues。
+- 前端：type-check / lint / **1884 tests** / build 全过。
+- OpenAPI：135 paths，134 条后端路由全部有契约，226 个 `$ref` 可解析，selftest 通过。
+- 迁移清单（56 个迁移，最后一个 `0056_local_mirror.sql`）、third-party notices、audit-labels 一致。
+- 备份链自检 `selftest_backup.sh` **14 通过 / 0 失败**（新增镜像归档产出与恢复比对两项）。
+- **反向验证**：归属校验两种半对写法（只比 scope / 只比 cid）各自必红；
+  `checkOwner` 改 `if false` 必红；双清端点跳过云删除必红；
+  直传确认去掉 `scheduleMirror` 必红；镜像目录校验改成恒 false 必红。

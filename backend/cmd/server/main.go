@@ -16,6 +16,7 @@ import (
 	"weichuan/internal/logx"
 	"weichuan/internal/middleware"
 	"weichuan/internal/migrate"
+	"weichuan/internal/mirror"
 	"weichuan/internal/model"
 	"weichuan/internal/pii"
 	"weichuan/internal/repository"
@@ -197,6 +198,11 @@ func main() {
 	// 系统设置覆盖环境变量（空串=界面未设置→保留环境变量），让云存储 / CDN / 微信凭据
 	// 也能在后台维护；这些客户端在启动时构造，故界面标记为「需重启生效」。
 	cfg.OverlayFromSettings()
+	// 本地镜像目录必须独立于 /uploads 静态目录。放在构造上传器之前：
+	// 配错时若继续启动，私有桶对象经镜像回拉后会变成免鉴权的公开文件。
+	if err := config.ValidateMirrorDirs(cfg.UploadDir, cfg.MirrorDir); err != nil {
+		log.Fatalf("storage mirror config: %v", err)
+	}
 
 	// 按租户解析授权用的库连接（Phase 4）：注入后 EnforceLicense 会先查
 	// tenant_license 表该租户的行，查不到才回退全局设置。
@@ -355,7 +361,14 @@ func main() {
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
 		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「文件存储与分发」缺少兜底）：%v", err)
 	}
+	// 第二套不可删档案：平台本地镜像落点。只做备份副本，不参与绑定解析。
+	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
+	if mirrorErr != nil {
+		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
+	}
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
+	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
+	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.SetProfileOriginDiag(profiles.Diagnose)
 	handler.SetProfileOwnerResolver(profiles.OwnerOf)

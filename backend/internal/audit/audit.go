@@ -171,6 +171,17 @@ const (
 	// 刷新错误常带连接串 / 签名 token，审计表一旦泄密反而比不记更糟。
 	ActionCDNRefresh = "cdn.refresh"
 
+	// ActionMirrorBackup 本地镜像回拉失败（异步 best-effort，见 internal/mirror）。
+	// 对象已成功写入云桶，回拉只影响备份完整性，绝不能让上传报错；但没有留痕
+	// 就等于「以为有备份、其实没有」，所以每次失败单独记一条。Detail 只记
+	// tenant_id / key 前缀长度等元数据，不写底层错误（可能带桶名与内部路径）。
+	ActionMirrorBackup = "storage.mirror_fail"
+
+	// ActionStorageObjectDelete 平台超管删除单个对象（云桶 + 本地镜像双清）。
+	// 删除不可逆且会留下裂图引用，因此必须显式二次确认才放行；审计只记
+	// tenant_id / 扩展名，不记对象键（键里可能带业务标识）。
+	ActionStorageObjectDelete = "storage.object_delete"
+
 	// ActionURLProbe 后台「测试地址」：服务端会按管理员填的 URL 发一次出向 HEAD。
 	// 按审计包「只读不记」的约定本不该留痕，但它能把服务器当代理访问任意主机，
 	// 是典型 SSRF 入口——谁在什么时候测过哪个 host、结果如何必须有据可查。

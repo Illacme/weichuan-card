@@ -510,13 +510,20 @@ func bindingIDs(c *gin.Context) (int64, int64, bool) {
 }
 
 func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
-	var n int64
-	if err := db.Model(&model.StorageProfile{}).Where("id = ?", storageID).Count(&n).Error; err != nil || n == 0 {
+	var sp model.StorageProfile
+	if err := db.First(&sp, storageID).Error; err != nil {
 		return "存储档案不存在"
+	}
+	// 平台镜像档案只接收异步回拉的备份副本，绝不能成为任何租户的写入目标：
+	// 一旦绑定，新文件会被写进备份目录，而备份脚本与出参域名都不认这个落点，
+	// 结果是管理员以为切了云桶、实际全写进了私有备份盘。
+	if sp.Purpose == model.ProfilePurposePlatformMirror {
+		return "该档案是平台本地镜像，只用于备份副本，不能绑定为存储写入目标"
 	}
 	if deliveryID == 0 {
 		return ""
 	}
+	var n int64
 	if err := db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).Count(&n).Error; err != nil || n == 0 {
 		return "分发档案不存在"
 	}
@@ -733,6 +740,7 @@ func storageProfileView(row *model.StorageProfile) gin.H {
 		"pathStyle": row.PathStyle, "hostHeader": row.HostHeader, "useSsl": row.UseSSL, "localDir": row.LocalDir,
 		"publicRead": row.PublicRead, "status": row.Status, "lastError": row.LastError,
 		"lastProbeAt": row.LastProbeAt, "version": row.Version, "builtin": row.Builtin,
+		"purpose":   row.Purpose,
 		"createdAt": row.CreatedAt, "updatedAt": row.UpdatedAt,
 		"accessKeyConfigured": row.AccessKey != "", "secretKeyConfigured": row.SecretKey != "",
 		"accessKeyMasked": maskCredential(row.AccessKey),

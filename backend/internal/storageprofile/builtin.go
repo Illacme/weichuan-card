@@ -9,79 +9,102 @@ import (
 	"gorm.io/gorm"
 )
 
-// 内置本地档案：每个部署都必须有且只有一套，作为「云配置配错 / 桶欠费 / 网络不通」
-// 时的最后退路。它不可删除（handler 拦），驱动锁定为 local（handler 拦），
-// 管理员只能改它的展示名与本地目录。
+// 内置本地档案：每个部署都有两套，且都不可删除（handler 拦）、驱动锁定为 local。
 //
-// 为什么不写进迁移 SQL：本地目录取决于部署时的 UPLOAD_DIR，基址取决于
-// UPLOAD_BASE_URL，两者都不是迁移能知道的。放到启动时 ensure，升级与首装同一套逻辑。
-const builtinLocalName = "平台本地存储"
+//   - tenant_fallback「平台本地存储」：租户退路，目录与 cfg.UploadDir 同源，
+//     静态路由 /uploads 直接托管它。服务「云配置全坏时还能上传」。
+//   - platform_mirror「平台本地镜像」：备份落点，目录为 cfg.MirrorDir，
+//     不在 /uploads 下，PublicRead=false。只接收「上传成功后从云回拉」的副本，
+//     **不允许被任何绑定引用**（绑定它等于把备份副本变成主写入目标）。
+//
+// 为什么不写进迁移 SQL：目录取决于部署时的 UPLOAD_DIR / MIRROR_DIR，基址取决于
+// UPLOAD_BASE_URL，都不是迁移能知道的。放到启动时 ensure，升级与首装同一套逻辑。
+const (
+	builtinLocalName  = "平台本地存储"
+	builtinMirrorName = "平台本地镜像"
+)
 
-// EnsureBuiltinLocal 保证内置本地档案存在，返回该档案（已存在则原样返回）。
-//
-// 三条边界：
-//  1. 幂等：重复启动不会重复插入，也不会覆盖管理员改过的展示名；
-//  2. 只认 builtin=true 的行；若历史手工数据里已有同名非内置行，换一个不冲突的名字；
-//  3. 不自动创建全局绑定——把 local 绑成全局默认会覆盖租户已有的自有桶配置
-//     属于静默改变文件落点。绑不绑由管理员在界面决定。
-//
-// **local_dir 必须同步为传入的 dir，不能保留库里的旧值**：静态路由
-// `r.Static("/uploads", cfg.UploadDir)` 与平台实例都绑在 cfg.UploadDir 上，
-// 而 LocalUploader 返回的 URL 恒为相对路径 /uploads/<key>。若内置档案的目录
-// 与它分叉，绑定该档案的租户写进新目录、静态路由却从旧目录读，结果是全站裂图
-// 且没有任何一边报错。本地盘只允许一个真值源，即 cfg.UploadDir（系统设置的
-// 「本地上传目录」）；handler 同时锁死内置档案的 local_dir 编辑，防止运行期再分叉。
+// EnsureBuiltinLocal 保证「租户退路」内置档案存在并返回它。
 func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile, error) {
+	return ensureBuiltin(db, model.ProfilePurposeTenantFallback, builtinLocalName, dir, baseURL, true)
+}
+
+// EnsureBuiltinMirror 保证「平台本地镜像」内置档案存在并返回它。
+// 镜像副本不对外公开，所以 baseURL 传空；目录可由部署配置修改，但启动后不可在界面改。
+func EnsureBuiltinMirror(db *gorm.DB, dir string) (*model.StorageProfile, error) {
+	return ensureBuiltin(db, model.ProfilePurposePlatformMirror, builtinMirrorName, dir, "", false)
+}
+
+// ensureBuiltin 保证某一用途的内置档案存在。
+//
+// 四条边界：
+//  1. 幂等：重复启动不重复插入，也不覆盖管理员改过的展示名；
+//  2. 只认 builtin=true 且 purpose 匹配的行；历史同名非内置行由 availableBuiltinName 避让；
+//  3. **local_dir 必须同步为传入的 dir**：退路档案要与静态路由 / 平台实例同源
+//     （否则租户写新目录、静态路由读旧目录，全站裂图且无人报错）；镜像档案要与
+//     运行期 MirrorManager 的落点同源（否则备份写进 A 目录，备份脚本打的是 B 目录）；
+//  4. 不自动创建全局绑定——把 local 绑成全局默认会静默改变所有租户的文件落点。
+func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead bool) (*model.StorageProfile, error) {
 	if db == nil {
 		return nil, fmt.Errorf("数据库为空")
 	}
-	var row model.StorageProfile
-	res := db.Where("builtin = ?", true).Limit(1).Find(&row)
-	if res.Error != nil {
-		return nil, fmt.Errorf("读取内置本地档案失败：%w", res.Error)
+	// 升级兼容（SQLite / devserver 的 AutoMigrate 不会执行迁移里的 UPDATE）：
+	// 0056 之前的内置行 purpose 为空，只能是租户退路档案——那时还没有第二种。
+	if err := db.Model(&model.StorageProfile{}).
+		Where("builtin = ? AND purpose = ?", true, "").
+		Update("purpose", model.ProfilePurposeTenantFallback).Error; err != nil {
+		return nil, fmt.Errorf("补齐内置档案用途失败：%w", err)
 	}
+	var row model.StorageProfile
+	res := db.Where("builtin = ? AND purpose = ?", true, purpose).Limit(1).Find(&row)
+	if res.Error != nil {
+		return nil, fmt.Errorf("读取内置档案失败：%w", res.Error)
+	}
+	want := strings.TrimSpace(dir)
 	if res.RowsAffected > 0 {
-		// 已存在：展示名保留管理员改过的值；local_dir 必须跟随 cfg.UploadDir，
-		// 否则与静态路由 / 平台实例分叉（原因见函数注释）。仅在值确实不同时更新，
-		// 避免每次启动都无谓地写库并惊动档案版本。
+		// 已存在：展示名保留管理员改过的值；local_dir 必须跟随启动配置，
+		// 仅在值确实不同时更新，避免每次启动都无谓写库并惊动档案版本。
 		updates := map[string]any{}
-		if want := strings.TrimSpace(dir); want != "" && strings.TrimSpace(row.LocalDir) != want {
+		if want != "" && strings.TrimSpace(row.LocalDir) != want {
 			updates["local_dir"] = want
 		}
 		if strings.TrimSpace(row.BaseURL) == "" && strings.TrimSpace(baseURL) != "" {
 			updates["base_url"] = strings.TrimSpace(baseURL)
 		}
+		if row.Purpose != purpose {
+			updates["purpose"] = purpose
+		}
 		if len(updates) > 0 {
 			if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
-				return nil, fmt.Errorf("补全内置本地档案失败：%w", err)
+				return nil, fmt.Errorf("补全内置档案失败：%w", err)
 			}
 			_ = db.First(&row, row.ID).Error
 		}
 		return &row, nil
 	}
 
-	name, err := availableBuiltinName(db)
+	name, err := availableBuiltinName(db, name)
 	if err != nil {
 		return nil, err
 	}
 	row = model.StorageProfile{
-		Name: name, Driver: "local", LocalDir: strings.TrimSpace(dir),
-		BaseURL: strings.TrimSpace(baseURL), PublicRead: true, UseSSL: true,
-		Status: "unknown", Builtin: true, Version: 1,
+		Name: name, Driver: "local", LocalDir: want,
+		BaseURL: strings.TrimSpace(baseURL), PublicRead: publicRead, UseSSL: true,
+		Status: "unknown", Builtin: true, Purpose: purpose, Version: 1,
 	}
 	if err := db.Create(&row).Error; err != nil {
-		return nil, fmt.Errorf("创建内置本地档案失败：%w", err)
+		return nil, fmt.Errorf("创建内置档案失败：%w", err)
 	}
 	return &row, nil
 }
 
 // availableBuiltinName 找一个不与现有档案冲突的名字。
-// 名字有唯一索引；若「平台本地存储」被手工建过（非内置），直接插入会报唯一键冲突，
-// 让整个进程起不来——这里退让成「平台本地存储（内置）」并在必要时加序号。
-func availableBuiltinName(db *gorm.DB) (string, error) {
-	candidates := []string{builtinLocalName, builtinLocalName + "（内置）"}
+// 名字有唯一索引；若期望名被手工建过（非内置），直接插入会报唯一键冲突，
+// 让整个进程起不来——这里退让成「xxx（内置）」并在必要时加序号。
+func availableBuiltinName(db *gorm.DB, base string) (string, error) {
+	candidates := []string{base, base + "（内置）"}
 	for i := 2; i <= 20; i++ {
-		candidates = append(candidates, fmt.Sprintf("%s（内置%d）", builtinLocalName, i))
+		candidates = append(candidates, fmt.Sprintf("%s（内置%d）", base, i))
 	}
 	for _, name := range candidates {
 		var n int64
@@ -92,5 +115,5 @@ func availableBuiltinName(db *gorm.DB) (string, error) {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("无法为内置本地档案分配不冲突的名称")
+	return "", fmt.Errorf("无法为内置档案分配不冲突的名称")
 }

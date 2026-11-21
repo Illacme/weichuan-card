@@ -133,7 +133,7 @@ func (c *testClient) doRaw(method, path string, body interface{}, token, cookieH
 
 // buildEngine 用给定的 db / 配置 / 存储实现装配与生产 main.go 等价的路由。
 // 把「建库」与「装配」分离，便于 SQLite（AutoMigrate）与 MySQL（migrations SQL）复用同一套断言。
-func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher) *gin.Engine {
+func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Uploader, refresher storage.CDNRefresher, resolverOverride ...storage.Resolver) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -189,6 +189,9 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// 与生产同一套解析：平台实例由 SetPlatform 注入，租户桶只看档案绑定。
 	// 没有绑定档案的租户自动回落到 up，所以既有断言（都用本地存储）一行不用改。
 	var effective storage.Resolver = profiles
+	if len(resolverOverride) > 0 && resolverOverride[0] != nil {
+		effective = resolverOverride[0]
+	}
 	effectiveCDN := storageprofile.NewDynamicCDN(refresher, profiles)
 	RegisterUpload(r, db, cfg, effective, effectiveCDN)
 	RegisterStorage(r, db, effective, effectiveCDN, cfg)

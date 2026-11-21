@@ -126,6 +126,10 @@ func uploadHandler(db *gorm.DB, cfg config.Config, res storage.Resolver, refresh
 				return
 			}
 			urls = append(urls, u)
+			// 本地镜像：对象已写入主存储后异步从云回拉一份备份。
+			// 开关（平台总闸 + 该租户开关）与归属校验都在 Manager.Schedule 里，
+			// 这里只管通知；失败只留痕，不影响本次上传结果。
+			scheduleMirror(cid, objKey)
 			// 用量累加：失败只记日志（函数内 [STORAGE][WARN]）、不失败本次上传
 			// ——文件已落盘，回错误会让用户重传，反而多出孤儿文件。
 			_ = addStorageUsage(db, cid, fh.Size, 1)

@@ -3312,6 +3312,62 @@ paths:
                       reason:
                         type: string
 
+  /api/admin/storage/object/delete:
+    post:
+      tags: [存储]
+      summary: 删除单个对象（云桶 + 本地镜像双清）
+      description: >-
+        平台超管专用。删除一个对象键对应的主存储对象，并同时清掉本地镜像副本。
+
+
+        为什么必须双清：只删云桶会留下过期 / 违规备份（下架的内容还在磁盘上）；
+        只删镜像会在恢复时露出旧文件，与「已删除」的记录对不上。
+
+
+        为什么要求二次确认：对象键可能仍被多个业务行引用（同一张案例图挂在多个页面），
+        删一条记录就删对象会让其它页面裂图。因此本接口不挂在内容删除上，
+        而是要求管理员显式提交对象键并输入 `DELETE`，表示「我已确认没有引用」。
+
+
+        顺序是「先镜像、后云桶」：镜像删除失败整体中止，不留「主对象已删、备份还在」
+        的半清状态；云桶删除失败时镜像已清、主对象仍在，重试即可。
+
+
+        租户按**对象键里的归属前缀**解析，不按调用者身份——平台超管可以删任何租户的对象。
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, confirm]
+              properties:
+                key:
+                  type: string
+                  description: 带归属前缀的对象键（如 `t/5/abcd1234.png`、`p/wxacode/x.jpg`）
+                  example: t/5/abcd1234.png
+                confirm:
+                  type: string
+                  description: 必须为 `DELETE`，用于二次确认
+                  example: DELETE
+      responses:
+        "200":
+          description: >-
+            code=0 删除成功（镜像与主对象都已清除）；
+            code=1 参数错误 / 未输入 DELETE / 对象键为历史形态 / 存储驱动不支持删除 /
+            本地镜像清理失败（已取消删除）/ 主对象删除失败（镜像已清，可重试）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  msg:
+                    type: string
+
   /api/admin/upload/capability:
     get:
       tags: [存储]

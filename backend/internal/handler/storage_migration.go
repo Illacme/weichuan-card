@@ -75,6 +75,12 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源或目标档案不存在"})
 			return
 		}
+		// 镜像档案是备份落点，不是业务桶：既不能当迁移源（里面是副本，不是真数据），
+		// 也不能当目标（会把主写入指向备份盘，且自动切换后出参全错）。
+		if mirrorProfileInvolved(db, req.SourceProfileID, req.TargetProfileID) {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "平台本地镜像档案不能作为迁移的源或目标"})
+			return
+		}
 		if req.AutoSwitch && req.DryRun {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "试运行不会切换绑定，请取消自动切换"})
 			return
@@ -266,6 +272,19 @@ func switchBindingAfterMigration(db *gorm.DB, job *model.StorageMigrationJob) er
 	b.Version++
 	b.CreatedAt = time.Now()
 	return db.Save(&b).Error
+}
+
+// mirrorProfileInvolved 判断给定档案里有没有平台本地镜像。
+// 查库失败按「有」处理（fail closed）：宁可拒绝一次合法迁移，
+// 也不能在库抖动时让主写入悄悄落到备份盘。
+func mirrorProfileInvolved(db *gorm.DB, ids ...int64) bool {
+	var n int64
+	if err := db.Model(&model.StorageProfile{}).
+		Where("id IN ? AND purpose = ?", ids, model.ProfilePurposePlatformMirror).
+		Count(&n).Error; err != nil {
+		return true
+	}
+	return n > 0
 }
 
 func clipErr(err error) string {

@@ -154,7 +154,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now weichuan
 ### C. 完整生产（MySQL 原生 + systemd + HTTPS，不用 Docker）
 
 1. 安装 MySQL 8.0（`apt install mysql-server` 或 yum），建库 `weichuan`，手动应用迁移（命令见第 4 节，与 Docker 无关完全适用）。
-2. `go build -o weichuan-server ./cmd/server`，环境变量：`DB_DSN` / `JWT_KEY` / `ADMIN_USER` / `ADMIN_PASS` / `UPLOAD_BASE_URL` / `COOKIE_SECURE=true`。  
+2. `go build -o weichuan-server ./cmd/server`，环境变量：`DB_DSN` / `JWT_KEY` / `ADMIN_USER` / `ADMIN_PASS` / `UPLOAD_BASE_URL` / `COOKIE_SECURE=true`；开启本地镜像再加 `MIRROR_DIR`（**必须与 `UPLOAD_DIR` 分开**，见 §9）。  
    **`UPLOAD_BASE_URL` 填对外访问基址，不是 S3 端点**：七牛 S3 兼容端点写入的对象会落在 `<S3 空间名>/` 目录下（控制台里是 `aitel/xxx.mp4`），基址必须带同一层（`https://<CDN域名>/aitel`），只填裸域名会拼出 404 的播放地址。自测：对同一个已上传对象分别 `curl -I http://<CDN域名>/<对象名>` 和 `curl -I http://<CDN域名>/aitel/<对象名>`，哪个 200 就按哪个填；同时确认该 CDN 域名已启用 HTTPS（未启用时 `https://` 返回 `403` + `X-Error-Info: httpsDisabled`，小程序里表现为视频黑屏 00:00）。**改完重启只影响新上传**，已入库的完整 URL 要重新上传或改库记录。详见 `backend/README.md` 存储章节。
    **更省事的替代**：`DB_DSN` / `JWT_KEY` / `ADMIN_PASS` 全留空，首次访问走安装向导（§2.2，二进制路径的前置与坑都在那里）。
 3. systemd 常驻（unit 同 B，`ExecStart` 换二进制、补 `Environment=` 行）。
@@ -174,11 +174,14 @@ DB_DSN=/var/lib/weichuan/weichuan.db           # 裸路径兜底（仅认 .db/.s
 
 ```bash
 cd backend && go build -o weichuan-server ./cmd/server
-sudo mkdir -p /var/lib/weichuan /var/lib/weichuan/uploads
+sudo mkdir -p /var/lib/weichuan /var/lib/weichuan/uploads /var/lib/weichuan/mirror
 export DB_DSN=sqlite:///var/lib/weichuan/weichuan.db
 export JWT_KEY=$(openssl rand -base64 32)     # 上线前必改
 export ADMIN_PASS=$(openssl rand -base64 12)  # 上线前必改
 export UPLOAD_DIR=/var/lib/weichuan/uploads
+# 本地镜像备份落点：必须与 UPLOAD_DIR 分离。/uploads 是免鉴权静态服务，
+# 私有桶对象回拉到它下面就等于公开可读。不开启镜像可以留空。
+export MIRROR_DIR=/var/lib/weichuan/mirror
 export COOKIE_SECURE=true
 export TZ=Asia/Shanghai                        # 统计按服务端本地日期落库，见下方说明
 ./weichuan-server                              # 日志首行会打印 database driver=sqlite
@@ -2011,6 +2014,7 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 | `backups/weichuan-<时间戳>.db.gz` / `.sql.gz` | 数据库 | —— |
 | `backups/uploads-<时间戳>.tar.gz` | `uploads/` 里的图片（头像、案例图、海报素材） | 库恢复了，名片页满屏裂图 |
 | `backups/secrets-<时间戳>.tar.gz.enc` | `runtime.env`（含 `PII_ENC_KEY`）+ `license.key`，**加密** | 库里的姓名/手机是密文，**没有钥匙解不开**；业务 PII 无 re-key，丢钥=永久失读 |
+| `backups/mirror-<时间戳>.tar.gz`（可选） | 云桶对象的本地镜像副本（`MIRROR_DIR`） | 未开启本地镜像时本就没有这一件；一旦开启过，缺它就等于「以为有备份，其实只在云厂商那里有一份」，桶被误删没有回头路 |
 
 | 形态 | 数据库做法 |
 |---|---|
@@ -2049,7 +2053,7 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 确需只备库（排查用）：`BACKUP_SKIP_FILES=1`；确需跳过密钥（明确接受 PII 永久失读）：
 `BACKUP_ALLOW_NO_KEY=1`。两者都会打 WARN。
 
-轮转按 `KEEP_DAYS`（默认 7 天），三件套各自轮转。
+轮转按 `KEEP_DAYS`（默认 7 天），各产物分别轮转。
 
 #### 后台面板：看状态 / 临时补一份 / 下载
 

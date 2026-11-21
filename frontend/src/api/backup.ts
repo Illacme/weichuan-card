@@ -11,7 +11,7 @@ import http from './request'
  */
 
 export interface BackupItem {
-  kind: string // db / uploads / secrets
+  kind: string // db / uploads / mirror / secrets
   label: string
   file: string
   bytes: number
@@ -38,11 +38,21 @@ export interface BackupStatus {
   automaticTip: string
 }
 
-// 面板固定按这三行渲染。不能只渲染 items：缺失的那一件恰好最该被看见，
+// 面板固定按这几行渲染。不能只渲染 items：缺失的那一件恰好最该被看见，
 // 而 items 里没有它——「看不见的东西等于没有」正是这个面板要解决的问题。
-export const BACKUP_KINDS: { kind: string; label: string; hint: string }[] = [
+//
+// mirror（云对象的本地镜像副本）是 optional：没开启本地镜像的部署本来就不会产出，
+// 固定成必填行会让正常部署天天显示「缺失」。所以只在真有归档时才出现；
+// 一旦出现过，之后的缺失就由后端告警规则 backup_mirror 盯着（那才是真异常）。
+export const BACKUP_KINDS: { kind: string; label: string; hint: string; optional?: boolean }[] = [
   { kind: 'db', label: '数据库', hint: '全部业务数据（含加密后的员工个人信息）' },
   { kind: 'uploads', label: '上传文件', hint: '名片图片 / 案例图，丢了页面会成片空白' },
+  {
+    kind: 'mirror',
+    label: '本地镜像',
+    hint: '云桶对象的本地副本；只做备份、不参与出参，用于桶被误删时找回',
+    optional: true,
+  },
   { kind: 'secrets', label: '运行时密钥', hint: 'PII_ENC_KEY 等：没有它，库里的姓名手机解不出来' },
 ]
 

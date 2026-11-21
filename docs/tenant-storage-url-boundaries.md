@@ -481,3 +481,24 @@ sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `st
 
 **仍未做**：严格裸键的云驱动验收（需 R1 的 `/uploads/`→桶 反代）、存量回填 P3、
 `UploaderResolver` 按租户选桶（P2）、配置写接口与后台界面（P1 后半段）。
+
+### 5.9 本地镜像回拉的归属校验（2026-11-21 / 第七十八轮）
+
+本地镜像（`internal/mirror`）要按对象键里的归属前缀判断「这个键是不是这个租户的」，
+因此 `TestRefWiringGate` 的 sanctioned 集合新增三个文件：
+
+| 文件 | 为什么必须放行 | 它不做什么 |
+| --- | --- | --- |
+| `mirror/mirror.go` | 调 `storage.ParseRef` 校验归属（`checkOwner`），并调 `DeleteObject` 清理副本 | **不生成新键**，只校验与删除已有键 |
+| `mirror/mirror_test.go` | 单测要构造真实键 | — |
+| `handler/mirror_hook_test.go` | 端到端用例要构造真实键 | — |
+
+**为什么必须校验**：键来自客户端（直传确认端点上报）。不校验的话，用 A 的凭据可以把
+B 桶里的对象回拉到 A 的备份目录——两边都不报错，A 的备份盘里多出别人的素材。
+
+**口径与谁一致**：`thumbEnsureHandler`、`signHandler`、`uploadCompanyID` 三处同一口径
+（`ref.Scope` + `ref.CompanyID`）。不一致会出现「签名允许、镜像拒绝」这类自相矛盾的封锁，
+管理员看到的是「上传成功但备份一直没有」，查不出原因。
+
+**反向验证**：把 `checkOwner` 里的 `if ref.Scope != want || ref.CompanyID != cid` 改成 `if false`，
+`TestCopyRejectsForeignTenantKey` 必红；还原后复绿。

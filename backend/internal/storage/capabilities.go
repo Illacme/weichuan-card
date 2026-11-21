@@ -33,6 +33,15 @@ type CDNRefresher interface {
 // 吃内存——解码后的 RGBA 通常是原文件的 10~30 倍。
 const MaxObjectReadBytes = 16 << 20
 
+// ObjectDeleter 按 key 删除对象（删除双清用）。
+//
+// 为什么独立于 ObjectStore：删除是不可逆操作，不能混进「读写能力」里被顺手调用。
+// 只由 mirror 的清理链路显式使用，且必须是幂等的——对象本来就不存在时返回 nil。
+// 业务侧现有的「违规下架」是**覆盖写占位图**，不是删除，两者语义不同。
+type ObjectDeleter interface {
+	DeleteObject(key string) error
+}
+
 // ObjectStore 对象读写能力：供「直传后补缩略图」使用。
 //
 // 为什么需要单独一个接口：普通上传走 Uploader.Save，字节在服务端手上，

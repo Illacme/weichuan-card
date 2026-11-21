@@ -4,7 +4,7 @@
 #
 # 备份脚本是「只有出事那天才会真正执行」的那种代码：平时全绿、坏了自己也不会叫。
 # 这个自检把最关键的几条行为钉死，防止后续改动悄悄破坏：
-#   1. 备份能产出图片归档 + 加密密钥包；
+#   1. 备份能产出图片归档 + 本地镜像归档 + 加密密钥包；
 #   2. 恢复回来逐字节一致（备份 ≠ 能恢复，这两件事要分开验）；
 #   3. 密钥包里没有明文（加密真的生效了）；
 #   4. 有密钥文件却没给 BACKUP_ENC_KEY → 整次失败且不留半成品；
@@ -26,15 +26,17 @@ bad() { echo "  [FAIL] $*"; FAIL=$((FAIL + 1)); }
 head_() { echo; echo "── $* ──"; }
 
 # ── 夹具：两个图片（含子目录）+ 两个密钥文件 ──
-mkdir -p "$ROOT/src/uploads/sub" "$ROOT/src/data" "$ROOT/backups"
+mkdir -p "$ROOT/src/uploads/sub" "$ROOT/src/data" "$ROOT/backups" "$ROOT/src/mirror/t/1"
 printf 'IMG-A' > "$ROOT/src/uploads/avatar.png"
 printf 'IMG-B' > "$ROOT/src/uploads/sub/case.jpg"
+printf 'MIRROR-C' > "$ROOT/src/mirror/t/1/cloud.png"
 printf 'PII_ENC_KEY=Zm9v\nJWT_KEY=jwt\nADMIN_PASS=admin\n' > "$ROOT/src/data/runtime.env"
 printf 'LICENSE\n' > "$ROOT/src/data/license.key"
 
 BK_ENV=(BACKUP_SOURCE=host
         BACKUP_DIR="$ROOT/backups"
         UPLOAD_DIR="$ROOT/src/uploads"
+        MIRROR_DIR="$ROOT/src/mirror"
         CONFIG_FILE="$ROOT/src/data/runtime.env"
         LICENSE_FILE="$ROOT/src/data/license.key")
 
@@ -47,7 +49,9 @@ fi
 
 up_count="$(ls "$ROOT"/backups/uploads-*.tar.gz 2>/dev/null | wc -l | tr -d ' ')"
 sec_count="$(ls "$ROOT"/backups/secrets-*.tar.gz.enc 2>/dev/null | wc -l | tr -d ' ')"
+mir_count="$(ls "$ROOT"/backups/mirror-*.tar.gz 2>/dev/null | wc -l | tr -d ' ')"
 [ "$up_count" = "1" ] && ok "产出图片归档 uploads-*.tar.gz" || bad "没有图片归档"
+[ "$mir_count" = "1" ] && ok "产出本地镜像归档 mirror-*.tar.gz" || bad "没有镜像归档（云对象的本地副本会丢在备份之外）"
 [ "$sec_count" = "1" ] && ok "产出加密密钥包 secrets-*.enc" || bad "没有密钥包"
 
 # 密钥包必须是密文：明文口令/密钥不该出现在文件里
@@ -70,6 +74,11 @@ if diff -r "$ROOT/src/uploads" "$ROOT/out/uploads" >/dev/null 2>&1; then
   ok "图片恢复后与源目录一致"
 else
   bad "图片恢复后与源不一致"
+fi
+if diff -r "$ROOT/src/mirror" "$ROOT/out/mirror" >/dev/null 2>&1; then
+  ok "本地镜像恢复后与源目录一致"
+else
+  bad "本地镜像恢复后与源不一致"
 fi
 if cmp -s "$ROOT/src/data/runtime.env" "$ROOT/out/data/runtime.env"; then
   ok "runtime.env 恢复后一致"

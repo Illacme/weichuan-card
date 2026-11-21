@@ -150,3 +150,28 @@ func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
 	require.EqualValues(t, 1, body["code"])
 	require.Contains(t, body["msg"], "公开读")
 }
+
+// 平台镜像档案是备份落点，不能当写入目标，也不能参与迁移。
+// 一旦绑上，新文件会写进备份目录：备份脚本打的是同一处，主出参域名却不认它，
+// 管理员看到的是「已切云桶」、实际全落在私有备份盘，且没有任何报错。
+func TestMirrorProfileCannotBeWriteTarget(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(model.All()...))
+
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: "普通桶", Driver: "minio", Version: 1,
+	}).Error)
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: "平台本地镜像", Driver: "local", Builtin: true,
+		Purpose: model.ProfilePurposePlatformMirror, Version: 1,
+	}).Error)
+	var normal, mirror model.StorageProfile
+	require.NoError(t, db.First(&normal, "name = ?", "普通桶").Error)
+	require.NoError(t, db.First(&mirror, "name = ?", "平台本地镜像").Error)
+
+	require.Empty(t, validateBindingTargets(db, normal.ID, 0))
+	require.Contains(t, validateBindingTargets(db, mirror.ID, 0), "不能绑定")
+	require.False(t, mirrorProfileInvolved(db, normal.ID))
+	require.True(t, mirrorProfileInvolved(db, normal.ID, mirror.ID))
+}

@@ -472,6 +472,8 @@ func takedownMediaCheck(db *gorm.DB, res storage.Resolver, refresher storage.CDN
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "下架失败：" + err.Error()})
 			return
 		}
+		// 同步覆盖镜像副本：否则本地备份里仍留着违规图，恢复时又被放出去。
+		scheduleMirror(row.CompanyID, row.ObjectKey)
 		// 覆盖写之后必须刷 CDN：不刷的话边缘节点会继续吐旧图，
 		// 表现为「后台显示已下架，但用户看到的还是那张违规图」。
 		refreshCDN(db, refresher, row.URL)

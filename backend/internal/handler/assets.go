@@ -175,6 +175,8 @@ func assetAdoptHandler(db *gorm.DB, res storage.Resolver, refresher storage.CDNR
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "采用失败：" + err.Error()})
 			return
 		}
+		// 平台对象（p/）只受平台总闸控制，按 cid=0 走镜像判定。
+		scheduleMirror(0, objKey)
 		// 固定对象名 = 覆盖写：这里才是「同名可能被换成新内容」的场景（素材库升级换图），
 		// 必须让 CDN 边缘失效，否则已经采用过该素材的页面会继续拿到旧图
 		refreshCDN(db, refresher, url)

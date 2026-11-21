@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"weichuan/internal/audit"
 	"weichuan/internal/config"
 	"weichuan/internal/middleware"
 	"weichuan/internal/setting"
@@ -37,6 +38,8 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher
 	// 私有桶：已存 URL → 限时签名 URL（超管 / 员工）
 	r.POST("/api/admin/storage/sign", middleware.AuthMiddleware(db, "admin"), signHandler(res, cfg))
 	r.POST("/api/employee/storage/sign", middleware.AuthMiddleware(db, "employee"), signHandler(res, cfg))
+	// 对象删除（云桶 + 本地镜像双清）：平台超管专属，且必须显式二次确认。
+	r.POST("/api/admin/storage/object/delete", middleware.PlatformAdminMiddleware(db), objectDeleteHandler(db, res))
 	// CDN 刷新（超管）
 	r.POST("/api/admin/cdn/refresh", middleware.AuthMiddleware(db, "admin"), cdnRefreshHandler(refresher))
 	// 本地私有文件流（仅本地驱动 + 私有模式：文件不通过 /uploads 静态公开，需鉴权后读取）。
@@ -48,8 +51,9 @@ func RegisterStorage(r *gin.Engine, db *gorm.DB, res storage.Resolver, refresher
 	}
 }
 
-// thumbEnsureHandler 直传后补缩略图：客户端上报对象键，服务端读回原图、
-// 生成 _thumb 兄弟对象写回同目录。
+// thumbEnsureHandler 直传后确认端点：客户端 PUT 成功后调用，服务端据此
+// ① 异步回拉一份本地镜像备份（所有类型都做，含 mp4）；② 补 _thumb 兄弟对象。
+// 补缩略图保持原有路径与返回语义不变（前端 uploadFile.ts 已在直传成功后无条件调用）。
 //
 // 为什么需要这条接口：普通上传走 Uploader.Save，字节在服务端手上，ProcessUpload
 // 顺手就把 _thumb 一起写出来了。但预签名直传是浏览器直接把字节 PUT 到对象存储，
@@ -94,6 +98,10 @@ func thumbEnsureHandler(res storage.Resolver) gin.HandlerFunc {
 			c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "无权处理该对象"})
 			return
 		}
+		// 直传字节不经过服务端，这是后端唯一能确认「上传已完成」的时刻。
+		// 镜像判定（总闸 + 租户开关 + 归属）都在 Manager 内；失败只留痕。
+		// 必须放在缩略图 ext 判断之前——mp4 等非图片不生成缩略图，但同样要备份。
+		scheduleMirror(cid, key)
 		up, uerr := res.For(cid)
 		if uerr != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
@@ -415,5 +423,76 @@ func localFileHandler(l *storage.LocalUploader) gin.HandlerFunc {
 			return
 		}
 		c.File(fp)
+	}
+}
+
+// objectDeleteHandler 删除单个对象：云桶与本地镜像双清。
+//
+// 为什么单独做而不是挂在内容删除上：项目 / 服务的图片可能被多个条目引用，
+// 删一条记录就删对象会让其它页面裂图。这里要求管理员显式指定对象键并输入
+// DELETE 二次确认，表示「我已确认没有引用」。
+//
+// 顺序是「先镜像、后云桶」：镜像删除失败就整体中止，绝不留下「主对象已删、
+// 备份还在」的半清状态；云桶删除失败时镜像已清，主对象还在，重新点一次即可。
+// 租户按**对象键里的归属**解析，不按调用者身份——平台超管可以删任何租户对象。
+func objectDeleteHandler(db *gorm.DB, res storage.Resolver) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Key     string `json:"key"`
+			Confirm string `json:"confirm"`
+		}
+		if c.ShouldBindJSON(&req) != nil || strings.TrimSpace(req.Key) == "" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
+			return
+		}
+		if strings.ToUpper(strings.TrimSpace(req.Confirm)) != "DELETE" {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "请显式输入 DELETE 确认删除（删除后引用该对象的页面会裂图）"})
+			return
+		}
+		key := strings.TrimSpace(req.Key)
+		ref, err := storage.ParseRef(key)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "对象键非法或为历史形态"})
+			return
+		}
+		// 平台对象（p/ 前缀）写在 Platform() 实例里，而 resolve(0) 会落到
+		// storage_bindings.tenant_id=0 指向的全局默认绑定——两者常不是同一个桶。
+		// 用 For(0) 会「删除成功」但删的是别处的同名键，真正对象还在。
+		var up storage.Uploader
+		if ref.CompanyID <= 0 {
+			up = res.Platform()
+			if up == nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "平台存储实例不可用"})
+				return
+			}
+		} else {
+			var uerr error
+			up, uerr = res.For(ref.CompanyID)
+			if uerr != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": uerr.Error()})
+				return
+			}
+		}
+		deleter, ok := up.(storage.ObjectDeleter)
+		if !ok {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "当前存储驱动不支持删除对象"})
+			return
+		}
+		if err := removeMirrorErr(key); err != nil {
+			log.Printf("[MIRROR][WARN] 删除前清理镜像失败 key=%s: %v", key, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "本地镜像清理失败，已取消删除"})
+			return
+		}
+		if err := deleter.DeleteObject(key); err != nil {
+			log.Printf("[STORAGE][WARN] 删除对象失败 key=%s: %v", key, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "删除对象失败（本地镜像已清除，可重试）"})
+			return
+		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionStorageObjectDelete, TargetType: "storage_object",
+			Result: audit.ResultSuccess,
+			Detail: map[string]any{"tenant_id": ref.CompanyID, "ext": strings.ToLower(filepath.Ext(key))},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	}
 }

@@ -492,6 +492,9 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
     // 资源标识：只有 Cloudflare（Zone ID）与 CloudFront（Distribution ID）需要
     'cdn_resource_id',
     'cdn_endpoint',
+    // 本地镜像备份：与上面「平台存储」并列但独立——它不改变主落点，只决定备份副本存哪
+    'local_mirror_enabled',
+    'mirror_dir',
   ],
   upload: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext', 'presign_put_ttl_minutes', 'sign_get_ttl_minutes'],
   wechat: [
@@ -521,6 +524,9 @@ const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
     { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
     { label: '平台存储 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
     { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
+    // 镜像与「平台存储」是两件事：主写入与出参不变，这里只决定备份副本落在哪。
+    // 放在最后是因为它是增强项，缺省即可用；默认不开租户，平台对象随总闸。
+    { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled', 'mirror_dir'] },
   ],
   upload: [
     { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },

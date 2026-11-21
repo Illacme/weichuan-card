@@ -78,6 +78,8 @@ const items: SettingItem[] = [
   { key: 'storage_region', name: '存储区域', group: 'storage', type: 'string', value: '', description: 'S3 区域', secret: false, restart: true, readOnly: false, envVar: 'STORAGE_REGION', configured: false },
   { key: 'storage_public', name: '存储空间公开访问', group: 'storage', type: 'bool', value: 'true', description: '公开桶', secret: false, restart: true, readOnly: false, envVar: 'STORAGE_PUBLIC', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
+  { key: 'mirror_dir', name: '本地镜像目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
+  { key: 'local_mirror_enabled', name: '本地镜像总开关', group: 'storage', type: 'bool', value: 'true', description: '本地镜像总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_base_url', name: '文件访问基址', group: 'storage', type: 'string', value: '', description: '文件公开访问地址', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_BASE_URL', configured: false },
   { key: 'cookie_domain', name: '登录 Cookie 作用域', group: 'security', type: 'string', value: '', description: 'Cookie 作用域', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_DOMAIN', configured: false },
   { key: 'cookie_secure', name: '登录 Cookie 强制 HTTPS', group: 'security', type: 'bool', value: 'false', description: 'Cookie Secure', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_SECURE', configured: true },
@@ -813,7 +815,13 @@ describe('Settings 系统设置', () => {
       '平台存储 · 存储位置',
       '平台存储 · 访问方式',
       '平台存储 · CDN 刷新（可选）',
+      '本地镜像备份（可选）',
     ])
+    // 镜像两项必须落在「本地镜像备份」区，不能混进「平台存储」——
+    // 前者只决定备份副本存哪，后者决定主写入与出参落点，混在一起会让人
+    // 以为改镜像目录会切换对外地址。
+    expect(rowExists(w, 'local_mirror_enabled')).toBe(true)
+    expect(rowExists(w, 'mirror_dir')).toBe(true)
     // local 态：CDN 区只剩开关本身，凭据不占版面
     expect(rowExists(w, 'cdn_enabled')).toBe(true)
     expect(rowExists(w, 'cdn_access_key_id')).toBe(false)
@@ -837,7 +845,10 @@ describe('Settings 系统设置', () => {
       .map((r: any) => r.find('.label-key').text())
     // local 态可见项的顺序：driver → upload_dir → public → cdn_enabled。
     // upload_base_url 是云存储专属（local 用相对地址不经过它），local 下不占版面
-    expect(keys).toEqual(['storage_driver', 'upload_dir', 'storage_public', 'cdn_enabled'])
+    expect(keys).toEqual([
+      'storage_driver', 'upload_dir', 'storage_public', 'cdn_enabled',
+      'local_mirror_enabled', 'mirror_dir',
+    ])
   })
 
   it('配置向导：默认落在第一个未完成步骤，条件显隐与主列表一致', async () => {

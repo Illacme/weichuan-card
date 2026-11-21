@@ -133,6 +133,8 @@ services:
       STORAGE_DRIVER: local
       STORAGE_PUBLIC: "true"
       UPLOAD_DIR: /app/uploads
+      # 本地镜像备份落点：必须与 UPLOAD_DIR 分离，否则私有对象会被 /uploads 公开
+      MIRROR_DIR: /app/storage/mirror
       # 与下方 nginx 发布端口一致（宿主机访问地址）。
       # 必须留变量壳：这是**对外地址**，生产要换成 https 域名，写死就等于
       # 「.env 里怎么改都不生效」——而 preflight 查的是 .env，会给出虚假 PASS。
@@ -161,6 +163,7 @@ services:
       # 可选：WX_APPID / WX_APPSECRET / MINIO_* / OSS_* / CDN_*
     volumes:
       - uploads_data:/app/uploads
+      - mirror_data:/app/storage/mirror
       # 安装向导写出的配置（runtime.env）与 SQLite 库文件都在这里，必须持久化
       - data_data:/app/data
       # 备份产物落宿主机目录：后台可下载、运维可 rsync 异地，且与 cron 共用同一处
@@ -240,6 +243,7 @@ services:
 volumes:
   mysql_data: # 仅 --profile mysql 时创建
   uploads_data:
+  mirror_data: # 云对象的本地镜像副本，独立卷，避免 /uploads 静态路由公开私有对象
   # 后端配置（runtime.env）与可选 SQLite 库文件；删掉它会回到「未配置」状态
   data_data:
   caddy_data: # 仅 --profile https 时创建：Caddy 证书与账户数据，删掉会重新申请证书
