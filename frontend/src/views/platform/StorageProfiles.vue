@@ -22,12 +22,11 @@
           <el-table-column label="档案名" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
-              <el-tag v-if="row.builtin" size="small" type="info">内置</el-tag>
+              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 自动运行，请勿改动' : '系统自带的备用盘 · 云端出问题时才用，请勿删除'">
+                <el-tag size="small" type="info">内置</el-tag>
+              </el-tooltip>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
               <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
-              <div v-if="row.builtin" class="builtin-hint">
-                {{ row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 自动运行，请勿改动' : '系统自带的备用盘 · 云端出问题时才用，请勿删除' }}
-              </div>
             </template>
           </el-table-column>
           <el-table-column prop="driver" label="驱动" width="90" />
@@ -523,6 +522,5 @@ function exportErrors() {
 .migration-create { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
-.builtin-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
 .builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
 </style>

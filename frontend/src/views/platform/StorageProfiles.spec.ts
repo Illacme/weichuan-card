@@ -137,9 +137,11 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('平台本地存储')
     expect(w.text()).toContain('内置')
-    // 管理员看不懂内部术语：列表要有一句人话说明「这是系统自带、别删」
-    expect(w.text()).toContain('系统自带的备用盘')
-    expect(w.text()).toContain('请勿删除')
+    // 说明移入标签悬停提示：列表保持清爽，但要钉死悬停会显示「系统自带、别删」
+    const tip1 = w.findComponent({ name: 'ElTooltip' })
+    expect(tip1.exists()).toBe(true)
+    expect(tip1.props('content')).toContain('系统自带的备用盘')
+    expect(tip1.props('content')).toContain('请勿删除')
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
     await flush()
@@ -176,10 +178,12 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('租户退路')
     expect(w.text()).toContain('平台镜像')
-    // 两条内置档案各自有区分得开的人话说明，管理员不会混为一谈
-    expect(w.text()).toContain('系统自带的备用盘')
-    expect(w.text()).toContain('系统自带的备份盘')
-    expect(w.text()).toContain('自动运行，请勿改动')
+    // 两条内置档案的悬停提示各自可区分，管理员不会混为一谈
+    const tips = w.findAllComponents({ name: 'ElTooltip' })
+    expect(tips).toHaveLength(2)
+    expect(tips[0].props('content')).toContain('系统自带的备用盘')
+    expect(tips[1].props('content')).toContain('系统自带的备份盘')
+    expect(tips[1].props('content')).toContain('自动运行，请勿改动')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
     // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
