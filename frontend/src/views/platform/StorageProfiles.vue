@@ -185,7 +185,7 @@
           <el-table-column prop="error" label="错误" min-width="180" show-overflow-tooltip />
           <el-table-column label="操作" width="210">
             <template #default="{ row }">
-              <el-button link type="primary" :disabled="row.status === 'running' || row.status === 'done'" @click="startJob(row)">启动 / 续跑</el-button>
+              <el-button link type="primary" :disabled="row.status === 'running' || (row.status === 'done' && !row.failed)" @click="startJob(row)">{{ row.status === 'done' && row.failed ? '重试失败' : '启动 / 续跑' }}</el-button>
               <el-button link type="warning" :disabled="row.status !== 'running'" @click="stopJob(row)">取消</el-button>
               <el-button link type="primary" @click="openErrors(row)">失败清单</el-button>
             </template>

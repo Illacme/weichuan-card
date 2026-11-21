@@ -18,6 +18,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// migrationCopyObject 是单个对象的复制动作，默认走驱动的流式复制。
+// 抽成变量只为测试能精确模拟「某个对象失败」——续跑必须重试失败对象这条
+// 承诺，靠真实本地驱动很难稳定复现（删文件会被列举阶段就发现）。
+var migrationCopyObject = func(copier storage.ObjectCopier, sink storage.ObjectStreamWriter, key string) error {
+	return copier.CopyObjectTo(sink, key)
+}
+
 // 一键迁移任务（迁移 0054）。
 //
 // 边界（勿回退）：
@@ -109,9 +116,14 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "任务不存在"})
 			return
 		}
-		if job.Status == "running" || job.Status == "done" {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "任务已在运行或已完成"})
+		if !canRunMigration(job.Status, job.Failed) {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "任务已在运行或已全部完成"})
 			return
+		}
+		// 有失败对象的 done 任务允许续跑重试：失败清单就是待重试队列，
+		// 续跑只重试那些对象，已成功的靠 last_key 跳过。
+		if job.Status == "done" && job.Failed > 0 {
+			log.Printf("[STORAGE_MIGRATION] job=%d retry %d failed objects", id, job.Failed)
 		}
 		if err := db.Model(&model.StorageMigrationJob{}).Where("id = ?", id).
 			Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
@@ -152,6 +164,17 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": rows})
 	})
+}
+
+// canRunMigration 判断任务能否启动/续跑：运行中不重入；已完成的只有仍有失败对象才允许重试。
+func canRunMigration(status string, failed int64) bool {
+	if status == "running" {
+		return false
+	}
+	if status == "done" {
+		return failed > 0
+	}
+	return true
 }
 
 func migrationPrefix(tenantID int64) string {
@@ -216,25 +239,59 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 	}
 	job.Total = int64(len(keys))
 
+	// 失败清单就是待重试队列：上次失败的对象即使落在 last_key 之前，续跑也必须重试。
+	// 旧实现里失败对象照样推进 last_key，续跑那句 `key <= last_key` 会把它们永久跳过——
+	// 表面「任务完成、零失败」的分母对得上，实际那几个对象从没被搬到目标桶。
+	failedKeys := map[string]bool{}
+	var priorErrors []model.StorageMigrationError
+	if err := db.Where("job_id = ?", jobID).Find(&priorErrors).Error; err != nil {
+		finish("failed", "读取失败清单失败："+err.Error())
+		return
+	}
+	for _, e := range priorErrors {
+		failedKeys[e.ObjectKey] = true
+	}
+	// 用真实失败条数校准，避免续跑时把上次失败又累加一遍。
+	job.Failed = int64(len(failedKeys))
+
+	processed := 0
 	for _, key := range keys {
 		// 取消是协作式的：每个对象之间检查一次状态，不会留下半途被强杀的连接。
 		var status string
 		if err := db.Model(&model.StorageMigrationJob{}).Where("id = ?", jobID).Select("status").Scan(&status).Error; err != nil || status != "running" {
 			return // cancel 接口已经写了终态，这里不要再覆盖
 		}
-		if key <= job.LastKey {
-			continue // 断点续跑：上次成功位点之前的对象跳过
+		retry := failedKeys[key]
+		if key <= job.LastKey && !retry {
+			continue // 断点续跑：上次已成功处理的对象跳过；失败对象例外，必须重试
 		}
+		processed++
 		if !job.DryRun {
-			if err := copier.CopyObjectTo(sink, key); err != nil {
-				job.Failed++
-				_ = db.Create(&model.StorageMigrationError{JobID: jobID, ObjectKey: key, Error: clipErr(err)}).Error
+			if err := migrationCopyObject(copier, sink, key); err != nil {
+				if !retry {
+					_ = db.Create(&model.StorageMigrationError{JobID: jobID, ObjectKey: key, Error: clipErr(err)}).Error
+					job.Failed++
+				}
+				// 失败仍推进 last_key：不让一个坏对象卡住后面所有对象；
+				// 它已留在 failedKeys 里，下次续跑会被精确找回重试。
+				job.LastKey = key
+				if processed%20 == 0 {
+					_ = db.Model(&model.StorageMigrationJob{}).Where("id = ?", jobID).
+						Updates(map[string]any{"done": job.Done, "failed": job.Failed, "last_key": job.LastKey}).Error
+				}
+				continue
+			}
+			if retry {
+				// 重试成功：销掉失败记录并把计数还回去，Done 在此刻才 +1。
+				_ = db.Where("job_id = ? AND object_key = ?", jobID, key).Delete(&model.StorageMigrationError{}).Error
+				job.Failed--
+				delete(failedKeys, key)
 			}
 		}
-		job.Done++
+		job.Done++ // Done = 成功搬过去的对象数；失败不计，续跑重试成功才补上
 		job.LastKey = key
 		// 每 20 个对象落一次进度：每个都写会让大桶迁移把数据库写爆。
-		if job.Done%20 == 0 {
+		if processed%20 == 0 {
 			_ = db.Model(&model.StorageMigrationJob{}).Where("id = ?", jobID).
 				Updates(map[string]any{"done": job.Done, "failed": job.Failed, "last_key": job.LastKey}).Error
 		}

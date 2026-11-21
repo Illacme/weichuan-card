@@ -233,4 +233,24 @@ describe('文件存储与分发模块', () => {
     expect(profiles).not.toContain('转为存储档案')
     expect(profiles).not.toContain('给自己选「用哪一套」')
   })
+
+  it('迁移任务有失败对象时可重试，全部成功才禁用启动按钮', async () => {
+    vi.mocked(api.listMigrationJobs).mockResolvedValue([
+      { id: 1, tenantId: 7, sourceProfileId: 1, targetProfileId: 2, status: 'done', done: 1, total: 3, failed: 2, error: '' },
+      { id: 2, tenantId: 0, sourceProfileId: 1, targetProfileId: 2, status: 'done', done: 3, total: 3, failed: 0, error: '' },
+    ] as any)
+    const w = mountPage()
+    await flush()
+    // 失败对象还在：按钮必须是可点的「重试失败」，否则失败清单里的对象永远没入口重试。
+    const retryBtn = w.findAll('button').find((b) => b.text() === '重试失败')!
+    expect(retryBtn).toBeTruthy()
+    expect(retryBtn.attributes('disabled')).toBeUndefined()
+    await retryBtn.trigger('click')
+    await flush()
+    expect(api.runMigrationJob).toHaveBeenCalledWith(1)
+    // 全部成功：按钮禁用，文案仍是「启动 / 续跑」。
+    const startBtn = w.findAll('button').find((b) => b.text() === '启动 / 续跑')!
+    expect(startBtn).toBeTruthy()
+    expect(startBtn.attributes('disabled')).toBeDefined()
+  })
 })

@@ -4547,13 +4547,13 @@ paths:
   /api/admin/storage-migration-jobs/{id}/run:
     post:
       summary: 启动（或断点续跑）迁移任务
-      description: 异步执行，进度按对象落库；上次位点 lastKey 之后继续。
+      description: 异步执行，进度按对象落库；从 lastKey 之后继续，但失败清单里的对象会重试。有失败对象的已完成任务可再次启动以重试失败项。
       tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
       responses:
         "200":
-          description: code=0；code=1 已在运行 / 已完成
+          description: code=0；code=1 已在运行 / 已全部完成（无失败对象）
   /api/admin/storage-migration-jobs/{id}/cancel:
     post:
       summary: 取消运行中的迁移任务
