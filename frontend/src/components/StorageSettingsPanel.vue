@@ -9,15 +9,17 @@
         <p class="hero-desc">{{ locationDesc }}</p>
         <p class="hero-note">
           连接信息（驱动 / 桶 / 凭据 / 访问基址）在「存储档案 → 平台自身存储」里改；
-          这里只管服务器目录与备份，保存后需要重启。
+          CDN 刷新的厂商与凭据在「分发档案 → 平台自身 CDN」里改。两处保存后都需要重启。
+          这里只管服务器目录与本地备份。
         </p>
         <div class="hero-chips">
           <span class="chip" :class="{ 'chip-on': mirrorOn }">本地备份 {{ mirrorOn ? '已开启' : '未开启' }}</span>
-          <span class="chip" :class="{ 'chip-on': cdnOn }">CDN 刷新 {{ cdnOn ? '已开启' : '未开启' }}</span>
+          <span class="chip" :class="{ 'chip-on': cdnOn }">CDN 刷新 {{ cdnText }}</span>
         </div>
       </div>
       <div class="hero-action">
         <el-button type="primary" @click="emit('goto-profiles')">去存储档案修改</el-button>
+        <el-button link type="primary" @click="emit('goto-deliveries')">改 CDN 刷新凭据</el-button>
         <span class="hero-action-note">改桶 / 密钥 / 访问地址</span>
       </div>
     </div>
@@ -35,8 +37,6 @@
           :id="'set-' + item.key"
           :item="item"
           :model-value="draft[item.key] ?? ''"
-          :focus="depState(item.key).focus"
-          :dim="depState(item.key).dim"
           compact
           @change="(key: string, value: string) => draft[key] = value"
           @clear="clearSecret"
@@ -54,7 +54,7 @@
           <span class="chev">{{ advancedOpen ? '−' : '+' }}</span>
         </button>
         <p v-if="!advancedOpen" class="advanced-hint">
-          CDN 刷新、存储配额、上传大小与临时链接时效都在这里；不确定就保持默认。
+          存储配额、上传大小与临时链接时效都在这里；不确定就保持默认。CDN 刷新凭据不在这里，见顶部「改 CDN 刷新凭据」。
         </p>
         <div v-else>
           <div v-for="sec in advancedSections" :key="sec.label" class="config-section">
@@ -65,8 +65,6 @@
               :id="'set-' + item.key"
               :item="item"
               :model-value="draft[item.key] ?? ''"
-              :focus="depState(item.key).focus"
-              :dim="depState(item.key).dim"
               compact
               @change="(key: string, value: string) => draft[key] = value"
               @clear="clearSecret"
@@ -98,7 +96,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
 import SettingRow from '@/components/SettingRow.vue'
-import { CDN_DEFAULT_PROVIDER, CDN_RESOURCE_PROVIDERS } from '@/utils/cdn'
+import { cdnProviderLabel } from '@/utils/cdn'
 
 // 顶部摘要只需要回答「文件实际存在哪」，因此只要这四个字段；
 // 父级直接传完整 StorageProfile 也兼容，测试里传最小对象也不必造 19 个字段。
@@ -112,8 +110,13 @@ interface PlatformLocation {
 const props = defineProps<{
   /** 平台自身存储档案；父级已加载时用来在顶部显示「实际存在哪」 */
   platformProfile?: PlatformLocation | null
+  /** 平台自身 CDN 档案（分发档案里 purpose=platform_primary 那一行） */
+  platformDelivery?: { provider?: string } | null
 }>()
-const emit = defineEmits<{ (e: 'goto-profiles'): void }>()
+const emit = defineEmits<{
+  (e: 'goto-profiles'): void
+  (e: 'goto-deliveries'): void
+}>()
 
 // 本面板只接管系统设置里 storage / upload 两组，后端仍走 getSettings / updateSettings，
 // 启动期语义不变（静态路由与上传器在 main.go 构造，改完必须重启）。
@@ -126,7 +129,6 @@ const BASIC_KEYS = ['upload_dir', 'mirror_dir', 'local_mirror_enabled']
 
 // 高级区默认收起：CDN / 配额 / 上传限制 / 临时链接，都是「配一次就不动」的项。
 const ADVANCED_SECTIONS: { label: string; keys: string[] }[] = [
-  { label: 'CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
   { label: '配额与上传限制', keys: ['storage_quota_mb', 'upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
   { label: '临时链接有效期', keys: ['presign_put_ttl_minutes', 'sign_get_ttl_minutes'] },
 ]
@@ -145,30 +147,6 @@ const FRIENDLY: Record<string, { name: string; desc: string }> = {
   local_mirror_enabled: {
     name: '自动本地备份',
     desc: '打开后，云端文件会自动在服务器另存一份；每家企业还要在「企业管理」里单独打开。',
-  },
-  cdn_enabled: {
-    name: '开启 CDN 刷新',
-    desc: '覆盖图片后自动通知 CDN 清缓存。不开也能用，只是更新可能慢几分钟。',
-  },
-  cdn_provider: {
-    name: 'CDN 厂商',
-    desc: '选择你实际使用的 CDN；选完再填下面这一家的凭据。',
-  },
-  cdn_access_key_id: {
-    name: 'CDN AccessKey',
-    desc: 'CDN 服务商给的访问账号；Cloudflare 只需要 Token，这一项不用填。',
-  },
-  cdn_access_key_secret: {
-    name: 'CDN SecretKey',
-    desc: 'CDN 服务商给的访问密钥；留空表示不修改。',
-  },
-  cdn_resource_id: {
-    name: 'CDN 资源标识',
-    desc: '只有 Cloudflare（Zone ID）和 CloudFront（Distribution ID）需要。',
-  },
-  cdn_endpoint: {
-    name: 'CDN 刷新节点',
-    desc: '一般留空，用厂商默认地址即可。',
   },
   storage_quota_mb: {
     name: '企业存储配额',
@@ -247,10 +225,14 @@ const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
 const mirrorOn = computed(() => (draft.local_mirror_enabled || '') === 'true')
-const cdnOn = computed(() => (draft.cdn_enabled || '') === 'true')
-const cdnProvider = computed(() => (draft.cdn_provider || '').trim() || CDN_DEFAULT_PROVIDER)
-const cdnNeedsResource = computed(() => CDN_RESOURCE_PROVIDERS.includes(cdnProvider.value))
-const CDN_ONLY = ['cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']
+// CDN 状态来自分发档案，不再来自本面板的 draft：凭据只有一处真值源。
+const cdnProvider = computed(() => (props.platformDelivery?.provider || '').trim())
+const cdnOn = computed(() => cdnProvider.value !== '' && cdnProvider.value !== 'none')
+const cdnText = computed(() => {
+  if (!props.platformDelivery) return '未配置'
+  if (!cdnOn.value) return '已关闭'
+  return `已开启 · ${cdnProviderLabel(cdnProvider.value)}`
+})
 
 const locationTitle = computed(() => {
   const p = props.platformProfile
@@ -270,20 +252,6 @@ const locationDesc = computed(() => {
   }
   return `写入 ${p.endpoint || '未填端点'} 的 ${p.bucket || '未填桶名'}，对外地址 ${p.baseUrl || '未填访问基址'}。`
 })
-
-function depState(key: string) {
-  if (CDN_ONLY.includes(key)) {
-    if (!cdnOn.value) return { focus: false, dim: true }
-    if (key === 'cdn_access_key_id') {
-      return { focus: cdnProvider.value !== 'cloudflare', dim: cdnProvider.value === 'cloudflare' }
-    }
-    if (key === 'cdn_resource_id') {
-      return { focus: cdnNeedsResource.value, dim: !cdnNeedsResource.value }
-    }
-    return { focus: true, dim: false }
-  }
-  return { focus: false, dim: false }
-}
 
 // 与 Settings.vue 的 DESTRUCTIVE 同源：改错会让已存文件失联。
 const DESTRUCTIVE: Record<string, string> = {

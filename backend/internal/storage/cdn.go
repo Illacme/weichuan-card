@@ -5,15 +5,20 @@ import (
 	"strings"
 )
 
-// 支持的 CDN 厂商。取值与设置项 cdn_provider 的枚举、前端下拉选项共用同一份，
-// 新增厂商只需：① 加常量 + 进 CDNProviders ② 实现 CDNRefresher ③ 在 NewCDNRefresher
-// 里加一个 case ④ 在 setting registry 里登记（Desc 写明该厂商要填什么）。
+// 支持的 CDN 厂商。取值与「分发档案」的 provider 枚举、前端下拉选项共用同一份
+// （迁移 0060 之前是设置项 cdn_provider），新增厂商只需：① 加常量 + 进 CDNProviders
+// ② 实现 CDNRefresher ③ 在 NewCDNRefresher 里加一个 case ④ 在分发档案表单里加选项
+// 与各厂商凭据说明。
 const (
 	CDNProviderAliyun     = "aliyun"     // 阿里云 CDN
 	CDNProviderTencent    = "tencent"    // 腾讯云 CDN
 	CDNProviderQiniu      = "qiniu"      // 七牛云融合 CDN
 	CDNProviderCloudflare = "cloudflare" // Cloudflare
 	CDNProviderCloudFront = "cloudfront" // AWS CloudFront
+	// CDNProviderNone 是分发档案里「明确不刷新」的取值：不是厂商，但需要与
+	// 「没配」（空串按阿里云处理）区分开——空串是老配置的兼容语义，none 是
+	// 管理员的明确选择，不能混为一谈。
+	CDNProviderNone = "none"
 )
 
 // CDNProviders 厂商枚举（按界面展示顺序）

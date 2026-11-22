@@ -352,24 +352,17 @@ func TestPIIEncKeyUnsetShowsNotConfigured(t *testing.T) {
 	t.Fatal("设置列表里没有 pii_enc_key 项")
 }
 
-// TestStorageSettingsOverlayEnv 部署期目录 / CDN 的覆盖语义：
+// TestStorageSettingsOverlayEnv 部署期目录的覆盖语义：
 // 界面设置非空 → 覆盖环境变量；留空 → 回退环境变量（不是「设了空串就把它清成空」）。
-// 平台存储连接信息已进档案（迁移 0059），不在这张表里，见
-// TestStorageConnectionKeysNotInSettings。
+// 平台存储连接信息已进档案（迁移 0059）、CDN 刷新凭据已进分发档案（迁移 0060），
+// 都不在这张表里，见 TestStorageConnectionKeysNotInSettings。
 func TestStorageSettingsOverlayEnv(t *testing.T) {
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)
 	adminToken := loginAdmin(t, c)
 
 	base := func() config.Config {
-		return config.Config{
-			UploadDir:      "env/uploads",
-			MirrorDir:      "env/mirror",
-			CDNAccessKeyID: "env-cdn-id",
-			CDNEnabled:     false,
-			CDNProvider:    "qiniu",
-			CDNResourceID:  "env-resource",
-		}
+		return config.Config{UploadDir: "env/uploads", MirrorDir: "env/mirror"}
 	}
 
 	// 1) 界面全空 → 原样保留环境变量值
@@ -377,18 +370,11 @@ func TestStorageSettingsOverlayEnv(t *testing.T) {
 	cfg.OverlayFromSettings()
 	require.Equal(t, "env/uploads", cfg.UploadDir)
 	require.Equal(t, "env/mirror", cfg.MirrorDir)
-	require.Equal(t, "env-cdn-id", cfg.CDNAccessKeyID)
-	require.False(t, cfg.CDNEnabled)
-	require.Equal(t, "qiniu", cfg.CDNProvider)
-	require.Equal(t, "env-resource", cfg.CDNResourceID)
 
 	// 2) 界面填了 → 覆盖
 	_, body := c.do("PUT", "/api/admin/settings", map[string]string{
-		"upload_dir":      "ui/uploads",
-		"mirror_dir":      "ui/mirror",
-		"cdn_enabled":     "true",
-		"cdn_provider":    "cloudflare",
-		"cdn_resource_id": "ui-zone-id",
+		"upload_dir": "ui/uploads",
+		"mirror_dir": "ui/mirror",
 	}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 
@@ -396,17 +382,11 @@ func TestStorageSettingsOverlayEnv(t *testing.T) {
 	cfg.OverlayFromSettings()
 	require.Equal(t, "ui/uploads", cfg.UploadDir)
 	require.Equal(t, "ui/mirror", cfg.MirrorDir)
-	require.True(t, cfg.CDNEnabled)
-	require.Equal(t, "cloudflare", cfg.CDNProvider)
-	require.Equal(t, "ui-zone-id", cfg.CDNResourceID)
 
 	// 3) 清空 → 回到环境变量
 	_, body = c.do("PUT", "/api/admin/settings", map[string]string{
-		"upload_dir":      "",
-		"mirror_dir":      "",
-		"cdn_enabled":     "",
-		"cdn_provider":    "",
-		"cdn_resource_id": "",
+		"upload_dir": "",
+		"mirror_dir": "",
 	}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 
@@ -414,9 +394,6 @@ func TestStorageSettingsOverlayEnv(t *testing.T) {
 	cfg.OverlayFromSettings()
 	require.Equal(t, "env/uploads", cfg.UploadDir)
 	require.Equal(t, "env/mirror", cfg.MirrorDir)
-	require.False(t, cfg.CDNEnabled)
-	require.Equal(t, "qiniu", cfg.CDNProvider)
-	require.Equal(t, "env-resource", cfg.CDNResourceID)
 }
 
 // TestStorageConnectionKeysNotInSettings 钉住 0059 的边界：平台连接信息只在
@@ -435,25 +412,14 @@ func TestStorageConnectionKeysNotInSettings(t *testing.T) {
 	for _, key := range []string{
 		"storage_driver", "storage_endpoint", "storage_bucket", "storage_access_key",
 		"storage_secret_key", "storage_use_ssl", "storage_region", "storage_public", "upload_base_url",
+		// 0060：CDN 刷新凭据与分发档案字段级重复，只留指针
+		"cdn_enabled", "cdn_provider", "cdn_access_key_id", "cdn_access_key_secret",
+		"cdn_resource_id", "cdn_endpoint",
 	} {
 		require.False(t, keys[key], "%s 不该还在系统设置里", key)
 	}
 	require.True(t, keys["platform_storage_profile_id"])
-}
-
-// TestCDNProviderValidation 厂商枚举：非法值被拒、合法值可存。
-// 配错厂商最坏结果是「刷新静默失效」，所以要在写入时就拦住。
-func TestCDNProviderValidation(t *testing.T) {
-	r := setupSQLiteEngine(t)
-	c := newTestClient(r, t)
-	adminToken := loginAdmin(t, c)
-
-	for _, ok := range []string{"aliyun", "tencent", "qiniu", "cloudflare", "cloudfront"} {
-		_, body := c.do("PUT", "/api/admin/settings", map[string]string{"cdn_provider": ok}, adminToken)
-		require.EqualValues(t, 0, body["code"], "合法厂商应可保存：%s", ok)
-	}
-	_, body := c.do("PUT", "/api/admin/settings", map[string]string{"cdn_provider": "akamai"}, adminToken)
-	require.EqualValues(t, 1, body["code"], "未支持的厂商应被拒")
+	require.True(t, keys["platform_delivery_profile_id"])
 }
 
 // TestRestartKeysReportedOnSave 云存储 / CDN 客户端在启动时构造，改完必须重启才生效。
@@ -468,11 +434,11 @@ func TestRestartKeysReportedOnSave(t *testing.T) {
 	require.EqualValues(t, 0, body["code"])
 	require.Empty(t, body["data"].(map[string]interface{})["restartKeys"])
 
-	// 需重启项：点名返回（存储连接信息已进档案，这里用同样需重启的 CDN 项验证）
-	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"cdn_provider": "cloudflare"}, adminToken)
+	// 需重启项：点名返回（存储连接信息与 CDN 凭据都已进档案，这里用部署期目录验证）
+	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"upload_dir": "data/uploads2"}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 	keys := body["data"].(map[string]interface{})["restartKeys"].([]interface{})
-	require.Contains(t, keys, "cdn_provider")
+	require.Contains(t, keys, "upload_dir")
 }
 
 // TestTokenAndSignTTLHaveSafetyFloor 第二批写死常量接入设置后的语义：
@@ -654,7 +620,6 @@ func TestSettingsValueValidation(t *testing.T) {
 		"upload_max_mb":        "30",
 		"miniprogram_base_url": "https://api.example.com",
 		"mirror_dir":           "./storage/mirror2",
-		"cdn_provider":         "cloudflare",
 		"pinned_company_id":    "1", // 朗汇（seed 的 1 号租户，enabled）
 	} {
 		_, body := c.do("PUT", "/api/admin/settings", map[string]string{k: v}, adminToken)

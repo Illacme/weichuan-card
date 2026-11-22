@@ -7,8 +7,9 @@
       <div class="row-label">
         <span class="label-text">{{ item.name || item.key }}</span>
         <!-- 格式最易错的项：填错后果写进悬浮徽标（默认不占版面）。
-             upload_base_url 填错=图片全打不开、miniprogram_base_url 填错=小程序连不上，
-             这两类「后果严重且现场才发现」的项必须给最强引导。 -->
+             典型是 miniprogram_base_url：填错小程序直接连不上，而现场才发现。
+             存储连接类（upload_base_url / storage_endpoint）已随 0059 进档案，
+             它们的填错后果写在档案表单里，不再占这里的位置。 -->
         <el-tooltip v-if="fieldHint" placement="top" popper-class="si-hint-popper" :content="fieldHint">
           <span class="row-hint" tabindex="0" aria-label="填写说明">?</span>
         </el-tooltip>
@@ -159,7 +160,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { SettingItem } from '@/api/settings'
-import { CDN_PROVIDERS, CDN_PROVIDER_LABELS } from '@/utils/cdn'
 import PathPickerDialog from '@/components/PathPickerDialog.vue'
 
 const props = defineProps<{
@@ -203,16 +203,12 @@ function minOf(item: SettingItem) {
 // / 华为云 OBS / 七牛云 / AWS S3 / R2 等）」，面板宽到 528px > 318px，popper.js
 // 沿 fallback 链翻到 left，下拉整个跑到选择框左侧盖住标签列（2026-10-23 实测）。
 // 所以候选文案保持短：完整说明交给行内的 description，那儿不比下拉里挤着看更清楚。
+// 存储驱动与 CDN 厂商的候选文案已随「连接信息进档案」一起下线（0059 / 0060）：
+// 它们不再是设置项，这里只保留仍在设置页出现的小程序码环境版本。
 const OPTION_LABELS: Record<string, string> = {
-  'storage_driver|local': 'local（服务器本地磁盘）',
-  'storage_driver|minio': 'minio（MinIO / 自建 S3 兼容服务）',
-  'storage_driver|oss': 'oss（阿里云 OSS）',
-  'storage_driver|s3': 's3（S3 兼容云存储）',
-  // CDN 厂商：候选值本身就是品牌名，只补中文名，不加括号说明（同上长度约束）。
-  // 厂商清单来自 utils/cdn（与后端同源），新增厂商时界面自动跟上，不用在这儿再补一行
-  ...Object.fromEntries(
-    CDN_PROVIDERS.map((p) => [`cdn_provider|${p}`, `${p}（${CDN_PROVIDER_LABELS[p]}）`]),
-  ),
+  'wxacode_env_version|release': 'release（正式版）',
+  'wxacode_env_version|trial': 'trial（体验版）',
+  'wxacode_env_version|develop': 'develop（开发版）',
 }
 function optionLabel(opt: string): string {
   return OPTION_LABELS[`${props.item.key}|${opt}`] || opt
@@ -221,28 +217,18 @@ function optionLabel(opt: string): string {
 // 格式易错项的悬浮说明：只放「填错的后果当场发现不了」的项（地址类）。
 // 默认不占版面，指针停留/聚焦时弹出；与安装向导的 JWT/Cookie 徽标同一模式。
 const FIELD_HINTS: Record<string, string> = {
-  // 云存储专属（local 用相对地址、不经过它）——这一项只在 minio / oss / s3 下可见，
-  // 提示里点明归属，被搜索拽出来的置灰行也能自解释
-  upload_base_url:
-    '图片 / 视频 / 小程序码的公开访问地址，http:// 或 https:// 完整地址（例 https://cdn.example.com）；配了 CDN 就填加速域名。仅 minio / oss / s3 需要——本地存储用相对地址，不经过这项。填错的结果是图片全部打不开。',
   miniprogram_base_url:
     '小程序端冷启动第一个请求打到这，必须是小程序能访问到的公网 https 地址（例 https://mp.example.com）。填错小程序直接连不上。',
-  storage_endpoint: '对象存储的服务地址，如 minio.example.com:9000；存储方式选 local 时不需要。',
 }
 const fieldHint = computed(() => FIELD_HINTS[props.item.key] || '')
 
 // 示例占位：比笼统的「未设置」更能告诉用户该填成什么样。
 // 与 item.description（讲「是什么、改了会怎样」）互补：示例讲「填什么格式」。
+// 只登记仍在系统设置里的项：存储连接信息与 CDN 凭据已分别进存储档案 / 分发档案
+// （0059 / 0060），它们的示例留在各自的表单里，这里不再保留空转条目。
 const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   upload_dir: '如 ./data/uploads',
-  storage_endpoint: '如 minio.example.com:9000',
-  storage_bucket: '如 weichuan',
-  storage_region: '如 ap-guangzhou（大多数服务留空自动探测）',
-  upload_base_url: '如 https://cdn.example.com',
   miniprogram_base_url: '如 https://mp.example.com',
-  cdn_endpoint: '如 cdn.example.com（留空按厂商取默认）',
-  // 资源标识只有 Cloudflare / CloudFront 需要，示例里点名两家各自填什么
-  cdn_resource_id: 'Cloudflare 填 Zone ID，CloudFront 填 Distribution ID',
 }
 function placeholderOf(item: SettingItem) {
   if (item.readOnly) return '只读'

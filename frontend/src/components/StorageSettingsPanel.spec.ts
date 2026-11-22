@@ -84,9 +84,12 @@ const LOCAL_PROFILE = { driver: 'local', endpoint: '', bucket: '', baseUrl: 'htt
 
 type PlatformLocation = { driver: string; endpoint?: string; bucket?: string; baseUrl?: string }
 
-function mountPanel(platformProfile: PlatformLocation = LOCAL_PROFILE) {
+function mountPanel(
+  platformProfile: PlatformLocation = LOCAL_PROFILE,
+  platformDelivery: { provider?: string } | null = { provider: 'aliyun' },
+) {
   return mount(StorageSettingsPanel, {
-    props: { platformProfile },
+    props: { platformProfile, platformDelivery },
     global: { stubs, directives: { loading: {} } },
   })
 }
@@ -141,16 +144,41 @@ describe('平台自身存储配置面板', () => {
     expect(text).not.toContain('storage_driver')
   })
 
-  it('顶部说清连接信息去哪改，并能一键切到存储档案标签', async () => {
+  it('顶部说清两处连接信息去哪改，并各给一个直达入口', async () => {
     const w = mountPanel()
     await flush()
     const text = w.text()
     expect(text).toContain('连接信息（驱动 / 桶 / 凭据 / 访问基址）')
     expect(text).toContain('存储档案 → 平台自身存储')
-    expect(text).toContain('保存后需要重启')
-    const btn = w.findAll('button').find((b) => b.text() === '去存储档案修改')!
-    await btn.trigger('click')
+    // CDN 凭据只在一处：分发档案的内置行，不再在本面板留第二份表单
+    expect(text).toContain('分发档案 → 平台自身 CDN')
+    expect(text).toContain('保存后都需要重启')
+
+    await w.findAll('button').find((b) => b.text() === '去存储档案修改')!.trigger('click')
     expect(w.emitted('goto-profiles')).toBeTruthy()
+
+    await w.findAll('button').find((b) => b.text() === '改 CDN 刷新凭据')!.trigger('click')
+    expect(w.emitted('goto-deliveries')).toBeTruthy()
+  })
+
+  it('CDN 状态读分发档案，凭据输入框不在本面板', async () => {
+    const w = mountPanel(LOCAL_PROFILE, { provider: 'cloudflare' })
+    await flush()
+    // 先展开高级区：否则「行不存在」可能只是因为还没渲染，等于没守
+    await openAdvanced(w)
+    expect(w.text()).toContain('CDN 刷新 已开启 · Cloudflare')
+    // 关键守门：任何 cdn_* 行都不该出现在这里（凭据只有分发档案一处真值源）
+    for (const key of ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']) {
+      expect(w.find(`.row[data-key="${key}"]`).exists()).toBe(false)
+    }
+    expect(w.text()).not.toContain('CDN 厂商')
+    expect(w.text()).not.toContain('AccessKey')
+  })
+
+  it('分发档案没读到时不冒充「已关闭」，也不显示空厂商', async () => {
+    const w = mountPanel(LOCAL_PROFILE, null)
+    await flush()
+    expect(w.text()).toContain('CDN 刷新 未配置')
   })
 
   it('云存储时摘要显示实际桶与访问地址，而不是继续讲本地目录', async () => {
@@ -165,18 +193,18 @@ describe('平台自身存储配置面板', () => {
     expect(text).toContain('https://cdn.example.com')
   })
 
-  it('高级设置默认收起，点开后出现 CDN / 配额 / 上传限制三组', async () => {
+  it('高级设置默认收起，点开后只有配额 / 上传限制与临时链接两组', async () => {
     const w = mountPanel()
     await flush()
     expect(w.text()).not.toContain('单张图片上限')
     await openAdvanced(w)
-    expect(w.findAll('.config-section')).toHaveLength(3)
+    expect(w.findAll('.config-section')).toHaveLength(2)
     const text = w.text()
-    expect(text).toContain('CDN 刷新（可选）')
     expect(text).toContain('配额与上传限制')
     expect(text).toContain('临时链接有效期')
     expect(text).toContain('单张图片上限')
-    expect(text).toContain('CDN 厂商')
+    // CDN 组已随凭据一起移走：这里不该再出现第二个 CDN 配置入口
+    expect(text).not.toContain('CDN 刷新（可选）')
   })
 
   it('部署目录不再随驱动置灰：连接信息已进档案，面板只按 CDN 联动', async () => {
@@ -199,37 +227,22 @@ describe('平台自身存储配置面板', () => {
     expect(updateSettings).toHaveBeenCalledTimes(1)
     const payload = vi.mocked(updateSettings).mock.calls[0][0] as Record<string, string>
     expect(payload).toEqual({ upload_max_mb: '20' })
-  })
-
-  it('敏感项点清除提交空串，保存后回到「已配置」且不把掩码当值', async () => {
-    const w = mountPanel()
-    await flush()
-    await openAdvanced(w)
-    // 夹具里 secret 项原值为空（后端给掩码，界面留空），直接改值模拟重新填写
-    const pwd = rowOf(w, 'cdn_access_key_secret').find('input.el-input')
-    await pwd.setValue('new-secret')
-    await flush()
-    await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
-    await flush()
-    const payload = vi.mocked(updateSettings).mock.calls[0][0] as Record<string, string>
-    expect(payload.cdn_access_key_secret).toBe('new-secret')
     expect(ElMessage.success).toHaveBeenCalled()
   })
 
   it('保存返回需重启项时给出常驻提示', async () => {
     vi.mocked(updateSettings).mockImplementationOnce(async () => ({
-      code: 0, data: { restartKeys: ['cdn_provider'] },
+      code: 0, data: { restartKeys: ['upload_dir'] },
     }) as any)
     const w = mountPanel()
     await flush()
-    await openAdvanced(w)
-    const input = rowOf(w, 'cdn_provider').find('input.el-input')
-    await input.setValue('cloudflare')
+    const input = rowOf(w, 'upload_dir').find('input.el-input')
+    await input.setValue('/mnt/new-uploads')
     await flush()
     await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     expect(w.text()).toContain('刚保存的改动需要重启才生效')
-    expect(w.text()).toContain('CDN 厂商')
+    expect(w.text()).toContain('本地上传目录')
   })
 
   it('破坏性改动弹确认，取消则不提交且草稿保留', async () => {

@@ -58,13 +58,28 @@
         <div class="tab-head">
           <span class="tab-tip">
             分发与存储互相独立：同一个桶可以配国内 / 海外多套 CDN 域名。域名只影响访客侧 URL，不改变上传落点。
+            平台自己的文件（小程序码、素材采用等 p/ 对象）用内置的「平台自身 CDN」那一行，改完需重启。
           </span>
           <el-button type="primary" @click="openDeliveryDialog(null)">新建分发档案</el-button>
         </div>
         <el-table :data="deliveries" v-loading="loading" size="small" border>
-          <el-table-column prop="name" label="档案名" min-width="130" />
+          <el-table-column prop="name" label="档案名" min-width="150">
+            <template #default="{ row }">
+              {{ row.name }}
+              <el-tooltip v-if="row.builtin" placement="top" :content="deliveryPurposeHint(row)">
+                <el-tag size="small" type="info" effect="plain" class="builtin-tag">内置</el-tag>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column prop="provider" label="厂商" width="120" />
-          <el-table-column prop="domain" label="公开域名" min-width="220" />
+          <el-table-column label="公开域名" min-width="220">
+            <template #default="{ row }">
+              <span v-if="row.purpose === 'platform_primary'" class="muted">
+                见「存储档案 → 平台自身存储」的访问基址
+              </span>
+              <span v-else>{{ row.domain }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="pathPrefix" label="路径前缀" min-width="110" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
@@ -76,7 +91,7 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="openDeliveryDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkDelivery(row)">自检</el-button>
-              <el-button link type="danger" @click="removeDelivery(row)">删除</el-button>
+              <el-button link type="danger" :disabled="row.builtin" @click="removeDelivery(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -95,7 +110,7 @@
         <div class="binding-card">
           <h4>全局默认（所有企业的共同设置）</h4>
           <p v-if="!boundGlobal" class="muted">
-            当前未配置档案绑定，继续沿用「系统设置」里的平台存储与 CDN（改动需重启）。
+            当前未配置档案绑定：存储沿用「存储档案 → 平台自身存储」，CDN 刷新沿用「分发档案 → 平台自身 CDN」（两处改动都需重启）。
           </p>
           <div class="binding-form">
             <label>存储档案</label>
@@ -104,7 +119,7 @@
             </el-select>
             <label>分发档案</label>
             <el-select v-model="globalDeliveryId" placeholder="不启用 CDN" clearable style="width: 260px">
-              <el-option v-for="p in deliveries" :key="p.id" :label="p.name" :value="p.id" />
+              <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
             <el-button type="primary" :loading="saving" @click="saveGlobal">保存全局默认</el-button>
             <el-button
@@ -136,7 +151,7 @@
           <el-table-column label="分发档案" min-width="170">
             <template #default="{ row }">
               <el-select v-model="row.deliveryProfileId" size="small" clearable style="width:100%">
-                <el-option v-for="p in deliveries" :key="p.id" :label="p.name" :value="p.id" />
+                <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
               </el-select>
             </template>
           </el-table-column>
@@ -223,7 +238,9 @@
       <el-tab-pane label="平台自身存储（启动配置）" name="platform">
         <StorageSettingsPanel
           :platform-profile="platformPrimaryProfile"
+          :platform-delivery="platformDelivery"
           @goto-profiles="tab = 'storage'"
+          @goto-deliveries="tab = 'delivery'"
         />
       </el-tab-pane>
     </el-tabs>
@@ -302,8 +319,20 @@
           </el-select>
         </el-form-item>
         <template v-if="deliveryForm.provider !== 'none'">
-          <el-form-item label="公开域名"><el-input v-model="deliveryForm.domain" placeholder="https://cdn.example.com" /></el-form-item>
-          <el-form-item label="路径前缀"><el-input v-model="deliveryForm.pathPrefix" placeholder="一般留空" /></el-form-item>
+          <!-- 平台自身 CDN 不承载域名：平台对象的出参域名唯一真值源是存储档案的
+               访问基址，这里再存一份必然出现「改了基址、这里还是旧域名」。 -->
+          <el-alert
+            v-if="deliveryForm.purpose === 'platform_primary'"
+            type="info"
+            :closable="false"
+            class="delivery-domain-note"
+            title="平台域名不在这里配"
+            description="平台对象（p/ 前缀）的访问域名以「存储档案 → 平台自身存储」里的访问基址为准，这份档案只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
+          />
+          <template v-else>
+            <el-form-item label="公开域名"><el-input v-model="deliveryForm.domain" placeholder="https://cdn.example.com" /></el-form-item>
+            <el-form-item label="路径前缀"><el-input v-model="deliveryForm.pathPrefix" placeholder="一般留空" /></el-form-item>
+          </template>
           <el-form-item label="刷新端点"><el-input v-model="deliveryForm.endpoint" placeholder="留空用厂商默认" /></el-form-item>
           <el-form-item label="资源标识"><el-input v-model="deliveryForm.resourceId" placeholder="Cloudflare Zone ID / CloudFront Distribution ID" /></el-form-item>
           <el-form-item label="AccessKey / Token"><el-input v-model="deliveryForm.accessKey" /></el-form-item>
@@ -363,6 +392,20 @@ const platformPrimaryProfile = computed(
   () => storages.value.find((p) => p.purpose === 'platform_primary') || null,
 )
 const deliveries = ref<DeliveryProfile[]>([])
+// 平台自身 CDN 档案不能绑给企业：它的 domain 为空（平台域名真值源是存储档案的
+// 访问基址），绑上去企业自己的 CDN 域名反而失效，看起来「配了 CDN」实际全站走平台域名。
+// 后端 validateBindingTargets 同样拒绝，这里只是让下拉里看不到。
+const writableDeliveries = computed(() => deliveries.value.filter(
+  (p) => p.purpose !== 'platform_primary',
+))
+// 平台自身 CDN：面板与 CDN 刷新页都靠它显示「现在用哪家厂商」。
+const platformDelivery = computed(
+  () => deliveries.value.find((p) => p.purpose === 'platform_primary') || null,
+)
+function deliveryPurposeHint(row: { purpose?: string }) {
+  if (row.purpose !== 'platform_primary') return ''
+  return '平台自身 CDN：只服务 p/ 平台对象与未绑定分发档案的企业，不可删除、不可绑定给企业；域名见存储档案的访问基址，改完需重启'
+}
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
 const companyBindings = ref<StorageBinding[]>([])
@@ -398,6 +441,7 @@ const emptyStorage = () => ({
 const emptyDelivery = () => ({
   id: 0, name: '', provider: 'aliyun', domain: '', pathPrefix: '', endpoint: '',
   resourceId: '', accessKey: '', secretKey: '', accessKeyMasked: '',
+  purpose: '' as DeliveryProfile['purpose'], builtin: false,
 })
 
 const storageDialog = ref(false)

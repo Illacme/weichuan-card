@@ -70,17 +70,33 @@ func (StorageProfile) TableName() string { return "storage_profiles" }
 // 独立于存储档案：一个桶可以配多个 CDN 域名（国内 / 海外 / 逃生），
 // 一个域名也可以回源到不同桶。domain 只影响出参 URL，不参与上传实例构造，
 // 与既有 PublicOrigin 的语义保持一致。
+//
+// Purpose 只标记**内置档案的用途**（迁移 0060）：
+//   - platform_primary：平台自身那份 CDN 刷新凭据。平台对象（p/ 前缀）与未绑定
+//     企业的覆盖写由它刷新；它的 Domain 不参与出参（平台域名唯一真值源是
+//     storage_profiles 里 platform_primary 的 BaseURL），只承载 provider / 凭据 /
+//     端点 / 资源标识。
+//
+// 普通档案为空串。内置档案不可删、不可绑定给企业。
+const (
+	DeliveryPurposePlatformPrimary = "platform_primary"
+)
+
 type DeliveryProfile struct {
-	ID          int64      `gorm:"primaryKey" json:"id"`
-	Name        string     `gorm:"size:64;uniqueIndex" json:"name"`
-	Provider    string     `gorm:"size:24;default:none" json:"provider"`
-	Domain      string     `gorm:"size:255" json:"domain"`
-	PathPrefix  string     `gorm:"column:path_prefix;size:128" json:"pathPrefix"`
-	AccessKey   string     `gorm:"column:access_key;size:512" json:"accessKey,omitempty"`
-	SecretKey   string     `gorm:"column:secret_key;size:1024" json:"secretKey,omitempty"`
-	Endpoint    string     `gorm:"size:255" json:"endpoint"`
-	ResourceID  string     `gorm:"column:resource_id;size:128" json:"resourceId"`
-	Status      string     `gorm:"size:16;default:unknown" json:"status"`
+	ID         int64  `gorm:"primaryKey" json:"id"`
+	Name       string `gorm:"size:64;uniqueIndex" json:"name"`
+	Provider   string `gorm:"size:24;default:none" json:"provider"`
+	Domain     string `gorm:"size:255" json:"domain"`
+	PathPrefix string `gorm:"column:path_prefix;size:128" json:"pathPrefix"`
+	AccessKey  string `gorm:"column:access_key;size:512" json:"accessKey,omitempty"`
+	SecretKey  string `gorm:"column:secret_key;size:1024" json:"secretKey,omitempty"`
+	Endpoint   string `gorm:"size:255" json:"endpoint"`
+	ResourceID string `gorm:"column:resource_id;size:128" json:"resourceId"`
+	Status     string `gorm:"size:16;default:unknown" json:"status"`
+	// Builtin / Purpose 与 StorageProfile 同口径：内置行由启动逻辑 ensure 创建，
+	// 不可删、不可绑定，改完需重启（平台刷新器启动期构造、运行期不可变）。
+	Builtin     bool       `gorm:"default:false" json:"builtin"`
+	Purpose     string     `gorm:"column:purpose;size:24" json:"purpose"`
 	LastProbeAt *time.Time `gorm:"column:last_probe_at" json:"lastProbeAt,omitempty"`
 	LastError   string     `gorm:"column:last_error;size:512" json:"lastError,omitempty"`
 	Version     int64      `gorm:"default:1" json:"version"`

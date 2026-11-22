@@ -49,7 +49,13 @@ func (c *Config) OverlayFromSettings() {
 	// 启动后由 ValidateMirrorDirs 统一校验两者不重叠。
 	c.MirrorDir = str("mirror_dir", c.MirrorDir)
 
-	// CDN 缓存刷新：厂商 + 通用凭据位 + 资源标识
+	// CDN 缓存刷新：厂商 + 通用凭据位 + 资源标识。
+	//
+	// 这组 key 已从 setting registry 移除（迁移 0060）：真值源是 delivery_profiles
+	// 里 purpose=platform_primary 的内置档案，启动期由 ApplyPlatformDeliveryConfig
+	// 回填 cfg。这里保留读取**只为首次生成那份档案时当种子**——老部署在界面上
+	// 填过的凭据不能凭空丢失。档案一旦存在，EnsureBuiltinPlatformDelivery 就会
+	// 清理这些行，之后这里是空转。
 	c.CDNEnabled = setting.GetBool("cdn_enabled", c.CDNEnabled)
 	c.CDNProvider = str("cdn_provider", c.CDNProvider)
 	c.CDNAccessKeyID = str("cdn_access_key_id", c.CDNAccessKeyID)

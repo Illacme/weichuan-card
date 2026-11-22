@@ -194,6 +194,52 @@ CDN、配额与上传限制、临时链接时效折叠进「高级设置（通�
 `SettingRow` 的 `compact` 模式负责隐藏 key 文本、类型 tag 与运维徽标，
 重启提示从「每行一个徽标」收敛为保存后一条常驻告警——信息没少，只是不再挡路。
 
+## 0.4 平台自身 CDN 也收进分发档案（迁移 0060）
+
+0059 只搬了**存储**连接信息，CDN 那组 `cdn_enabled` / `cdn_provider` /
+`cdn_access_key_id` / `cdn_access_key_secret` / `cdn_resource_id` / `cdn_endpoint`
+仍留在 `sys_setting`。它们与 `delivery_profiles` 的 provider / access_key / secret_key /
+resource_id / endpoint 是**字段级重复**：同一家 CDN 的同一份凭据要填两遍，
+改了一处另一处不动，两边都不报错——覆盖了图、边缘仍是旧的。迁移 0060 按同一纪律收口。
+
+现在「谁的覆盖写用谁的凭据」只有三条：
+
+| 对象 | 刷新凭据来自 | 生效时机 |
+| --- | --- | --- |
+| `/uploads/p/`（平台对象：素材采用、小程序码重生成） | `delivery_profiles` 里 `builtin=1, purpose=platform_primary` 的内置行 | 启动期构造刷新器，**改完重启** |
+| `/uploads/t/<cid>/`，该企业绑了分发档案 | 绑定的那套分发档案 | 逐请求解析，免重启 |
+| `/uploads/t/<cid>/`，该企业没绑 | 同上，落到平台内置行（`Resolve` 继承全局 / 无绑定即平台） | 同第一行 |
+
+`sys_setting` 只留 `platform_delivery_profile_id` 指针；**`cdn_enabled` 已取消**——
+「不刷新」由厂商 `none` 表达，两个开关并存只会让人猜「关了开关但厂商还在，到底刷不刷」。
+那六个 `cdn_*` 仅作为首次生成内置行时的种子（老部署在界面填过的凭据不能凭空丢失），
+生成后立刻清理，运行期不再有第二处真值源。
+
+**平台分发档案不承载域名**：平台对象的出参域名唯一真值源是
+`storage_profiles` 里 `platform_primary` 的 `base_url`（`OriginFor` 对 `cid<=0`
+直接回平台入口）。让分发档案也存一份域名，就会出现「存储档案改了基址、分发档案
+还指着旧域名」的第二真值源，正是这一轮要消灭的东西。因此该行的 `domain` 允许为空、
+界面上也不显示这一栏。
+
+### 顺带修掉的串味：`p/` 不再借全局绑定
+
+`TenantFromURLs` 只认 `/uploads/t/<cid>/`，平台对象返回 `0`，而 `Resolve(0)` 读的是
+**「全局默认绑定」那一行**（`tenant_id=0`）。于是「给无绑定企业配的默认分发档案」
+会顺带决定平台对象的刷新凭据：配错了，p/ 对象的覆盖写就报错或用别家账号刷，
+而平台自己那份配置从头到尾没被读过。0060 起 `DynamicCDN.Refresh` 先按 URL 分两批：
+`/uploads/p/` 一律用平台刷新器，其余才走绑定解析；混批时各走各的，任一边失败都浮出来
+（仍然**不静默回退**——这是第七十六轮定下的纪律）。
+
+### 边界
+
+- 内置行不可删除（要停刷新请把厂商改成「不刷新」）、不可绑定给企业
+  （`validateBindingTargets` 拒绝；前端绑定下拉同步过滤）；
+- 驱动与凭据可改、可自检，复用 `POST /api/admin/delivery-profiles/:id/check`；
+- 启动链在 0059 之后多两步：`EnsureBuiltinPlatformDelivery` → `ApplyPlatformDeliveryConfig`，
+  刷新器随后由该档案构造；凭据不全只记一行日志、不启用刷新，绝不让服务起不来；
+- 界面：CDN 刷新页与「平台自身存储」面板都只读这份档案，凭据输入框只存在于
+  「分发档案」标签；面板顶部的 CDN 状态与「改 CDN 刷新凭据」直达入口取代了原来的五个输入框。
+
 ## 0. 解决什么，不解决什么
 
 **解决**：让每个企业能把图片 / 视频物理存到自己的对象存储账号里，凭据由平台安全保管，

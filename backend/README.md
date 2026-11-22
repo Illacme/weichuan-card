@@ -326,7 +326,9 @@ export STORAGE_PUBLIC="true"
 # 什么时候才需要关：写入侧归一在某个私有分支上误判（表现为保存报「地址不合法」），
 # 又来不及发版时用它先顶上，再回来修判定。详见 docs/tenant-storage-url-boundaries.md §5.5。
 export STORAGE_REF_STRICT="1"
-# CDN 刷新（覆盖写后使边缘缓存失效）：CDN_ENABLED=1 + 厂商 + 该厂商要求的凭据
+# CDN 刷新（覆盖写后使边缘缓存失效）：CDN_ENABLED=1 + 厂商 + 该厂商要求的凭据。
+# 迁移 0060 起这些值只在**首次启动**时播种进「分发档案 → 平台自身 CDN」，
+# 之后真值源是那份档案（后台改，改完重启），环境变量不再覆盖它。
 export CDN_ENABLED="false"
 # 厂商：aliyun / tencent / qiniu / cloudflare / cloudfront（留空按 aliyun）
 export CDN_PROVIDER="aliyun"
@@ -557,7 +559,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 小程序端：原生 `wx.uploadFile` 只能 multipart POST，不便做 raw PUT；小程序仍走普通 `/api/employee/upload` 服务端上传（能力已具备），直传预签名主要在 PC 后台生效。
 
 ### 2. CDN 刷新（五家厂商）
-- 启用：`CDN_ENABLED=1` + `CDN_PROVIDER`（aliyun / tencent / qiniu / cloudflare / cloudfront，留空按 aliyun）+ 该厂商要求的凭据。
+- 启用：在「文件存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，保存后重启；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
 - 各家要填什么（界面按厂商联动只显示需要的字段）：
 
   | 厂商 | AccessKeyId 位 | AccessKeySecret 位 | 资源标识 | 默认端点 | 单次上限 |
@@ -1083,7 +1085,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/employee/upload/presign | 同上（员工鉴权） |
 | POST | /api/admin/storage/sign | 私有桶：提交已存 URL 列表，返回限时签名 URL（仅 minio/oss 私有桶） |
 | POST | /api/employee/storage/sign | 同上（员工鉴权） |
-| POST | /api/admin/cdn/refresh | 触发 CDN 缓存刷新（body: `{"urls":[...]}`），需 `CDN_ENABLED=1` |
+| POST | /api/admin/cdn/refresh | 触发 CDN 缓存刷新（body: `{"urls":[...]}`）。`/uploads/p/` 的对象用「平台自身 CDN」档案的凭据，`/uploads/t/<cid>/` 用该企业绑定的分发档案；两者都没配就返回「未配置」 |
 | POST | /api/admin/storage/object/delete | 删除单个对象并双清（云桶 + 本地镜像）：body `{"key":"t/5/x.png","confirm":"DELETE"}`；先清镜像再删主对象，镜像清不掉整体中止 |
 
 ### 企业管理（仅平台超级管理员，company_id=0）

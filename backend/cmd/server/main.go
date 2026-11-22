@@ -374,6 +374,13 @@ func main() {
 		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", err)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
+	// 平台自身的 CDN 刷新凭据放在第四套内置档案里（迁移 0060）：与 0059 同构，
+	// sys_setting 只留一个指针。那组 cdn_* 与分发档案的字段级重复，填两处必然漂移。
+	platformDelivery, err := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
+	if err != nil {
+		log.Fatalf("[CDN][FATAL] 平台自身 CDN 档案不可用：%v", err)
+	}
+	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
 	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))
@@ -393,28 +400,23 @@ func main() {
 	// 构造失败时降级本地（而不是 Fatal）：凭据在档案里填错的情况下，
 	// 进程必须还能起来，管理员才进得去后台把它改回来（「改错可自愈」的底线）。
 	up, platformDriver := platformUploader(platformProfile, cfg)
-	// CDN 刷新器（可选）：启用后覆盖写会触发边缘缓存失效。厂商由 cdn_provider 决定，
-	// 各厂商要求的凭据不同（Cloudflare 只要 Token+Zone ID，AK/SK 三家不需要资源标识），
-	// 校验放在 storage.NewCDNRefresher 里——配不全只记一行日志、不启用刷新，
-	// 绝不能因为 CDN 配错让服务起不来（刷新是增强，主流程不依赖它）。
+	// CDN 刷新器（可选）：启用后覆盖写会触发边缘缓存失效。厂商与凭据来自内置分发
+	// 档案（迁移 0060），各厂商要求的凭据不同（Cloudflare 只要 Token+Zone ID，AK/SK
+	// 三家不需要资源标识）。校验放在 storage.NewCDNRefresher 里——配不全只记一行
+	// 日志、不启用刷新，绝不能因为 CDN 配错让服务起不来（刷新是增强，主流程不依赖它）。
 	var refresher storage.CDNRefresher
-	if cfg.CDNEnabled {
-		rf, err := storage.NewCDNRefresher(storage.CDNConfig{
-			Provider:        cfg.CDNProvider,
-			AccessKeyID:     cfg.CDNAccessKeyID,
-			AccessKeySecret: cfg.CDNAccessKeySecret,
-			Endpoint:        cfg.CDNEndpoint,
-			ResourceID:      cfg.CDNResourceID,
-		})
-		if err != nil {
-			log.Printf("[WARN] cdn refresh disabled: %v", err)
-		} else {
-			refresher = rf
-			log.Printf("cdn refresh enabled (provider=%s, endpoint=%s)",
-				storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
-		}
+	rf, rfErr := storageprofile.BuildPlatformRefresher(platformDelivery)
+	switch {
+	case rfErr != nil:
+		log.Printf("[WARN] cdn refresh disabled: %v", rfErr)
+	case rf != nil:
+		refresher = rf
+		log.Printf("cdn refresh enabled (provider=%s, endpoint=%s)",
+			storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
+	default:
+		log.Printf("cdn refresh off：平台自身 CDN 档案选了「不刷新」（在「文件存储与分发 → 分发档案」里改）")
 	}
-	// 多套 CDN：档案绑定优先，没绑定沿用上面这份全局刷新器。
+	// 多套 CDN：档案绑定优先，没绑定沿用上面这份平台刷新器。
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。

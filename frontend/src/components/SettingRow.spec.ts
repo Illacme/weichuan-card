@@ -85,10 +85,11 @@ describe('SettingRow 控件唯一性（防 v-if 链断裂回归）', () => {
   })
 
   it('格式易错项带悬浮说明徽标，普通项不带', () => {
-    // 地址类项填错后果当场发现不了（图片打不开 / 小程序连不上），必须有说明徽标
-    const w = mountRow({ key: 'upload_base_url', type: 'string' })
+    // 地址类项填错后果当场发现不了（小程序连不上），必须有说明徽标。
+    // upload_base_url / storage_endpoint 的提示已随连接信息进档案一起下线（0059）。
+    const w = mountRow({ key: 'miniprogram_base_url', type: 'string' })
     expect(w.find('.row-hint').exists()).toBe(true)
-    expect(w.text()).toContain('图片全部打不开')
+    expect(w.text()).toContain('小程序直接连不上')
     // 无提示的项不挂徽标：徽标一多就等于没有
     const plain = mountRow({ key: 'brand_name', type: 'string' })
     expect(plain.find('.row-hint').exists()).toBe(false)
@@ -102,14 +103,14 @@ describe('SettingRow 控件唯一性（防 v-if 链断裂回归）', () => {
   })
 
   it('枚举项渲染为三态下拉：未设置 + 后端下发的候选值', () => {
-    // storage_driver 后端有 oneOf 校验 + Options 候选：界面必须渲染下拉而不是
-    // 文本框——候选值就摆在后端却让人手打，填错只能等保存时报错
+    // 枚举项（如小程序码环境版本）后端有 oneOf 校验 + Options 候选：界面必须渲染下拉
+    // 而不是文本框——候选值就摆在后端却让人手打，填错只能等保存时报错
     // （2026-10-22 用户实测：「存储方式还是填写字符串的方式，怎么没有下拉」）
-    const w = mountRow({ key: 'storage_driver', type: 'string', options: ['local', 'minio', 'oss', 's3'] })
+    const w = mountRow({ key: 'wxacode_env_version', type: 'string', options: ['release', 'trial', 'develop'] })
     expect(w.find('.row-control select').exists()).toBe(true)
     expect(w.find('.row-control input').exists()).toBe(false)
-    // 未设置（回退环境变量）+ 4 个候选
-    expect(w.findAll('.row-control option')).toHaveLength(5)
+    // 未设置（回退环境变量）+ 3 个候选
+    expect(w.findAll('.row-control option')).toHaveLength(4)
     // 下拉朝向必须限定 bottom/top：设置页的选择框贴内容区右缘，面板比右侧剩余
     // 空间宽时 popper.js 默认翻到 left，下拉整个跑到选择框左侧盖住标签列
     // （2026-10-23 用户实测「为什么点击下拉框后是在左侧弹出的」）。砍掉 left/right
@@ -123,12 +124,12 @@ describe('SettingRow 控件唯一性（防 v-if 链断裂回归）', () => {
 
   it('行内校验错误：传了才显示，不传不占版面', () => {
     // 配置向导在「下一步」前校验地址类项，错误显示在行内（主列表不传，靠后端拦）
-    const w = mountRow({ key: 'upload_base_url', type: 'string' }, 'cdn.example.com')
+    const w = mountRow({ key: 'miniprogram_base_url', type: 'string' }, 'mp.example.com')
     expect(w.find('.row-error').exists()).toBe(false)
     const w2 = mount(SettingRow, {
       props: {
-        item: { ...base, key: 'upload_base_url', type: 'string' },
-        modelValue: 'cdn.example.com',
+        item: { ...base, key: 'miniprogram_base_url', type: 'string' },
+        modelValue: 'mp.example.com',
         error: '不是完整地址，应类似 https://cdn.example.com',
       },
       global: {

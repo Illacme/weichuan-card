@@ -37,6 +37,10 @@ export interface DeliveryProfile {
   status: string
   lastError: string
   version: number
+  /** 内置档案：启动时生成，不可删除、不可绑定给企业（迁移 0060） */
+  builtin?: boolean
+  /** platform_primary = 平台自身 CDN：只服务 p/ 平台对象，域名不在这里配 */
+  purpose?: string
   accessKeyConfigured: boolean
   secretKeyConfigured: boolean
   accessKeyMasked: string

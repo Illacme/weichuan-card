@@ -261,7 +261,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		row := &model.DeliveryProfile{Provider: "none", Status: storageStatusUnknown}
+		row := &model.DeliveryProfile{Provider: storage.CDNProviderNone, Status: storageStatusUnknown}
 		applyDeliveryProfileReq(row, &req)
 		if msg := validateDeliveryProfile(row); msg != "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": msg})
@@ -328,6 +328,19 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		if bound > 0 {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "还有 " + strconv.FormatInt(bound, 10) + " 条绑定在使用该档案，请先改绑"})
+			return
+		}
+		// 内置分发档案（platform_primary）承载平台对象与未绑定企业的刷新凭据，
+		// 删掉它等于让 p/ 对象的覆盖写悄悄不再刷新——而 p/ 对象恰恰是素材采用、
+		// 小程序码重生成这两条「同名覆盖」路径的落点。要停刷新请把厂商改成
+		// 「不刷新」，不是删档案。
+		var row model.DeliveryProfile
+		if db.First(&row, id).Error != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			return
+		}
+		if row.Builtin {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置分发档案不可删除；要停用刷新请把厂商改成「不刷新」"})
 			return
 		}
 		if err := db.Delete(&model.DeliveryProfile{}, id).Error; err != nil {
@@ -580,9 +593,15 @@ func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	if deliveryID == 0 {
 		return ""
 	}
-	var n int64
-	if err := db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).Count(&n).Error; err != nil || n == 0 {
+	var dp model.DeliveryProfile
+	if err := db.First(&dp, deliveryID).Error; err != nil {
 		return "分发档案不存在"
+	}
+	// 平台自身 CDN 档案只服务 p/ 平台对象：它的 domain 为空（平台域名真值源是
+	// 存储档案的访问基址），绑给企业会让出参回落到平台入口，企业自己的 CDN 域名
+	// 反而失效——看起来「配了 CDN」，实际全站走平台域名。
+	if dp.Purpose == model.DeliveryPurposePlatformPrimary {
+		return "该档案是平台自身 CDN，只供平台对象使用，不能绑定给企业"
 	}
 	return ""
 }
@@ -753,7 +772,8 @@ func validateDeliveryProfile(row *model.DeliveryProfile) string {
 	if row.Name == "" {
 		return "请填写档案名"
 	}
-	if row.Provider != "none" {
+	platform := row.Purpose == model.DeliveryPurposePlatformPrimary
+	if row.Provider != storage.CDNProviderNone {
 		found := false
 		for _, p := range storage.CDNProviders {
 			if p == row.Provider {
@@ -763,7 +783,10 @@ func validateDeliveryProfile(row *model.DeliveryProfile) string {
 		if !found {
 			return "CDN 厂商不在支持范围内"
 		}
-		if row.Domain == "" || (!strings.HasPrefix(row.Domain, "https://") && !strings.HasPrefix(row.Domain, "http://")) {
+		// 平台自身 CDN 档案不承载域名：平台对象的出参域名唯一真值源是
+		// storage_profiles 里 platform_primary 的 base_url。这里再存一份必然漂移
+		// （改了存储档案的基址、分发档案还指着旧域名），所以不要求填、也不使用。
+		if !platform && (row.Domain == "" || (!strings.HasPrefix(row.Domain, "https://") && !strings.HasPrefix(row.Domain, "http://"))) {
 			return "公开访问域名要写完整，包含 https:// 前缀"
 		}
 	}
@@ -774,7 +797,7 @@ func validateDeliveryProfile(row *model.DeliveryProfile) string {
 }
 
 func checkDeliveryProfile(row *model.DeliveryProfile) (string, error) {
-	if row.Provider == "none" {
+	if row.Provider == storage.CDNProviderNone {
 		return "不启用 CDN：出参 URL 直接用存储基址", nil
 	}
 	if _, err := storage.NewCDNRefresher(storage.CDNConfig{
@@ -813,6 +836,7 @@ func deliveryProfileView(row *model.DeliveryProfile) gin.H {
 		"pathPrefix": row.PathPrefix, "endpoint": row.Endpoint, "resourceId": row.ResourceID,
 		"status": row.Status, "lastError": row.LastError, "lastProbeAt": row.LastProbeAt,
 		"version": row.Version, "createdAt": row.CreatedAt, "updatedAt": row.UpdatedAt,
+		"builtin": row.Builtin, "purpose": row.Purpose,
 		"accessKeyConfigured": row.AccessKey != "", "secretKeyConfigured": row.SecretKey != "",
 		"accessKeyMasked": maskCredential(row.AccessKey),
 	}

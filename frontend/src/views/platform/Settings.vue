@@ -365,7 +365,6 @@ import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import SettingRow from '@/components/SettingRow.vue'
 import { clearWizardDraft, loadWizardDraft, saveWizardDraft } from '@/utils/wizardDraft'
-import { CDN_DEFAULT_PROVIDER, CDN_RESOURCE_PROVIDERS } from '@/utils/cdn'
 
 // 分组展示顺序与中文名；与后端 setting.registry 的 group 字段对应。
 // 未登记的分组兜底显示在最后，避免后端新增分组后前端丢项。
@@ -416,18 +415,12 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
   storage: [
     // 指针由系统自动维护，放在最前让排障的人一眼看到「平台实际用哪套档案」
     'platform_storage_profile_id',
+    // 平台自身 CDN 的指针：同样由系统维护，CDN 凭据在「分发档案」里
+    'platform_delivery_profile_id',
     // 部署期目录事实：改完必须重启，档案里的连接信息改完同样必须重启
     'upload_dir',
     'mirror_dir',
     'local_mirror_enabled',
-    // CDN 刷新：可选增强，不开则整区用不上；厂商决定下面哪些凭据要填
-    'cdn_enabled',
-    'cdn_provider',
-    'cdn_access_key_id',
-    'cdn_access_key_secret',
-    // 资源标识：只有 Cloudflare（Zone ID）与 CloudFront（Distribution ID）需要
-    'cdn_resource_id',
-    'cdn_endpoint',
     'storage_quota_mb',
   ],
   upload: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext', 'presign_put_ttl_minutes', 'sign_get_ttl_minutes'],
@@ -452,10 +445,12 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 // 用户在一边看懂的分区，另一边直接认出来。
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
-    { label: '平台自身存储 · 指向与部署目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
+    {
+      label: '平台自身存储 · 指向与部署目录',
+      keys: ['platform_storage_profile_id', 'platform_delivery_profile_id', 'upload_dir', 'mirror_dir'],
+    },
     // 镜像与「平台存储」是两件事：主写入与出参不变，这里只决定备份副本落在哪。
     { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
-    { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
   ],
   upload: [
     { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
@@ -848,38 +843,17 @@ function destructiveWarnings(): string[] {
 
 // ---- 依赖联动 ----
 // 以下拉 / 开关的当前草稿值为准：用户刚切换就能看到哪些项「转亮 / 置灰」，不必先保存再刷新。
-// 存储驱动的联动已随连接信息一起移到「文件存储与分发 → 存储档案」；这里只留 CDN 与微信。
-const cdnOn = computed(() => (draft.cdn_enabled || '') === 'true')
+// 存储驱动的联动随连接信息移到了「文件存储与分发 → 存储档案」，CDN 的联动随凭据移到了
+// 「分发档案 → 平台自身 CDN」（迁移 0060）；这里只剩微信凭据一条。
 const wxAppidFilled = computed(
   () => !!(draft.wx_appid || '').trim() || !!items.value.find((i) => i.key === 'wx_appid')?.configured,
 )
-
-const CDN_ONLY = ['cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']
-// 五家的凭据形态不同（与后端 storage.CDNProviderNeeds* 同源，改一边要改另一边）：
-//   - 资源标识只有 Cloudflare（Zone ID）与 CloudFront（Distribution ID）需要，
-//     AK/SK 三家按提交 URL 的域名自己定位加速域名；
-//   - Cloudflare 只用一个 API Token（填在 Secret 位），用不到 AccessKeyId。
-// 厂商清单与「谁需要什么」在 utils/cdn（与后端 storage.CDNProviderNeeds* 同源）。
-// 未启用 CDN 时整区不占版面；启用后按厂商再收窄一次，避免对着用不上的输入框。
-const cdnProvider = computed(() => (draft.cdn_provider || '').trim() || CDN_DEFAULT_PROVIDER)
-const cdnNeedsResource = computed(() => CDN_RESOURCE_PROVIDERS.includes(cdnProvider.value))
 
 interface DepState {
   focus: boolean
   dim: boolean
 }
 function depState(key: string): DepState {
-  if (CDN_ONLY.includes(key)) {
-    if (!cdnOn.value) return { focus: false, dim: true }
-    // Cloudflare 只用 API Token：AccessKeyId 用不到，别让人对着它发愣
-    if (key === 'cdn_access_key_id') {
-      return { focus: cdnProvider.value !== 'cloudflare', dim: cdnProvider.value === 'cloudflare' }
-    }
-    if (key === 'cdn_resource_id') {
-      return { focus: cdnNeedsResource.value, dim: !cdnNeedsResource.value }
-    }
-    return { focus: true, dim: false }
-  }
   if (key === 'wx_appsecret') {
     return { focus: wxAppidFilled.value, dim: !wxAppidFilled.value }
   }

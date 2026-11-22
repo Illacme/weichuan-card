@@ -84,6 +84,10 @@ const Mask = "******"
 // 连接信息本身在 storage_profiles 里，这里只回答「平台实例用哪一套」。
 const KeyPlatformStorageProfileID = "platform_storage_profile_id"
 
+// KeyPlatformDeliveryProfileID 指向 platform_primary 内置**分发**档案的指针（迁移 0060）。
+// CDN 刷新凭据本身在 delivery_profiles 里，这里只回答「平台对象用哪一套刷新器」。
+const KeyPlatformDeliveryProfileID = "platform_delivery_profile_id"
+
 // Item 后台「系统设置」渲染用 DTO。
 // 与 DB 模型 Setting 分开，避免把 secret 的真实值随表结构一并序列化出去。
 type Item struct {
@@ -293,33 +297,13 @@ var registry = []def{
 	{Key: "local_mirror_enabled", Group: "storage", Type: "bool", Value: "true",
 		Name: "本地镜像总开关",
 		Desc: "是否开启「上传成功后从云异步回拉本地备份」。这是平台总闸；每家企业还要在「企业管理」里单独打开该租户的开关才生效。平台自身对象（小程序码、素材采用等 p/ 对象）只受本总闸控制。关闭只停止新增镜像，已生成的副本不会删除。"},
-	{Key: "cdn_enabled", Group: "storage", Type: "bool", Restart: true, EnvVar: "CDN_ENABLED",
-		Name: "启用 CDN 刷新",
-		// 2026-10-23：从「只支持阿里云」扩到五家（阿里云 / 腾讯云 / 七牛云 /
-		// Cloudflare / CloudFront），Desc 里的厂商限制必须跟着改，否则用户仍以为
-		// 只有阿里云能用。「覆盖同名文件」也要说准：普通上传的对象名是随机的、
-		// 不会覆盖，真正会覆盖的是素材采用与小程序码重生成这两条固定对象名的路径。
-		Desc: "覆盖同名文件后是否自动刷新 CDN 缓存，让访客立刻看到新文件。需先选好下面的 CDN 厂商，并把该厂商要求的凭据填全；刷新失败只记日志，不影响上传结果。改完要重启服务才生效。"},
-	{Key: "cdn_provider", Group: "storage", Type: "string", Restart: true, EnvVar: "CDN_PROVIDER",
-		Name:     "CDN 厂商",
-		Options:  []string{"aliyun", "tencent", "qiniu", "cloudflare", "cloudfront"},
-		Validate: oneOf("aliyun", "tencent", "qiniu", "cloudflare", "cloudfront"),
-		// 五家的凭据形态不同（AK/SK 三家、Cloudflare 用 Token+Zone、CloudFront 用
-		// AK/SK+Distribution），所以下面几项是「通用凭据位」，具体含义按厂商变：
-		// 界面按厂商联动显示需要的字段，Desc 里逐项写清各厂商对应什么。
-		Desc: "用哪家 CDN 的刷新接口：aliyun=阿里云，tencent=腾讯云，qiniu=七牛云，cloudflare=Cloudflare，cloudfront=AWS CloudFront。留空按阿里云处理（早期版本只有阿里云）。改完要重启服务才生效。"},
-	{Key: "cdn_access_key_id", Group: "storage", Type: "string", Restart: true, EnvVar: "CDN_ACCESS_KEY_ID",
-		Name: "CDN AccessKeyId",
-		Desc: "刷新凭据的「账号」部分：阿里云填 AccessKeyId（可与 OSS 相同），腾讯云填 SecretId，七牛云填 AccessKey，CloudFront 填 AccessKeyId；Cloudflare 用不到这项（它只用 API Token）。改完要重启服务才生效。"},
-	{Key: "cdn_access_key_secret", Group: "storage", Type: "string", Secret: true, Restart: true, EnvVar: "CDN_ACCESS_KEY_SECRET",
-		Name: "CDN AccessKeySecret",
-		Desc: "刷新凭据的「密钥」部分：阿里云填 AccessKeySecret，腾讯云填 SecretKey，七牛云填 SecretKey，CloudFront 填 SecretAccessKey，Cloudflare 填 API Token。界面不会显示已保存的内容，填新值即覆盖。改完要重启服务才生效。"},
-	{Key: "cdn_resource_id", Group: "storage", Type: "string", Restart: true, EnvVar: "CDN_RESOURCE_ID",
-		Name: "CDN 资源标识",
-		Desc: "只有 Cloudflare 与 CloudFront 需要：Cloudflare 填站点 Zone ID，CloudFront 填 Distribution ID（分发 ID）。其余三家按提交 URL 的域名自动定位，不用填。改完要重启服务才生效。"},
-	{Key: "cdn_endpoint", Group: "storage", Type: "string", Restart: true, EnvVar: "CDN_ENDPOINT",
-		Name: "CDN 服务端点",
-		Desc: "刷新接口地址，留空按厂商取默认值（阿里云 cdn.aliyuncs.com / 腾讯云 cdn.tencentcloudapi.com / 七牛云 fusion.qiniuapi.com / Cloudflare api.cloudflare.com / CloudFront cloudfront.amazonaws.com），一般不用改。改完要重启服务才生效。"},
+	// CDN 刷新的厂商与凭据已收进 delivery_profiles 的内置档案 purpose=platform_primary
+	// （迁移 0060）：那五个 cdn_* 与分发档案的 provider / access_key / secret_key /
+	// resource_id / endpoint 是字段级重复，填两处必然漂移。这里只留指针——
+	// 与上面 storage 的指针同一纪律，也不在前端分组里展示。
+	{Key: "platform_delivery_profile_id", Group: "storage", Type: "string", Restart: true,
+		Name: "平台自身 CDN 档案",
+		Desc: "平台自己的文件（p/ 平台对象与未绑定分发档案的企业）用哪一套 CDN 刷新凭据。由系统自动指向内置的「平台自身 CDN」档案，不需要手工修改；要改厂商 / 凭据请到「文件存储与分发 → 分发档案」编辑那一行，保存后重启服务。"},
 
 	// ---- 安全与基础设施（只读：只能改环境变量后重启）----
 	// 这三项改错会把「改回来的入口」一起弄丢（连不上库 / 登不进后台），故界面只展示。

@@ -3,17 +3,18 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
-vi.mock('@/api/settings', () => ({ getSettings: vi.fn() }))
+// 平台 CDN 凭据的真值源是「分发档案 → 平台自身 CDN」（迁移 0060），
+// 不再是系统设置的 cdn_* 一组：这里 mock 的是分发档案接口。
+vi.mock('@/api/storageProfiles', () => ({ listDeliveryProfiles: vi.fn() }))
 vi.mock('@/api/storage', () => ({ cdnRefresh: vi.fn() }))
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }))
 
 import { ElMessage } from 'element-plus'
-import { getSettings } from '@/api/settings'
+import { listDeliveryProfiles, type DeliveryProfile } from '@/api/storageProfiles'
 import { cdnRefresh } from '@/api/storage'
 import CdnRefresh from './CdnRefresh.vue'
-import type { SettingItem } from '@/api/settings'
 
 const ElCard = defineComponent({ name: 'ElCard', template: `<div class="el-card"><slot /></div>` })
 // alert 拍平：标题与默认插槽（按钮）都进 DOM，便于断言「提示 + 去设置」一体
@@ -36,55 +37,44 @@ const ElInput = defineComponent({
 const ElButton = defineComponent({
   name: 'ElButton',
   props: ['type', 'loading', 'size'],
-  template: `<button class="el-button" @click="$emit('click')"><slot /></button>`,
+  template: `<button class="el-button" @click="$emit('click')"><slot></slot></button>`,
 })
 
-function item(key: string, over: Partial<SettingItem> = {}): SettingItem {
+function profile(over: Partial<DeliveryProfile> = {}): DeliveryProfile {
   return {
-    key,
-    name: key,
-    group: 'storage',
-    type: 'string',
-    value: '',
-    description: key,
-    secret: false,
-    restart: true,
-    readOnly: false,
-    envVar: '',
-    configured: false,
+    id: 1, name: '平台自身 CDN', provider: 'aliyun', domain: '', pathPrefix: '',
+    endpoint: '', resourceId: '', status: 'unknown', lastError: '', version: 1,
+    builtin: true, purpose: 'platform_primary',
+    accessKeyConfigured: true, secretKeyConfigured: true, accessKeyMasked: 'AK****',
     ...over,
   }
 }
 
-// 五家厂商的界面侧事实（谁要资源标识、谁不要 AK）由 utils/cdn 与后端同源维护，
-// 这里用三家覆盖三种形态：aliyun（AK+SK）、cloudfront（AK+SK+资源标识）、cloudflare（仅 SK+资源标识）
-const ON_ALIYUN = [
-  item('cdn_enabled', { name: '启用 CDN 刷新', type: 'bool', value: 'true', envVar: 'CDN_ENABLED', configured: true }),
-  item('cdn_provider', { name: 'CDN 厂商', value: 'aliyun', envVar: 'CDN_PROVIDER', configured: true }),
-  item('cdn_access_key_id', { name: 'CDN AccessKeyId', envVar: 'CDN_ACCESS_KEY_ID', configured: true }),
-  item('cdn_access_key_secret', { name: 'CDN AccessKeySecret', secret: true, envVar: 'CDN_ACCESS_KEY_SECRET', configured: true }),
-  item('cdn_resource_id', { name: 'CDN 资源标识', envVar: 'CDN_RESOURCE_ID', configured: false }),
-  item('cdn_endpoint', { name: 'CDN 服务端点', envVar: 'CDN_ENDPOINT', configured: false }),
-]
+// 三种厂商形态：aliyun（AK+SK）、cloudfront（AK+SK+资源标识）、cloudflare（仅 Token+资源标识）
+const ON_ALIYUN = [profile()]
 
-async function setup(items: SettingItem[]) {
-  const router = createRouter({
+function makeRouter() {
+  return createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: { template: '<div />' } },
-      { path: '/platform/settings', component: { template: '<div>settings</div>' } },
+      { path: '/platform/storage-profiles', component: { template: '<div>profiles</div>' } },
     ],
   })
+}
+
+async function setup(profiles: DeliveryProfile[]) {
+  const router = makeRouter()
   await router.push('/')
   await router.isReady()
-  vi.mocked(getSettings).mockResolvedValue({ code: 0, data: items } as never)
+  vi.mocked(listDeliveryProfiles).mockResolvedValue(profiles as never)
   const w = mount(CdnRefresh, {
     global: {
       plugins: [router],
       stubs: { 'el-card': ElCard, 'el-alert': ElAlert, 'el-tag': ElTag, 'el-input': ElInput, 'el-button': ElButton },
     },
   })
-  await vi.waitFor(() => expect(getSettings).toHaveBeenCalled())
+  await vi.waitFor(() => expect(listDeliveryProfiles).toHaveBeenCalled())
   await nextTick()
   return { w, router }
 }
@@ -95,7 +85,7 @@ function submitButton(w: any) {
 
 describe('CdnRefresh 平台管理 · CDN 刷新', () => {
   beforeEach(() => {
-    vi.mocked(getSettings).mockReset()
+    vi.mocked(listDeliveryProfiles).mockReset()
     vi.mocked(cdnRefresh).mockReset()
     vi.mocked(cdnRefresh).mockResolvedValue({ code: 0 } as never)
     vi.mocked(ElMessage.success).mockClear()
@@ -106,56 +96,44 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
     const { w } = await setup(ON_ALIYUN)
     const text = w.text()
     expect(text).toContain('aliyun（阿里云）')
-    // 厂商确实取到了（不是「没拉到设置」时的回落显示）
-    expect(text).not.toContain('未设置，按默认')
     expect(text).not.toContain('未启用')
     expect(text).not.toContain('还缺')
-    // 说明里点明支持五家 + 自动刷新触发点（不再是「填好阿里云凭据」的旧说法）
+    // 说明里点明支持五家 + 自动刷新触发点 + 凭据在哪改
     expect(text).toContain('CloudFront')
     expect(text).toContain('自动刷新')
+    expect(text).toContain('分发档案')
   })
 
-  it('未启用：先点明缺口并给去设置入口，省一次无效提交', async () => {
-    const items = ON_ALIYUN.map((it) =>
-      it.key === 'cdn_enabled' ? { ...it, value: '', configured: false } : it,
-    )
-    const { w, router } = await setup(items)
+  it('未启用：先点明缺口并给去分发档案的入口，省一次无效提交', async () => {
+    const { w, router } = await setup([profile({ provider: 'none' })])
     expect(w.text()).toContain('CDN 刷新当前未启用')
     await w.findAll('button.el-button').find((b: any) => b.text().includes('去设置'))!.trigger('click')
     await nextTick()
-    // 路由跳转是异步的：给它一个微任务周期再断言
-    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/platform/settings'))
+    // 直达「分发档案」标签：CDN 凭据只在那里配，不再指去系统设置
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/platform/storage-profiles'))
+    expect(router.currentRoute.value.query.tab).toBe('delivery')
   })
 
   it('CloudFront 缺资源标识：点名缺的那一项', async () => {
-    const items = ON_ALIYUN.map((it) => {
-      if (it.key === 'cdn_provider') return { ...it, value: 'cloudfront' }
-      if (it.key === 'cdn_resource_id') return { ...it, configured: false }
-      return it
-    })
-    const { w } = await setup(items)
+    const { w } = await setup([profile({ provider: 'cloudfront', resourceId: '' })])
     expect(w.text()).toContain('cloudfront')
-    expect(w.text()).toContain('还缺 CDN 资源标识')
-    expect(w.text()).not.toContain('AccessKeyId')
+    expect(w.text()).toContain('还缺 资源标识')
+    expect(w.text()).not.toContain('AccessKey')
   })
 
-  it('Cloudflare：用不到 AccessKeyId，只提示缺 AccessKeySecret', async () => {
-    const items = ON_ALIYUN.map((it) => {
-      if (it.key === 'cdn_provider') return { ...it, value: 'cloudflare' }
-      if (it.key === 'cdn_access_key_secret') return { ...it, configured: false }
-      if (it.key === 'cdn_resource_id') return { ...it, configured: true }
-      return it
-    })
-    const { w } = await setup(items)
-    expect(w.text()).toContain('还缺 CDN AccessKeySecret')
-    expect(w.text()).not.toContain('CDN AccessKeyId')
+  it('Cloudflare：用不到 AccessKey，只提示缺 API Token', async () => {
+    const { w } = await setup([
+      profile({ provider: 'cloudflare', accessKeyConfigured: false, secretKeyConfigured: false, resourceId: 'zone-1' }),
+    ])
+    expect(w.text()).toContain('还缺 API Token')
+    expect(w.text()).not.toContain('AccessKey')
   })
 
-  it('设置接口拿不到时不下判断：宁可不提示，也不误报未启用', async () => {
-    vi.mocked(getSettings).mockRejectedValue(new Error('网络错误') as never)
-    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
+  it('档案接口拿不到时不下判断：宁可不提示未启用，也不挡提交', async () => {
+    const router = makeRouter()
     await router.push('/')
     await router.isReady()
+    vi.mocked(listDeliveryProfiles).mockRejectedValue(new Error('网络错误') as never)
     const w = mount(CdnRefresh, {
       global: {
         plugins: [router],
@@ -163,6 +141,7 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
       },
     })
     await nextTick()
+    await vi.waitFor(() => expect(w.text()).toContain('还没读到'))
     expect(w.text()).not.toContain('未启用')
     expect(submitButton(w).exists()).toBe(true)
   })

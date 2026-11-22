@@ -12,6 +12,7 @@
 package storageprofile
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -569,7 +570,7 @@ func (r *Resolver) OwnerOf(cid int64) (model.StorageOwner, bool) {
 // 解析不到租户时用全局绑定。返回 nil 表示没有配置 CDN 刷新。
 func (r *Resolver) CDNRefresherFor(urls ...string) storage.CDNRefresher {
 	eff, err := r.Resolve(TenantFromURLs(urls...))
-	if err != nil || eff.Delivery == nil || eff.Delivery.Provider == "none" || eff.Delivery.Provider == "" {
+	if err != nil || eff.Delivery == nil || eff.Delivery.Provider == storage.CDNProviderNone || eff.Delivery.Provider == "" {
 		return nil
 	}
 	dp := eff.Delivery
@@ -609,7 +610,7 @@ func (r *Resolver) HasDeliveryBinding() bool {
 			continue
 		}
 		dp := s.Deliveries[b.DeliveryProfileID]
-		if dp != nil && dp.Provider != "" && dp.Provider != "none" {
+		if dp != nil && dp.Provider != "" && dp.Provider != storage.CDNProviderNone {
 			return true
 		}
 	}
@@ -633,26 +634,51 @@ func (d *DynamicCDN) Configured() bool {
 	return d.base != nil || (d.prof != nil && d.prof.HasDeliveryBinding())
 }
 
-// Refresh 按 URL 所属企业选 CDN 刷新器。
+// Refresh 按 URL 归属选 CDN 刷新器。
 //
 // 第七十六轮修掉一处静默回退：早先 Resolve 失败或 NewCDNRefresher 构造失败时
 // 会悄悄落到平台全局 refresher（base），base 为空则直接 return nil——
 // 企业配了分发档案但凭据写错时，违规图下架后边缘仍是旧图，接口却报成功。
 // 这与本包「绑定存在但档案坏了要报错，绝不静默回退」的纪律直接冲突。
 //
-// 判据不是「进程里有没有任何分发绑定」（HasDeliveryBinding 是全局的，
-// 不能用来判断**这家**有没有绑定），而是本次解析得到的 eff.Delivery：
-//   - 有分发档案 → 用它的凭据刷；失败就报错，不回落；
-//   - 没有分发档案 → 走平台全局 refresher（base），没有就 no-op；
-//   - 解析档案本身失败 → 报错，因为此时根本不知道该刷哪个 CDN。
+// 第八十一轮再修一处串味：`TenantFromURLs` 只认 `/uploads/t/<cid>/`，平台对象
+// （`/uploads/p/`）返回 0，而 `Resolve(0)` 读的是**全局默认绑定**那一行——
+// 于是平台对象的刷新会借用「无绑定企业的默认分发档案」的凭据。今天有 sys_setting
+// 兜底时不明显，但语义从一开始就是错的：平台对象只该用平台自己的 CDN 档案。
+//
+// 所以按 URL 分两批：
+//   - `/uploads/p/` → 平台刷新器（base，由 platform_primary 分发档案构造）；
+//   - 其余 → 按企业绑定的分发档案；解析失败或凭据无效都报错，不回落平台。
 func (d *DynamicCDN) Refresh(urls []string) error {
+	if len(urls) == 0 {
+		return nil
+	}
+	platformURLs, rest := splitPlatformURLs(urls)
+	var errs []error
+	if len(platformURLs) > 0 {
+		// 平台没配 CDN（provider=none）时是明确「不刷新」，不是失败。
+		if d.base != nil {
+			if err := d.base.Refresh(platformURLs); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(rest) > 0 {
+		if err := d.refreshByBinding(rest); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (d *DynamicCDN) refreshByBinding(urls []string) error {
 	if d.prof != nil {
 		eff, err := d.prof.Resolve(TenantFromURLs(urls...))
 		if err != nil {
 			return fmt.Errorf("读取分发档案失败，已拒绝静默回落到平台 CDN：%w", err)
 		}
 		if eff.Delivery != nil {
-			if eff.Delivery.Provider == "none" || eff.Delivery.Provider == "" {
+			if eff.Delivery.Provider == storage.CDNProviderNone || eff.Delivery.Provider == "" {
 				return nil // 明确配了「不刷新」
 			}
 			rf, err := storage.NewCDNRefresher(storage.CDNConfig{
@@ -670,6 +696,27 @@ func (d *DynamicCDN) Refresh(urls []string) error {
 		return nil
 	}
 	return d.base.Refresh(urls)
+}
+
+// splitPlatformURLs 把平台对象（p/）与其余 URL 分开：一次批量刷新里混了两类时
+// 各走各的刷新器，不能让任何一边被另一边顶替。
+func splitPlatformURLs(urls []string) (platform, rest []string) {
+	for _, u := range urls {
+		if isPlatformObjectURL(u) {
+			platform = append(platform, u)
+			continue
+		}
+		rest = append(rest, u)
+	}
+	return platform, rest
+}
+
+// isPlatformObjectURL 认两种形态：完整 URL（含 /uploads/p/）与裸对象键（p/ 开头）。
+func isPlatformObjectURL(u string) bool {
+	if strings.Contains(u, storage.UploadsPathPrefix+storage.PlatformKeyPrefix) {
+		return true
+	}
+	return strings.HasPrefix(u, storage.PlatformKeyPrefix)
 }
 
 var _ storage.CDNRefresher = (*DynamicCDN)(nil)

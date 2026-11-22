@@ -118,7 +118,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 | 文件存储与 CDN | `platform_storage_profile_id` | 平台自身存储档案指针（系统自动指向内置的 `platform_primary` 档案，不需要手工改） |
 | 文件存储与 CDN | `upload_dir` / `mirror_dir` | 本地上传目录 / 本地镜像目录（改后需重启；驱动、桶、凭据、基址请到「文件存储与分发 → 存储档案」改） |
 | 文件存储与 CDN | `local_mirror_enabled` | 本地镜像总闸（每家企业还要单独打开开关） |
-| 文件存储与 CDN | `cdn_enabled` / `cdn_access_key_id` / `cdn_access_key_secret` / `cdn_endpoint` | CDN 缓存刷新（覆盖写后使边缘缓存失效） |
+| 文件存储与 CDN | `platform_delivery_profile_id` | 平台自身 CDN 档案指针（系统自动指向内置的「平台自身 CDN」分发档案；厂商与凭据请到「文件存储与分发 → 分发档案」改，改后需重启） |
 | 安全与基础设施 | `db_dsn` / `jwt_key` / `cookie_secure` / `cookie_domain` | **只读**，仅掩码展示当前值，修改走环境变量**或配置文件**（默认 `data/runtime.env`）后重启 |
 | 功能开关 | `metrics_enabled` | 是否开放 `/metrics`（Prometheus 指标）；留空则跟随 `METRICS_ENABLED` |
 | 功能开关 | `content_sec_enabled` | UGC 内容安全检测（默认开）：员工提交名片修改、访客提交开通申请时，把姓名 / 昵称 / 职位等文字送微信内容安全接口，命中违规直接拒绝提交。未配小程序凭据、或提交人没有 openid 时自动跳过（fail-open，只记 `[CONTENT-SEC]` 日志），不影响正常提交 |

@@ -203,6 +203,13 @@ func main() {
 		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", perr)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
+	// 平台 CDN 档案同款：dev 也要生成这一行，否则「分发档案」页在联调环境里
+	// 看不到内置行，界面分支只有线上才第一次跑。
+	platformDelivery, perr := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
+	if perr != nil {
+		log.Fatalf("[CDN][FATAL] 平台自身 CDN 档案不可用：%v", perr)
+	}
+	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
 	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))

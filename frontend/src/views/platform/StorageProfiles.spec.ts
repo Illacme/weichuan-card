@@ -319,6 +319,31 @@ describe('文件存储与分发模块', () => {
     expect(src).toContain(":disabled=\"storageForm.builtin && storageForm.purpose !== 'platform_primary'\"")
   })
 
+  it('分发档案的内置行不可删、不进绑定下拉，域名指向存储档案', async () => {
+    vi.mocked(api.listDeliveryProfiles).mockResolvedValue([
+      { ...delivery(1, '平台自身 CDN'), builtin: true, purpose: 'platform_primary', provider: 'aliyun', domain: '' },
+      delivery(2, '客户 CDN'),
+    ] as any)
+    const w = mountPage()
+    await flush()
+
+    // 平台行的域名列不能是空白（会像「没配」），要说清它跟存储档案走
+    expect(w.text()).toContain('平台自身 CDN')
+    expect(w.text()).toContain('见「存储档案 → 平台自身存储」的访问基址')
+    expect(w.text()).toContain('https://cdn.example.com')
+
+    // 删除按钮对内置行禁用：后端也会拒，但界面上不该给人点
+    const platformRow = w.findAll('.el-table-row').find((r) => r.text().includes('平台自身 CDN'))!
+    const del = platformRow.findAll('button').find((b) => b.text() === '删除')!
+    expect(del.attributes('disabled')).toBeDefined()
+
+    // 绑定下拉（全局 + 企业）都不能出现平台自身 CDN：
+    // 它的 domain 为空，绑给企业会让企业自己的 CDN 域名失效
+    const options = w.findAll('option').map((o) => o.text())
+    expect(options).not.toContain('平台自身 CDN')
+    expect(options).toContain('客户 CDN')
+  })
+
   it('路由与菜单必须同时登记（新增页面不能漏一处）', () => {
     const router = readFileSync('src/router/index.ts', 'utf8')
     const menu = readFileSync('src/layout/AdminLayout.vue', 'utf8')

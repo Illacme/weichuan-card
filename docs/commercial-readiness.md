@@ -5907,3 +5907,58 @@ optional 行（未开启镜像的部署不产出，硬占一行会天天显示�
      已改为按 `data-key` 断言「这一行不存在」+ 断言显示名不出现）；
   ③ 摘要卡改读 `tenant_fallback` / 摘掉 `goto-profiles` → 接线守门分别红。
 - 无后端改动：路由、接口、设置项、启动链一律未动，OpenAPI 与迁移清单不变。
+
+## 第八十一轮：平台自身 CDN 收进分发档案（迁移 0060）
+
+用户问「平台自身存储里的 CDN 配置不是也应该直接引用分发档案吗，为什么又留了单独配置项」。
+查证后确认这是 0059 没搬完的同一类包袱，且比上一轮更该收：
+
+- `sys_setting` 的 `cdn_provider` / `cdn_access_key_id` / `cdn_access_key_secret` /
+  `cdn_resource_id` / `cdn_endpoint` 与 `delivery_profiles` 的
+  provider / access_key / secret_key / resource_id / endpoint **字段级重复**；
+- 平台的 CDN 没有档案，只能留在 `sys_setting`，于是同一家厂商的同一份凭据要填两遍，
+  改了一处另一处不动，两边都不报错；
+- 顺带查出真 bug：`TenantFromURLs` 只认 `/uploads/t/<cid>/`，平台对象 `p/` 返回 0，
+  而 `Resolve(0)` 读的是「全局默认绑定」那一行——平台对象的刷新会借用
+  「无绑定企业的默认分发档案」的凭据，平台自己那份配置从头到尾没被读过。
+
+### 三条不可退决定
+
+1. **内置分发档案 `purpose=platform_primary`**：与存储档案同构，启动期 ensure、
+   不可删除、不可绑定给企业、可自检。`sys_setting` 只留 `platform_delivery_profile_id`。
+2. **取消 `cdn_enabled`**：`provider=none` 就是「不刷新」，两个开关并存只会让人猜
+   「关了开关但厂商还在，到底刷不刷」。`cfg.CDN*` 由 `ApplyPlatformDeliveryConfig`
+   启动期回填，其它读取点仍读 `cfg`，不必各自查库。
+3. **平台分发档案不承载域名**：平台域名唯一真值源是 `platform_primary.BaseURL`
+   （`OriginFor` 对 `cid<=0` 直接回平台入口）。让分发档案再存一份域名，就会重演
+   「改了基址、这里还是旧域名」的第二真值源问题。该行 `domain` 允许为空、界面不显示。
+
+### 落地触点
+
+- 模型与迁移：`DeliveryProfile` 加 `builtin` / `purpose`（0060），清单重生成 60 个；
+- 启动链：`EnsureBuiltinPlatformDelivery`（首次从 `CDN_*` 播种并清理旧 key）→
+  `ApplyPlatformDeliveryConfig` → `BuildPlatformRefresher`；provider=none 时返回 nil
+  而不是报错，凭据不全只记日志、不启用刷新（刷新是增强，配错不能挡住启动）；
+- 刷新路由：`DynamicCDN.Refresh` 按 URL 拆两批，`/uploads/p/`（含裸键 `p/`）走平台刷新器，
+  其余走绑定解析；混批各走各的，任一边失败都浮出来，仍然不静默回退；
+- 接口守门：内置行 DELETE 拒绝、`validateBindingTargets` 拒绝平台 CDN、
+  `deliveryProfileView` 回传 builtin/purpose、平台行放宽域名校验（普通行照旧强制 https）；
+- 前端：系统设置移除整组 `cdn_*`（只留两个指针）；「平台自身存储」面板的 CDN 表单
+  换成一句状态 + 「改 CDN 刷新凭据」直达；分发档案页给内置行加「内置」标签、禁用删除、
+  域名列写「见存储档案的访问基址」、绑定下拉过滤掉它；CDN 刷新页改读分发档案
+  （含缺项点名：AccessKey / SecretKey 或 API Token / 资源标识），「去设置」改为直达
+  分发档案标签。
+
+### 验证
+
+- 后端：gofmt / vet / build / `go test ./...` 全绿，golangci-lint 0 issues。
+- 前端：type-check / lint / **1894 tests** / Vite build 全过。
+- OpenAPI：137 paths，136 条路由全部有契约，226 个 `$ref` 可解析；迁移清单 60 个。
+- **反向验证**六组，全部「注入坏实现必红 → 还原复绿 → sha256 零漂移」：
+  ① ensure 每次启动按 env 覆盖管理员值 → `TestEnsureBuiltinPlatformDelivery` 红；
+  ② 去掉 `p/` 分支 → `TestDynamicCDNPlatformObjectsNeverBorrowGlobalDelivery` 红；
+  ③ 内置分发档案允许删除 → `TestBuiltinDeliveryProfileCannotBeDeleted` 红；
+  ④ 允许把平台 CDN 绑给企业 → `TestPlatformDeliveryProfileCannotBeBoundToTenant` 红；
+  ⑤ 面板把 `cdn_provider` 加回高级区 → 两条前端守门同时红（顺带发现「凭据不在本面板」
+     这条原来没展开高级区，等于只在未渲染时成立，已改为先展开再断言）；
+  ⑥ 去掉内置行的删除禁用 → 分发档案页守门红。
