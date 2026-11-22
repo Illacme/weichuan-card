@@ -5962,3 +5962,33 @@ optional 行（未开启镜像的部署不产出，硬占一行会天天显示�
   ⑤ 面板把 `cdn_provider` 加回高级区 → 两条前端守门同时红（顺带发现「凭据不在本面板」
      这条原来没展开高级区，等于只在未渲染时成立，已改为先展开再断言）；
   ⑥ 去掉内置行的删除禁用 → 分发档案页守门红。
+
+## 第八十二轮：存储模块产品化包装（面向用户的呈现与引导）
+
+**用户诉求**：整个模块以完全面向用户的角度优化页面呈现和配置引导，做必要简化；
+让用户知道整体架构、默认初始配置是本地化的、可自行引入云平台扩展性能；
+完整配置流程、每个菜单标签和配置项都充分说明；选择云平台时所有第三方平台都要给出对应地址。
+
+**改动（纯前端 + 文档，不动后端与运行时语义）**：
+
+- 新增 `frontend/src/utils/storageGuides.ts`：用户侧唯一事实源，含架构三句话、默认事实、
+  五步配置流程、七条术语、四个菜单说明、六个页签说明、存储/分发共 20 个字段的四段说明，
+  以及七家对象存储 + 五家 CDN 的控制台 / 密钥 / 文档官方链接；
+- 新增 `StorageOverview.vue` 并设为模块默认页签：三张状态卡（结论先行）、三层架构图、
+  五步流程（可点跳对应页签）、第三方入口总表、S3 端点示例表、名词解释；
+- `StorageProfiles.vue`：六个页签各有一句「这里管什么」；表格空状态给出下一步；
+  存储/分发弹窗按当前驱动或厂商显示官方入口与「密钥怎么拿」，每个字段挂 `FieldHelp`；
+- `CdnRefresh.vue` 显示当前厂商的官方入口与凭据取法；`AdminLayout.vue` 菜单加悬停说明；
+  `Settings.vue` 指路改为首推「总览」，并保留直达启动配置的次入口；
+- 新增 [`docs/storage-user-guide.md`](storage-user-guide.md)：管理员完整手册；
+  README、`tenant-storage-design.md` §0.5、launch-checklist 同步。
+
+**验证**：
+
+- 前端：1912 tests（117 files）/ type-check / lint / Vite build 全过。
+- 后端：gofmt / vet / build / `go test ./...` 全绿（本轮未改后端，确认无回归）。
+- 链接核对：24 个官方地址逐个 curl，除 Cloudflare dash 反爬返回 403（浏览器正常）外全部 200；
+  CloudFront 文档改用正确的 `AmazonCloudFront/latest/DeveloperGuide/` 路径。
+- 守门新增三组：`storageGuides.spec.ts`（逐平台校验链接与默认项无外链）、
+  `StorageOverview.spec.ts`（状态卡 / 架构 / 五步跳转 / 外链安全属性）、
+  `StorageProfiles.spec.ts` 四条（默认总览 / 弹窗换链接 / 字段帮助真渲染 / 空状态）。

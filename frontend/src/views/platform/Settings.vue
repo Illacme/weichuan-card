@@ -60,11 +60,12 @@
       :closable="false"
       show-icon
       title="所有存储与分发配置都在「文件存储与分发」"
-      description="那里可以保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定、用迁移任务搬运历史对象；原在本页的存储 / 上传启动配置也已搬到该模块的「平台自身存储」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
+      description="第一次进去先看「总览」：一页看清当前文件存哪、访客怎么读到、从本地盘接入云平台的完整步骤，以及所有云厂商的官方入口。档案、绑定、迁移都在同一模块；原在本页的存储 / 上传启动配置在「平台自身存储」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
       class="storage-module-entry"
     >
       <template #default>
-        <a href="/platform/storage-profiles?tab=platform" class="storage-module-link">打开「文件存储与分发」 →</a>
+        <a href="/platform/storage-profiles?tab=overview" class="storage-module-link">先看总览与配置流程 →</a>
+        <a href="/platform/storage-profiles?tab=platform" class="storage-module-secondary-link">平台自身存储（启动配置）→</a>
       </template>
     </el-alert>
 
@@ -1895,4 +1896,6 @@ onMounted(load)
 }
 .storage-module-entry { margin-bottom: 14px; }
 .storage-module-link { display: inline-block; margin-top: 6px; color: #409eff; font-weight: 600; }
+.storage-module-secondary-link { display: inline-block; margin: 6px 0 0 18px; color: #606266; font-size: 12px; }
+.storage-module-secondary-link:hover { color: #409eff; }
 </style>

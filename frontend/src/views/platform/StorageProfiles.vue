@@ -9,8 +9,19 @@
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
+      <!-- 总览：第一次进来先看这里，默认页签 -->
+      <el-tab-pane label="总览" name="overview">
+        <StorageOverview
+          :platform-profile="platformPrimaryProfile"
+          :platform-delivery="platformDelivery"
+          :global-binding="globalBinding"
+          @goto="tab = $event"
+        />
+      </el-tab-pane>
+
       <!-- 存储档案 -->
       <el-tab-pane label="存储档案" name="storage">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.storage.title }}</strong><span>{{ TAB_GUIDES.storage.desc }}</span></div>
         <div class="tab-head">
           <span class="tab-tip">
             同一份 endpoint / AK / SK 只填一次，多家企业共享。改一次桶地址，所有绑定它的企业立刻跟着变。
@@ -50,11 +61,15 @@
               <el-button v-else link type="danger" @click="removeStorage(row)">删除</el-button>
             </template>
           </el-table-column>
+          <template #empty>
+            <div class="table-empty">还没有存储档案。系统内置的档案会自动出现在这里；需要接云时点右上角「新建存储档案」，官方入口和字段说明都在弹窗里。</div>
+          </template>
         </el-table>
       </el-tab-pane>
 
       <!-- 分发档案 -->
       <el-tab-pane label="分发档案" name="delivery">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.delivery.title }}</strong><span>{{ TAB_GUIDES.delivery.desc }}</span></div>
         <div class="tab-head">
           <span class="tab-tip">
             分发与存储互相独立：同一个桶可以配国内 / 海外多套 CDN 域名。域名只影响访客侧 URL，不改变上传落点。
@@ -94,11 +109,15 @@
               <el-button link type="danger" :disabled="row.builtin" @click="removeDelivery(row)">删除</el-button>
             </template>
           </el-table-column>
+          <template #empty>
+            <div class="table-empty">还没有分发档案。不开 CDN 不影响使用；需要给访客加速时点右上角「新建分发档案」，各厂商控制台与凭据入口都在弹窗里。</div>
+          </template>
         </el-table>
       </el-tab-pane>
 
       <!-- 绑定关系 -->
       <el-tab-pane label="绑定关系" name="binding">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.binding.title }}</strong><span>{{ TAB_GUIDES.binding.desc }}</span></div>
         <el-alert
           class="binding-alert"
           type="warning"
@@ -181,6 +200,7 @@
 
       <!-- 迁移任务 -->
       <el-tab-pane label="迁移任务" name="migration">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.migration.title }}</strong><span>{{ TAB_GUIDES.migration.desc }}</span></div>
         <el-alert
           class="binding-alert"
           type="info"
@@ -236,6 +256,7 @@
       <!-- 平台自身存储的部署期配置：连接信息已在「存储档案」标签的那一行里，
            这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
       <el-tab-pane label="平台自身存储（启动配置）" name="platform">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.platform.title }}</strong><span>{{ TAB_GUIDES.platform.desc }}</span></div>
         <StorageSettingsPanel
           :platform-profile="platformPrimaryProfile"
           :platform-delivery="platformDelivery"
@@ -256,9 +277,30 @@
       <el-alert type="warning" :closable="false" show-icon class="dialog-alert"
         title="凭据以明文入库，回显只给掩码"
         description="请确保数据库备份与访问控制到位。SecretKey 一旦保存就不再回传，忘记只能重新填写。" />
+
+      <!-- 跟着当前驱动变的小抄：官方控制台 / 密钥 / 文档直达，不必再去搜索"某某云 endpoint 在哪" -->
+      <div v-if="currentDriverGuide" class="vendor-guide">
+        <strong>{{ currentDriverGuide.label }} · {{ currentDriverGuide.summary }}</strong>
+        <p>适合：{{ currentDriverGuide.when }}</p>
+        <p v-if="currentDriverGuide.credential">密钥怎么拿：{{ currentDriverGuide.credential }}</p>
+        <div v-if="currentDriverGuide.links.length" class="guide-links">
+          <a v-for="link in currentDriverGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+        </div>
+        <table v-if="storageForm.driver === 's3'" class="variant-table">
+          <thead><tr><th>服务商</th><th>服务地址示例</th><th>怎么填</th></tr></thead>
+          <tbody>
+            <tr v-for="v in S3_VARIANTS" :key="v.label"><td>{{ v.label }}</td><td><code>{{ v.endpoint }}</code></td><td>{{ v.note }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <el-form label-width="130px" size="small">
-        <el-form-item label="档案名"><el-input v-model="storageForm.name" placeholder="例如：主站 OSS" /></el-form-item>
-        <el-form-item label="驱动">
+        <el-form-item>
+          <template #label>档案名 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'name')" /></template>
+          <el-input v-model="storageForm.name" placeholder="例如：主站 OSS" />
+        </el-form-item>
+        <el-form-item>
+          <template #label>存储方式 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'driver')" /></template>
           <el-select v-model="storageForm.driver" style="width: 100%" :disabled="storageForm.builtin && storageForm.purpose !== 'platform_primary'">
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
@@ -270,26 +312,47 @@
           </span>
         </el-form-item>
         <template v-if="storageForm.driver !== 'local'">
-          <el-form-item label="Endpoint"><el-input v-model="storageForm.endpoint" placeholder="host[:port]，不要带 http://" /></el-form-item>
-          <el-form-item label="Bucket"><el-input v-model="storageForm.bucket" /></el-form-item>
-          <el-form-item label="Region"><el-input v-model="storageForm.region" placeholder="S3 兼容桶可留空" /></el-form-item>
-          <el-form-item label="上传返回基址"><el-input v-model="storageForm.baseUrl" placeholder="https://your-domain/uploads" /></el-form-item>
-          <el-form-item label="Host Header"><el-input v-model="storageForm.hostHeader" placeholder="留空=路径风格；<bucket>.域名=虚拟主机风格" /></el-form-item>
-          <el-form-item label="使用 HTTPS"><el-switch v-model="storageForm.useSsl" /></el-form-item>
+          <el-form-item>
+            <template #label>服务地址 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'endpoint')" /></template>
+            <el-input v-model="storageForm.endpoint" placeholder="host[:port]，不要带 http://" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>存储桶名 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'bucket')" /></template>
+            <el-input v-model="storageForm.bucket" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>地域 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'region')" /></template>
+            <el-input v-model="storageForm.region" placeholder="S3 兼容桶可留空" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>访问基址 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'baseUrl')" /></template>
+            <el-input v-model="storageForm.baseUrl" placeholder="https://your-domain/uploads" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>主机头（高级） <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'hostHeader')" /></template>
+            <el-input v-model="storageForm.hostHeader" placeholder="留空=路径风格；<bucket>.域名=虚拟主机风格" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>使用 HTTPS <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'useSsl')" /></template>
+            <el-switch v-model="storageForm.useSsl" />
+          </el-form-item>
           <el-form-item label="公开读桶">
             <el-switch v-model="storageForm.publicRead" disabled />
             <span class="field-note">当前只支持公开读桶：私有桶需要限时签名链路，后端会拒绝 publicRead=false</span>
           </el-form-item>
-          <el-form-item label="AccessKey">
+          <el-form-item>
+            <template #label>AccessKey <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'accessKey')" /></template>
             <el-input v-model="storageForm.accessKey" :placeholder="storageForm.id ? '留空表示不修改' : '必填'" />
             <span v-if="storageForm.accessKeyMasked" class="field-note">当前：{{ storageForm.accessKeyMasked }}</span>
           </el-form-item>
-          <el-form-item label="SecretKey">
+          <el-form-item>
+            <template #label>SecretKey <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'secretKey')" /></template>
             <el-input v-model="storageForm.secretKey" type="password" show-password :placeholder="storageForm.id ? '留空表示不修改' : '必填'" />
           </el-form-item>
         </template>
         <template v-else>
-          <el-form-item label="本地根目录">
+          <el-form-item>
+            <template #label>本地根目录 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'localDir')" /></template>
             <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
             <span v-if="storageForm.builtin && storageForm.purpose === 'platform_mirror'" class="field-note">
               这是备份保险柜：备份目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir），改那里后需重启才生效；图片传到云端后系统自动在这里留一份副本。
@@ -311,9 +374,21 @@
 
     <!-- 分发档案表单 -->
     <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑分发档案' : '新建分发档案'" width="600px">
+      <div v-if="currentCdnGuide" class="vendor-guide">
+        <strong>{{ currentCdnGuide.label }} · {{ currentCdnGuide.summary }}</strong>
+        <p>适合：{{ currentCdnGuide.when }}</p>
+        <p v-if="currentCdnGuide.credential">密钥怎么拿：{{ currentCdnGuide.credential }}</p>
+        <div v-if="currentCdnGuide.links.length" class="guide-links">
+          <a v-for="link in currentCdnGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+        </div>
+      </div>
       <el-form label-width="130px" size="small">
-        <el-form-item label="档案名"><el-input v-model="deliveryForm.name" /></el-form-item>
-        <el-form-item label="厂商">
+        <el-form-item>
+          <template #label>档案名 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'name')" /></template>
+          <el-input v-model="deliveryForm.name" />
+        </el-form-item>
+        <el-form-item>
+          <template #label>CDN 厂商 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'provider')" /></template>
           <el-select v-model="deliveryForm.provider" style="width: 100%">
             <el-option v-for="p in providers" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
@@ -330,13 +405,31 @@
             description="平台对象（p/ 前缀）的访问域名以「存储档案 → 平台自身存储」里的访问基址为准，这份档案只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
           />
           <template v-else>
-            <el-form-item label="公开域名"><el-input v-model="deliveryForm.domain" placeholder="https://cdn.example.com" /></el-form-item>
-            <el-form-item label="路径前缀"><el-input v-model="deliveryForm.pathPrefix" placeholder="一般留空" /></el-form-item>
+            <el-form-item>
+              <template #label>公开域名 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'domain')" /></template>
+              <el-input v-model="deliveryForm.domain" placeholder="https://cdn.example.com" />
+            </el-form-item>
+            <el-form-item>
+              <template #label>路径前缀 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'pathPrefix')" /></template>
+              <el-input v-model="deliveryForm.pathPrefix" placeholder="一般留空" />
+            </el-form-item>
           </template>
-          <el-form-item label="刷新端点"><el-input v-model="deliveryForm.endpoint" placeholder="留空用厂商默认" /></el-form-item>
-          <el-form-item label="资源标识"><el-input v-model="deliveryForm.resourceId" placeholder="Cloudflare Zone ID / CloudFront Distribution ID" /></el-form-item>
-          <el-form-item label="AccessKey / Token"><el-input v-model="deliveryForm.accessKey" /></el-form-item>
-          <el-form-item label="SecretKey"><el-input v-model="deliveryForm.secretKey" type="password" show-password /></el-form-item>
+          <el-form-item>
+            <template #label>刷新接口地址 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'endpoint')" /></template>
+            <el-input v-model="deliveryForm.endpoint" placeholder="留空用厂商默认" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>资源标识 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'resourceId')" /></template>
+            <el-input v-model="deliveryForm.resourceId" placeholder="Cloudflare Zone ID / CloudFront Distribution ID" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>AccessKey / Token <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'accessKey')" /></template>
+            <el-input v-model="deliveryForm.accessKey" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>SecretKey <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'secretKey')" /></template>
+            <el-input v-model="deliveryForm.secretKey" type="password" show-password />
+          </el-form-item>
         </template>
       </el-form>
       <template #footer>
@@ -371,13 +464,21 @@ import {
 } from '@/api/storageProfiles'
 import { listCompanies, type CompanyItem } from '@/api/tenants'
 import StorageSettingsPanel from '@/components/StorageSettingsPanel.vue'
+import StorageOverview from '@/components/StorageOverview.vue'
+import FieldHelp from '@/components/FieldHelp.vue'
+import {
+  TAB_GUIDES, S3_VARIANTS,
+  STORAGE_FIELD_GUIDES, DELIVERY_FIELD_GUIDES, driverGuide, cdnGuide,
+  type FieldGuide,
+} from '@/utils/storageGuides'
 
-// 支持 ?tab=platform 直达「平台自身存储」，?focus=<key> 由新面板消费。
-// 白名单挡住乱传的 tab，避免落到一个空白页。
+// 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「平台自身存储」面板消费。
+// 第一次进来落在「总览」：先看懂架构和现状，再去改配置。
+const VALID_TABS = ['overview', 'storage', 'delivery', 'binding', 'migration', 'platform']
 const initialTab = typeof window !== 'undefined'
-  ? (new URLSearchParams(window.location.search).get('tab') || 'storage')
-  : 'storage'
-const tab = ref(['storage', 'delivery', 'binding', 'migration', 'platform'].includes(initialTab) ? initialTab : 'storage')
+  ? (new URLSearchParams(window.location.search).get('tab') || 'overview')
+  : 'overview'
+const tab = ref(VALID_TABS.includes(initialTab) ? initialTab : 'overview')
 const loading = ref(false)
 const saving = ref(false)
 const storages = ref<StorageProfile[]>([])
@@ -448,6 +549,22 @@ const storageDialog = ref(false)
 const storageForm = reactive(emptyStorage())
 const deliveryDialog = ref(false)
 const deliveryForm = reactive(emptyDelivery())
+
+// 弹窗里的小抄：跟着当前选中的驱动 / 厂商换内容，给出官方入口与"值去哪拿"。
+const currentDriverGuide = computed(() => driverGuide(storageForm.driver))
+const currentCdnGuide = computed(() => cdnGuide(deliveryForm.provider))
+// FieldGuide 与 FieldHelp 的 props 同名换算，表单里一行一个 v-bind 即可。
+function help(map: Record<string, FieldGuide>, key: string, override?: string) {
+  const g = map[key]
+  return {
+    title: override || g?.label || key,
+    usage: g?.usage || '',
+    source: g?.source,
+    rules: g?.rules,
+    note: g?.note,
+  }
+}
+
 const errorDialog = ref(false)
 const errorRows = ref<MigrationError[]>([])
 const newJob = reactive({ tenantId: 0, sourceProfileId: 0, targetProfileId: 0, dryRun: false, autoSwitch: false })
@@ -655,4 +772,18 @@ function exportErrors() {
 .builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
 .builtin-setting-link { margin-right: 10px; font-size: 12px; color: #409eff; text-decoration: none; white-space: nowrap; }
 .builtin-setting-link:hover { text-decoration: underline; }
+/* 产品化引导：每个页签先说清"这里管什么"，弹窗里按当前厂商给官方入口 */
+.tab-guide { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; margin-bottom: 12px; background: #f4f8ff; border-left: 3px solid #409eff; border-radius: 4px; }
+.tab-guide strong { font-size: 13px; white-space: nowrap; }
+.tab-guide span { color: #606266; font-size: 12px; line-height: 1.6; }
+.vendor-guide { padding: 12px 14px; margin-bottom: 14px; border: 1px solid #d9e8fb; border-radius: 6px; background: #f5f9ff; }
+.vendor-guide > strong { font-size: 13px; }
+.vendor-guide p { margin: 6px 0 0; color: #606266; font-size: 12px; line-height: 1.7; }
+.guide-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 9px; }
+.guide-links a { color: #409eff; font-size: 12px; text-decoration: none; }
+.guide-links a:hover { text-decoration: underline; }
+.variant-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
+.variant-table th, .variant-table td { padding: 6px 8px; border: 1px solid #e4e7ed; text-align: left; color: #606266; }
+.variant-table th { background: #fff; }
+.table-empty { padding: 28px 16px; color: #909399; font-size: 13px; line-height: 1.8; }
 </style>

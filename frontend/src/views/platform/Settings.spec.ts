@@ -1077,7 +1077,9 @@ describe('平台自身存储与档案模块的边界', () => {
     expect(w.text()).toContain('所有存储与分发配置都在「文件存储与分发」')
     const link = w.find('a.storage-module-link')
     expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toBe('/platform/storage-profiles?tab=platform')
+    // 首推总览：先把架构和当前状态讲清楚，再让人进具体配置页
+    expect(link.attributes('href')).toBe('/platform/storage-profiles?tab=overview')
+    expect(w.find('a.storage-module-secondary-link').attributes('href')).toBe('/platform/storage-profiles?tab=platform')
   })
 
   it('就绪清单里的存储项「去配置」跳到新模块，不在本页扑空', () => {

@@ -26,6 +26,15 @@
       style="margin-bottom: 14px"
     />
 
+    <!-- 当前平台的官方入口：刷新失败时第一反应应该是"去控制台看状态"，而不是无从下手 -->
+    <div v-if="guideInfo" class="refresh-guide">
+      <strong>{{ guideInfo.label }} · 官方入口</strong>
+      <div class="refresh-links">
+        <a v-for="link in guideInfo.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+      </div>
+      <p>{{ guideInfo.credential }}</p>
+    </div>
+
     <el-input
       v-model="urls"
       type="textarea"
@@ -51,6 +60,7 @@ import {
   CDN_RESOURCE_PROVIDERS,
   cdnProviderLabel,
 } from '@/utils/cdn'
+import { cdnGuide } from '@/utils/storageGuides'
 
 const router = useRouter()
 const urls = ref('')
@@ -81,6 +91,7 @@ const providerTag = computed(() => {
   return `${provider.value}（${cdnProviderLabel(provider.value)}）`
 })
 const enabled = computed(() => !!provider.value && provider.value !== 'none')
+const guideInfo = computed(() => (enabled.value ? cdnGuide(provider.value) : null))
 // 还缺哪几项：与后端 storage.CDNProviderNeeds* 同源（utils/cdn 是界面侧同一份事实）
 const missingKeys = computed(() => {
   const dp = platform.value
@@ -155,4 +166,10 @@ async function refresh() {
   color: #909399;
   font-size: 13px;
 }
+.refresh-guide { margin-bottom: 14px; padding: 12px 14px; border: 1px solid #d9e8fb; border-radius: 6px; background: #f5f9ff; }
+.refresh-guide strong { font-size: 13px; }
+.refresh-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px; }
+.refresh-links a { color: #409eff; font-size: 12px; text-decoration: none; }
+.refresh-links a:hover { text-decoration: underline; }
+.refresh-guide p { margin: 9px 0 0; color: #606266; font-size: 12px; line-height: 1.7; }
 </style>

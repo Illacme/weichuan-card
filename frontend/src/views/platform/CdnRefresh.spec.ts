@@ -118,7 +118,8 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
     const { w } = await setup([profile({ provider: 'cloudfront', resourceId: '' })])
     expect(w.text()).toContain('cloudfront')
     expect(w.text()).toContain('还缺 资源标识')
-    expect(w.text()).not.toContain('AccessKey')
+    // 只守住「缺口列表」不误报；页面下方厂商说明里提到 AccessKey 是正常的
+    expect(w.text()).not.toMatch(/还缺[^。]*AccessKey/)
   })
 
   it('Cloudflare：用不到 AccessKey，只提示缺 API Token', async () => {
@@ -126,7 +127,7 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
       profile({ provider: 'cloudflare', accessKeyConfigured: false, secretKeyConfigured: false, resourceId: 'zone-1' }),
     ])
     expect(w.text()).toContain('还缺 API Token')
-    expect(w.text()).not.toContain('AccessKey')
+    expect(w.text()).not.toMatch(/还缺[^。]*AccessKey/)
   })
 
   it('档案接口拿不到时不下判断：宁可不提示未启用，也不挡提交', async () => {
@@ -165,5 +166,17 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
     await nextTick()
     expect(vi.mocked(cdnRefresh)).not.toHaveBeenCalled()
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请至少填写一个 URL')
+  })
+
+  it('给出当前厂商的官方入口与凭据取法，刷新失败时不用自己搜控制台', async () => {
+    const { w } = await setup([profile({ provider: 'cloudflare', resourceId: 'zone-1' })])
+    const hrefs = w.findAll('a[href]').map((a) => a.attributes('href') || '')
+    expect(hrefs).toContain('https://dash.cloudflare.com/profile/api-tokens')
+    expect(hrefs).toContain('https://developers.cloudflare.com/cache/how-to/purge-cache/')
+    expect(w.text()).toContain('API Token')
+    expect(w.text()).toContain('Zone ID')
+    for (const a of w.findAll('a[href]')) {
+      expect(a.attributes('target')).toBe('_blank')
+    }
   })
 })

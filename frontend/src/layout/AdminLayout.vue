@@ -21,7 +21,8 @@
               <el-icon><component :is="g.icon" /></el-icon>
               <span>{{ g.group }}</span>
             </template>
-            <el-menu-item v-for="m in g.items" :key="m.path" :index="m.path">
+            <!-- 菜单标签只用短名（侧栏很窄），悬停给出一句人话说明这个入口管什么 -->
+            <el-menu-item v-for="m in g.items" :key="m.path" :index="m.path" :title="menuHint(m.path, m.title)">
               {{ m.title }}
             </el-menu-item>
           </el-sub-menu>
@@ -187,6 +188,7 @@ import { buildLicenseBanner } from '@/utils/licenseBanner'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import CompanyPicker from '@/components/CompanyPicker.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import { MENU_GUIDES } from '@/utils/storageGuides'
 
 const auth = useAuthStore()
 const settings = useSettingsStore()
@@ -390,6 +392,12 @@ const allMenuGroups = [
     ],
   },
 ]
+
+// 侧栏只放得下短名，说明放到原生 title 里；没有专门说明的菜单保持默认浏览器行为。
+function menuHint(path: string, title: string) {
+  const guide = MENU_GUIDES[path]
+  return guide ? `${title}：${guide.desc}` : title
+}
 
 // 企业管理员不显示平台管理组
 const menuGroups = computed(() =>

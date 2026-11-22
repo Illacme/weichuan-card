@@ -4,6 +4,7 @@ import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
 import { routes } from '@/router'
+import { readFileSync } from 'node:fs'
 
 // 后台外壳：菜单分组与权限过滤、品牌名回落、登出、手机端分流。
 // 「企业管理员看不到平台管理组」是这里的核心安全约束——菜单藏不住就等于没权限，
@@ -246,6 +247,15 @@ function routeMenuEntries(): { path: string; title: string }[] {
 }
 
 describe('layout/AdminLayout', () => {
+  it('存储与分发相关菜单带一句话说明，鼠标停上去就知道这个入口管什么', () => {
+    const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
+    expect(src).toContain(':title="menuHint(m.path, m.title)"')
+    expect(src).toContain("import { MENU_GUIDES } from '@/utils/storageGuides'")
+    for (const path of ['/platform/storage-profiles', '/platform/cdn-refresh', '/platform/backup', '/platform/settings']) {
+      expect(src, `${path} 也要在菜单里给出说明`).toContain(`path: '${path}'`)
+    }
+  })
+
   beforeEach(() => {
     auth.loggedIn = true
     auth.profileLoaded = true

@@ -62,7 +62,8 @@ const ElSelect = defineComponent({
 })
 const ElOption = defineComponent({ name: 'ElOption', props: ['label', 'value'], template: '<option :value="value">{{ label }}</option>' })
 const ElAlert = defineComponent({ name: 'ElAlert', props: ['title', 'description', 'type'], template: '<div class="el-alert">{{ title }} {{ description }}<slot /></div>' })
-const ElFormItem = defineComponent({ name: 'ElFormItem', props: ['label'], template: '<div class="el-form-item"><slot /></div>' })
+// label 插槽必须渲染：配置项旁边的「?」帮助挂在这里，不渲染就等于没测
+const ElFormItem = defineComponent({ name: 'ElFormItem', props: ['label'], template: '<div class="el-form-item"><slot name="label">{{ label }}</slot><slot /></div>' })
 const ElForm = defineComponent({ name: 'ElForm', template: '<div class="el-form"><slot /></div>' })
 const ElSwitch = defineComponent({ name: 'ElSwitch', props: ['modelValue'], emits: ['update:modelValue'], template: '<button class="el-switch" />' })
 const ElCheckbox = defineComponent({ name: 'ElCheckbox', props: ['modelValue', 'disabled'], template: '<label class="el-checkbox"><slot /></label>' })
@@ -423,5 +424,85 @@ describe('文件存储与分发模块', () => {
     expect(view).not.toContain('pathStyle')
     // 唯一的路径风格入口是 Host Header：文案要说清留空就是路径风格
     expect(view).toContain('留空=路径风格')
+  })
+
+  it('默认落在总览页签，每个页签都有一句"这里管什么"的说明', async () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain('?tab=xxx 直达指定页签')
+    expect(src).toContain("|| 'overview'")
+    expect(src).toContain('name="overview"')
+    expect((src.match(/class="tab-guide"/g) || []).length).toBeGreaterThanOrEqual(5)
+    const w = mountPage()
+    await flush()
+    expect(w.find('.storage-overview').exists()).toBe(true)
+    expect(w.text()).toContain('一页看清：文件存在哪、访客怎么读到')
+    expect(w.text()).toContain('存储档案')
+    expect(w.text()).toContain('管「文件存哪」')
+    expect(w.text()).toContain('管「老文件怎么搬到新桶」')
+  })
+
+  it('新建存储档案弹窗按当前驱动给出官方入口、凭据取法与逐字段说明', async () => {
+    const w = mountPage()
+    await flush()
+    await w.findAll('button').find((b) => b.text() === '新建存储档案')!.trigger('click')
+    await flush()
+    const dialog = w.find('.el-dialog')
+    const vm: any = w.vm
+
+    const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
+
+    // MinIO 自建：给官网与部署文档，不编造一个在线控制台
+    expect(hrefs()).toContain('https://min.io/docs/minio/linux/index.html')
+    expect(dialog.text()).toContain('Root 用户名 / 密码在部署 MinIO 时自己设定')
+
+    vm.storageForm.driver = 'oss'
+    await flush()
+    expect(hrefs()).toContain('https://oss.console.aliyun.com/')
+    expect(hrefs()).toContain('https://ram.console.aliyun.com/manage/ak')
+    expect(dialog.text()).toContain('地域与 Endpoint 对照')
+    expect(dialog.text()).toContain('密钥怎么拿')
+
+    vm.storageForm.driver = 's3'
+    await flush()
+    expect(hrefs()).toContain('https://console.cloud.tencent.com/cos')
+    expect(hrefs()).toContain('https://dash.cloudflare.com/')
+    expect(hrefs()).toContain('https://console.huaweicloud.com/obs/')
+    expect(dialog.text()).toContain('s3.ap-northeast-1.amazonaws.com')
+
+    // 每个字段旁的「?」说明必须真渲染出来，且点名关键的几个，不能靠"总数够多"蒙混
+    const helpTitles = dialog.findAllComponents({ name: 'FieldHelp' }).map((h: any) => h.props('title'))
+    expect(helpTitles.length).toBeGreaterThanOrEqual(8)
+    for (const key of ['服务地址（Endpoint）', '存储桶名（Bucket）', '访问基址', 'AccessKey', 'SecretKey']) {
+      expect(helpTitles, `${key} 缺字段说明`).toContain(key)
+    }
+    expect(dialog.text()).toContain('值来源')
+  })
+
+  it('分发档案弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
+    const w = mountPage()
+    await flush()
+    await w.findAll('button').find((b) => b.text() === '新建分发档案')!.trigger('click')
+    await flush()
+    const dialog = w.find('.el-dialog')
+    const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
+    expect(hrefs()).toContain('https://cdn.console.aliyun.com/')
+    const vm: any = w.vm
+    vm.deliveryForm.provider = 'cloudflare'
+    await flush()
+    expect(hrefs()).toContain('https://dash.cloudflare.com/profile/api-tokens')
+    expect(dialog.text()).toContain('刷新缓存文档')
+    expect(dialog.text()).toContain('Zone ID')
+    expect(dialog.text()).toContain('API Token')
+    const helpTitles = dialog.findAllComponents({ name: 'FieldHelp' }).map((h: any) => h.props('title'))
+    expect(helpTitles.length).toBeGreaterThanOrEqual(6)
+    expect(helpTitles).toContain('CDN 厂商')
+    expect(helpTitles).toContain('资源标识')
+  })
+
+  it('空表给出引导文案，不让管理员对着白板猜下一步', () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain('<template #empty>')
+    expect(src).toContain('还没有存储档案')
+    expect(src).toContain('还没有分发档案')
   })
 })

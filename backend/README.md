@@ -395,6 +395,11 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - **数据不持久**：SQLite 库在系统临时目录，重启即丢并重新 seed；要持久化运行见仓库根 `docs/deploy-runbook.md`「无 Docker 部署」路径 B/C/D（D 是生产可用的 SQLite 单机方案）。
 
 ## 生产文件存储（MinIO / OSS）
+
+面向管理员的界面说明、完整接入流程与各家云厂商的控制台 / 密钥 / 文档地址见
+[`docs/storage-user-guide.md`](../docs/storage-user-guide.md)；设计取舍与迁移约束见
+[`docs/tenant-storage-design.md`](../docs/tenant-storage-design.md)。
+
 - **运行期真值源是 `storage_profiles` 里 `purpose=platform_primary` 的内置档案**（迁移 0059），
   档案页统一编辑 / 自检，改完必须重启。下面的 `STORAGE_*` / `MINIO_*` / `OSS_*` / `UPLOAD_BASE_URL`
   仍是私有部署与老库的**首次播种入口**：档案不存在时用它们生成档案，之后不再覆盖档案里的值；
