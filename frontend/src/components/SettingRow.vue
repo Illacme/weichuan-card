@@ -2,7 +2,7 @@
   <!-- 单行配置项：主列表与「配置向导」共用同一行渲染，保证两处形态/语义一致。
        draft 值由父级持有（v-model 拆成 :model-value + change 事件），
        避免行组件内部再复制一份状态导致两处不同步。 -->
-  <div class="row" :id="id" :class="{ 'row-dim': dim }">
+  <div class="row" :id="id" :data-key="item.key" :class="{ 'row-dim': dim, 'row-compact': compact }">
     <div class="row-main">
       <div class="row-label">
         <span class="label-text">{{ item.name || item.key }}</span>
@@ -12,29 +12,31 @@
         <el-tooltip v-if="fieldHint" placement="top" popper-class="si-hint-popper" :content="fieldHint">
           <span class="row-hint" tabindex="0" aria-label="填写说明">?</span>
         </el-tooltip>
-        <!-- key 降级为次要灰字：界面面向运营用中文名，排查日志/环境变量时仍可对照 -->
-        <span v-if="item.name" class="label-key">{{ item.key }}</span>
-        <el-tag size="small" effect="plain">{{ typeLabel(item.type) }}</el-tag>
+        <!-- key 降级为次要灰字：界面面向运营用中文名，排查日志/环境变量时仍可对照。
+             紧凑模式（平台自身存储面板）不展示 key / 类型 / 重启徽标：管理员只需要
+             看懂「这一项是干什么的」，技术细节留给排障与开发。 -->
+        <span v-if="item.name && !compact" class="label-key">{{ item.key }}</span>
+        <el-tag v-if="!compact" size="small" effect="plain">{{ typeLabel(item.type) }}</el-tag>
         <!-- 依赖联动：当前选项下「应该配」且还没配 → 待配置；「暂时不用管」 → 置灰说明 -->
-        <el-tag v-if="focus && !item.configured" size="small" type="warning" effect="plain">待配置</el-tag>
-        <el-tag v-if="dim" size="small" type="info" effect="plain">当前选项下不需要</el-tag>
-        <el-tag v-if="item.restart" size="small" type="warning" effect="plain">需重启</el-tag>
-        <el-tag v-if="item.readOnly" size="small" type="info" effect="plain">只读</el-tag>
+        <el-tag v-if="!compact && focus && !item.configured" size="small" type="warning" effect="plain">待配置</el-tag>
+        <el-tag v-if="!compact && dim" size="small" type="info" effect="plain">当前选项下不需要</el-tag>
+        <el-tag v-if="!compact && item.restart" size="small" type="warning" effect="plain">需重启</el-tag>
+        <el-tag v-if="!compact && item.readOnly" size="small" type="info" effect="plain">只读</el-tag>
         <!-- 只读项也要说清「现在到底配了没」：只写「只读」会让运营以为功能没生效。
              未配置 = 进程在用内置缺省值（如 JWT_KEY 仍是 change-me），属上线前要修的项。 -->
         <el-tag
-          v-if="item.readOnly"
+          v-if="!compact && item.readOnly"
           size="small"
           effect="plain"
           :type="item.configured ? 'success' : 'warning'"
         >
           {{ item.configured ? '已配置' : '未配置·用缺省值' }}
         </el-tag>
-        <el-tag v-if="item.secret" size="small" type="danger" effect="plain">敏感</el-tag>
+        <el-tag v-if="!compact && item.secret" size="small" type="danger" effect="plain">敏感</el-tag>
       </div>
       <div class="row-desc">
         {{ item.description }}
-        <span v-if="item.envVar" class="env-hint">
+        <span v-if="item.envVar && !compact" class="env-hint">
           部署环境配置名：{{ item.envVar }}
           <template v-if="item.readOnly">
             ——本页不可改，请到部署环境改环境变量或配置文件（默认 data/runtime.env）后重启服务
@@ -172,6 +174,8 @@ const props = defineProps<{
   dim?: boolean
   /** 行内校验错误文案（配置向导用；主列表不传） */
   error?: string
+  /** 紧凑模式：隐藏 key / 类型 / 重启等运维标签，只保留中文名与说明 */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -285,6 +289,17 @@ function openPicker() {
 }
 .row:last-child {
   border-bottom: none;
+}
+/* 紧凑模式：平台自身存储面板只给管理员看「人话」，技术标签全部收起 */
+.row-compact {
+  padding: 10px 0;
+}
+.row-compact .label-text {
+  font-size: 13px;
+}
+.row-compact .row-desc {
+  margin-top: 2px;
+  color: #606266;
 }
 .row-main {
   min-width: 0;

@@ -221,7 +221,10 @@
       <!-- 平台自身存储的部署期配置：连接信息已在「存储档案」标签的那一行里，
            这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
       <el-tab-pane label="平台自身存储（启动配置）" name="platform">
-        <StorageSettingsPanel />
+        <StorageSettingsPanel
+          :platform-profile="platformPrimaryProfile"
+          @goto-profiles="tab = 'storage'"
+        />
       </el-tab-pane>
     </el-tabs>
 
@@ -354,6 +357,11 @@ const storages = ref<StorageProfile[]>([])
 const writableStorages = computed(() => storages.value.filter(
   (p) => p.purpose !== 'platform_mirror' && p.purpose !== 'platform_primary',
 ))
+// 顶部摘要只读「平台自身存储」这一行，告诉管理员文件实际存在哪；
+// 改连接信息仍去「存储档案」标签，不在启动配置面板里重复一套表单。
+const platformPrimaryProfile = computed(
+  () => storages.value.find((p) => p.purpose === 'platform_primary') || null,
+)
 const deliveries = ref<DeliveryProfile[]>([])
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])

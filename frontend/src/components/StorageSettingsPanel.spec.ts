@@ -80,13 +80,28 @@ const ITEMS = [
   item('sign_get_ttl_minutes', '签名时效', 'upload', '30', { type: 'int' }),
 ]
 
-function mountPanel() {
-  return mount(StorageSettingsPanel, { global: { stubs, directives: { loading: {} } } })
+const LOCAL_PROFILE = { driver: 'local', endpoint: '', bucket: '', baseUrl: 'https://card.example.com/uploads' }
+
+type PlatformLocation = { driver: string; endpoint?: string; bucket?: string; baseUrl?: string }
+
+function mountPanel(platformProfile: PlatformLocation = LOCAL_PROFILE) {
+  return mount(StorageSettingsPanel, {
+    props: { platformProfile },
+    global: { stubs, directives: { loading: {} } },
+  })
 }
+// 紧凑模式隐藏了 key，用 data-key 定位；这本身也是「技术键名不再占版面」的守门。
 function rowOf(w: any, key: string) {
-  const r = w.findAll('.row').find((x: any) => x.text().includes(key))
-  expect(r, `未找到配置项行: ${key}`).toBeTruthy()
-  return r!
+  const r = w.find(`.row[data-key="${key}"]`)
+  expect(r.exists(), `未找到配置项行: ${key}`).toBe(true)
+  return r
+}
+async function openAdvanced(w: any) {
+  const btn = w.findAll('button').find((b: any) => b.text().includes('高级设置'))
+  if (btn) {
+    await btn.trigger('click')
+    await flush()
+  }
 }
 
 beforeEach(() => {
@@ -99,35 +114,69 @@ beforeEach(() => {
 })
 
 describe('平台自身存储配置面板', () => {
-  it('集中展示 storage / upload 两组全部配置项，不混入其它组', async () => {
+  it('默认只展示「文件存在哪」与三个常用项，技术键名和高级项全部收起', async () => {
     const w = mountPanel()
     await flush()
     expect(getSettings).toHaveBeenCalled()
     const text = w.text()
-    expect(text).toContain('平台自身存储档案')
-    expect(text).toContain('本地上传目录')
-    expect(text).toContain('镜像目录')
-    expect(text).toContain('租户配额') // 原页面的未分区项也不能丢
-    expect(text).toContain('单张上限')
-    expect(text).toContain('签名时效')
+    // 顶部先给结论：管理员不用读配置表就知道文件在哪
+    expect(text).toContain('图片 / 视频 / 小程序码存哪')
+    expect(text).toContain('文件存在服务器本地磁盘')
+    expect(text).toContain('服务器上传目录')
+    expect(text).toContain('本地备份目录')
+    expect(text).toContain('自动本地备份')
+    // 内部指针不给管理员看：它由系统自动维护，展示只会增加困惑。
+    // 紧凑模式不渲染 key 文本，所以必须按 data-key 断言「这一行根本不存在」——
+    // 只断言 key 字符串不出现会恒真（键名本来就不显示），等于没守。
+    expect(text).not.toContain('platform_storage_profile_id')
+    expect(text).not.toContain('平台自身存储档案')
+    expect(w.find('.row[data-key="platform_storage_profile_id"]').exists()).toBe(false)
+    // 高级项默认不占版面
+    expect(text).toContain('高级设置（通常不用改）')
+    expect(text).not.toContain('单张图片上限')
+    expect(text).not.toContain('CDN 厂商')
+    expect(w.findAll('.config-section')).toHaveLength(0)
     expect(text).not.toContain('brand_name')
     expect(text).not.toContain('jwt_key')
-    // 连接信息不在系统设置里（迁移 0059）
     expect(text).not.toContain('storage_driver')
-    // 五个分区齐全
-    expect(w.findAll('.config-section')).toHaveLength(6)
   })
 
-  it('顶部说明讲清谁用这组配置、改动要重启，并指回本模块其它标签', async () => {
+  it('顶部说清连接信息去哪改，并能一键切到存储档案标签', async () => {
     const w = mountPanel()
     await flush()
     const text = w.text()
-    expect(text).toContain('平台自身存储的部署目录')
-    expect(text).toContain('需重启服务')
-    expect(text).toContain('存储档案')
-    // 连接信息已进档案：面板必须把人指过去，不能让人继续找存储方式下拉
-    expect(text).toContain('驱动 / 桶 / 凭据 / 访问基址')
-    expect(text).toContain('同一块盘')
+    expect(text).toContain('连接信息（驱动 / 桶 / 凭据 / 访问基址）')
+    expect(text).toContain('存储档案 → 平台自身存储')
+    expect(text).toContain('保存后需要重启')
+    const btn = w.findAll('button').find((b) => b.text() === '去存储档案修改')!
+    await btn.trigger('click')
+    expect(w.emitted('goto-profiles')).toBeTruthy()
+  })
+
+  it('云存储时摘要显示实际桶与访问地址，而不是继续讲本地目录', async () => {
+    const w = mountPanel({
+      driver: 's3', endpoint: 's3.example.com', bucket: 'card-prod',
+      baseUrl: 'https://cdn.example.com',
+    })
+    await flush()
+    const text = w.text()
+    expect(text).toContain('文件存在S3 兼容云 · card-prod')
+    expect(text).toContain('s3.example.com')
+    expect(text).toContain('https://cdn.example.com')
+  })
+
+  it('高级设置默认收起，点开后出现 CDN / 配额 / 上传限制三组', async () => {
+    const w = mountPanel()
+    await flush()
+    expect(w.text()).not.toContain('单张图片上限')
+    await openAdvanced(w)
+    expect(w.findAll('.config-section')).toHaveLength(3)
+    const text = w.text()
+    expect(text).toContain('CDN 刷新（可选）')
+    expect(text).toContain('配额与上传限制')
+    expect(text).toContain('临时链接有效期')
+    expect(text).toContain('单张图片上限')
+    expect(text).toContain('CDN 厂商')
   })
 
   it('部署目录不再随驱动置灰：连接信息已进档案，面板只按 CDN 联动', async () => {
@@ -141,10 +190,11 @@ describe('平台自身存储配置面板', () => {
   it('保存只提交改动项，值以字符串提交', async () => {
     const w = mountPanel()
     await flush()
+    await openAdvanced(w)
     const input = rowOf(w, 'upload_max_mb').find('input.el-input-number')
     await input.setValue('20')
     await flush()
-    await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     expect(updateSettings).toHaveBeenCalledTimes(1)
     const payload = vi.mocked(updateSettings).mock.calls[0][0] as Record<string, string>
@@ -154,11 +204,12 @@ describe('平台自身存储配置面板', () => {
   it('敏感项点清除提交空串，保存后回到「已配置」且不把掩码当值', async () => {
     const w = mountPanel()
     await flush()
+    await openAdvanced(w)
     // 夹具里 secret 项原值为空（后端给掩码，界面留空），直接改值模拟重新填写
     const pwd = rowOf(w, 'cdn_access_key_secret').find('input.el-input')
     await pwd.setValue('new-secret')
     await flush()
-    await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     const payload = vi.mocked(updateSettings).mock.calls[0][0] as Record<string, string>
     expect(payload.cdn_access_key_secret).toBe('new-secret')
@@ -171,10 +222,11 @@ describe('平台自身存储配置面板', () => {
     }) as any)
     const w = mountPanel()
     await flush()
+    await openAdvanced(w)
     const input = rowOf(w, 'cdn_provider').find('input.el-input')
     await input.setValue('cloudflare')
     await flush()
-    await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     expect(w.text()).toContain('刚保存的改动需要重启才生效')
     expect(w.text()).toContain('CDN 厂商')
@@ -187,7 +239,7 @@ describe('平台自身存储配置面板', () => {
     const input = rowOf(w, 'upload_dir').find('input.el-input')
     await input.setValue('/mnt/new-uploads')
     await flush()
-    await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     expect(updateSettings).not.toHaveBeenCalled()
     expect(w.text()).toContain('有 1 项改动未保存')
@@ -196,6 +248,7 @@ describe('平台自身存储配置面板', () => {
   it('重置把改动还原为服务端原值', async () => {
     const w = mountPanel()
     await flush()
+    await openAdvanced(w)
     const input = rowOf(w, 'upload_max_mb').find('input.el-input-number')
     await input.setValue('20')
     await flush()

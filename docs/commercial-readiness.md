@@ -5863,3 +5863,47 @@ optional 行（未开启镜像的部署不产出，硬占一行会天天显示�
   ② 迁移守门漏掉 `platform_primary` → 同测试 `:186` 红；
   ③ 重启时按 env 覆盖档案连接信息 → `TestEnsureBuiltinPlatformPrimary:63` 红；
   ④ 前端 `writableStorages` 放掉 `platform_primary` → 新增档案页守门红。
+
+## 第八十轮：平台自身存储面板改成「结论先行 + 渐进披露」
+
+第七十九轮把连接信息搬进档案后，页面在技术上正确，但用户看完截图的原话是
+**「这个页面怎么还是这样复杂呢，管理员都完全搞不懂了啊」**。问题不在功能，在版面：
+指针、类型标签、`需重启` 徽标、带环境变量名的说明一行行平铺，管理员读完 15 行仍答不出
+「我的图片到底存在哪」。这一轮只改呈现，不动语义。
+
+### 三条呈现规则
+
+1. **先给结论，再给表单。** 顶部一张摘要卡直接回答「图片 / 视频 / 小程序码存哪」：
+   本地盘就写「文件存在服务器本地磁盘」并显示实际目录；云上就写
+   「文件存在S3 兼容云 · card-prod」并给出端点与访问基址。管理员不进任何表单就能核对。
+2. **常用项直出，其余折叠。** 默认只留三项：`upload_dir`（服务器上传目录）、
+   `mirror_dir`（本地备份目录）、`local_mirror_enabled`（自动本地备份）。
+   CDN 刷新、配额与上传限制、临时链接时效收进「高级设置（通常不用改）」，
+   默认收起；`?focus=<key>` 命中高级区时自动展开，避免从档案行跳过来「点了却看不到字段」。
+3. **隐藏内部机制。** `platform_storage_profile_id` 不再出现——它由系统自动维护，
+   展示只会让人以为「这也要我填」。`SettingRow` 新增 `compact` 模式，隐藏 key 文本、
+   类型 tag、`需重启` / `只读` / `敏感` 徽标与环境变量提示，只保留中文名 + 一句人话说明。
+   重启提示不丢，只是从「每行一个徽标」收敛为保存后一条常驻告警。
+
+### 落地触点
+
+- `frontend/src/components/SettingRow.vue`：`compact` prop + 根节点 `data-key`
+  （紧凑模式不渲染 key 文本，测试必须靠 `data-key` 定位，这本身也是守门）。
+- `frontend/src/components/StorageSettingsPanel.vue`：摘要卡 + 常用区 + 折叠高级区；
+  `FRIENDLY` 映射把每项改写成「这项是干什么的、改了会怎样」，不出现字段名与 env 名；
+  新增 `goto-profiles` 事件，摘要卡右上角「去存储档案修改」直接切到档案标签。
+- `frontend/src/views/platform/StorageProfiles.vue`：把 `purpose === 'platform_primary'`
+  那一行传给面板（不拿列表首项凑，也不用 `tenant_fallback`），并接 `goto-profiles`。
+- 组件 prop 收窄为 `PlatformLocation`（driver / endpoint / bucket / baseUrl 四个字段），
+  父级传完整 `StorageProfile` 仍兼容，测试不必造 19 个字段。
+
+### 验证
+
+- 前端：type-check / lint / **1892 tests**（新增 4 条面板守门，替换 2 条旧结构断言）/
+  Vite build 全过。
+- **反向验证**三组，全部「注入坏实现必红 → 还原复绿 → sha256 零漂移」：
+  ① 高级区默认展开 → 默认只展示 3 项 + 三组高级区两条守门同时红；
+  ② 把指针项塞回常用区 → 守门红（顺带发现原断言只查 key 字符串，紧凑模式下恒真，
+     已改为按 `data-key` 断言「这一行不存在」+ 断言显示名不出现）；
+  ③ 摘要卡改读 `tenant_fallback` / 摘掉 `goto-profiles` → 接线守门分别红。
+- 无后端改动：路由、接口、设置项、启动链一律未动，OpenAPI 与迁移清单不变。

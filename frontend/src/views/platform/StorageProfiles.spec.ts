@@ -382,6 +382,13 @@ describe('文件存储与分发模块', () => {
     expect(src).not.toContain('label="平台兜底配置"')
     expect(src).toContain('name="platform"')
     expect(src).toContain('StorageSettingsPanel')
+    // 面板顶部的「文件存在哪」必须取 platform_primary 那一行，不能拿列表第一项凑；
+    // 也不接受租户退路（tenant_fallback）——它只是可绑定的本地盘，跟平台实际落点无关。
+    expect(src).toContain(":platform-profile=\"platformPrimaryProfile\"")
+    expect(src).toContain("p.purpose === 'platform_primary'")
+    expect(src).not.toContain("p.purpose === 'tenant_fallback'")
+    // 顶部「去存储档案修改」必须切到档案标签，否则管理员点了没反应只能自己找。
+    expect(src).toContain("@goto-profiles=\"tab = 'storage'\"")
   })
 
   it('僵尸字段 pathStyle 不再出现在前端类型与表单里', () => {

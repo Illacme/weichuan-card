@@ -1,33 +1,83 @@
 <template>
   <div class="storage-settings-panel">
-    <el-alert
-      type="warning"
-      :closable="false"
-      show-icon
-      title="这里只管平台自身存储的部署目录，保存后需重启服务"
-      :description="`驱动 / 桶 / 凭据 / 访问基址已收进「存储档案」标签里的「平台自身存储」一行，可在那里直接自检；这里只留服务器目录、镜像总闸与 CDN 刷新。选本地盘时「本地上传目录」与档案里的「平台本地存储」是同一块盘。已绑定档案的企业走「绑定关系」标签里的配置，不受这里影响。`"
-    />
+    <!-- 顶部先回答管理员唯一关心的问题：文件现在到底存在哪。
+         技术键名、类型、重启徽标都收进「高级设置」，默认不占版面。 -->
+    <div class="hero-card">
+      <div class="hero-copy">
+        <div class="hero-kicker">图片 / 视频 / 小程序码存哪</div>
+        <h3 class="hero-title">{{ locationTitle }}</h3>
+        <p class="hero-desc">{{ locationDesc }}</p>
+        <p class="hero-note">
+          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「存储档案 → 平台自身存储」里改；
+          这里只管服务器目录与备份，保存后需要重启。
+        </p>
+        <div class="hero-chips">
+          <span class="chip" :class="{ 'chip-on': mirrorOn }">本地备份 {{ mirrorOn ? '已开启' : '未开启' }}</span>
+          <span class="chip" :class="{ 'chip-on': cdnOn }">CDN 刷新 {{ cdnOn ? '已开启' : '未开启' }}</span>
+        </div>
+      </div>
+      <div class="hero-action">
+        <el-button type="primary" @click="emit('goto-profiles')">去存储档案修改</el-button>
+        <span class="hero-action-note">改桶 / 密钥 / 访问地址</span>
+      </div>
+    </div>
 
     <div v-if="loading" class="panel-loading">正在读取配置…</div>
     <template v-else>
-      <div v-for="sec in sections" :key="sec.label" class="config-section">
-        <div class="config-section-title">{{ sec.label }}</div>
+      <div class="simple-card">
+        <div class="simple-card-head">
+          <h4>服务器上的目录</h4>
+          <p>只有用「服务器本地磁盘」时才需要关心；改完必须重启。</p>
+        </div>
         <SettingRow
-          v-for="item in sec.items"
+          v-for="item in basicItems"
           :key="item.key"
           :id="'set-' + item.key"
           :item="item"
           :model-value="draft[item.key] ?? ''"
           :focus="depState(item.key).focus"
           :dim="depState(item.key).dim"
+          compact
           @change="(key: string, value: string) => draft[key] = value"
           @clear="clearSecret"
         />
       </div>
 
+      <div class="advanced-card">
+        <button
+          type="button"
+          class="advanced-toggle"
+          :aria-expanded="advancedOpen"
+          @click="advancedOpen = !advancedOpen"
+        >
+          <span>{{ advancedOpen ? '收起高级设置' : '高级设置（通常不用改）' }}</span>
+          <span class="chev">{{ advancedOpen ? '−' : '+' }}</span>
+        </button>
+        <p v-if="!advancedOpen" class="advanced-hint">
+          CDN 刷新、存储配额、上传大小与临时链接时效都在这里；不确定就保持默认。
+        </p>
+        <div v-else>
+          <div v-for="sec in advancedSections" :key="sec.label" class="config-section">
+            <div class="config-section-title">{{ sec.label }}</div>
+            <SettingRow
+              v-for="item in sec.items"
+              :key="item.key"
+              :id="'set-' + item.key"
+              :item="item"
+              :model-value="draft[item.key] ?? ''"
+              :focus="depState(item.key).focus"
+              :dim="depState(item.key).dim"
+              compact
+              @change="(key: string, value: string) => draft[key] = value"
+              @clear="clearSecret"
+            />
+          </div>
+        </div>
+      </div>
+
       <div class="panel-actions">
         <el-button :disabled="!dirty" @click="reset">重置</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">保存存储配置</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">保存设置</el-button>
         <span v-if="dirty" class="dirty-tip">有 {{ changedCount }} 项改动未保存</span>
       </div>
 
@@ -50,21 +100,108 @@ import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
 import SettingRow from '@/components/SettingRow.vue'
 import { CDN_DEFAULT_PROVIDER, CDN_RESOURCE_PROVIDERS } from '@/utils/cdn'
 
+// 顶部摘要只需要回答「文件实际存在哪」，因此只要这四个字段；
+// 父级直接传完整 StorageProfile 也兼容，测试里传最小对象也不必造 19 个字段。
+interface PlatformLocation {
+  driver: string
+  endpoint?: string
+  bucket?: string
+  baseUrl?: string
+}
+
+const props = defineProps<{
+  /** 平台自身存储档案；父级已加载时用来在顶部显示「实际存在哪」 */
+  platformProfile?: PlatformLocation | null
+}>()
+const emit = defineEmits<{ (e: 'goto-profiles'): void }>()
+
 // 本面板只接管系统设置里 storage / upload 两组，后端仍走 getSettings / updateSettings，
 // 启动期语义不变（静态路由与上传器在 main.go 构造，改完必须重启）。
 // 平台连接信息已进「存储档案」（迁移 0059），这里只剩部署期目录与策略项。
 const PANEL_GROUPS = new Set(['storage', 'upload'])
 
-// 分区元数据与 Settings.vue 的 GROUP_SECTIONS.storage / .upload 同源。
-// 那边还服务向导，本面板单独维护一份；改分区时两边都要改。
-const SECTIONS: { label: string; keys: string[] }[] = [
-  { label: '平台自身存储 · 指向与目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
-  { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
-  { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
-  { label: '存储配额（可选）', keys: ['storage_quota_mb'] },
-  { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
+// 常用区只留三件事：本地目录、备份目录、自动备份开关。
+// 指针（platform_storage_profile_id）由系统自动维护，不给管理员看，也不允许改。
+const BASIC_KEYS = ['upload_dir', 'mirror_dir', 'local_mirror_enabled']
+
+// 高级区默认收起：CDN / 配额 / 上传限制 / 临时链接，都是「配一次就不动」的项。
+const ADVANCED_SECTIONS: { label: string; keys: string[] }[] = [
+  { label: 'CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
+  { label: '配额与上传限制', keys: ['storage_quota_mb', 'upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
   { label: '临时链接有效期', keys: ['presign_put_ttl_minutes', 'sign_get_ttl_minutes'] },
 ]
+const ADVANCED_KEYS = new Set(ADVANCED_SECTIONS.flatMap((s) => s.keys))
+
+// 管理员语言：不解释 key、不解释类型，只回答「这项是干什么的、改了会怎样」。
+const FRIENDLY: Record<string, { name: string; desc: string }> = {
+  upload_dir: {
+    name: '服务器上传目录',
+    desc: '选「服务器本地磁盘」时，图片 / 视频 / 小程序码保存在这里。换目录后旧文件不会自动搬过去，必须重启。',
+  },
+  mirror_dir: {
+    name: '本地备份目录',
+    desc: '云端上传成功后，系统在这里留一份副本。不要放在上传目录下面；改完要重启。',
+  },
+  local_mirror_enabled: {
+    name: '自动本地备份',
+    desc: '打开后，云端文件会自动在服务器另存一份；每家企业还要在「企业管理」里单独打开。',
+  },
+  cdn_enabled: {
+    name: '开启 CDN 刷新',
+    desc: '覆盖图片后自动通知 CDN 清缓存。不开也能用，只是更新可能慢几分钟。',
+  },
+  cdn_provider: {
+    name: 'CDN 厂商',
+    desc: '选择你实际使用的 CDN；选完再填下面这一家的凭据。',
+  },
+  cdn_access_key_id: {
+    name: 'CDN AccessKey',
+    desc: 'CDN 服务商给的访问账号；Cloudflare 只需要 Token，这一项不用填。',
+  },
+  cdn_access_key_secret: {
+    name: 'CDN SecretKey',
+    desc: 'CDN 服务商给的访问密钥；留空表示不修改。',
+  },
+  cdn_resource_id: {
+    name: 'CDN 资源标识',
+    desc: '只有 Cloudflare（Zone ID）和 CloudFront（Distribution ID）需要。',
+  },
+  cdn_endpoint: {
+    name: 'CDN 刷新节点',
+    desc: '一般留空，用厂商默认地址即可。',
+  },
+  storage_quota_mb: {
+    name: '企业存储配额',
+    desc: '每家企业最多能存多少 MB；0 表示不限制。',
+  },
+  upload_max_mb: {
+    name: '单张图片上限',
+    desc: '单位 MB。超过这个大小的图片会被拒绝上传。',
+  },
+  upload_video_max_mb: {
+    name: '单个视频上限',
+    desc: '单位 MB。视频通常比图片大，单独设置。',
+  },
+  upload_allow_ext: {
+    name: '允许上传的文件类型',
+    desc: '逗号分隔，例如 png,jpg,webp；不在列表里的类型会被拒绝。',
+  },
+  presign_put_ttl_minutes: {
+    name: '直传链接有效期',
+    desc: '浏览器直接上传到云存储时，链接多少分钟内有效。',
+  },
+  sign_get_ttl_minutes: {
+    name: '私有桶下载链接有效期',
+    desc: '只有关闭公开读时才用到；填 0 用默认值。',
+  },
+}
+
+const DRIVER_LABELS: Record<string, string> = {
+  local: '服务器本地磁盘',
+  minio: 'MinIO / 自建 S3',
+  oss: '阿里云 OSS',
+  s3: 'S3 兼容云',
+}
 
 const loading = ref(true)
 const saving = ref(false)
@@ -75,7 +212,7 @@ const cleared = reactive<Record<string, boolean>>({})
 const restartPending = ref<string[]>([])
 
 // 从内置档案行的「跟随系统设置 →」跳来时带 ?focus=<key>，加载完滚到对应行。
-// 面板不按 depState 隐藏项（只置灰），所以从任何档案跳来都能定位到目录项。
+// 如果目标在高级区，自动展开，避免「点了链接却看不到字段」。
 const focusKey = (() => {
   if (typeof window === 'undefined') return ''
   try {
@@ -84,14 +221,23 @@ const focusKey = (() => {
     return ''
   }
 })()
+const advancedOpen = ref(ADVANCED_KEYS.has(focusKey))
 
-const sections = computed(() => SECTIONS
-  .map((s) => ({
-    label: s.label,
-    items: s.keys
-      .map((k) => items.value.find((i) => i.key === k))
-      .filter((it): it is SettingItem => !!it),
-  }))
+function friendly(item: SettingItem): SettingItem {
+  const f = FRIENDLY[item.key]
+  return f ? { ...item, name: f.name, description: f.desc } : item
+}
+
+function pick(keys: string[]): SettingItem[] {
+  return keys
+    .map((k) => items.value.find((i) => i.key === k))
+    .filter((it): it is SettingItem => !!it)
+    .map(friendly)
+}
+
+const basicItems = computed(() => pick(BASIC_KEYS))
+const advancedSections = computed(() => ADVANCED_SECTIONS
+  .map((s) => ({ label: s.label, items: pick(s.keys) }))
   .filter((s) => s.items.length > 0))
 
 const changedKeys = computed(() => items.value
@@ -100,11 +246,30 @@ const changedKeys = computed(() => items.value
 const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
-// 依赖联动：与 Settings.vue 的 depState 同规则（存储驱动的联动已移进档案模块）。
+const mirrorOn = computed(() => (draft.local_mirror_enabled || '') === 'true')
 const cdnOn = computed(() => (draft.cdn_enabled || '') === 'true')
 const cdnProvider = computed(() => (draft.cdn_provider || '').trim() || CDN_DEFAULT_PROVIDER)
 const cdnNeedsResource = computed(() => CDN_RESOURCE_PROVIDERS.includes(cdnProvider.value))
 const CDN_ONLY = ['cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']
+
+const locationTitle = computed(() => {
+  const p = props.platformProfile
+  // 父级档案列表与设置项各自加载：设置项已回来却仍没有档案，说明档案列表没读到，
+  // 不能一直显示「正在读取」，否则管理员会以为页面卡死。
+  if (!p) return loading.value ? '正在读取存储位置…' : '暂时读不到存储位置'
+  if (p.driver === 'local') return '文件存在服务器本地磁盘'
+  const label = DRIVER_LABELS[p.driver] || p.driver || '云存储'
+  return `文件存在${label}${p.bucket ? ` · ${p.bucket}` : ''}`
+})
+
+const locationDesc = computed(() => {
+  const p = props.platformProfile
+  if (!p) return '请到「存储档案 → 平台自身存储」核对驱动、桶与访问基址。'
+  if (p.driver === 'local') {
+    return `实际目录是 ${draft.upload_dir || '（未设置）'}；网站通过 /uploads 直接读取。`
+  }
+  return `写入 ${p.endpoint || '未填端点'} 的 ${p.bucket || '未填桶名'}，对外地址 ${p.baseUrl || '未填访问基址'}。`
+})
 
 function depState(key: string) {
   if (CDN_ONLY.includes(key)) {
@@ -211,7 +376,7 @@ async function save() {
     restartPending.value = (r?.data?.restartKeys || [])
       .map((k: string) => items.value.find((i) => i.key === k)?.name || k)
     ElMessage.success(
-      `已保存 ${savedCount} 项存储配置${restartPending.value.length ? '，需重启服务后生效' : ''}`,
+      `已保存 ${savedCount} 项设置${restartPending.value.length ? '，需重启服务后生效' : ''}`,
     )
   } catch {
     // 失败保留草稿，方便修正后重试
@@ -226,15 +391,69 @@ onMounted(load)
 <style scoped>
 .storage-settings-panel { padding: 4px 0 8px; }
 .panel-loading { padding: 24px 0; color: #909399; font-size: 13px; }
-.config-section { margin-top: 14px; }
+
+/* 顶部摘要：先给结论，再给入口。不要一上来就是 15 行配置。 */
+.hero-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid #d9ecff;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f4f9ff 0%, #ffffff 70%);
+}
+.hero-copy { min-width: 0; flex: 1; }
+.hero-kicker { font-size: 12px; color: #409eff; font-weight: 600; letter-spacing: 0.02em; }
+.hero-title { margin: 6px 0 6px; font-size: 19px; line-height: 1.35; color: #1f2d3d; }
+.hero-desc { margin: 0; font-size: 13px; line-height: 1.7; color: #303133; word-break: break-all; }
+.hero-note { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: #909399; }
+.hero-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip {
+  display: inline-flex; align-items: center;
+  padding: 3px 9px; border-radius: 999px;
+  background: #f4f4f5; color: #909399; font-size: 12px;
+}
+.chip-on { background: #ecf5ff; color: #409eff; }
+.hero-action { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.hero-action-note { font-size: 12px; color: #c0c4cc; white-space: nowrap; }
+
+.simple-card {
+  margin-top: 14px;
+  padding: 14px 16px 6px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+}
+.simple-card-head h4 { margin: 0; font-size: 14px; color: #303133; }
+.simple-card-head p { margin: 4px 0 6px; font-size: 12px; line-height: 1.6; color: #909399; }
+
+.advanced-card { margin-top: 14px; padding-top: 4px; }
+.advanced-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 10px 2px;
+  border: none; border-top: 1px solid #ebeef5;
+  background: transparent; color: #606266;
+  font-size: 13px; cursor: pointer;
+}
+.advanced-toggle:hover { color: #409eff; }
+.chev { font-size: 16px; line-height: 1; color: #c0c4cc; }
+.advanced-hint { margin: 0 0 6px; font-size: 12px; line-height: 1.6; color: #c0c4cc; }
+.config-section { margin-top: 10px; }
 .config-section-title {
   font-size: 13px; font-weight: 600; color: #303133;
-  padding: 6px 0 8px; border-bottom: 1px solid #ebeef5;
+  padding: 6px 0 4px; border-bottom: 1px solid #f2f6fc;
 }
+
 .panel-actions {
   display: flex; align-items: center; gap: 12px;
   position: sticky; bottom: 0; margin-top: 18px; padding: 12px 0;
   background: #fff; border-top: 1px solid #ebeef5;
 }
 .dirty-tip { font-size: 12px; color: #e6a23c; }
+
+@media (max-width: 767px) {
+  .hero-card { flex-direction: column; }
+  .hero-action { align-items: flex-start; }
+}
 </style>
