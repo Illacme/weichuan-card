@@ -434,7 +434,7 @@ describe('Settings 系统设置', () => {
   it('每个分组展示导语：一句话说清管什么、什么时候动', async () => {
     const { w } = await setup()
     expect(w.text()).toContain('产品的基础展示信息') // general
-    expect(w.text()).toContain('所有存储与分发配置都在') // 指路已改到新模块
+    expect(w.text()).toContain('存储相关配置都在「存储与分发」') // 指路已改到新模块
     expect(w.text()).toContain('首次部署必配') // miniprogram
     // 8 个分组各一条导语（通用 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计）
     expect(w.findAll('.group-blurb')).toHaveLength(8)
@@ -556,7 +556,7 @@ describe('Settings 系统设置', () => {
   // ---- P1：依赖联动（非搜索态按分支过滤） + 分组顺序 ----
   it('分组按依赖链排序：小程序与微信相邻，存储已搬走', async () => {
     const { w } = await setup()
-    // 存储 / 上传两组已搬到文件存储与分发模块；这里只校验剩余组的顺序
+    // 存储 / 上传两组已搬到存储与分发模块；这里只校验剩余组的顺序
     const order = w.findAll('.group-card').map((c: any) => c.find('.group-title').text())
     expect(order).toEqual([
       '通用',
@@ -596,7 +596,7 @@ describe('Settings 系统设置', () => {
     expect(dialogOf(w).text()).toContain('upload_dir')
     expect(dialogOf(w).text()).toContain('mirror_dir')
     expect(dialogOf(w).text()).not.toContain('storage_endpoint')
-    expect(dialogOf(w).text()).toContain('文件存储与分发 → 存储档案')
+    expect(dialogOf(w).text()).toContain('存储与分发 → 存储档案')
   })
 
   it('向导「稍后再说」：恢复打开前的草稿，不产生任何提交', async () => {
@@ -631,7 +631,7 @@ describe('Settings 系统设置', () => {
     await nextTick()
     const hint = dialogOf(w).find('.wizard-preset')
     expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('文件存储与分发 → 存储档案')
+    expect(hint.text()).toContain('存储与分发 → 存储档案')
     expect(hint.text()).toContain('自检')
     // 连接信息不在向导里，不能再出现「演示 / 生产一键填驱动」的假入口
     expect(hint.findAllComponents({ name: 'ElButton' })).toHaveLength(0)
@@ -1074,7 +1074,7 @@ describe('平台自身存储与档案模块的边界', () => {
     const { w } = await setup()
     expect(w.text()).not.toContain('保存默认档案')
     expect(w.text()).not.toContain('默认档案（推荐）')
-    expect(w.text()).toContain('所有存储与分发配置都在「文件存储与分发」')
+    expect(w.text()).toContain('存储相关配置都在「存储与分发」')
     const link = w.find('a.storage-module-link')
     expect(link.exists()).toBe(true)
     // 首推总览：先把架构和当前状态讲清楚，再让人进具体配置页
@@ -1094,7 +1094,7 @@ describe('平台自身存储与档案模块的边界', () => {
     expect(src).not.toContain("storage: '平台兜底存储")
     // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点
     expect(src).toContain('平台自身存储的部署期事实')
-    expect(src).toContain('文件存储与分发 → 存储档案')
+    expect(src).toContain('存储与分发 → 存储档案')
     expect(src).not.toContain('storage_driver')
   })
 })

@@ -247,6 +247,19 @@ function routeMenuEntries(): { path: string; title: string }[] {
 }
 
 describe('layout/AdminLayout', () => {
+  it('存储模块菜单名统一为「存储与分发」', () => {
+    // 名字里的「文件」既窄（还有视频、小程序码）又长，且 0059/0060 后模块已含分发与绑定
+    const hit = routeMenuEntries().find((m) => m.path === '/platform/storage-profiles')
+    expect(hit?.title).toBe('存储与分发')
+    const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
+    expect(src).toContain("title: '存储与分发'")
+    expect(src).not.toContain('文件存储与分发')
+    // 指路文案也要跟着改，否则管理员按菜单名找不到
+    const settings = readFileSync('src/views/platform/Settings.vue', 'utf8')
+    expect(settings).toContain('存储相关配置都在「存储与分发」')
+    expect(settings).not.toContain('文件存储与分发')
+  })
+
   it('存储与分发相关菜单带一句话说明，鼠标停上去就知道这个入口管什么', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).toContain(':title="menuHint(m.path, m.title)"')

@@ -379,8 +379,8 @@ const allMenuGroups = [
     items: [
       { path: '/companies', title: '企业管理' },
       { path: '/platform/cdn-refresh', title: 'CDN 刷新' },
-      // 文件存储与分发：多套档案 + 绑定 + 一键迁移（平台超管专属）
-      { path: '/platform/storage-profiles', title: '文件存储与分发' },
+      // 存储与分发：多套档案 + 绑定 + 一键迁移（平台超管专属）
+      { path: '/platform/storage-profiles', title: '存储与分发' },
       // 系统设置：运行参数（品牌名 / 上传限制 / 小程序码 TTL / 特性开关）后台维护
       { path: '/platform/settings', title: '系统设置' },
       // 账号管理：平台超管账号改名 / 新增 / 重置密码 / 删除

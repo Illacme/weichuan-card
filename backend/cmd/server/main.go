@@ -359,7 +359,7 @@ func main() {
 	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
 	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
-		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「文件存储与分发」缺少兜底）：%v", err)
+		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
 	}
 	// 第二套不可删档案：平台本地镜像落点。只做备份副本，不参与绑定解析。
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
@@ -414,7 +414,7 @@ func main() {
 		log.Printf("cdn refresh enabled (provider=%s, endpoint=%s)",
 			storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
 	default:
-		log.Printf("cdn refresh off：平台自身 CDN 档案选了「不刷新」（在「文件存储与分发 → 分发档案」里改）")
+		log.Printf("cdn refresh off：平台自身 CDN 档案选了「不刷新」（在「存储与分发 → 分发档案」里改）")
 	}
 	// 多套 CDN：档案绑定优先，没绑定沿用上面这份平台刷新器。
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
@@ -578,6 +578,6 @@ func platformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uplo
 		return up, sp.Driver
 	}
 	log.Printf("[WARN] 平台自身存储档案 %d 初始化失败：%v；已降级为本地磁盘存储。"+
-		"请到「文件存储与分发 → 存储档案 → 平台自身存储」修正后重启服务。", sp.ID, err)
+		"请到「存储与分发 → 存储档案 → 平台自身存储」修正后重启服务。", sp.ID, err)
 	return storageprofile.LocalPlatformFallback(cfg), "local"
 }

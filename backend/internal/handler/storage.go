@@ -250,9 +250,9 @@ func capabilityHandler(res storage.Resolver) gin.HandlerFunc {
 		reason := ""
 		switch {
 		case driver == "local":
-			// 分组名要与前端「系统设置」里的分组中文名一致（文件存储与 CDN），
-			// 否则按提示找过去会找不到对应位置
-			reason = "当前为本地磁盘存储：视频会占用服务器磁盘与带宽。请先在「系统设置 → 文件存储与 CDN」配置对象存储"
+			// 指路必须落在真实存在的入口：连接信息在「存储与分发 → 存储档案」，
+			// 系统设置里早已没有对象存储的配置项，按旧提示找过去会扑空。
+			reason = "当前为本地磁盘存储：视频会占用服务器磁盘与带宽。请先在「存储与分发 → 存储档案」接入对象存储"
 		case !presign:
 			reason = "当前存储驱动不支持直传预签名，大视频经服务器中转会拖垮服务"
 		}
@@ -384,13 +384,13 @@ func cdnRefreshHandler(rf storage.CDNRefresher) gin.HandlerFunc {
 		if rf == nil {
 			// 五家厂商要求的凭据不同（Cloudflare 是 Token+Zone ID，AK/SK 三家不要资源标识），
 			// 所以提示只指路、不点名具体环境变量，避免指错厂商
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「系统设置 → 文件存储与 CDN」启用刷新，选好厂商并填全它要求的凭据后重启服务"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → 分发档案」新建一套并绑定，或给「平台自身 CDN」选好厂商并填全凭据后重启服务"})
 			return
 		}
 		// 动态刷新器是个壳：包了壳但没有全局刷新器、也没有分发档案绑定时，
 		// 仍然等同「未配置」，不能因为类型非 nil 就把失败伪装成成功。
 		if checker, ok := rf.(interface{ Configured() bool }); ok && !checker.Configured() {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「文件存储与分发 → 分发档案」新建一套并绑定，或在系统设置里填全凭据"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → 分发档案」新建一套并绑定，或在系统设置里填全凭据"})
 			return
 		}
 		var req struct {

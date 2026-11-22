@@ -564,7 +564,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 小程序端：原生 `wx.uploadFile` 只能 multipart POST，不便做 raw PUT；小程序仍走普通 `/api/employee/upload` 服务端上传（能力已具备），直传预签名主要在 PC 后台生效。
 
 ### 2. CDN 刷新（五家厂商）
-- 启用：在「文件存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，保存后重启；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
+- 启用：在「存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，保存后重启；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
 - 各家要填什么（界面按厂商联动只显示需要的字段）：
 
   | 厂商 | AccessKeyId 位 | AccessKeySecret 位 | 资源标识 | 默认端点 | 单次上限 |

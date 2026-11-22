@@ -131,7 +131,7 @@ export const STORAGE_GLOSSARY: { term: string; meaning: string }[] = [
 export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
   '/platform/storage-profiles': {
     desc: '图片视频存哪、怎么加速访问',
-    detail: '从一个总览页看全貌：当前用的本地盘还是云盘、有没有 CDN、老文件怎么搬。档案、绑定、迁移都在这个模块里。',
+    detail: '总览一句话说清现在存哪、CDN 开没开；要接云时点「展开帮助」看五步流程与各家官方地址。档案、绑定、迁移都在这个模块里。',
   },
   '/platform/cdn-refresh': {
     desc: '换了文件后让 CDN 立刻更新',
@@ -143,12 +143,12 @@ export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
   },
   '/platform/settings': {
     desc: '品牌名、上传大小、有效期等运行参数',
-    detail: '存储连接信息和 CDN 凭据已收进「文件存储与分发」，这里只留目录、配额和有效期等少量启动参数。',
+    detail: '存储连接信息和 CDN 凭据已收进「存储与分发」，这里只留目录、配额和有效期等少量启动参数。',
   },
 }
 
 export const TAB_GUIDES: Record<string, { title: string; desc: string }> = {
-  overview: { title: '总览', desc: '一页看清整体架构、当前状态和完整配置流程。第一次进来先看这里。' },
+  overview: { title: '总览', desc: '一句话说清文件现在存哪、CDN 开没开。要接云时再展开帮助看流程、官方地址与名词解释。' },
   storage: { title: '存储档案', desc: '管「文件存哪」。每套档案写一次连接信息，多家企业可以共用。' },
   delivery: { title: '分发档案', desc: '管「访客怎么更快读到」。CDN 与存储互相独立，同一个桶可以配多套加速。' },
   binding: { title: '绑定关系', desc: '管「谁用哪套」。不单独指定就用全局默认；改完下一个请求立即生效。' },

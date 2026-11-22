@@ -190,7 +190,7 @@ func main() {
 	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
 	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
-		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「文件存储与分发」缺少兜底）：%v", err)
+		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
 	}
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
 	if mirrorErr != nil {

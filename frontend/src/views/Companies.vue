@@ -447,7 +447,7 @@
         show-icon
         class="profile-dialog-alert"
         title="选择本企业使用哪一套档案"
-        description="保存后新上传立即生效，历史对象不会自动搬迁。不选则继承「系统设置 → 文件存储与 CDN」里的默认档案。"
+        description="保存后新上传立即生效，历史对象不会自动搬迁。不选则继承「存储与分发 → 绑定关系」里的全局默认。"
       />
       <el-form label-width="110px" size="small">
         <el-form-item label="存储档案">

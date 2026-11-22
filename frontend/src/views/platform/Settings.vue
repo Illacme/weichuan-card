@@ -59,12 +59,12 @@
       type="success"
       :closable="false"
       show-icon
-      title="所有存储与分发配置都在「文件存储与分发」"
-      description="第一次进去先看「总览」：一页看清当前文件存哪、访客怎么读到、从本地盘接入云平台的完整步骤，以及所有云厂商的官方入口。档案、绑定、迁移都在同一模块；原在本页的存储 / 上传启动配置在「平台自身存储」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
+      title="存储相关配置都在「存储与分发」"
+      description="第一次进去先看「总览」：一句话说清文件现在存哪、要不要接云。档案、绑定、迁移与平台自身的启动配置都在同一模块；本页只保留其它运行参数与首次安装向导。"
       class="storage-module-entry"
     >
       <template #default>
-        <a href="/platform/storage-profiles?tab=overview" class="storage-module-link">先看总览与配置流程 →</a>
+        <a href="/platform/storage-profiles?tab=overview" class="storage-module-link">先看总览 →</a>
         <a href="/platform/storage-profiles?tab=platform" class="storage-module-secondary-link">平台自身存储（启动配置）→</a>
       </template>
     </el-alert>
@@ -269,7 +269,7 @@
       <!-- 存储连接信息已进档案模块：在这里指路，避免首次部署的人继续找存储方式下拉 -->
       <div v-if="currentStep.key === 'brand'" class="wizard-preset">
         <span class="wizard-preset-label">存储连接信息：</span>
-        <span class="wizard-preset-note">驱动 / 桶 / 凭据 / 访问基址请到「文件存储与分发 → 存储档案」的「平台自身存储」一行配置并自检；本向导只管部署目录与上传限制。</span>
+        <span class="wizard-preset-note">驱动 / 桶 / 凭据 / 访问基址请到「存储与分发 → 存储档案」的「平台自身存储」一行配置并自检；本向导只管部署目录与上传限制。</span>
       </div>
       <div class="wizard-body">
         <template v-for="g in currentGroups" :key="g.label">
@@ -395,7 +395,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '平台自身存储的部署期事实：本地上传目录、本地镜像目录、镜像总闸与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定档案的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「文件存储与分发 → 存储档案」里的「平台自身存储」一行，可以在那里直接自检；这里改不了，改完档案也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「文件存储与分发」——那边保存后下一个请求即生效。',
+    '平台自身存储的部署期事实：本地上传目录、本地镜像目录、镜像总闸与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定档案的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 存储档案」里的「平台自身存储」一行，可以在那里直接自检；这里改不了，改完档案也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边保存后下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -506,7 +506,7 @@ const restartDismissed = ref(false)
 const groups = computed(() => {
   const map = new Map<string, SettingItem[]>()
   for (const it of items.value) {
-    // 存储 / 上传两组已集中到「文件存储与分发 → 平台自身存储」，
+    // 存储 / 上传两组已集中到「存储与分发 → 平台自身存储」，
     // 主列表不再重复展示。items.value 仍是全量：配置向导首装时照常要用这些项。
     if (it.group === 'storage' || it.group === 'upload') continue
     if (!map.has(it.group)) map.set(it.group, [])
@@ -691,7 +691,7 @@ function toggleReady() {
 // 定位到对应配置行（行上锚点 id="set-<key>"）。
 // 防御 scrollIntoView 缺失：jsdom 等环境没有该方法（真实浏览器均有），缺省时静默跳过。
 function jumpTo(key: string) {
-  // 存储 / 上传项已搬到「文件存储与分发 → 平台自身存储」，本页不再有对应行。
+  // 存储 / 上传项已搬到「存储与分发 → 平台自身存储」，本页不再有对应行。
   // 就绪清单里的「去配置」必须跟着走，否则点了没有任何反应（又一条死路）。
   const it = items.value.find((i) => i.key === key)
   if (it && (it.group === 'storage' || it.group === 'upload')) {
@@ -844,7 +844,7 @@ function destructiveWarnings(): string[] {
 
 // ---- 依赖联动 ----
 // 以下拉 / 开关的当前草稿值为准：用户刚切换就能看到哪些项「转亮 / 置灰」，不必先保存再刷新。
-// 存储驱动的联动随连接信息移到了「文件存储与分发 → 存储档案」，CDN 的联动随凭据移到了
+// 存储驱动的联动随连接信息移到了「存储与分发 → 存储档案」，CDN 的联动随凭据移到了
 // 「分发档案 → 平台自身 CDN」（迁移 0060）；这里只剩微信凭据一条。
 const wxAppidFilled = computed(
   () => !!(draft.wx_appid || '').trim() || !!items.value.find((i) => i.key === 'wx_appid')?.configured,
@@ -891,7 +891,7 @@ const WIZARD_STEPS: WizardStep[] = [
     key: 'storage',
     title: '存储部署目录',
     short: '存储目录',
-    blurb: '这里定的是服务器上的本地目录与镜像备份。驱动 / 桶 / 凭据 / 访问基址已收进「文件存储与分发 → 存储档案」的「平台自身存储」一行，可在那里直接自检；改完任一边都要重启服务。',
+    blurb: '这里定的是服务器上的本地目录与镜像备份。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 存储档案」的「平台自身存储」一行，可在那里直接自检；改完任一边都要重启服务。',
     keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir', 'local_mirror_enabled'],
     groups: [
       { label: '指向与部署目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },

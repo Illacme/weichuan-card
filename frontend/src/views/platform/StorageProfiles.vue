@@ -4,8 +4,8 @@
       type="info"
       :closable="false"
       show-icon
-      title="文件存储与分发：配置只存一份，谁用由绑定决定"
-      description="三层关系：存储档案保存桶的连接信息；分发档案保存 CDN 域名；绑定决定谁用哪一套。不给任何企业单独指定时，所有人默认用同一套（全局默认）；企业也能单独指定自己的一套。保存后下一个请求即生效，无需重启。档案与绑定都含云凭据或决定文件落点，只有平台超管能增删改；企业管理员看不到也改不了。"
+      title="存储与分发：配置只存一份，谁用由绑定决定"
+      description="存储档案管文件存哪，分发档案管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。档案与绑定只有平台超管能增删改。"
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
@@ -22,11 +22,7 @@
       <!-- 存储档案 -->
       <el-tab-pane label="存储档案" name="storage">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.storage.title }}</strong><span>{{ TAB_GUIDES.storage.desc }}</span></div>
-        <div class="tab-head">
-          <span class="tab-tip">
-            同一份 endpoint / AK / SK 只填一次，多家企业共享。改一次桶地址，所有绑定它的企业立刻跟着变。
-            企业自有桶由平台超管在这里接入并绑定；下方「迁移任务」可把历史对象搬到新档案（只复制不删除）。
-          </span>
+        <div class="tab-head tab-head-actions">
           <el-button type="primary" @click="openStorageDialog(null)">新建存储档案</el-button>
         </div>
         <el-table :data="storages" v-loading="loading" size="small" border>
@@ -70,11 +66,7 @@
       <!-- 分发档案 -->
       <el-tab-pane label="分发档案" name="delivery">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.delivery.title }}</strong><span>{{ TAB_GUIDES.delivery.desc }}</span></div>
-        <div class="tab-head">
-          <span class="tab-tip">
-            分发与存储互相独立：同一个桶可以配国内 / 海外多套 CDN 域名。域名只影响访客侧 URL，不改变上传落点。
-            平台自己的文件（小程序码、素材采用等 p/ 对象）用内置的「平台自身 CDN」那一行，改完需重启。
-          </span>
+        <div class="tab-head tab-head-actions">
           <el-button type="primary" @click="openDeliveryDialog(null)">新建分发档案</el-button>
         </div>
         <el-table :data="deliveries" v-loading="loading" size="small" border>
@@ -274,24 +266,27 @@
       <el-alert v-else-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
         title="这是系统自带的档案，通常不用改动"
         description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
-      <el-alert type="warning" :closable="false" show-icon class="dialog-alert"
-        title="凭据以明文入库，回显只给掩码"
-        description="请确保数据库备份与访问控制到位。SecretKey 一旦保存就不再回传，忘记只能重新填写。" />
-
-      <!-- 跟着当前驱动变的小抄：官方控制台 / 密钥 / 文档直达，不必再去搜索"某某云 endpoint 在哪" -->
+      <!-- 跟着当前驱动变的小抄：默认收起，已经知道去哪拿凭据的人不用看 -->
       <div v-if="currentDriverGuide" class="vendor-guide">
-        <strong>{{ currentDriverGuide.label }} · {{ currentDriverGuide.summary }}</strong>
-        <p>适合：{{ currentDriverGuide.when }}</p>
-        <p v-if="currentDriverGuide.credential">密钥怎么拿：{{ currentDriverGuide.credential }}</p>
-        <div v-if="currentDriverGuide.links.length" class="guide-links">
-          <a v-for="link in currentDriverGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+        <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
+          <strong>{{ currentDriverGuide.label }}</strong>
+          <span class="vendor-guide-q">{{ guideOpen ? '收起配置说明' : '不知道这几项去哪拿？' }}</span>
+          <span class="vendor-guide-arrow">{{ guideOpen ? '↑' : '↓' }}</span>
+        </button>
+        <div v-if="guideOpen" class="vendor-guide-body">
+          <p>{{ currentDriverGuide.summary }}</p>
+          <p>适合：{{ currentDriverGuide.when }}</p>
+          <p v-if="currentDriverGuide.credential">密钥怎么拿：{{ currentDriverGuide.credential }}</p>
+          <div v-if="currentDriverGuide.links.length" class="guide-links">
+            <a v-for="link in currentDriverGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+          </div>
+          <table v-if="storageForm.driver === 's3'" class="variant-table">
+            <thead><tr><th>服务商</th><th>服务地址示例</th><th>怎么填</th></tr></thead>
+            <tbody>
+              <tr v-for="v in S3_VARIANTS" :key="v.label"><td>{{ v.label }}</td><td><code>{{ v.endpoint }}</code></td><td>{{ v.note }}</td></tr>
+            </tbody>
+          </table>
         </div>
-        <table v-if="storageForm.driver === 's3'" class="variant-table">
-          <thead><tr><th>服务商</th><th>服务地址示例</th><th>怎么填</th></tr></thead>
-          <tbody>
-            <tr v-for="v in S3_VARIANTS" :key="v.label"><td>{{ v.label }}</td><td><code>{{ v.endpoint }}</code></td><td>{{ v.note }}</td></tr>
-          </tbody>
-        </table>
       </div>
 
       <el-form label-width="130px" size="small">
@@ -366,6 +361,7 @@
           </el-form-item>
         </template>
       </el-form>
+      <p class="dialog-footnote">凭据以明文入库、回显只给掩码，SecretKey 保存后不再回传；请确保数据库备份与访问控制到位。</p>
       <template #footer>
         <el-button @click="storageDialog = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitStorage">保存</el-button>
@@ -375,11 +371,18 @@
     <!-- 分发档案表单 -->
     <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑分发档案' : '新建分发档案'" width="600px">
       <div v-if="currentCdnGuide" class="vendor-guide">
-        <strong>{{ currentCdnGuide.label }} · {{ currentCdnGuide.summary }}</strong>
-        <p>适合：{{ currentCdnGuide.when }}</p>
-        <p v-if="currentCdnGuide.credential">密钥怎么拿：{{ currentCdnGuide.credential }}</p>
-        <div v-if="currentCdnGuide.links.length" class="guide-links">
-          <a v-for="link in currentCdnGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+        <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
+          <strong>{{ currentCdnGuide.label }}</strong>
+          <span class="vendor-guide-q">{{ guideOpen ? '收起配置说明' : '不知道这几项去哪拿？' }}</span>
+          <span class="vendor-guide-arrow">{{ guideOpen ? '↑' : '↓' }}</span>
+        </button>
+        <div v-if="guideOpen" class="vendor-guide-body">
+          <p>{{ currentCdnGuide.summary }}</p>
+          <p>适合：{{ currentCdnGuide.when }}</p>
+          <p v-if="currentCdnGuide.credential">密钥怎么拿：{{ currentCdnGuide.credential }}</p>
+          <div v-if="currentCdnGuide.links.length" class="guide-links">
+            <a v-for="link in currentCdnGuide.links" :key="link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label }} ↗</a>
+          </div>
         </div>
       </div>
       <el-form label-width="130px" size="small">
@@ -481,6 +484,8 @@ const initialTab = typeof window !== 'undefined'
 const tab = ref(VALID_TABS.includes(initialTab) ? initialTab : 'overview')
 const loading = ref(false)
 const saving = ref(false)
+// 弹窗里的厂商小抄默认收起：知道去哪拿凭据的人不用先读一屏说明
+const guideOpen = ref(false)
 const storages = ref<StorageProfile[]>([])
 // 两套内置档案绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
 // 镜像只收备份副本，平台自身存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
@@ -620,6 +625,7 @@ function openStorageDialog(row: any | null) {
   Object.assign(storageForm, emptyStorage(), row || {})
   storageForm.accessKey = ''
   storageForm.secretKey = ''
+  guideOpen.value = false
   storageDialog.value = true
 }
 async function submitStorage() {
@@ -650,6 +656,7 @@ function openDeliveryDialog(row: any | null) {
   Object.assign(deliveryForm, emptyDelivery(), row || {})
   deliveryForm.accessKey = ''
   deliveryForm.secretKey = ''
+  guideOpen.value = false
   deliveryDialog.value = true
 }
 async function submitDelivery() {
@@ -757,7 +764,7 @@ function exportErrors() {
 .storage-profiles-page { padding: 4px 0; }
 .storage-tabs { margin-top: 14px; }
 .tab-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.tab-tip { color: #606266; font-size: 13px; line-height: 1.6; }
+.tab-head-actions { justify-content: flex-end; }
 .binding-alert, .dialog-alert { margin-bottom: 14px; }
 .binding-card { border: 1px solid #ebeef5; border-radius: 6px; padding: 14px 16px; margin-bottom: 18px; }
 .binding-card h4 { margin: 0 0 10px; font-size: 14px; }
@@ -772,18 +779,23 @@ function exportErrors() {
 .builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
 .builtin-setting-link { margin-right: 10px; font-size: 12px; color: #409eff; text-decoration: none; white-space: nowrap; }
 .builtin-setting-link:hover { text-decoration: underline; }
-/* 产品化引导：每个页签先说清"这里管什么"，弹窗里按当前厂商给官方入口 */
-.tab-guide { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; margin-bottom: 12px; background: #f4f8ff; border-left: 3px solid #409eff; border-radius: 4px; }
-.tab-guide strong { font-size: 13px; white-space: nowrap; }
-.tab-guide span { color: #606266; font-size: 12px; line-height: 1.6; }
-.vendor-guide { padding: 12px 14px; margin-bottom: 14px; border: 1px solid #d9e8fb; border-radius: 6px; background: #f5f9ff; }
-.vendor-guide > strong { font-size: 13px; }
-.vendor-guide p { margin: 6px 0 0; color: #606266; font-size: 12px; line-height: 1.7; }
-.guide-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 9px; }
+/* 页签说明压成一行淡灰字：信息还在，但不再每页挂一条蓝色横幅 */
+.tab-guide { margin: -4px 0 12px; color: #909399; font-size: 12px; line-height: 1.5; }
+.tab-guide strong { margin-right: 8px; color: #606266; font-weight: 600; }
+.tab-guide span { color: #909399; }
+.vendor-guide { margin-bottom: 14px; border: 1px solid #ebeef5; border-radius: 6px; background: #fafcff; }
+.vendor-guide-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: 0; background: transparent; font-size: 12px; text-align: left; cursor: pointer; }
+.vendor-guide-toggle strong { font-size: 12px; color: #303133; }
+.vendor-guide-q { color: #409eff; }
+.vendor-guide-arrow { margin-left: auto; color: #909399; }
+.vendor-guide-body { padding: 0 12px 10px; }
+.vendor-guide-body p { margin: 0 0 6px; color: #606266; font-size: 12px; line-height: 1.7; }
+.guide-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 4px; }
 .guide-links a { color: #409eff; font-size: 12px; text-decoration: none; }
 .guide-links a:hover { text-decoration: underline; }
 .variant-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
 .variant-table th, .variant-table td { padding: 6px 8px; border: 1px solid #e4e7ed; text-align: left; color: #606266; }
 .variant-table th { background: #fff; }
+.dialog-footnote { margin: 2px 0 0; color: #a8abb2; font-size: 12px; line-height: 1.6; }
 .table-empty { padding: 28px 16px; color: #909399; font-size: 13px; line-height: 1.8; }
 </style>

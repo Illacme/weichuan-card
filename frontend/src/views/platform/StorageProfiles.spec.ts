@@ -98,7 +98,7 @@ beforeEach(() => {
   vi.mocked(api.createMigrationJob).mockResolvedValue({} as any)
 })
 
-describe('文件存储与分发模块', () => {
+describe('存储与分发模块', () => {
   it('加载五类数据并说明三层模型', async () => {
     const w = mountPage()
     await flush()
@@ -435,7 +435,9 @@ describe('文件存储与分发模块', () => {
     const w = mountPage()
     await flush()
     expect(w.find('.storage-overview').exists()).toBe(true)
-    expect(w.text()).toContain('一页看清：文件存在哪、访客怎么读到')
+    // 总览默认是极简视图：一句结论 + 三层小图 + 一个动作，细节收进按需展开区
+    expect(w.find('.ov-hero').exists()).toBe(true)
+    expect(w.find('.ov-toggle').exists()).toBe(true)
     expect(w.text()).toContain('存储档案')
     expect(w.text()).toContain('管「文件存哪」')
     expect(w.text()).toContain('管「老文件怎么搬到新桶」')
@@ -450,6 +452,13 @@ describe('文件存储与分发模块', () => {
     const vm: any = w.vm
 
     const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
+
+    // 厂商小抄默认收起：已经知道去哪拿凭据的人不必先读一屏说明
+    expect(dialog.find('.vendor-guide-toggle').exists()).toBe(true)
+    expect(dialog.find('.vendor-guide-toggle').attributes('aria-expanded')).toBe('false')
+    expect(hrefs()).toHaveLength(0)
+    await dialog.find('.vendor-guide-toggle').trigger('click')
+    await flush()
 
     // MinIO 自建：给官网与部署文档，不编造一个在线控制台
     expect(hrefs()).toContain('https://min.io/docs/minio/linux/index.html')
@@ -476,6 +485,16 @@ describe('文件存储与分发模块', () => {
       expect(helpTitles, `${key} 缺字段说明`).toContain(key)
     }
     expect(dialog.text()).toContain('值来源')
+
+    // 关掉再开必须回到收起状态：不能把上一次的展开状态带过来，
+    // 否则「默认收起」只在第一次打开时成立。
+    vm.storageDialog = false
+    await flush()
+    await w.findAll('button').find((b) => b.text() === '新建存储档案')!.trigger('click')
+    await flush()
+    const reopened = w.find('.el-dialog')
+    expect(reopened.find('.vendor-guide-toggle').attributes('aria-expanded')).toBe('false')
+    expect(reopened.findAll('a[href]')).toHaveLength(0)
   })
 
   it('分发档案弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
@@ -485,6 +504,10 @@ describe('文件存储与分发模块', () => {
     await flush()
     const dialog = w.find('.el-dialog')
     const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
+    // 与存储弹窗同口径：默认收起，点开才铺链接
+    expect(hrefs()).toHaveLength(0)
+    await dialog.find('.vendor-guide-toggle').trigger('click')
+    await flush()
     expect(hrefs()).toContain('https://cdn.console.aliyun.com/')
     const vm: any = w.vm
     vm.deliveryForm.provider = 'cloudflare'
