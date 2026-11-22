@@ -1149,7 +1149,7 @@ describe('配置向导步骤条', () => {
   })
 })
 
-describe('平台兜底与档案模块的边界', () => {
+describe('平台自身存储与档案模块的边界', () => {
   it('系统设置不再内嵌默认档案选择器，只留到档案模块的指路', async () => {
     const { w } = await setup()
     expect(w.text()).not.toContain('保存默认档案')
@@ -1164,5 +1164,14 @@ describe('平台兜底与档案模块的边界', () => {
     const src = readFileSync('src/views/platform/Settings.vue', 'utf8')
     expect(src).toContain('it.group === \'storage\' || it.group === \'upload\'')
     expect(src).toContain('/platform/storage-profiles?tab=platform&focus=')
+  })
+
+  it('分组名叫「平台自身存储」而不是「兜底」，并讲清 local 下与内置档案同一块盘', () => {
+    const src = readFileSync('src/views/platform/Settings.vue', 'utf8')
+    expect(src).toContain("storage: '平台自身存储（启动配置）'")
+    expect(src).not.toContain("storage: '平台兜底存储")
+    // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点，必须点明
+    expect(src).toContain('这里定的是平台自己那份文件存哪')
+    expect(src).toContain('与档案模块的「平台本地存储」是同一块盘')
   })
 })

@@ -22,7 +22,7 @@
           <el-table-column label="档案名" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
-              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录跟随「系统设置 → 本地镜像目录」，这里改不了；自动运行，请勿删除' : '系统自带的备用盘 · 目录跟随「系统设置 → 本地上传目录」，这里改不了；云端出问题时才用，请勿删除'">
+              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储 → 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
                 <el-tag size="small" type="info">内置</el-tag>
               </el-tooltip>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
@@ -217,9 +217,9 @@
         </el-table>
       </el-tab-pane>
 
-      <!-- 平台兜底：系统设置里的存储/上传项集中到这里，管理员只进一个模块。
+      <!-- 平台自身存储：系统设置里的存储/上传项集中到这里，管理员只进一个模块。
            后端仍走 sys_setting + 重启（静态路由与上传器启动期构造），首装向导仍在系统设置。 -->
-      <el-tab-pane label="平台兜底配置" name="platform">
+      <el-tab-pane label="平台自身存储（启动配置）" name="platform">
         <StorageSettingsPanel />
       </el-tab-pane>
     </el-tabs>
@@ -228,7 +228,7 @@
     <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑存储档案' : '新建存储档案'" width="640px">
       <el-alert v-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
         title="这是系统自带的档案，通常不用改动"
-        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动和目录；你一般只需要改下面的展示名，其他保持默认即可。" />
+        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储 → 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
       <el-alert type="warning" :closable="false" show-icon class="dialog-alert"
         title="凭据以明文入库，回显只给掩码"
         description="请确保数据库备份与访问控制到位。SecretKey 一旦保存就不再回传，忘记只能重新填写。" />
@@ -265,12 +265,12 @@
           <el-form-item label="本地根目录">
             <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
             <span v-if="storageForm.builtin && storageForm.purpose === 'platform_mirror'" class="field-note">
-              这是备份保险柜：备份目录跟随「系统设置 → 本地镜像目录」，图片传到云端后系统自动在这里留一份副本。
+              这是备份保险柜：备份目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir），改那里后需重启才生效；图片传到云端后系统自动在这里留一份副本。
               它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              内置档案的目录跟随「系统设置 → 本地上传目录」，网站的图片读取用的也是这个位置。
-              所以这里不用改、也不建议改；真要换位置请改系统设置后重启，单独改这里会让图片找不到。
+              内置档案的目录继承自「平台自身存储 → 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
+              所以这里不用改、也不建议改；真要换位置请到那里改后重启服务，单独改这里会让图片找不到。
             </span>
             <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
           </el-form-item>
@@ -333,7 +333,7 @@ import {
 import { listCompanies, type CompanyItem } from '@/api/tenants'
 import StorageSettingsPanel from '@/components/StorageSettingsPanel.vue'
 
-// 支持 ?tab=platform 直达「平台兜底配置」，?focus=<key> 由新面板消费。
+// 支持 ?tab=platform 直达「平台自身存储」，?focus=<key> 由新面板消费。
 // 白名单挡住乱传的 tab，避免落到一个空白页。
 const initialTab = typeof window !== 'undefined'
   ? (new URLSearchParams(window.location.search).get('tab') || 'storage')
@@ -398,7 +398,7 @@ function statusText(s: string) {
 }
 // 内置档案的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
-// 配置已集中到本模块的「平台兜底配置」标签；focus 参数让面板加载后滚到对应行。
+// 配置已集中到本模块的「平台自身存储」标签；focus 参数让面板加载后滚到对应行。
 function builtinSettingHref(row: { purpose?: string }) {
   const key = row.purpose === 'platform_mirror' ? 'mirror_dir' : 'upload_dir'
   return `/platform/storage-profiles?tab=platform&focus=${key}`

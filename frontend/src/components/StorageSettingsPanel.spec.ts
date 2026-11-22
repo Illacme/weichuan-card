@@ -105,7 +105,7 @@ beforeEach(() => {
   vi.mocked(ElMessageBox.confirm).mockResolvedValue('confirm' as any)
 })
 
-describe('平台兜底配置面板', () => {
+describe('平台自身存储配置面板', () => {
   it('集中展示 storage / upload 两组全部配置项，不混入其它组', async () => {
     const w = mountPanel()
     await flush()
@@ -127,10 +127,13 @@ describe('平台兜底配置面板', () => {
     const w = mountPanel()
     await flush()
     const text = w.text()
-    expect(text).toContain('平台兜底的启动配置')
+    expect(text).toContain('平台自身存储的启动配置')
     expect(text).toContain('需重启服务')
     expect(text).toContain('尚未绑定档案的企业')
     expect(text).toContain('存储档案 / 绑定关系')
+    // 本地模式下平台实例与「平台本地存储」档案是同一块盘——这句是用户那次疑问的根因，
+    // 文案必须点明，否则管理员仍会以为这是两份配置
+    expect(text).toContain('与「存储档案」里的「平台本地存储」是同一块盘')
   })
 
   it('依赖联动：切到 minio 后本地目录置灰，云凭据转亮', async () => {

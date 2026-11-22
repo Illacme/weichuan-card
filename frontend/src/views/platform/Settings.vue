@@ -49,7 +49,7 @@
       style="margin-bottom: 14px"
     />
 
-    <!-- 两模块边界：本页只留「平台兜底」的启动配置；多套档案 / 全局默认 /
+    <!-- 两模块边界：本页只留「平台自身存储」的启动配置；多套档案 / 全局默认 /
          企业绑定 / 历史对象迁移全在独立模块。
          早先在本页内嵌过一个「默认档案」选择器，与档案模块的绑定页重复，
          且少了 force / 回滚，管理员容易在两处各选一套还以为会同步——已移除，
@@ -60,7 +60,7 @@
       :closable="false"
       show-icon
       title="所有存储与分发配置都在「文件存储与分发」"
-      description="那里可以保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定、用迁移任务搬运历史对象；原在本页的存储 / 上传启动配置也已搬到该模块的「平台兜底配置」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
+      description="那里可以保存多套存储与分发档案、选全局默认（即时生效，带切换前核对与一键回滚）、给企业单独绑定、用迁移任务搬运历史对象；原在本页的存储 / 上传启动配置也已搬到该模块的「平台自身存储」标签（改动需重启）。本页只保留其它运行参数与首次安装向导。"
       class="storage-module-entry"
     >
       <template #default>
@@ -403,7 +403,7 @@ const GROUP_LABELS: Record<string, string> = {
   wechat: '微信',
   mpupload: '后台上传小程序代码',
   auth: '登录与令牌',
-  storage: '平台兜底存储（启动配置）',
+  storage: '平台自身存储（启动配置）',
   security: '安全与基础设施（只读）',
   feature: '功能开关',
   stats: '数据统计',
@@ -414,7 +414,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '平台兜底（高级）：p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用这里；已绑档案的企业走「文件存储与分发」里的自己的档案。这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，属于进程启动期配置，任一项改动都要重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，请到「文件存储与分发」——那边保存后下一个请求即生效。',
+    '平台自身存储（启动配置）：这里定的是平台自己那份文件存哪——p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用它；已绑档案的企业走「文件存储与分发」里的自己的档案。驱动可选本地磁盘或云桶，选本地时「本地上传目录」与档案模块的「平台本地存储」是同一块盘。这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，属于进程启动期配置，任一项改动都要重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，请到「文件存储与分发」——那边保存后下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -481,7 +481,7 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 // 用户在一边看懂的分区，另一边直接认出来。
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
-    // 三个分区标题统一带「平台存储 · 」前缀：这里定的是平台兜底的落点
+    // 三个分区标题统一带「平台存储 · 」前缀：这里定的是平台自身存储的落点
     // （p/ 平台对象 + 未绑档案企业），与档案模块的多套存储是两件事。
     // local 与云存储两套互斥配置在这一区里按 depState 二选一出现
     { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
@@ -544,7 +544,7 @@ const restartDismissed = ref(false)
 const groups = computed(() => {
   const map = new Map<string, SettingItem[]>()
   for (const it of items.value) {
-    // 存储 / 上传两组已集中到「文件存储与分发 → 平台兜底配置」，
+    // 存储 / 上传两组已集中到「文件存储与分发 → 平台自身存储」，
     // 主列表不再重复展示。items.value 仍是全量：配置向导首装时照常要用这些项。
     if (it.group === 'storage' || it.group === 'upload') continue
     if (!map.has(it.group)) map.set(it.group, [])
@@ -751,7 +751,7 @@ function toggleReady() {
 // 定位到对应配置行（行上锚点 id="set-<key>"）。
 // 防御 scrollIntoView 缺失：jsdom 等环境没有该方法（真实浏览器均有），缺省时静默跳过。
 function jumpTo(key: string) {
-  // 存储 / 上传项已搬到「文件存储与分发 → 平台兜底配置」，本页不再有对应行。
+  // 存储 / 上传项已搬到「文件存储与分发 → 平台自身存储」，本页不再有对应行。
   // 就绪清单里的「去配置」必须跟着走，否则点了没有任何反应（又一条死路）。
   const it = items.value.find((i) => i.key === key)
   if (it && (it.group === 'storage' || it.group === 'upload')) {

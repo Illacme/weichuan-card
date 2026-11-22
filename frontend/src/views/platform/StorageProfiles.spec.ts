@@ -82,7 +82,7 @@ function mountPage() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // 新「平台兜底配置」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
+  // 新「平台自身存储」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
   // 这里显式给实现，避免 clearAllMocks 后拿不到返回值。
   vi.mocked(getSettings).mockResolvedValue({ code: 0, data: [] } as any)
   vi.mocked(api.listStorageProfiles).mockResolvedValue([storage(1, '主站 OSS'), storage(2, '备份桶')] as any)
@@ -221,7 +221,9 @@ describe('文件存储与分发模块', () => {
     expect(w.text()).toContain('不可删除')
     // 目录也必须锁死：它与静态路由共用一个真值源，单独改会让租户对象写进
     // /uploads 读不到的目录，全站裂图且不报错。
-    expect(w.text()).toContain('内置档案的目录跟随')
+    expect(w.text()).toContain('内置档案的目录继承自')
+    expect(w.text()).toContain('upload_dir')
+    expect(w.text()).toContain('重启服务')
     const dirInput = w.find('input[placeholder="留空使用平台 uploads 目录"]')
     expect(dirInput.exists()).toBe(true)
     expect(dirInput.attributes('disabled')).toBeDefined()
@@ -250,6 +252,10 @@ describe('文件存储与分发模块', () => {
     expect(tips[1].props('content')).toContain('系统自带的备份盘')
     expect(tips[1].props('content')).toContain('自动运行')
     expect(tips[1].props('content')).toContain('本地镜像目录')
+    // 悬停提示要点明目录真值源（配置项 key）与改后重启，否则管理员还来档案里找目录框
+    expect(tips[0].props('content')).toContain('upload_dir')
+    expect(tips[1].props('content')).toContain('mirror_dir')
+    expect(tips[1].props('content')).toContain('重启')
     // 两套内置档案分别跳到各自的真值源，不能都指向 upload_dir
     const links = w.findAll('a.builtin-setting-link')
     expect(links).toHaveLength(2)
@@ -262,6 +268,9 @@ describe('文件存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('本地镜像目录')
     expect(w.text()).toContain('不参与任何租户绑定')
+    // 详情必写清目录继承自哪个配置项、改后要重启（不是「跟随系统设置」这种含糊说法）
+    expect(w.text()).toContain('mirror_dir')
+    expect(w.text()).toContain('重启')
     expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 本地上传目录」')
 
     // 下拉里不能出现镜像档案：绑上它等于把备份副本变成主写入目标。
@@ -327,9 +336,10 @@ describe('文件存储与分发模块', () => {
     expect(startBtn.attributes('disabled')).toBeDefined()
   })
 
-  it('新增「平台兜底配置」标签，把系统设置的存储/上传项收进同一模块', () => {
+  it('新增「平台自身存储」标签，把系统设置的存储/上传项收进同一模块', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
-    expect(src).toContain('label="平台兜底配置"')
+    expect(src).toContain('label="平台自身存储（启动配置）"')
+    expect(src).not.toContain('label="平台兜底配置"')
     expect(src).toContain('name="platform"')
     expect(src).toContain('StorageSettingsPanel')
   })

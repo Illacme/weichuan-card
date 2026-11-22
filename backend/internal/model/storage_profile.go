@@ -24,13 +24,13 @@ const (
 )
 
 type StorageProfile struct {
-	ID         int64  `gorm:"primaryKey" json:"id"`
-	Name       string `gorm:"size:64;uniqueIndex" json:"name"`
-	Driver     string `gorm:"size:16;default:local" json:"driver"`
-	Endpoint   string `gorm:"size:255" json:"endpoint"`
-	Bucket     string `gorm:"size:128" json:"bucket"`
-	Region     string `gorm:"size:64" json:"region"`
-	BaseURL    string `gorm:"column:base_url;size:255" json:"baseUrl"`
+	ID       int64  `gorm:"primaryKey" json:"id"`
+	Name     string `gorm:"size:64;uniqueIndex" json:"name"`
+	Driver   string `gorm:"size:16;default:local" json:"driver"`
+	Endpoint string `gorm:"size:255" json:"endpoint"`
+	Bucket   string `gorm:"size:128" json:"bucket"`
+	Region   string `gorm:"size:64" json:"region"`
+	BaseURL  string `gorm:"column:base_url;size:255" json:"baseUrl"`
 	// S3 路径风格由 HostHeader 单点推导（nginxsnippet.Target.PathStyle），
 	// 不设独立字段：曾经有 path_style 列，但运行时零消费，改它不改变任何行为。
 	// 0058 已删列，别再加回来。
