@@ -80,6 +80,10 @@ type def struct {
 // Mask 敏感项在接口响应里的掩码（界面据此显示「已配置」，不回传真实值）。
 const Mask = "******"
 
+// KeyPlatformStorageProfileID 指向 platform_primary 内置档案的 sys_setting 指针。
+// 连接信息本身在 storage_profiles 里，这里只回答「平台实例用哪一套」。
+const KeyPlatformStorageProfileID = "platform_storage_profile_id"
+
 // Item 后台「系统设置」渲染用 DTO。
 // 与 DB 模型 Setting 分开，避免把 secret 的真实值随表结构一并序列化出去。
 type Item struct {
@@ -267,48 +271,19 @@ var registry = []def{
 		Desc: "同一个 IP 每分钟最多允许提交几次开通申请。这个端点不需要登录，一次提交会查手机号、调微信内容安全检测并写一条待审记录，不限流就能被脚本灌满待审列表、把内容安全配额打爆。填 0 或负数会回到默认 10 次——不会把这道防护关掉。"},
 
 	// ---- 文件存储与 CDN（改后需重启：客户端在启动时构造）----
-	// 凭据写错最坏结果是「上传失败」，改回来重启即可自愈，不会把自己锁在系统外，
-	// 因此允许在界面维护；留空则回退同名环境变量。
-	{Key: "storage_driver", Group: "storage", Type: "string", Restart: true, EnvVar: "STORAGE_DRIVER",
-		Name:     "存储方式",
-		Options:  []string{"local", "minio", "oss", "s3"},
-		Validate: oneOf("local", "minio", "oss", "s3"),
-		// s3 与 minio 共用同一套端点 / 桶 / 凭据字段与 S3 客户端实现，差别只在
-		// 「声明的用途」：minio 面向自建 MinIO，s3 面向腾讯云 COS / 华为云 OBS /
-		// 七牛云 / AWS S3 / Cloudflare R2 等 S3 兼容云（这类云常需填存储区域）。
-		Desc: "图片和视频存到哪里：local=服务器本地磁盘，minio=MinIO 或自建 S3 兼容服务，oss=阿里云 OSS，s3=S3 兼容云存储（腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2 等）。留空则使用部署环境里配置的值。改完要重启服务才生效。"},
-	{Key: "storage_endpoint", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_ENDPOINT",
-		Name: "存储服务端点",
-		// 七牛云必须给例子：它的端点不是「厂商主域名」，而是按**空间所在区域**分的
-		// s3.<区域>.qiniucs.com，填错了报的是 S3 错误码（签名不匹配 / NoSuchBucket），
-		// 看上去像密钥错，实际是端点点错了。区域只能从控制台存储空间概览的
-		// 「S3 域名」弹窗里看——匿名探测在所有区域都只回 NotSupportAnonymous，探不出来。
-		Desc: "对象存储的服务地址，只填域名或 IP:端口，不要带 http://（例：127.0.0.1:9000）。MinIO / 阿里云 OSS / 各类 S3 兼容云共用这一项；七牛云按空间所在区域填 s3.<区域>.qiniucs.com，例：s3.cn-south-1.qiniucs.com（区域在控制台存储空间概览的「S3 域名」里看，不是空间绑定的 CDN 域名）。改完要重启服务才生效。"},
-	{Key: "storage_bucket", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_BUCKET",
-		Name: "存储空间名称",
-		Desc: "对象存储里存放文件的桶名（MinIO 与阿里云 OSS 都叫 bucket）。上传的文件都会存进这个桶。改完要重启服务才生效。"},
-	{Key: "storage_access_key", Group: "storage", Type: "string", Restart: true, EnvVar: "MINIO_ACCESS_KEY",
-		Name: "存储 AccessKey",
-		Desc: "对象存储的用户名（阿里云 OSS 里叫 AccessKeyId）。改完要重启服务才生效。"},
-	{Key: "storage_secret_key", Group: "storage", Type: "string", Secret: true, Restart: true, EnvVar: "MINIO_SECRET_KEY",
-		Name: "存储 SecretKey",
-		Desc: "对象存储的密码（阿里云 OSS 里叫 AccessKeySecret）。界面不会显示已保存的内容，填新值即覆盖。改完要重启服务才生效。"},
-	{Key: "storage_use_ssl", Group: "storage", Type: "bool", Restart: true, EnvVar: "MINIO_USE_SSL",
-		Name: "存储启用 HTTPS",
-		// 「OSS 用不到」必须写进 Desc：NewOssUploader 不收 SSL 参数（阿里云客户端
-		// 固定 https），oss 驱动下这一项是空操作，前端也把它置灰（2026-10-22 全量核查口径）。
-		Desc: "连接 MinIO / S3 兼容存储时是否走 HTTPS（阿里云 OSS 固定 HTTPS，用不到这项）。留空则使用部署环境里配置的值。改完要重启服务才生效。"},
-	{Key: "storage_region", Group: "storage", Type: "string", Restart: true, EnvVar: "STORAGE_REGION",
-		Name: "存储区域",
-		// 为什么允许留空、错了也不拦：minio-go 的 Region 留空时会先按 endpoint URL
-		// 猜（AWS / Google 可猜中），猜不到再向服务端发 GetBucketLocation 探测
-		// （bucket-cache.go），主流 S3 云都能自动拿到；只有探测失败或不实现该接口的
-		// 云才需要手填。填错的最坏结果是上传失败，改回正确值重启即可自愈，
-		// 不属于「填错会把自己锁在系统外」的项，故不加 Validate。
-		Desc: "连接 MinIO / S3 兼容存储（腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2）时使用的区域，例：ap-guangzhou、us-east-1。留空会自动探测，大多数服务不用填；填错会导致上传失败，改回正确值重启即可恢复。阿里云 OSS 用不到这项。改完要重启服务才生效。"},
-	{Key: "storage_public", Group: "storage", Type: "bool", Restart: true, EnvVar: "STORAGE_PUBLIC",
-		Name: "存储空间公开访问",
-		Desc: "存储桶是否允许公开访问。选「关」（私有桶）时，已上传的图片只能通过限时签名链接访问。改完要重启服务才生效。"},
+	// 平台自身存储的**连接信息**（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）已收进
+	// storage_profiles 的内置档案 purpose=platform_primary（迁移 0059），这里不再
+	// 重复登记：同一份配置放两处，必然出现「档案里自检通过、平台实际还在用旧桶」。
+	//
+	// sys_setting 只留一个指针和部署期目录事实。指针由
+	// storageprofile.EnsureBuiltinPlatformPrimary 启动时自动写入，唯一合法目标是
+	// 那套内置档案；前端分组不展示它（改连接信息去「文件存储与分发 → 存储档案」），
+	// 留在 registry 是为了 Upsert 的类型契约，也让排障时能直接从设置接口看到指向。
+	// 这里刻意写字面量而不是常量：settings_contract 的守门按 `Key: "..."` 解析
+	// registry，常量引用会让它整条漏掉（夹具对账随之误报「夹具凭空造了」）。
+	{Key: "platform_storage_profile_id", Group: "storage", Type: "string", Restart: true,
+		Name: "平台自身存储档案",
+		Desc: "平台自己的文件（p/ 平台对象与未绑定档案的企业）使用哪一套存储档案。由系统自动指向内置的「平台自身存储」档案，不需要手工修改；要改驱动 / 桶 / 凭据请到「文件存储与分发 → 存储档案」编辑那一行，保存后重启服务。"},
 	{Key: "upload_dir", Group: "storage", Type: "string", Restart: true, EnvVar: "UPLOAD_DIR",
 		Name: "本地上传目录",
 		Desc: "存储方式选 local 时，文件保存在服务器上的哪个目录（小程序码缓存也放这里）。换成其它存储方式后这一项不再起作用。改完要重启服务才生效。"},
@@ -318,14 +293,6 @@ var registry = []def{
 	{Key: "local_mirror_enabled", Group: "storage", Type: "bool", Value: "true",
 		Name: "本地镜像总开关",
 		Desc: "是否开启「上传成功后从云异步回拉本地备份」。这是平台总闸；每家企业还要在「企业管理」里单独打开该租户的开关才生效。平台自身对象（小程序码、素材采用等 p/ 对象）只受本总闸控制。关闭只停止新增镜像，已生成的副本不会删除。"},
-	{Key: "upload_base_url", Group: "storage", Type: "string", Restart: true, EnvVar: "UPLOAD_BASE_URL",
-		Name:     "文件访问基址",
-		Validate: httpURLOrEmpty(),
-		// 「仅对象存储需要」必须写进 Desc：local 驱动 Save 返回相对地址 /uploads/...，
-		// 端上自行拼基址（浏览器按页面源、小程序用 miniprogram_base_url），
-		// 这一项不参与——早期文案说「小程序和后台都用它拼」对 local 是误导，
-		// 界面联动也已按 minio / oss / s3 专属过滤（2026-10-22 全量核查统一口径）。
-		Desc: "已上传文件对外访问的根地址（仅 minio / oss / s3 需要），必须是 http:// 或 https:// 开头的完整地址（例：https://cdn.example.com）。小程序和后台都用它拼出完整链接，填错的话所有图片都会打不开；本地存储用相对地址，不经过这项。**视频对这个值最敏感**：请确认拼出来的 mp4 地址能在浏览器里直接播放（HTTPS 证书有效、对象可公开读），证书失效或只填了裸域名时，图片可能还看得见、视频却是一块黑屏 + 00:00。七牛云填空间绑定的 CDN 域名，不是 s3.<区域>.qiniucs.com 那个 S3 端点。**七牛 S3 兼容端点写进去的对象会落在「<S3 空间名>/」目录下**（控制台文件管理里看到 aitel/xxx.mp4 这种文件名），此时基址必须把这个目录一起带上，例：https://cdn.example.com/aitel，只填裸域名会拼出 404 的地址。自测：curl -I http://<CDN域名>/<已上传对象> 和 /aitel/<已上传对象>，哪个返回 200 就按哪个填。改完要重启服务才生效，且**只影响新上传**——已入库的完整 URL 不会自动更新，要重新上传或改库里那条记录。"},
 	{Key: "cdn_enabled", Group: "storage", Type: "bool", Restart: true, EnvVar: "CDN_ENABLED",
 		Name: "启用 CDN 刷新",
 		// 2026-10-23：从「只支持阿里云」扩到五家（阿里云 / 腾讯云 / 七牛云 /

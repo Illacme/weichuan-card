@@ -366,6 +366,14 @@ func main() {
 	if mirrorErr != nil {
 		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
+	// 平台自身存储的连接信息放在第三套内置档案里（迁移 0059），sys_setting 只留
+	// 一个指向它的 id。启动期读一次：档案首次生成时用历史 sys_setting / 环境变量
+	// 播种，之后管理员在档案页改的值才是真值源，重启只会被读取、不会被覆盖。
+	platformProfile, err := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
+	if err != nil {
+		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", err)
+	}
+	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
 	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))
@@ -381,10 +389,10 @@ func main() {
 	handler.RegisterLicenseView(r, db)                // 授权到期视图：企业管理员看自己的剩余天数，平台超管看即将到期名单
 	handler.RegisterURLProbe(r, db)                   // 后台「测试地址」：SSRF 受限的 HEAD 探测（公司简介视频地址自查）
 
-	// 文件上传：存储驱动可配（local 默认 / minio / oss），业务代码不变。
-	// 驱动初始化失败时降级本地（而不是 Fatal）：凭据在界面里改错的情况下，
+	// 文件上传：平台实例按内置档案构造（local 默认 / minio / oss / s3），业务代码不变。
+	// 构造失败时降级本地（而不是 Fatal）：凭据在档案里填错的情况下，
 	// 进程必须还能起来，管理员才进得去后台把它改回来（「改错可自愈」的底线）。
-	up := newUploaderWithFallback(cfg)
+	up, platformDriver := platformUploader(platformProfile, cfg)
 	// CDN 刷新器（可选）：启用后覆盖写会触发边缘缓存失效。厂商由 cdn_provider 决定，
 	// 各厂商要求的凭据不同（Cloudflare 只要 Token+Zone ID，AK/SK 三家不需要资源标识），
 	// 校验放在 storage.NewCDNRefresher 里——配不全只记一行日志、不启用刷新，
@@ -417,7 +425,7 @@ func main() {
 	// 注入，服务两类调用方——平台对象（p/ 前缀）与**没有绑定档案**的租户。
 	// 历史上这里还有 TENANT_STORAGE_ROUTE 开关与 tenant_storage_configs 分流，
 	// 第七十五轮随该表一起删除：产品未商用，兼容层不值得每个请求多查一次库。
-	profiles.SetPlatform(up, cfg.StorageDriver)
+	profiles.SetPlatform(up, platformDriver)
 	var effective storage.Resolver = profiles
 	handler.RegisterUpload(r, db, cfg, effective, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
 	handler.RegisterStorage(r, db, effective, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流
@@ -557,44 +565,17 @@ func runMigrate(cfg config.Config) {
 	log.Printf("[MIGRATE] 已应用 %d 个迁移：%s", len(applied), strings.Join(applied, ", "))
 }
 
-// newUploaderWithFallback 构造存储实现；失败时降级为本地磁盘并打印醒目告警。
-// 不 Fatal 是刻意的：凭据可能是在后台「系统设置」里填错的，若进程起不来，
-// 管理员就再也进不去后台改回来——降级保证「改错可自愈」。
-func newUploaderWithFallback(cfg config.Config) storage.Uploader {
-	up, err := newUploader(cfg)
+// platformUploader 按内置档案构造平台实例；失败时降级本地并回报**实际**驱动。
+//
+// 降级不 Fatal 是「改错可自愈」的底线：凭据在档案里填错时进程还得起来，
+// 管理员才进得去后台把它改回来。回报 local 而不是档案里写着却没生效的云驱动，
+// 是为了让 DriverFor / 后台能力探测如实反映当前落点。
+func platformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uploader, string) {
+	up, err := storageprofile.BuildPlatformUploader(sp, cfg)
 	if err == nil {
-		return up
+		return up, sp.Driver
 	}
-	log.Printf("[WARN] 存储驱动 %q 初始化失败：%v；已降级为本地磁盘存储。"+
-		"请到「系统设置 → 文件存储」修正后重启服务。", cfg.StorageDriver, err)
-	return &storage.LocalUploader{
-		Dir:      cfg.UploadDir,
-		BaseURL:  cfg.UploadBaseURL,
-		MaxBytes: 10 * 1024 * 1024,
-		AllowExt: storage.DefaultAllowExt,
-	}
-}
-
-// newUploader 按存储驱动构造文件存储实现（local / minio / oss / s3），统一返回 storage.Uploader
-func newUploader(cfg config.Config) (storage.Uploader, error) {
-	const maxBytes = 10 * 1024 * 1024 // 10MB
-	switch cfg.StorageDriver {
-	// minio 与 s3 共用同一套 S3 客户端实现：端点 / 桶 / 凭据 / SSL / 区域全部来自
-	// 同一批界面字段（storage_region 对两者都生效），枚举分开只为界面上的归属说明
-	// ——s3 面向腾讯云 COS / 华为云 OBS / 七牛云 / AWS S3 / R2 等 S3 兼容云，
-	// 这类云常需要显式指定区域，minio-go 的自动探测对它们并非总可靠。
-	case "minio", "s3":
-		return storage.NewMinioUploader(cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey,
-			cfg.MinioBucket, cfg.UploadBaseURL, cfg.StorageRegion, cfg.MinioUseSSL, maxBytes, storage.DefaultAllowExt)
-	case "oss":
-		return storage.NewOssUploader(cfg.OssEndpoint, cfg.OssAccessKeyID, cfg.OssAccessKeySecret,
-			cfg.OssBucket, cfg.UploadBaseURL, maxBytes, storage.DefaultAllowExt)
-	default:
-		return &storage.LocalUploader{
-			Dir:      cfg.UploadDir,
-			BaseURL:  cfg.UploadBaseURL,
-			MaxBytes: maxBytes,
-			AllowExt: storage.DefaultAllowExt,
-		}, nil
-	}
+	log.Printf("[WARN] 平台自身存储档案 %d 初始化失败：%v；已降级为本地磁盘存储。"+
+		"请到「文件存储与分发 → 存储档案 → 平台自身存储」修正后重启服务。", sp.ID, err)
+	return storageprofile.LocalPlatformFallback(cfg), "local"
 }

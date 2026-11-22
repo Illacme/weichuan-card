@@ -123,20 +123,23 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		// local_dir 若随请求改动，下面 builtin 分支要能识别出来（apply 已覆盖 row）。
 		reqChangedLocalDir := req.LocalDir != nil && strings.TrimSpace(*req.LocalDir) != origLocalDir
 		applyStorageProfileReq(&row, &req)
-		// 内置档案的驱动锁死为 local：它是「云配置全坏时还能上传」的唯一退路。
-		// 允许改成 minio/oss 等于让管理员可以亲手删掉这条退路（而删除按钮又被禁用，
-		// 形成「删不掉但能改成不可用」的假安全）。
 		if row.Builtin {
-			if row.Driver != nginxsnippet.DriverLocal {
+			// 三套内置档案的边界不同，不能一刀切：
+			//   - platform_primary 是平台自己的连接信息，驱动与桶本来就该能改（改完
+			//     重启），自检接口复用同一条；
+			//   - tenant_fallback / platform_mirror 是两块本地盘，驱动锁死 local。
+			//     允许改成云等于让管理员亲手删掉「云配置全坏时还能上传」的退路，
+			//     而删除按钮又是禁用的——形成「删不掉但能改成不可用」的假安全。
+			if row.Purpose != model.ProfilePurposePlatformPrimary &&
+				row.Driver != nginxsnippet.DriverLocal {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的驱动不可更改：它是云存储不可用时的兜底"})
 				return
 			}
-			// 目录同样锁死：静态路由 r.Static("/uploads", cfg.UploadDir) 与平台实例都
-			// 绑在 cfg.UploadDir 上。若内置档案单独改成别的目录，绑定它的租户写新目录、
-			// 静态路由却从旧目录读，全站裂图且两边都不报错。要换目录请改系统设置的
-			// upload_dir 并重启，启动时 EnsureBuiltinLocal 会把它同步到这个档案。
+			// 目录对所有内置档案都锁死：静态路由 r.Static("/uploads", cfg.UploadDir)
+			// 与平台实例都绑在 cfg.UploadDir 上。若内置档案单独改成别的目录，绑定它的
+			// 租户写新目录、静态路由却从旧目录读，全站裂图且两边都不报错。
 			if reqChangedLocalDir {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的目录不可单独修改：请到「系统设置 → 文件存储与 CDN → 本地上传目录」修改后重启服务"})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置档案的目录不可单独修改：请到「平台自身存储 → 本地上传目录 / 本地镜像目录」修改后重启服务"})
 				return
 			}
 			row.LocalDir = origLocalDir
@@ -563,11 +566,16 @@ func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	if err := db.First(&sp, storageID).Error; err != nil {
 		return "存储档案不存在"
 	}
-	// 平台镜像档案只接收异步回拉的备份副本，绝不能成为任何租户的写入目标：
-	// 一旦绑定，新文件会被写进备份目录，而备份脚本与出参域名都不认这个落点，
-	// 结果是管理员以为切了云桶、实际全写进了私有备份盘。
-	if sp.Purpose == model.ProfilePurposePlatformMirror {
+	// 两套内置档案绝不能成为租户的写入目标：
+	//   - 平台镜像只接收异步回拉的备份副本，绑定后新文件写进备份目录，
+	//     备份脚本与出参域名都不认这个落点；
+	//   - 平台自身存储装的是 p/ 平台对象与无绑定企业的字节，绑定给租户会把
+	//     客户文件写进平台桶（或让平台对象写进客户桶），两边都不报错。
+	switch sp.Purpose {
+	case model.ProfilePurposePlatformMirror:
 		return "该档案是平台本地镜像，只用于备份副本，不能绑定为存储写入目标"
+	case model.ProfilePurposePlatformPrimary:
+		return "该档案是平台自身存储，只供平台对象与未绑定企业使用，不能绑定给企业"
 	}
 	if deliveryID == 0 {
 		return ""

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, nextTick } from 'vue'
+import { defineComponent } from 'vue'
 
 vi.mock('@/api/settings', () => ({
   getSettings: vi.fn(),
@@ -61,16 +61,9 @@ const item = (key: string, name: string, group: string, value: string, extra: Re
 })
 
 const ITEMS = [
-  item('storage_driver', '存储方式', 'storage', 'local', { options: ['local', 'minio', 'oss', 's3'], restart: true }),
+  // 迁移 0059：连接信息已进存储档案，这里只有指针与部署期目录
+  item('platform_storage_profile_id', '平台自身存储档案', 'storage', '1', { restart: true }),
   item('upload_dir', '本地上传目录', 'storage', '/srv/uploads', { envVar: 'UPLOAD_DIR', restart: true }),
-  item('storage_endpoint', '对象存储端点', 'storage', '', { envVar: 'MINIO_ENDPOINT', restart: true }),
-  item('storage_bucket', 'Bucket', 'storage', '', { restart: true }),
-  item('storage_access_key', 'AccessKey', 'storage', '', { restart: true }),
-  item('storage_secret_key', 'SecretKey', 'storage', '', { secret: true, restart: true }),
-  item('storage_use_ssl', '使用 HTTPS', 'storage', 'true', { type: 'bool', restart: true }),
-  item('storage_region', '区域', 'storage', '', { restart: true }),
-  item('storage_public', '公开访问', 'storage', 'true', { type: 'bool', restart: true }),
-  item('upload_base_url', '上传基址', 'storage', '', { restart: true }),
   item('cdn_enabled', '启用 CDN', 'storage', 'false', { type: 'bool', restart: true }),
   item('cdn_provider', 'CDN 厂商', 'storage', 'aliyun', { restart: true }),
   item('cdn_access_key_id', 'CDN AK', 'storage', '', { restart: true }),
@@ -111,7 +104,7 @@ describe('平台自身存储配置面板', () => {
     await flush()
     expect(getSettings).toHaveBeenCalled()
     const text = w.text()
-    expect(text).toContain('存储方式')
+    expect(text).toContain('平台自身存储档案')
     expect(text).toContain('本地上传目录')
     expect(text).toContain('镜像目录')
     expect(text).toContain('租户配额') // 原页面的未分区项也不能丢
@@ -119,33 +112,30 @@ describe('平台自身存储配置面板', () => {
     expect(text).toContain('签名时效')
     expect(text).not.toContain('brand_name')
     expect(text).not.toContain('jwt_key')
-    // 六个分区齐全
-    expect(w.findAll('.config-section')).toHaveLength(7)
+    // 连接信息不在系统设置里（迁移 0059）
+    expect(text).not.toContain('storage_driver')
+    // 五个分区齐全
+    expect(w.findAll('.config-section')).toHaveLength(6)
   })
 
   it('顶部说明讲清谁用这组配置、改动要重启，并指回本模块其它标签', async () => {
     const w = mountPanel()
     await flush()
     const text = w.text()
-    expect(text).toContain('平台自身存储的启动配置')
+    expect(text).toContain('平台自身存储的部署目录')
     expect(text).toContain('需重启服务')
-    expect(text).toContain('尚未绑定档案的企业')
-    expect(text).toContain('存储档案 / 绑定关系')
-    // 本地模式下平台实例与「平台本地存储」档案是同一块盘——这句是用户那次疑问的根因，
-    // 文案必须点明，否则管理员仍会以为这是两份配置
-    expect(text).toContain('与「存储档案」里的「平台本地存储」是同一块盘')
+    expect(text).toContain('存储档案')
+    // 连接信息已进档案：面板必须把人指过去，不能让人继续找存储方式下拉
+    expect(text).toContain('驱动 / 桶 / 凭据 / 访问基址')
+    expect(text).toContain('同一块盘')
   })
 
-  it('依赖联动：切到 minio 后本地目录置灰，云凭据转亮', async () => {
+  it('部署目录不再随驱动置灰：连接信息已进档案，面板只按 CDN 联动', async () => {
     const w = mountPanel()
     await flush()
+    // 从内置档案跳来定位 upload_dir 时一定能找到，不会被任何联动隐藏
     expect(rowOf(w, 'upload_dir').classes()).not.toContain('row-dim')
-    const sel = rowOf(w, 'storage_driver').find('select.el-select')
-    await sel.setValue('minio')
-    await nextTick()
-    // 面板只置灰不隐藏：从内置档案跳来定位 upload_dir 时不会扑空
-    expect(rowOf(w, 'upload_dir').classes()).toContain('row-dim')
-    expect(rowOf(w, 'storage_endpoint').classes()).not.toContain('row-dim')
+    expect(rowOf(w, 'mirror_dir').classes()).not.toContain('row-dim')
   })
 
   it('保存只提交改动项，值以字符串提交', async () => {
@@ -165,37 +155,37 @@ describe('平台自身存储配置面板', () => {
     const w = mountPanel()
     await flush()
     // 夹具里 secret 项原值为空（后端给掩码，界面留空），直接改值模拟重新填写
-    const pwd = rowOf(w, 'storage_secret_key').find('input.el-input')
+    const pwd = rowOf(w, 'cdn_access_key_secret').find('input.el-input')
     await pwd.setValue('new-secret')
     await flush()
     await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
     await flush()
     const payload = vi.mocked(updateSettings).mock.calls[0][0] as Record<string, string>
-    expect(payload.storage_secret_key).toBe('new-secret')
+    expect(payload.cdn_access_key_secret).toBe('new-secret')
     expect(ElMessage.success).toHaveBeenCalled()
   })
 
   it('保存返回需重启项时给出常驻提示', async () => {
     vi.mocked(updateSettings).mockImplementationOnce(async () => ({
-      code: 0, data: { restartKeys: ['storage_driver'] },
+      code: 0, data: { restartKeys: ['cdn_provider'] },
     }) as any)
     const w = mountPanel()
     await flush()
-    const sel = rowOf(w, 'storage_driver').find('select.el-select')
-    await sel.setValue('minio')
+    const input = rowOf(w, 'cdn_provider').find('input.el-input')
+    await input.setValue('cloudflare')
     await flush()
     await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
     await flush()
     expect(w.text()).toContain('刚保存的改动需要重启才生效')
-    expect(w.text()).toContain('存储方式')
+    expect(w.text()).toContain('CDN 厂商')
   })
 
   it('破坏性改动弹确认，取消则不提交且草稿保留', async () => {
     vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce(new Error('cancel'))
     const w = mountPanel()
     await flush()
-    const sel = rowOf(w, 'storage_driver').find('select.el-select')
-    await sel.setValue('minio')
+    const input = rowOf(w, 'upload_dir').find('input.el-input')
+    await input.setValue('/mnt/new-uploads')
     await flush()
     await w.findAll('button').find((b) => b.text() === '保存存储配置')!.trigger('click')
     await flush()

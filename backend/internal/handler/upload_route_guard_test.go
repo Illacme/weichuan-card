@@ -148,8 +148,8 @@ func TestAssemblyPassesResolverNotUploader(t *testing.T) {
 		src, err := os.ReadFile(f)
 		require.NoError(t, err)
 		body := stripGoComments(string(src))
-		require.Contains(t, body, "profiles.SetPlatform(up, cfg.StorageDriver)",
-			"%s 必须把平台实例注入档案解析器", f)
+		require.Contains(t, body, "profiles.SetPlatform(up, platformDriver)",
+			"%s 必须把平台实例注入档案解析器，且驱动取实际生效值（档案构造失败会降级 local）", f)
 		// 静态包装层已整体移出生产包（测试桩在 internal/storage/testsupport），
 		// 这里连「测试支持包」一起拦：装配点引用它等于把桩当成生产实现。
 		require.NotContains(t, body, "NewStaticResolver(",

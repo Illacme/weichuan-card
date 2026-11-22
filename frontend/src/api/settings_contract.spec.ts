@@ -260,7 +260,7 @@ describe('③ 视图测试夹具：Settings.spec.ts 的 items ↔ setting.regist
   it('量尺自己有读数：夹具不是三行玩具，且覆盖了大部分分组', () => {
     expect(registry.length).toBeGreaterThan(40)
     expect(fixture.length).toBeGreaterThanOrEqual(30)
-    expect(fixture.map((f) => f.key)).toContain('storage_driver')
+    expect(fixture.map((f) => f.key)).toContain('platform_storage_profile_id')
     expect(fixture.map((f) => f.key)).toContain('db_dsn')
     expect(new Set(fixture.map((f) => f.group)).size).toBeGreaterThanOrEqual(8)
   })

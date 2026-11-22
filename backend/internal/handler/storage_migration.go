@@ -82,10 +82,11 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源或目标档案不存在"})
 			return
 		}
-		// 镜像档案是备份落点，不是业务桶：既不能当迁移源（里面是副本，不是真数据），
-		// 也不能当目标（会把主写入指向备份盘，且自动切换后出参全错）。
-		if mirrorProfileInvolved(db, req.SourceProfileID, req.TargetProfileID) {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "平台本地镜像档案不能作为迁移的源或目标"})
+		// 内置档案不是普通业务桶：镜像是备份落点（里面是副本，不是真数据），
+		// 平台自身存储承载 p/ 平台对象与无绑定企业的字节。两者当迁移源或目标，
+		// 都会让「主写入在哪」这件事实失去唯一答案，自动切换后出参全错。
+		if builtinProfileInvolved(db, req.SourceProfileID, req.TargetProfileID) {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "平台内置档案（自身存储 / 本地镜像）不能作为迁移的源或目标"})
 			return
 		}
 		if req.AutoSwitch && req.DryRun {
@@ -342,14 +343,15 @@ func switchBindingAfterMigration(db *gorm.DB, job *model.StorageMigrationJob) er
 	return db.Save(&b).Error
 }
 
-// mirrorProfileInvolved 判断给定档案里有没有平台本地镜像。
+// builtinProfileInvolved 判断给定档案里有没有平台内置档案（自身存储 / 本地镜像）。
 // 查库失败按「有」处理（fail closed）：宁可拒绝一次合法迁移，
-// 也不能在库抖动时让主写入悄悄落到备份盘。
-func mirrorProfileInvolved(db *gorm.DB, ids ...int64) bool {
+// 也不能在库抖动时让主写入悄悄落到备份盘或平台桶。
+func builtinProfileInvolved(db *gorm.DB, ids ...int64) bool {
 	var n int64
 	if err := db.Model(&model.StorageProfile{}).
-		Where("id IN ? AND purpose = ?", ids, model.ProfilePurposePlatformMirror).
-		Count(&n).Error; err != nil {
+		Where("id IN ? AND purpose IN ?", ids, []string{
+			model.ProfilePurposePlatformPrimary, model.ProfilePurposePlatformMirror,
+		}).Count(&n).Error; err != nil {
 		return true
 	}
 	return n > 0

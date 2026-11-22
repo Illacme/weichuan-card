@@ -12,15 +12,19 @@ import "time"
 // 凭据按当前产品决策明文入库：回显掩码、SecretKey 不回传。数据库备份与访问控制
 // 必须受控；项目没有 re-key 机制，将来改加密是一次专门迁移，不要在这里半做。
 //
-// Purpose 只标记**内置档案的用途**（迁移 0056）：
+// Purpose 只标记**内置档案的用途**（迁移 0056 / 0059）：
+//   - platform_primary：平台自身那份存储的连接信息（驱动 / 桶 / 凭据 / 基址），
+//     启动期由它构造平台实例并 SetPlatform；sys_setting 只留一个指向它的 id；
 //   - tenant_fallback：租户退路，dir 与 cfg.UploadDir 同源；
 //   - platform_mirror：平台本地镜像落点，独立目录，私有，不参与任何绑定。
 //
-// 普通档案为空串。两套内置档案都不可删 / 不可改驱动与目录，但它们**不是**
-// 可互换的：把镜像档案绑给租户会让备份副本变成主写入目标，属于静默改落点。
+// 普通档案为空串。内置档案都不可删，但它们**不是**可互换的：把镜像档案绑给租户
+// 会让备份副本变成主写入目标，把平台档案绑给租户会让 p/ 对象写进客户桶。
+// platform_primary 的连接信息可在界面改（改完重启），目录仍跟随 cfg.UploadDir。
 const (
-	ProfilePurposeTenantFallback = "tenant_fallback"
-	ProfilePurposePlatformMirror = "platform_mirror"
+	ProfilePurposePlatformPrimary = "platform_primary"
+	ProfilePurposeTenantFallback  = "tenant_fallback"
+	ProfilePurposePlatformMirror  = "platform_mirror"
 )
 
 type StorageProfile struct {

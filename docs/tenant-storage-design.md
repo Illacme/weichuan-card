@@ -42,11 +42,11 @@
 
 | 曾经的层 | 落点 | 结局 |
 | --- | --- | --- |
-| ① 平台级平铺 | `sys_setting` 的 `storage_*` | **保留，但角色收窄**：只用于构造「平台自身那一份实例」（`Resolver.SetPlatform`），服务平台对象（`p/library/...`、`p/wxacode/...`）与**没有绑定档案**的租户。不再作为按企业分流的兜底，也不参与任何租户判定；同时仍是 `STORAGE_*` / `MINIO_*` 环境变量的界面映射 |
+| ① 平台级平铺 | 原为 `sys_setting` 的 `storage_*`，迁移 0059 后为 `storage_profiles` 的 `platform_primary` 内置档案 | **配置已搬进档案**：连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）现在只有 `storage_profiles` 一处真值源；`sys_setting` 只保留 `platform_storage_profile_id` 指针与 `upload_dir` / `mirror_dir` 等部署期目录事实。启动期按档案构造 `Resolver.SetPlatform`，服务 `p/` 平台对象与未绑定档案的企业 |
 | ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | **已删除**：模型、handler、rekey 子命令、repository、前端弹窗、`TENANT_STORAGE_ROUTE` 开关、生成器 `--source=legacy` 全部移除；迁移 `0055` DROP 该表 |
 | ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
 
-### 为什么 ① 不删
+### 为什么平台自身实例仍要单独存在
 
 平台自己也需要一个桶，这不是历史包袱：
 
@@ -54,14 +54,18 @@
   它们的 URL 由平台 nginx 的 `/uploads/` 回退段托管。键前缀与实例必须同源，
   写进客户桶会「字节在客户桶、URL 是平台域名」→ 取图 404。
 - 它是**启动期一次**构造的进程级实例，运行期零查询；而 ② 是每个上传一次必查的
-  表（`company_id` 上的一次必然落空）。删 ② 才是性能收益，删 ① 只有风险。
-- 私有部署靠改 env 起服务时走的正是这条（`STORAGE_*` / `MINIO_*`）。
+  表（`company_id` 上的一次必然落空）。删 ② 才是性能收益，删平台实例只有风险。
+- 私有部署靠 `STORAGE_*` / `MINIO_*` / `OSS_*` 起服务的语义保留，但只作为
+  **首次播种**：档案一旦生成，管理员在档案页改的连接信息才是真值源，重新启动
+  不会再被环境变量或历史 `sys_setting` 覆盖（迁移 0059，见 §0.3）。
 
 #### UI 命名：叫「平台自身存储」，不叫「平台兜底」（2026-11-22 定）
 
 这组配置的分组标签与所在标签页统一叫 **「平台自身存储（启动配置）」**，不用「平台兜底」——后者会让管理员以为它是「出了事才用的备用配置」，从而忽略它其实是平台对象（`p/`）与无绑定企业的**唯一主落点**。「兜底」一词只留给真正退位的那一层：内置档案 `tenant_fallback`（界面「平台本地存储」），它才是云坏掉时的退路。
 
-三者语义在界面上必须说得出来：① 是**平台自己那份存哪的启动参数**（可 local 可云）；② 「平台本地存储」是 `upload_dir` 那块可被绑定的本地退路盘——① 选 local 时两者是**同一块盘的两个名字**；③ 「平台本地镜像」是 `mirror_dir` 的私有备份副本，只进不出、不可绑定。内置档案详情与悬停提示必须点明目录继承自哪配置项（`upload_dir` / `mirror_dir`）且改后需重启，否则管理员会回到档案里找根本不存在的目录输入框。守门见 `Settings.spec.ts`、`StorageProfiles.spec.ts`、`StorageSettingsPanel.spec.ts` 的对应断言。
+迁移 0059 后这个标签页只管**部署期目录事实**（`upload_dir` / `mirror_dir` / 总闸 / CDN / 配额）和指向档案的指针；驱动、桶、凭据、基址、公开读已统一到「文件存储与分发 → 存储档案」里的 `platform_primary` 行，见 §0.3。名字没变，职责收窄了——别再按旧口径去系统设置里找连接信息。
+
+三者语义在界面上必须说得出来：① 是**平台自己那份连接信息 + 启动期目录**（可 local 可云，连接信息在档案、目录在系统设置）；② 「平台本地存储」是 `upload_dir` 那块可被绑定的本地退路盘——① 选 local 时两者是**同一块盘的两个名字**；③ 「平台本地镜像」是 `mirror_dir` 的私有备份副本，只进不出、不可绑定。内置档案详情与悬停提示必须点明目录继承自哪配置项（`upload_dir` / `mirror_dir`）且改后需重启，否则管理员会回到档案里找根本不存在的目录输入框。守门见 `Settings.spec.ts`、`StorageProfiles.spec.ts`、`StorageSettingsPanel.spec.ts` 的对应断言。
 
 ### 删除 ② 的直接收益
 
@@ -95,6 +99,9 @@
 ---
 
 ## 0.2 本地镜像：两套不可删的本地落点（2026-11-21 定稿）
+
+> 本节只讲**目录落点**。第三套内置档案 `platform_primary` 装的是平台连接信息，
+> 不是一块新的本地盘，见 §0.3。别把「三套 builtin」误读成「三块本地目录」。
 
 存储模型收敛到一套之后，还剩一个真实缺口：**云桶里只有一份字节**。桶被误删、
 欠费清空、AK 泄露被人删对象，都意味着图片 / 视频永久消失，而数据库里只剩一堆键。
@@ -133,6 +140,49 @@
 镜像只是备份，URL 仍指向云桶 / CDN。这意味着「切回本地」不是改一个开关就能完成：
 需要另行把出参 origin 指到本地并确认副本完整。当前不做，写在这里是为了避免
 把「有备份」误读成「可随时切回」。
+
+## 0.3 平台自身存储档案化（迁移 0059）
+
+上一轮把平台连接信息留在 `sys_setting`，与档案页形成两套界面、两套校验、两套自检：
+管理员在档案里把桶配好并自检通过，平台那份实例却可能还在用旧值，取图 404 而两边日志都没有错。
+迁移 0059 把这件事一次切到位：**连接信息只有 `storage_profiles` 一处真值源**。
+
+三套内置档案的分工现在是：
+
+| 用途 | 装什么 | 谁能改 |
+| --- | --- | --- |
+| `platform_primary` | 平台自身连接信息：驱动 / 端点 / 桶 / 区域 / AK/SK / 基址 / HTTPS / 公开读；目录字段只是 `upload_dir` 的镜像 | 平台超管在档案页改，保存后**重启**生效；可复用档案自检 |
+| `tenant_fallback` | `upload_dir` 那块本地退路盘 | 只改展示名；驱动锁 local，目录跟随 `upload_dir` |
+| `platform_mirror` | `mirror_dir` 那块私有备份盘 | 只改展示名；驱动锁 local，目录跟随 `mirror_dir` |
+
+`sys_setting` 不再登记 `storage_driver` / `storage_endpoint` / `storage_bucket` /
+`storage_access_key` / `storage_secret_key` / `storage_use_ssl` / `storage_region` /
+`storage_public` / `upload_base_url`。只保留：
+
+- `upload_dir` / `mirror_dir`：部署期目录事实，改后重启，由 `EnsureBuiltinLocal` /
+  `EnsureBuiltinMirror` / `EnsureBuiltinPlatformPrimary` 单向同步到档案；
+- `local_mirror_enabled`：镜像总闸；
+- `platform_storage_profile_id`：由启动逻辑自动写入的指针，只用于排障时确认「平台实例用哪一套」，
+  不需要也不应该手工改。
+
+首次启动时 `EnsureBuiltinPlatformPrimary` 用当时的 `cfg`（环境变量 + 历史 `sys_setting`
+overlay）播种一条 `builtin=true, purpose=platform_primary` 的档案，随即清理那批历史
+`sys_setting` key。这不是长期兼容层：档案一旦存在，后续启动**只读不覆盖**管理员改过的
+连接信息；环境变量不再是第二真值源，只是老部署的一次性播种入口。
+
+启动链固定为：migrate → `setting.Init` → `cfg.OverlayFromSettings` →
+`ValidateMirrorDirs` → `EnsureBuiltinLocal` / `EnsureBuiltinMirror` /
+`EnsureBuiltinPlatformPrimary` → `ApplyPlatformConfig` → `BuildPlatformUploader` →
+`profiles.SetPlatform`。平台实例仍是**启动期构造、运行期不可变**：改档案只改库，
+必须重启才会换进程里的实例，避免一个请求写新桶、下一个请求又写旧桶。构造失败时降级
+本地盘（与 `cfg.UploadDir` 同源），并回报实际驱动 `local`，让能力探测如实反映落点；
+这是「填错还能进后台改回来」的底线，不是租户侧允许的静默回退。
+
+安全边界：`platform_primary` 不可删除、不可绑定给租户、不可作为迁移源或目标
+（`validateBindingTargets` / `builtinProfileInvolved` 双守门）；前端绑定与迁移下拉同步过滤
+`platform_primary` 与 `platform_mirror`。自检复用 `POST /api/admin/storage-profiles/:id/check`，
+与真实上传共用 `buildUploader` 的构造口径，不需要第二套探测代码。回填工具
+`cmd/storage-backfill` 也优先读这条档案，避免仍连到旧桶。
 
 ## 0. 解决什么，不解决什么
 
@@ -219,6 +269,11 @@
 ---
 
 ## 2. 现状盘点（逐条带证据）
+
+> 下表是 2026-11-13 首版逐行读码留下的**历史快照**，行号与当时的实现对应。
+> 其中「单实例 / `newUploaderWithFallback` / `cfg.StorageDriver` 直接构造」在迁移 0059
+> 后已改为「按 `platform_primary` 档案构造」，现行启动链以 §0.3 与 `cmd/server/main.go`
+> 为准；保留表格只为解释当时为什么做出这些设计选择。
 
 | 主题 | 事实 | 证据 |
 | --- | --- | --- |

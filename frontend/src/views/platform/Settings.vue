@@ -265,29 +265,10 @@
         >
       </div>
       <div class="wizard-blurb">{{ currentStep.blurb }}</div>
-      <!-- 快速开始预设：只出现在第 1 步。「这是什么部署」是开始配之前要先回答的
-           问题——选好模式，存储与上传限制落到推荐值，后面每一步仍可改。
-           放在第 1 步而不是存储步：先定调子再看明细，符合「从粗到细」的认知顺序。 -->
+      <!-- 存储连接信息已进档案模块：在这里指路，避免首次部署的人继续找存储方式下拉 -->
       <div v-if="currentStep.key === 'brand'" class="wizard-preset">
-        <span class="wizard-preset-label">快速开始：</span>
-        <el-button
-          size="small"
-          :type="activePreset === 'demo' ? 'primary' : 'default'"
-          @click="applyPreset('demo')"
-        >
-          演示模式
-        </el-button>
-        <el-button
-          size="small"
-          :type="activePreset === 'prod' ? 'primary' : 'default'"
-          @click="applyPreset('prod')"
-        >
-          生产模式
-        </el-button>
-        <el-button v-if="presetNote" size="small" text type="primary" @click="wizardJumpToKey('storage_driver')">
-          去「存储与上传」步
-        </el-button>
-        <span v-if="presetNote" class="wizard-preset-note">{{ presetNote }}</span>
+        <span class="wizard-preset-label">存储连接信息：</span>
+        <span class="wizard-preset-note">驱动 / 桶 / 凭据 / 访问基址请到「文件存储与分发 → 存储档案」的「平台自身存储」一行配置并自检；本向导只管部署目录与上传限制。</span>
       </div>
       <div class="wizard-body">
         <template v-for="g in currentGroups" :key="g.label">
@@ -414,7 +395,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '平台自身存储（启动配置）：这里定的是平台自己那份文件存哪——p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用它；已绑档案的企业走「文件存储与分发」里的自己的档案。驱动可选本地磁盘或云桶，选本地时「本地上传目录」与档案模块的「平台本地存储」是同一块盘。这组同时是 STORAGE_* / MINIO_* 环境变量的界面映射，属于进程启动期配置，任一项改动都要重启服务；更换存储方式前请确认历史文件仍可访问。切换「存储方式」后只显示当前方式相关的项，另一种方式已填的值不会丢、切回来还在；想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，请到「文件存储与分发」——那边保存后下一个请求即生效。',
+    '平台自身存储的部署期事实：本地上传目录、本地镜像目录、镜像总闸与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定档案的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「文件存储与分发 → 存储档案」里的「平台自身存储」一行，可以在那里直接自检；这里改不了，改完档案也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「文件存储与分发」——那边保存后下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -433,20 +414,12 @@ const GROUP_BLURBS: Record<string, string> = {
 // 的声明顺序本就合理，逐个写死只会多一处要同步的地方。
 const GROUP_ITEM_ORDER: Record<string, string[]> = {
   storage: [
-    'storage_driver',
-    // local 分支
+    // 指针由系统自动维护，放在最前让排障的人一眼看到「平台实际用哪套档案」
+    'platform_storage_profile_id',
+    // 部署期目录事实：改完必须重启，档案里的连接信息改完同样必须重启
     'upload_dir',
-    // 云存储分支（minio / oss / s3）
-    'storage_endpoint',
-    'storage_bucket',
-    'storage_access_key',
-    'storage_secret_key',
-    'storage_use_ssl',
-    // S3 兼容存储专属：部分云（COS / OBS 等）需显式区域，留空自动探测
-    'storage_region',
-    // 访问方式：公私总闸 + 对外基址（两种方式都生效）
-    'storage_public',
-    'upload_base_url',
+    'mirror_dir',
+    'local_mirror_enabled',
     // CDN 刷新：可选增强，不开则整区用不上；厂商决定下面哪些凭据要填
     'cdn_enabled',
     'cdn_provider',
@@ -455,9 +428,7 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
     // 资源标识：只有 Cloudflare（Zone ID）与 CloudFront（Distribution ID）需要
     'cdn_resource_id',
     'cdn_endpoint',
-    // 本地镜像备份：与上面「平台存储」并列但独立——它不改变主落点，只决定备份副本存哪
-    'local_mirror_enabled',
-    'mirror_dir',
+    'storage_quota_mb',
   ],
   upload: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext', 'presign_put_ttl_minutes', 'sign_get_ttl_minutes'],
   wechat: [
@@ -481,15 +452,10 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 // 用户在一边看懂的分区，另一边直接认出来。
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
-    // 三个分区标题统一带「平台存储 · 」前缀：这里定的是平台自身存储的落点
-    // （p/ 平台对象 + 未绑档案企业），与档案模块的多套存储是两件事。
-    // local 与云存储两套互斥配置在这一区里按 depState 二选一出现
-    { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
-    { label: '平台存储 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
-    { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
+    { label: '平台自身存储 · 指向与部署目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
     // 镜像与「平台存储」是两件事：主写入与出参不变，这里只决定备份副本落在哪。
-    // 放在最后是因为它是增强项，缺省即可用；默认不开租户，平台对象随总闸。
-    { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled', 'mirror_dir'] },
+    { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
+    { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
   ],
   upload: [
     { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
@@ -623,11 +589,8 @@ interface ReadyCheck {
   /** 只读项的环境变量示例：界面改不了，必须把这条交给部署的人去设 */
   envSample?: string
 }
-// 云驱动才检查的存储凭据（minio / oss / s3 共用同一组界面字段）
-const CLOUD_CREDENTIALS = ['storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key']
 const checks = computed<ReadyCheck[]>(() => {
   const find = (k: string) => items.value.find((i) => i.key === k)
-  const cloud = driverVal.value !== 'local'
   const defs: Array<Omit<ReadyCheck, 'ok' | 'readOnly' | 'envVar'>> = [
     {
       label: '登录签名密钥',
@@ -657,23 +620,6 @@ const checks = computed<ReadyCheck[]>(() => {
       hint: '生产 HTTPS 环境应为「开」',
       envSample: 'COOKIE_SECURE=true',
     },
-    {
-      label: '存储方式与凭据',
-      keys: ['storage_driver'],
-      hint: cloud
-        ? '生产建议 minio / oss / s3（S3 兼容云），并填好端点 / 存储桶 / AccessKey / SecretKey'
-        : '演示可用 local；生产建议 minio / oss / s3',
-    },
-    // local 驱动不经过这项（见上方注释），进清单就是永远划不掉的假警报
-    ...(cloud
-      ? [
-          {
-            label: '文件访问基址',
-            keys: ['upload_base_url'],
-            hint: '图片 / 视频的公开访问地址，须为 http:// 或 https:// 完整地址',
-          },
-        ]
-      : []),
     { label: '微信 AppID / AppSecret', keys: ['wx_appid', 'wx_appsecret'], hint: '小程序码与微信登录依赖，未配则相关功能不可用' },
     { label: '小程序接口基址', keys: ['miniprogram_base_url'], hint: '小程序端冷启动引导地址，须为 https 完整地址' },
   ]
@@ -682,8 +628,6 @@ const checks = computed<ReadyCheck[]>(() => {
     let ok: boolean
     if (c.keys[0] === 'cookie_secure') {
       ok = ['true', '1'].includes((first?.value || '').trim())
-    } else if (c.keys[0] === 'storage_driver') {
-      ok = !!first?.configured && (cloud ? CLOUD_CREDENTIALS.every((k) => !!find(k)?.configured) : true)
     } else {
       ok = c.keys.every((k) => !!find(k)?.configured)
     }
@@ -884,9 +828,8 @@ watch(displayGroups, () => nextTick(computeActive))
 // 可能并不存在的环境变量上。分组导语里的警告只配看，这里的确认逼一次清醒决策：
 // 误确认只是一次多余点击，漏确认可能就是一批文件打不开 + 工单。
 const DESTRUCTIVE: Record<string, string> = {
-  storage_driver: '存储方式变更后，按原方式上传的历史文件可能无法访问（请先确认历史文件仍可访问）',
   upload_dir: '本地上传目录变更后，旧目录中的已有文件将不再可见',
-  storage_public: '存储空间公开访问变更会影响所有已生成文件链接的可访问范围',
+  mirror_dir: '本地镜像目录变更后，旧目录中的备份副本将不再被自动纳入',
 }
 function destructiveWarnings(): string[] {
   const warns: string[] = []
@@ -905,29 +848,12 @@ function destructiveWarnings(): string[] {
 
 // ---- 依赖联动 ----
 // 以下拉 / 开关的当前草稿值为准：用户刚切换就能看到哪些项「转亮 / 置灰」，不必先保存再刷新。
-const driverVal = computed(() => (draft.storage_driver || '').trim() || 'local')
+// 存储驱动的联动已随连接信息一起移到「文件存储与分发 → 存储档案」；这里只留 CDN 与微信。
 const cdnOn = computed(() => (draft.cdn_enabled || '') === 'true')
 const wxAppidFilled = computed(
   () => !!(draft.wx_appid || '').trim() || !!items.value.find((i) => i.key === 'wx_appid')?.configured,
 )
 
-// local 只关心「文件落盘目录」；minio / oss / s3 只关心端点 / 桶 / 凭据 / 访问基址。
-// 两类项互斥出现，避免对着一堆当前选项下用不上的输入框。
-// 「专属」边界按后端实际读取路径划（2026-10-22 全量核查核实过源码，2026-10-23 加 s3 时重核）：
-//   - storage_use_ssl / storage_region 是 S3 兼容驱动（minio / s3）专属：
-//     cmd/server 的 NewOssUploader 不收 SSL 参数（阿里云 OSS 客户端固定 https），
-//     也没有区域参数；而 minio 与 s3 在 newUploader 里是同一个 case，
-//     共用 MinioUploader 的 useSSL / region 入参——两项对两者都真正生效；
-//   - upload_base_url 是云存储专属：LocalUploader.Save 返回相对地址 /uploads/...，
-//     小程序端用 miniprogram_base_url 拼绝对地址、浏览器按页面源解析，都不经过它。
-const S3_COMPAT_ONLY = ['storage_use_ssl', 'storage_region']
-const CLOUD_ONLY = [
-  'storage_endpoint',
-  'storage_bucket',
-  'storage_access_key',
-  'storage_secret_key',
-  'upload_base_url',
-]
 const CDN_ONLY = ['cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']
 // 五家的凭据形态不同（与后端 storage.CDNProviderNeeds* 同源，改一边要改另一边）：
 //   - 资源标识只有 Cloudflare（Zone ID）与 CloudFront（Distribution ID）需要，
@@ -943,15 +869,6 @@ interface DepState {
   dim: boolean
 }
 function depState(key: string): DepState {
-  if (key === 'upload_dir') {
-    return { focus: driverVal.value === 'local', dim: driverVal.value !== 'local' }
-  }
-  if (S3_COMPAT_ONLY.includes(key)) {
-    return { focus: driverVal.value === 'minio' || driverVal.value === 's3', dim: driverVal.value !== 'minio' && driverVal.value !== 's3' }
-  }
-  if (CLOUD_ONLY.includes(key)) {
-    return { focus: driverVal.value !== 'local', dim: driverVal.value === 'local' }
-  }
   if (CDN_ONLY.includes(key)) {
     if (!cdnOn.value) return { focus: false, dim: true }
     // Cloudflare 只用 API Token：AccessKeyId 用不到，别让人对着它发愣
@@ -997,38 +914,13 @@ const WIZARD_STEPS: WizardStep[] = [
   },
   {
     key: 'storage',
-    title: '存储与上传',
-    blurb: '图片 / 视频 / 小程序码存哪、怎么访问。演示选 local 即可；生产建议 minio / oss / s3（腾讯云 COS、华为云 OBS 等 S3 兼容云），并配上公开访问基址。切换存储方式后只显示当前方式相关的项，另一种方式已填的值不会丢。本组改动需重启服务。',
-    keys: [
-      'storage_driver',
-      'upload_dir',
-      'storage_endpoint',
-      'storage_bucket',
-      'storage_access_key',
-      'storage_secret_key',
-      'storage_use_ssl',
-      // S3 兼容云（s3）常需显式区域；minio 同样生效（同一 S3 客户端实现）
-      'storage_region',
-      // 公私总闸：两种存储方式都生效（本地私有文件也要鉴权后读取），必须进首配路径
-      'storage_public',
-      'upload_base_url',
-    ],
-    // 与主列表 storage 组的分区一致：本地 / 云存储两套互斥配置按 depState 二选一出现
+    title: '存储部署目录',
+    short: '存储目录',
+    blurb: '这里定的是服务器上的本地目录与镜像备份。驱动 / 桶 / 凭据 / 访问基址已收进「文件存储与分发 → 存储档案」的「平台自身存储」一行，可在那里直接自检；改完任一边都要重启服务。',
+    keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir', 'local_mirror_enabled'],
     groups: [
-      {
-        label: '存储位置',
-        keys: [
-          'storage_driver',
-          'upload_dir',
-          'storage_endpoint',
-          'storage_bucket',
-          'storage_access_key',
-          'storage_secret_key',
-          'storage_use_ssl',
-          'storage_region',
-        ],
-      },
-      { label: '访问方式', keys: ['storage_public', 'upload_base_url'] },
+      { label: '指向与部署目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
+      { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
     ],
   },
   {
@@ -1177,7 +1069,6 @@ function wizardJumpToKey(key: string) {
 // miniprogram_base_url 比后端更严一档（要求 https）：微信小程序官方只收 https，
 // http:// 能过后端校验但连不上，提示语里说清原因。
 const URL_RULES: Record<string, { httpsOnly?: boolean; example: string }> = {
-  upload_base_url: { example: 'https://cdn.example.com' },
   miniprogram_base_url: { httpsOnly: true, example: 'https://mp.example.com' },
 }
 function validateUrlValue(key: string, value: string): string {
@@ -1235,43 +1126,6 @@ function markWizardSeen() {
     // 写不进只影响「不再自动弹」，向导仍可手动打开，静默跳过即可
   }
 }
-// ---- 快速开始预设 ----
-// 第一次部署的人面对 8 个存储项无从下手：演示要能尽快跑起来，生产要安全。
-// 一键填入推荐组合，之后每一步里仍可改——预设只是起点，不是锁定。
-// 上传限制的「默认值」与后端 registry 缺省一致（前端没有缺省值接口，属镜像值，
-// 后端改缺省时这里要同步）；且只在「没设过」时填：用户显式改过的值不被预设覆盖。
-const PRESET_LIMIT_DEFAULTS: Record<string, string> = {
-  upload_max_mb: '10',
-  upload_video_max_mb: '100',
-  upload_allow_ext: 'png,jpg,jpeg,gif,webp,mp4',
-}
-const presetNote = ref('')
-const activePreset = computed(() => {
-  if (draft.storage_driver === 'minio') return 'prod'
-  if (draft.storage_driver === 'local' && draft.upload_dir === './data/uploads') return 'demo'
-  return ''
-})
-function applyPreset(mode: 'demo' | 'prod') {
-  Object.entries(PRESET_LIMIT_DEFAULTS).forEach(([k, v]) => {
-    // 只填空项：后端还没有这一项（旧版本）或用户没设过时才填推荐值
-    if (items.value.some((x) => x.key === k) && !draft[k]) setVal(k, v)
-  })
-  if (mode === 'demo') {
-    setVal('storage_driver', 'local')
-    setVal('upload_dir', './data/uploads')
-    // local 走同源 /uploads 访问，外部基址留空即可；显式清掉旧值，
-    // 避免上一套 CDN 域名残留，把图片继续指到已经不存在的地方
-    setVal('upload_base_url', '')
-    presetNote.value =
-      '已按演示模式填入：存储=local、目录=./data/uploads、上传限制=默认值（你改过的保持原样）。local 下文件经同源 /uploads 访问，不需要外部基址。'
-  } else {
-    setVal('storage_driver', 'minio')
-    setVal('storage_use_ssl', 'true')
-    presetNote.value =
-      '已按生产模式填入：存储=minio、连接走 HTTPS。存储端点、桶名、AccessKey / SecretKey、文件访问基址需按你的对象存储手动填写——到下一步逐项确认。'
-  }
-}
-
 function openWizard() {
   wizardSnapshot = { ...draft }
   wizardClearedSnapshot = { ...cleared }

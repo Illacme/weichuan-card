@@ -258,15 +258,17 @@ go build -o storage-backfill ./cmd/storage-backfill
   第六十三轮真桶实测猜错的代价是 `400 InvalidBucketName`，且两端日志都不报错。
 - **源端两种**：`local`（默认，需 `--source-dir`）读平台本地盘；`s3` 读平台自己的
   MinIO / S3 兼容桶。后者复用 `storage.NewMinioUploader` 且**省略路径风格变参**，
-  拿到与 `cmd/server.newUploader` 完全同一个客户端构造（`BucketLookupAuto`）——
+  与 `storageprofile.BuildPlatformUploader` 用同一套平台侧客户端构造（`BucketLookupAuto`）——
   平台侧没有 `company_id` / `host_header` 列，套用租户那套 `S3BucketLookup` 反而会分叉。
   源键是 `legacyRel` 推出的**历史相对裸键**（如 `shared-logo.png`），**不加 `p/` 前缀**；
   加了会整批 404。源端只读：`Put` 显式报错，绝不把对象覆盖写回平台桶。
-- **平台配置只读、与生产同源**：`config.Load()`（env > `CONFIG_FILE` > 内置缺省）+
-  `sys_setting` 非空值覆盖，空串 / 纯空白视为未设置；bool 用 `setting.ParseBool` 同一真值表。
-  刻意不调 `setting.Init()`——它会 `seedDefaults` 往业务库 INSERT，回填命令只读配置却顺手写库
-  既越权又会在只读从库上失败。凭据只能来自这三类来源，不作为命令行参数（会留进
-  shell history / `ps` / 工单）。`driver=oss` / `local` / 缺任一项配置一律显式拒绝，
+- **平台配置只读、与生产同源**：优先读 `storage_profiles` 的 `platform_primary` 档案，
+  与生产上传侧同一份连接信息、同一处自检。表不存在或档案尚未生成时（离线演练 / 未跑过
+  启动流程的库）才回落 `config.Load()` + 历史 `sys_setting`：非空值覆盖，空串视为未设置，
+  bool 用 `setting.ParseBool` 同一真值表。刻意不调 `setting.Init()`——它会 `seedDefaults`
+  往业务库 INSERT，回填命令只读配置却顺手写库既越权又会在只读从库上失败。
+  凭据不作为命令行参数（会留进 shell history / `ps` / 工单）。
+  `driver=oss` / `local` / 缺任一项配置一律显式拒绝，
   **不回退本地盘**。
 - **源端没有 `Put` 兜底，所以必须探桶**：第六十六轮靠「Put 的显式错误码 + 写后回读」
   区分「桶不存在」；S3 的 `HEAD` 响应按 HTTP 规范不带 body，`Stat` 层分不出
@@ -391,7 +393,13 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 - **数据不持久**：SQLite 库在系统临时目录，重启即丢并重新 seed；要持久化运行见仓库根 `docs/deploy-runbook.md`「无 Docker 部署」路径 B/C/D（D 是生产可用的 SQLite 单机方案）。
 
 ## 生产文件存储（MinIO / OSS）
-- 通过 `STORAGE_DRIVER` 切换，业务代码（handler / 前端 / 小程序）完全不变，仅 `main.go` 的 `newUploader` 工厂按环境变量选择实现，统一满足 `storage.Uploader` 接口：
+- **运行期真值源是 `storage_profiles` 里 `purpose=platform_primary` 的内置档案**（迁移 0059），
+  档案页统一编辑 / 自检，改完必须重启。下面的 `STORAGE_*` / `MINIO_*` / `OSS_*` / `UPLOAD_BASE_URL`
+  仍是私有部署与老库的**首次播种入口**：档案不存在时用它们生成档案，之后不再覆盖档案里的值；
+  `sys_setting` 里那组旧 `storage_*` 同样只在播种时读一次，随即清理。
+- 业务代码（handler / 前端 / 小程序）完全不变；启动链按档案调用
+  `storageprofile.EnsureBuiltinPlatformPrimary` → `ApplyPlatformConfig` → `BuildPlatformUploader`
+  → `profiles.SetPlatform`，统一满足 `storage.Uploader` 接口。构造失败降级本地盘并回报实际驱动 `local`：
   - `local`（默认）：写本地 `UPLOAD_DIR` 并由 `/uploads` 静态路由托管，适用于开发/单机。
   - `minio`：写入 MinIO（或任意 S3 兼容对象存储，含阿里云 OSS 的 S3 兼容端点），需 `MINIO_*` 环境变量；`UPLOAD_BASE_URL` 设为 bucket 的公开访问基址或 CDN 域名。
   - `oss`：写入阿里云 OSS，需 `OSS_*` 环境变量；`UPLOAD_BASE_URL` 设为 bucket 公网域名或绑定的自定义域名/CDN。
@@ -410,8 +418,10 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 
 ### 租户自有对象桶（迁移 0054，存储档案）
 
-上面这些 `STORAGE_*` / `MINIO_*` / `OSS_*` 是**全局单值**，全平台只可能有一套。客户说
-「文件存进我自己公司的桶」时，全局单值装不下第二个租户——所以有了**存储档案**。
+上面这些 `STORAGE_*` / `MINIO_*` / `OSS_*` 是**首次播种值**，全平台启动参数只可能有一套。
+它们已不再是运行期第二真值源：平台自己那份连接信息也在 `storage_profiles` 的
+`platform_primary` 档案里。客户说「文件存进我自己公司的桶」时，单份启动参数装不下第二个
+租户——所以有了**存储档案**。
 
 **只有一套模型**（第七十五轮删掉了历史上的 `tenant_storage_configs` 旧表与
 `TENANT_STORAGE_ROUTE` 开关，产品未商用，不留兼容层）：
@@ -422,8 +432,17 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 | `delivery_profiles` | 一套分发参数（客户自有访问域名 `domain`、CDN 刷新配置） |
 | `storage_bindings` | 把「某家企业」绑到「某套档案」。`tenant_id = 0` 是**全局默认**，企业行覆盖它 |
 
+`storage_profiles` 里有三套 `builtin=1` 的档案，用途靠 `purpose` 区分，互不覆盖：
+
+| `purpose` | 作用 |
+| --- | --- |
+| `platform_primary` | 平台自身连接信息（`p/` 对象与未绑定企业）：可改驱动 / 桶 / 凭据 / 基址，可自检，改后重启；不可删、不可绑定、不可迁移 |
+| `tenant_fallback` | `upload_dir` 的本地退路盘：驱动锁 local，目录跟随 `upload_dir`，不可删 |
+| `platform_mirror` | `mirror_dir` 的私有备份副本：驱动锁 local，目录跟随 `mirror_dir`，不可删、不可绑定、不可迁移 |
+
 配置入口：后台「**存储档案**」。三张表之间是多对多，同一套桶可以给多家企业用，
-换桶只改绑定，不用逐家改凭据。
+换桶只改绑定，不用逐家改凭据。平台自身存储的连接信息就在 `platform_primary` 那一行，
+与租户档案共用编辑和自检界面；系统设置里只留目录与指针，见 `docs/tenant-storage-design.md` §0.3。
 
 - **档案与绑定全部只有平台超级管理员**能读写（`PlatformAdminMiddleware`）。企业管理员连读
   都是 403。**不要照抄 `/api/admin/storage` 那批的 `AuthMiddleware(db,"admin")`**——那行只校验
@@ -1645,6 +1664,13 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 
 `internal/storageprofile.EnsureBuiltinLocal` 在启动时保证存在一套 `builtin=true` 的本地档案（目录取 `UPLOAD_DIR`、基址取 `UPLOAD_BASE_URL`），幂等且不覆盖管理员改过的名称，但**目录必须跟随 `UPLOAD_DIR`**（单独改会让租户写新目录、静态路由读旧目录）；handler 锁定其驱动为 local 并禁止删除。它**不会自动创建全局绑定**——把 local 绑成默认会覆盖企业已有的云档案绑定，静默改变文件落点；系统设置只在界面上预选它，保存才切换。
 
+迁移 0059 再加第三套 `builtin=true, purpose=platform_primary`：`EnsureBuiltinPlatformPrimary`
+首次用 `cfg`（env + 历史 `sys_setting`）播种驱动 / 桶 / 凭据 / 基址，之后只读档案、不再覆盖；
+`ApplyPlatformConfig` 把值同步进启动期 `cfg` 快照，`BuildPlatformUploader` 负责构造平台实例。
+`sys_setting` 只留 `platform_storage_profile_id` 指针和 `upload_dir` / `mirror_dir` 目录事实，
+旧 `storage_*` key 在播种后清理。三套 builtin 都不可删；只有 `platform_primary` 允许改连接信息，
+目录依旧全部锁死并跟随配置项。
+
 `internal/storageprofile` 是档案绑定的运行时解析层，也是 `storage.Resolver` 的**唯一实现**（`For` / `Platform` / `DriverFor`）：`Resolver.snapshot()` 用三张表的行数与 `MAX(version)` 作指纹（**一条 SQL**），变化即重载；指纹查询有 700ms 节流，稳态每进程每秒最多查一次库；`Snapshot.resolved` 缓存同一请求内的解析结果。有绑定走档案、没绑定走 `SetPlatform` 注入的平台实例。`DynamicCDN` 区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` / `SetProfileOriginDiag` 把分发档案的域名与诊断接进公开出参 origin。
 
 一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。
@@ -1654,7 +1680,8 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 `EnsureBuiltinMirror` 再建一套 `builtin=true` + `purpose=platform_mirror` 的本地档案，目录取 `MIRROR_DIR`（默认 `./storage/mirror`）。它**只做备份副本**：主写入与出参仍走云桶 / CDN，本地副本不参与任何读取。
 
 - **镜像目录不能放 `UPLOAD_DIR` 下**：`/uploads` 是免鉴权静态服务，私有桶对象一回拉就变成公开可读。compose 用独立卷 `mirror_data`。
-- **镜像档案不能当写入目标**：handler 拒绝把它绑给企业，`storage-backfill` 也拒绝它作源 / 目标；前端下拉同样过滤。
+- **内置档案不能当写入目标**：handler 拒绝把 `platform_mirror` / `platform_primary` 绑给企业，
+  `storage-backfill` 也拒绝两者作迁移源 / 目标；前端绑定与迁移下拉同样过滤。
 - **触发**：`handler` 里 `scheduleMirror(cid, key)`，在 multipart 上传、素材采用、小程序码、下架占位图、直传后补缩略图五处调用；走 `safego.Run` 异步，失败只留痕 + 审计 `storage.mirror_fail`。
 - **开关**：`sys_setting.local_mirror_enabled`（总闸，即时生效）与 `company.local_mirror_enabled`（逐家，默认 0）两级相与；平台对象（`p/`）只受总闸。
 - **删除双清**：`POST /api/admin/storage/object/delete` 需输入 `DELETE` 确认，先清镜像再删主对象。

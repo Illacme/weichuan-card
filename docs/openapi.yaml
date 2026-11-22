@@ -3691,13 +3691,13 @@ paths:
     get:
       summary: 读取全部可配置项（平台超管）
       description: |
-        返回 registry 全量项（当前 35 项），每项带生效方式元数据：
+        返回 registry 全量项（以接口实际返回为准），每项带生效方式元数据：
         - name：中文名（界面主标签，key 降级为次要灰字）
         - secret：敏感项，value 恒为掩码 "******"（真实值不下发）
         - restart：保存后需重启进程才生效（云存储 / CDN 客户端在启动时构造）
         - readOnly：只读项（db_dsn / jwt_key / cookie_*），PUT 会被拒绝
         - envVar：对应环境变量名（留空时回退它）
-        - options：枚举候选值（仅枚举项有，如 storage_driver），界面据此渲染下拉
+        - options：枚举候选值（仅枚举项有，如 cdn_provider），界面据此渲染下拉
         - configured：当前是否已有有效值
       tags: [设置]
       responses:
@@ -3722,8 +3722,10 @@ paths:
         - 敏感项：留空 = 不修改；提交掩码 "******" 会被拒绝（避免把掩码写成真值）
         - readOnly 项一律拒绝，msg 里提示改用环境变量
         - **值域校验**（类型合法 ≠ 取值合法），非法值直接 code=1 并在 msg 说明原因：
-          upload_max_mb 取 1~1024；miniprogram_base_url / upload_base_url 必须 http(s):// 开头；
-          storage_driver 只能 local / minio / oss / s3；pinned_company_id 须为 0 或存在且启用的企业 ID
+          upload_max_mb 取 1~1024；miniprogram_base_url 必须 http(s):// 开头；
+          pinned_company_id 须为 0 或存在且启用的企业 ID。
+          平台存储驱动 / 桶 / 凭据 / 基址已迁到 storage_profiles 的 platform_primary 档案，
+          校验与自检走 /api/admin/storage-profiles/:id/check，本接口不再登记这些 key。
         回包 data.restartKeys 点名「需重启才生效」的项，前端据此提示。
       tags: [设置]
       requestBody:
@@ -6431,7 +6433,7 @@ components:
           type: array
           items:
             type: string
-          description: 枚举候选值（仅枚举项有，如 storage_driver 的 local/minio/oss/s3）；界面据此渲染下拉，缺失时按文本框渲染
+          description: 枚举候选值（仅枚举项有，如 cdn_provider 的 aliyun/tencent/qiniu/cloudflare/cloudfront）；界面据此渲染下拉，缺失时按文本框渲染
         configured:
           type: boolean
         pathKind:

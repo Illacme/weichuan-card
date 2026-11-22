@@ -196,6 +196,13 @@ func main() {
 	if mirrorErr != nil {
 		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
+	// 与生产同款：平台连接信息在内置档案里，本地联调也走同一条构造链，
+	// 否则「档案配好了」只在线上生效，dev 永远用另一套，等于没验证。
+	platformProfile, perr := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
+	if perr != nil {
+		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", perr)
+	}
+	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
 	// 本地镜像管理器：按租户开关 + 平台总闸决定要不要回拉，失败只留痕。
 	handler.SetMirrorManager(mirror.New(db, profiles, mirrorProfile))
@@ -211,11 +218,12 @@ func main() {
 	handler.RegisterLicenseView(r, db)    // 授权到期视图：剩余天数 + 即将到期名单
 	handler.RegisterURLProbe(r, db)       // 后台「测试地址」：与生产同一套 SSRF 受限 HEAD 探测
 
-	up := &storage.LocalUploader{
-		Dir:      cfg.UploadDir,
-		BaseURL:  cfg.UploadBaseURL,
-		MaxBytes: 10 * 1024 * 1024,
-		AllowExt: storage.DefaultAllowExt,
+	up, upErr := storageprofile.BuildPlatformUploader(platformProfile, cfg)
+	platformDriver := platformProfile.Driver
+	if upErr != nil {
+		log.Printf("[WARN] 平台自身存储档案 %d 初始化失败，已降级为本地磁盘：%v", platformProfile.ID, upErr)
+		up = storageprofile.LocalPlatformFallback(cfg)
+		platformDriver = "local"
 	}
 	var refresher storage.CDNRefresher // 开发态不接 CDN
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
@@ -230,7 +238,7 @@ func main() {
 	r.Static("/uploads", cfg.UploadDir)
 	// 与生产同一套解析：平台实例由 SetPlatform 注入，租户桶只看档案绑定。
 	// 联调即验证契约，不能因为「dev 就固定走平台」让租户路由在生产才第一次跑。
-	profiles.SetPlatform(up, cfg.StorageDriver)
+	profiles.SetPlatform(up, platformDriver)
 	var effective storage.Resolver = profiles
 	handler.RegisterUpload(r, db, cfg, effective, refresher)
 	handler.RegisterMediaCheck(r, db, cfg, effective, refresher)

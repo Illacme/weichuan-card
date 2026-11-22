@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"weichuan/internal/model"
 	"weichuan/internal/refmigrate"
 	"weichuan/internal/setting"
 
@@ -70,6 +71,32 @@ func TestPlatformSourceConfigSettingsOverride(t *testing.T) {
 	require.Equal(t, "127.0.0.1:19000", cfg.Endpoint, "空白界面值不许把 env 覆盖成空")
 	require.Equal(t, "ap-shanghai", cfg.Region)
 	require.Equal(t, "AK-ENV", cfg.AccessKey, "界面没设的项保留 env")
+}
+
+// TestPlatformSourceConfigPrefersBuiltinProfile 钉住 0059 的真值源：档案存在时
+// 必须读档案，不能被环境变量或历史 sys_setting 行盖掉——否则回填工具会去
+// 一个早已不用的旧桶里找对象，报「源对象不存在」，而生产上传明明是好的。
+func TestPlatformSourceConfigPrefersBuiltinProfile(t *testing.T) {
+	envPlatformS3(t)
+	db := settingsDB(t)
+	require.NoError(t, db.AutoMigrate(&model.StorageProfile{}))
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: "平台自身存储", Driver: "s3", Endpoint: "profile.example.com",
+		Bucket: "wc-profile", Region: "ap-shanghai", AccessKey: "AK-PROFILE",
+		SecretKey: "SK-PROFILE", UseSSL: true, Builtin: true,
+		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
+	}).Error)
+	require.NoError(t, db.Create(&setting.Setting{Key: "storage_bucket", Value: "wc-ui-legacy"}).Error)
+
+	cfg, err := platformSourceConfig(db)
+	require.NoError(t, err)
+	require.Equal(t, "s3", cfg.Driver)
+	require.Equal(t, "profile.example.com", cfg.Endpoint)
+	require.Equal(t, "wc-profile", cfg.Bucket)
+	require.Equal(t, "AK-PROFILE", cfg.AccessKey)
+	require.Equal(t, "SK-PROFILE", cfg.SecretKey)
+	require.Equal(t, "ap-shanghai", cfg.Region)
+	require.True(t, cfg.UseSSL)
 }
 
 // TestPlatformSourceConfigNeverWritesSettings：回填命令只读配置，绝不能调
@@ -161,13 +188,14 @@ func TestSourceConfigIsReadOnlyAndSingleTruthTable(t *testing.T) {
 	requires := []string{
 		"config.Load()", "setting.ParseBool(", "readPlatformSettings(",
 		"db.Migrator().HasTable(", "map[string]any{\"key\":",
+		"model.StorageProfile{}", "ProfilePurposePlatformPrimary",
 	}
 	found := 0
 	for _, a := range requires {
 		require.Contains(t, code, a)
 		found++
 	}
-	require.GreaterOrEqual(t, found, 5, "抓到的锚点太少，守门可能已失效")
+	require.GreaterOrEqual(t, found, 7, "抓到的锚点太少，守门可能已失效")
 	require.NotContains(t, code, "setting.Init(", "Init 会 seedDefaults 写库")
 	require.NotContains(t, code, "OverlayFromSettings(", "该函数依赖已初始化的全局 Store")
 	require.NotContains(t, code, "Upsert(", "回填命令不许写系统设置")

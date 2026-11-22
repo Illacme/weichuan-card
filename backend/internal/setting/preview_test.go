@@ -106,11 +106,11 @@ func TestAllSecretWritableIsMask(t *testing.T) {
 	Init(newTestDB(t))
 	defer resetGlobal()
 
-	if err := Upsert("storage_secret_key", "plain-secret-value"); err != nil {
+	if err := Upsert("wx_appsecret", "plain-secret-value"); err != nil {
 		t.Fatalf("写入可写敏感项失败：%v", err)
 	}
 	for _, it := range All() {
-		if it.Key != "storage_secret_key" {
+		if it.Key != "wx_appsecret" {
 			continue
 		}
 		if !it.Configured {
@@ -121,5 +121,5 @@ func TestAllSecretWritableIsMask(t *testing.T) {
 		}
 		return
 	}
-	t.Fatalf("registry 中找不到 storage_secret_key")
+	t.Fatalf("registry 中找不到 wx_appsecret")
 }

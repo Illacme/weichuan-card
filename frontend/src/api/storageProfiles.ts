@@ -19,8 +19,8 @@ export interface StorageProfile {
   lastProbeAt: string | null
   version: number
   builtin: boolean
-  /** 内置档案用途（迁移 0056）：tenant_fallback=租户退路，platform_mirror=平台镜像；普通档案为空。 */
-  purpose?: '' | 'tenant_fallback' | 'platform_mirror'
+  /** 内置档案用途：platform_primary=平台自身存储，tenant_fallback=租户退路，platform_mirror=平台镜像；普通档案为空。 */
+  purpose?: '' | 'platform_primary' | 'tenant_fallback' | 'platform_mirror'
   accessKeyConfigured: boolean
   secretKeyConfigured: boolean
   accessKeyMasked: string

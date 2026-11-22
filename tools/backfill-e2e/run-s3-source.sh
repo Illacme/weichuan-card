@@ -8,9 +8,10 @@
 #   1. 源真的是平台 S3 桶，不是本地盘：平台源桶放字节 A，本地盘放不同的字节 B，
 #      平台桶再放一份 p/ 前缀的诱饵 C。apply 后客户桶签名 GET 必须 == A、
 #      != B、!= C。若有人偷偷回退本地盘或给源键加 p/ 前缀，字节立刻露馅。
-#   2. 配置真的走「env + sys_setting 只读覆盖」：env 故意给一份错误的诱饵
-#      （driver=local、桶不存在、凭据是假的），sys_setting 给正确值。只看 env
-#      的话 driver=local 会被 NewPlatformS3Source 当场拒绝，apply 不可能成功。
+#   2. 配置真的走「档案优先，bootstrap 时只读回落 env + sys_setting」：本装置
+#      故意不建 platform_primary 档案，覆盖尚未跑过启动流程的库。env 给一份
+#      错误的诱饵（driver=local、桶不存在、凭据是假的），sys_setting 给正确值；
+#      只看 env 的话 driver=local 会被 NewPlatformS3Source 当场拒绝，apply 不可能成功。
 #   3. 桶不存在 ≠ 源对象不存在：源端没有 Put 兜底，靠 BucketExists 把两者分开。
 #      两个负例必须给出不同的报错，否则运维会去查对象而不是查配置。
 #
@@ -109,8 +110,9 @@ upsert_tenant() { # upsert_tenant clean(true/false)
     -access-key "$S3_AK" -secret-key "$S3_SK" -bucket "$TENANT_BUCKET" -company "$CID" >/dev/null 2>&1
 }
 
-# 平台存储配置：env 给一份**错误诱饵**，sys_setting 给正确值。
-# 只有 sys_setting 覆盖生效，apply 才可能成功；这是配置同源的真桶证据。
+# 平台存储配置：env 给一份**错误诱饵**，sys_setting 给正确值；
+# 且不建 platform_primary 档案，专门覆盖迁移 0059 的 bootstrap 回落分支。
+# 只有 sys_setting 播种值被正确读取，apply 才可能成功；这是配置同源的真桶证据。
 export CONFIG_FILE="$WORK/empty.env"
 export STORAGE_DRIVER=local
 export MINIO_ENDPOINT="$S3_ENDPOINT"

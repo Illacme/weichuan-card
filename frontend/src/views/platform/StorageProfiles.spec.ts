@@ -279,6 +279,46 @@ describe('文件存储与分发模块', () => {
     expect(src).toContain("row.purpose === 'platform_mirror'")
   })
 
+  it('三套内置档案职责可辨，平台自身存储可改连接信息但不参与绑定与迁移', async () => {
+    vi.mocked(api.listStorageProfiles).mockResolvedValue([
+      { ...storage(1, '平台自身存储'), builtin: true, driver: 'minio', purpose: 'platform_primary' },
+      { ...storage(2, '平台本地存储'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
+      { ...storage(3, '平台本地镜像'), builtin: true, driver: 'local', purpose: 'platform_mirror' },
+    ] as any)
+    const w = mountPage()
+    await flush()
+
+    // 三套 builtin 都要能在列表里一眼认出来，不能混成「两个本地盘 + 一个普通档案」
+    expect(w.text()).toContain('平台自身存储')
+    expect(w.text()).toContain('租户退路')
+    expect(w.text()).toContain('平台镜像')
+    const tips = w.findAllComponents({ name: 'ElTooltip' })
+    expect(tips).toHaveLength(3)
+    expect(tips[0].props('content')).toContain('p/ 平台对象')
+    expect(tips[0].props('content')).toContain('不能绑定给企业')
+    expect(tips[0].props('content')).toContain('不能参与迁移')
+
+    // 平台自身存储 / 平台本地镜像都不能进绑定与迁移下拉；
+    // 租户退路（tenant_fallback）本质就是可被绑定的本地盘，必须仍然可选。
+    expect(w.findAll('option').filter((o) => o.text() === '平台本地存储').length).toBeGreaterThan(0)
+    for (const name of ['平台自身存储', '平台本地镜像']) {
+      expect(w.findAll('option').filter((o) => o.text() === name)).toHaveLength(0)
+    }
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain("p.purpose !== 'platform_primary'")
+    expect(src).toContain("p.purpose !== 'platform_mirror'")
+
+    // 平台自身存储的编辑弹窗保留驱动可改与「重启 + 自检」提示，
+    // 另外两套 builtin 仍锁 local；不能因为都是 builtin 就一刀切锁死。
+    const edit = w.findAll('button').filter((b) => b.text() === '编辑')[0]
+    await edit.trigger('click')
+    await flush()
+    expect(w.text()).toContain('连接信息在这里改')
+    expect(w.text()).toContain('重启')
+    expect(w.text()).toContain('不可删除')
+    expect(src).toContain(":disabled=\"storageForm.builtin && storageForm.purpose !== 'platform_primary'\"")
+  })
+
   it('路由与菜单必须同时登记（新增页面不能漏一处）', () => {
     const router = readFileSync('src/router/index.ts', 'utf8')
     const menu = readFileSync('src/layout/AdminLayout.vue', 'utf8')

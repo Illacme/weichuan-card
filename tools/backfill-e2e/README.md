@@ -107,11 +107,13 @@ bash tools/backfill-e2e/run-s3-source.sh
 ### 配置同源的真桶证据
 
 env 故意给一份**错误诱饵**（`STORAGE_DRIVER=local`、`MINIO_BUCKET=wc-env-decoy`、
-假凭据），`sys_setting` 给 7 项正确值。只看 env 的话 `driver=local` 会被
-`NewPlatformS3Source` 当场拒绝，`apply` 不可能成功——所以正向搬迁成功本身就是
-「`sys_setting` 覆盖生效」的证据。另有负例：删掉界面里的 `storage_bucket` 后必须
-回落到诱饵桶并显式报「平台源桶不存在」。全程还比对 `CHECKSUM TABLE sys_setting`，
-确认读配置没有顺手写库（`setting.Init` 会 `seedDefaults`）。
+假凭据），`sys_setting` 给 7 项正确值，且**故意不建 `platform_primary` 档案**——
+迁移 0059 后回填工具优先读档案，本装置刻意覆盖「档案尚未生成的 bootstrap / 离线演练」
+这一条回落分支。只看 env 的话 `driver=local` 会被 `NewPlatformS3Source` 当场拒绝，
+`apply` 不可能成功，所以正向搬迁成功本身就是「`sys_setting` 播种值被正确读取」的证据。
+另有负例：删掉 `storage_bucket` 后必须回落到诱饵桶并显式报「平台源桶不存在」。
+全程还比对 `CHECKSUM TABLE sys_setting`，确认读配置没有顺手写库（`setting.Init` 会
+`seedDefaults`）。正常部署跑过启动流程后这份回落分支不再被使用，真值源是平台档案。
 
 ### 成对的负例：桶不存在 ≠ 源对象不存在
 

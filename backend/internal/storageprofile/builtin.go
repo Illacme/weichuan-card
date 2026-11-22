@@ -17,6 +17,9 @@ import (
 //     不在 /uploads 下，PublicRead=false。只接收「上传成功后从云回拉」的副本，
 //     **不允许被任何绑定引用**（绑定它等于把备份副本变成主写入目标）。
 //
+// 第三套内置档案 platform_primary「平台自身存储」在 platform.go：它承载平台
+// 自己的连接信息，驱动可以是云；与上面两套「本地盘用途」不是一回事，别混用。
+//
 // 为什么不写进迁移 SQL：目录取决于部署时的 UPLOAD_DIR / MIRROR_DIR，基址取决于
 // UPLOAD_BASE_URL，都不是迁移能知道的。放到启动时 ensure，升级与首装同一套逻辑。
 const (

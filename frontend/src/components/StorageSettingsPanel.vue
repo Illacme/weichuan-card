@@ -4,8 +4,8 @@
       type="warning"
       :closable="false"
       show-icon
-      title="这里是平台自身存储的启动配置，保存后需重启服务"
-      :description="`决定 p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用什么存储——即平台自己那份文件存哪；本地磁盘、云桶都可选，选本地时这里的「本地上传目录」与「存储档案」里的「平台本地存储」是同一块盘。改动写进系统设置但需要重启才生效。已绑定档案的企业走「存储档案 / 绑定关系」标签里的配置，不受这里影响。多套档案、全局默认、企业绑定与历史对象迁移也都在本页其它标签。`"
+      title="这里只管平台自身存储的部署目录，保存后需重启服务"
+      :description="`驱动 / 桶 / 凭据 / 访问基址已收进「存储档案」标签里的「平台自身存储」一行，可在那里直接自检；这里只留服务器目录、镜像总闸与 CDN 刷新。选本地盘时「本地上传目录」与档案里的「平台本地存储」是同一块盘。已绑定档案的企业走「绑定关系」标签里的配置，不受这里影响。`"
     />
 
     <div v-if="loading" class="panel-loading">正在读取配置…</div>
@@ -52,16 +52,15 @@ import { CDN_DEFAULT_PROVIDER, CDN_RESOURCE_PROVIDERS } from '@/utils/cdn'
 
 // 本面板只接管系统设置里 storage / upload 两组，后端仍走 getSettings / updateSettings，
 // 启动期语义不变（静态路由与上传器在 main.go 构造，改完必须重启）。
-// 配置向导仍留在系统设置页里，首装时照常能配这些项——两边共用同一份 SettingRow。
+// 平台连接信息已进「存储档案」（迁移 0059），这里只剩部署期目录与策略项。
 const PANEL_GROUPS = new Set(['storage', 'upload'])
 
 // 分区元数据与 Settings.vue 的 GROUP_SECTIONS.storage / .upload 同源。
 // 那边还服务向导，本面板单独维护一份；改分区时两边都要改。
 const SECTIONS: { label: string; keys: string[] }[] = [
-  { label: '平台存储 · 存储位置', keys: ['storage_driver', 'upload_dir', 'storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'storage_use_ssl', 'storage_region'] },
-  { label: '平台存储 · 访问方式', keys: ['storage_public', 'upload_base_url'] },
+  { label: '平台自身存储 · 指向与目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
+  { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
   { label: '平台存储 · CDN 刷新（可选）', keys: ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint'] },
-  { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled', 'mirror_dir'] },
   { label: '存储配额（可选）', keys: ['storage_quota_mb'] },
   { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
   { label: '临时链接有效期', keys: ['presign_put_ttl_minutes', 'sign_get_ttl_minutes'] },
@@ -76,7 +75,7 @@ const cleared = reactive<Record<string, boolean>>({})
 const restartPending = ref<string[]>([])
 
 // 从内置档案行的「跟随系统设置 →」跳来时带 ?focus=<key>，加载完滚到对应行。
-// 面板不按 depState 隐藏项（只置灰），所以云驱动下 upload_dir 也找得到，不会扑空。
+// 面板不按 depState 隐藏项（只置灰），所以从任何档案跳来都能定位到目录项。
 const focusKey = (() => {
   if (typeof window === 'undefined') return ''
   try {
@@ -101,25 +100,13 @@ const changedKeys = computed(() => items.value
 const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
-// 依赖联动：与 Settings.vue 的 depState 同规则，向导和本面板切驱动时行为一致。
-const driverVal = computed(() => (draft.storage_driver || '').trim() || 'local')
+// 依赖联动：与 Settings.vue 的 depState 同规则（存储驱动的联动已移进档案模块）。
 const cdnOn = computed(() => (draft.cdn_enabled || '') === 'true')
 const cdnProvider = computed(() => (draft.cdn_provider || '').trim() || CDN_DEFAULT_PROVIDER)
 const cdnNeedsResource = computed(() => CDN_RESOURCE_PROVIDERS.includes(cdnProvider.value))
-const S3_COMPAT_ONLY = ['storage_use_ssl', 'storage_region']
-const CLOUD_ONLY = ['storage_endpoint', 'storage_bucket', 'storage_access_key', 'storage_secret_key', 'upload_base_url']
 const CDN_ONLY = ['cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']
 
 function depState(key: string) {
-  if (key === 'upload_dir') {
-    return { focus: driverVal.value === 'local', dim: driverVal.value !== 'local' }
-  }
-  if (S3_COMPAT_ONLY.includes(key)) {
-    return { focus: driverVal.value === 'minio' || driverVal.value === 's3', dim: driverVal.value !== 'minio' && driverVal.value !== 's3' }
-  }
-  if (CLOUD_ONLY.includes(key)) {
-    return { focus: driverVal.value !== 'local', dim: driverVal.value === 'local' }
-  }
   if (CDN_ONLY.includes(key)) {
     if (!cdnOn.value) return { focus: false, dim: true }
     if (key === 'cdn_access_key_id') {
@@ -133,11 +120,10 @@ function depState(key: string) {
   return { focus: false, dim: false }
 }
 
-// 与 Settings.vue 的 DESTRUCTIVE 中存储相关三项同源：改错会让已存文件失联。
+// 与 Settings.vue 的 DESTRUCTIVE 同源：改错会让已存文件失联。
 const DESTRUCTIVE: Record<string, string> = {
-  storage_driver: '存储方式变更后，按原方式上传的历史文件可能无法访问（请先确认历史文件仍可访问）',
   upload_dir: '本地上传目录变更后，旧目录中的已有文件将不再可见',
-  storage_public: '存储空间公开访问变更会影响所有已生成文件链接的可访问范围',
+  mirror_dir: '本地镜像目录变更后，旧目录中的备份副本将不再被自动纳入',
 }
 
 function destructiveWarnings(): string[] {

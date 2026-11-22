@@ -154,10 +154,10 @@ func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
 	require.Contains(t, body["msg"], "公开读")
 }
 
-// 平台镜像档案是备份落点，不能当写入目标，也不能参与迁移。
-// 一旦绑上，新文件会写进备份目录：备份脚本打的是同一处，主出参域名却不认它，
-// 管理员看到的是「已切云桶」、实际全落在私有备份盘，且没有任何报错。
-func TestMirrorProfileCannotBeWriteTarget(t *testing.T) {
+// 内置档案不能当租户写入目标，也不能参与迁移：
+//   - 平台镜像是备份落点，一旦绑上，新文件写进备份目录，主出参域名却不认它；
+//   - 平台自身存储装的是 p/ 平台对象，绑给租户会把两边字节写混且都不报错。
+func TestBuiltinProfilesCannotBeWriteTarget(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(model.All()...))
@@ -169,14 +169,21 @@ func TestMirrorProfileCannotBeWriteTarget(t *testing.T) {
 		Name: "平台本地镜像", Driver: "local", Builtin: true,
 		Purpose: model.ProfilePurposePlatformMirror, Version: 1,
 	}).Error)
-	var normal, mirror model.StorageProfile
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: "平台自身存储", Driver: "local", Builtin: true,
+		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
+	}).Error)
+	var normal, mirror, platform model.StorageProfile
 	require.NoError(t, db.First(&normal, "name = ?", "普通桶").Error)
 	require.NoError(t, db.First(&mirror, "name = ?", "平台本地镜像").Error)
+	require.NoError(t, db.First(&platform, "name = ?", "平台自身存储").Error)
 
 	require.Empty(t, validateBindingTargets(db, normal.ID, 0))
 	require.Contains(t, validateBindingTargets(db, mirror.ID, 0), "不能绑定")
-	require.False(t, mirrorProfileInvolved(db, normal.ID))
-	require.True(t, mirrorProfileInvolved(db, normal.ID, mirror.ID))
+	require.Contains(t, validateBindingTargets(db, platform.ID, 0), "不能绑定")
+	require.False(t, builtinProfileInvolved(db, normal.ID))
+	require.True(t, builtinProfileInvolved(db, normal.ID, mirror.ID))
+	require.True(t, builtinProfileInvolved(db, normal.ID, platform.ID))
 }
 
 // pathStyle 曾经是「能填但没用」的僵尸字段：S3 路径风格由 nginxsnippet.Target.PathStyle()

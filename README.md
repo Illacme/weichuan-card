@@ -93,7 +93,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 | 档位 | 含义 | 配置项 |
 | --- | --- | --- |
 | 即时生效 | 保存即写入内存缓存，无需重启 | 下表「常规」全部 |
-| 需重启 | 客户端在启动时构造，重启后才生效 | `storage_*`、`cdn_*`、`upload_dir`、`upload_base_url` |
+| 需重启 | 客户端在启动时构造，重启后才生效 | `cdn_*`、`upload_dir`、`mirror_dir`、平台存储档案指针（系统自动写入） |
 | 只读 | 界面不能改，展示**可辨认预览**（连接串遮口令、密钥遮中段）并提示改法；改它要动环境变量**或配置文件**后重启 | `db_dsn`、`jwt_key`、`cookie_secure`、`cookie_domain` |
 
 | 分组 | 配置项 | 说明 |
@@ -115,12 +115,9 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 > 按租户隔离的凭据，由平台超管在「企业管理 → 凭据」代填，优先级高于全局这份；该企业没配时回落全局。
 | 登录与令牌 | `access_token_ttl_minutes` / `refresh_token_ttl_days` | 令牌有效期；填 0 或负数回落默认值 15 分钟 / 30 天 |
 | 登录与令牌 | `login_rate_limit_per_min` / `refresh_rate_limit_per_min` | 每 IP 每分钟登录 / 刷新次数（防爆破；填 0 或负数回落默认值 10 / 60） |
-| 文件存储与 CDN | `storage_driver` | `local` / `minio` / `oss` / `s3`（只能取这四个值；留空回退 `STORAGE_DRIVER`，**需重启**） |
-| 文件存储与 CDN | `storage_endpoint` / `storage_bucket` | 对象存储端点与桶名（MinIO / OSS / S3 兼容云共用这两个字段） |
-| 文件存储与 CDN | `storage_access_key` / `storage_secret_key` | 对象存储凭据（后者敏感，界面只回传掩码） |
-| 文件存储与 CDN | `storage_use_ssl` / `storage_region` | MinIO / S3 兼容存储走 HTTPS / 区域（如 `ap-guangzhou`；留空自动探测，阿里云 OSS 用不到） |
-| 文件存储与 CDN | `storage_public` | 是否公开桶（私有桶走限时签名） |
-| 文件存储与 CDN | `upload_dir` / `upload_base_url` | 本地存储目录 / 上传文件公开访问基址 |
+| 文件存储与 CDN | `platform_storage_profile_id` | 平台自身存储档案指针（系统自动指向内置的 `platform_primary` 档案，不需要手工改） |
+| 文件存储与 CDN | `upload_dir` / `mirror_dir` | 本地上传目录 / 本地镜像目录（改后需重启；驱动、桶、凭据、基址请到「文件存储与分发 → 存储档案」改） |
+| 文件存储与 CDN | `local_mirror_enabled` | 本地镜像总闸（每家企业还要单独打开开关） |
 | 文件存储与 CDN | `cdn_enabled` / `cdn_access_key_id` / `cdn_access_key_secret` / `cdn_endpoint` | CDN 缓存刷新（覆盖写后使边缘缓存失效） |
 | 安全与基础设施 | `db_dsn` / `jwt_key` / `cookie_secure` / `cookie_domain` | **只读**，仅掩码展示当前值，修改走环境变量**或配置文件**（默认 `data/runtime.env`）后重启 |
 | 功能开关 | `metrics_enabled` | 是否开放 `/metrics`（Prometheus 指标）；留空则跟随 `METRICS_ENABLED` |
@@ -137,13 +134,13 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 > - 令牌有效期与签名时长这类「设成 0 就等于把功能关死、甚至把自己锁在外面」的项，
 >   代码内保留**安全下限**：界面填 0 / 负数一律回落缺省值。
 > - **类型合法 ≠ 取值合法**：对「填错会造成大面积故障」的项，保存入口还会做值域校验并当场拒绝——
->   `upload_max_mb`（1~1024）、`miniprogram_base_url` / `upload_base_url`（必须 `http(s)://` 开头）、
->   `storage_driver`（只能 `local` / `minio` / `oss` / `s3`）、`pinned_company_id`（必须是存在且启用的企业，0 = 平台模式）。
->   例如上传上限填 0 会让所有上传失败、报错却指向文件；基址漏写协议头会让小程序永远连不上，
->   且「后台下发正确基址」只在种子地址能连通一次之后才生效，等于自愈不了。
+>   `upload_max_mb`（1~1024）、`miniprogram_base_url`（必须 `http(s)://` 开头）、
+>   `pinned_company_id`（必须是存在且启用的企业，0 = 平台模式）。
+>   存储驱动 / 桶 / 基址的校验已随连接信息迁到「文件存储与分发 → 存储档案」的保存与自检接口。
 >
-> 另：云存储驱动初始化失败时会**降级为本地磁盘**而不是让进程退出——否则管理员
-> 连后台都进不去，就再也改不回来（见 `cmd/server` 的 `newUploaderWithFallback`）。
+> 另：平台自身存储档案的连接信息填错时，启动会**降级为本地磁盘**而不是让进程退出——
+> 否则管理员连后台都进不去，就再也改不回来（见 `cmd/server` 的 `platformUploader`）。
+> 改完档案要重启才会换平台实例；租户自有档案配错则显式失败，绝不回退平台盘。
 
 接口：`GET/PUT /api/admin/settings`（平台超管；PUT 回包含 `data.restartKeys` 点名需重启的项）、
 `GET /api/public/settings`（公开，仅品牌名 / 小程序基址 / 锁定租户）、

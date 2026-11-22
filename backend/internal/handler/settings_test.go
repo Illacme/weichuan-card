@@ -352,8 +352,10 @@ func TestPIIEncKeyUnsetShowsNotConfigured(t *testing.T) {
 	t.Fatal("设置列表里没有 pii_enc_key 项")
 }
 
-// TestStorageSettingsOverlayEnv 云存储 / CDN 凭据的覆盖语义：
+// TestStorageSettingsOverlayEnv 部署期目录 / CDN 的覆盖语义：
 // 界面设置非空 → 覆盖环境变量；留空 → 回退环境变量（不是「设了空串就把它清成空」）。
+// 平台存储连接信息已进档案（迁移 0059），不在这张表里，见
+// TestStorageConnectionKeysNotInSettings。
 func TestStorageSettingsOverlayEnv(t *testing.T) {
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)
@@ -361,9 +363,8 @@ func TestStorageSettingsOverlayEnv(t *testing.T) {
 
 	base := func() config.Config {
 		return config.Config{
-			StorageDriver:  "local",
-			OssEndpoint:    "oss-env.aliyuncs.com",
-			OssBucket:      "env-bucket",
+			UploadDir:      "env/uploads",
+			MirrorDir:      "env/mirror",
 			CDNAccessKeyID: "env-cdn-id",
 			CDNEnabled:     false,
 			CDNProvider:    "qiniu",
@@ -374,52 +375,70 @@ func TestStorageSettingsOverlayEnv(t *testing.T) {
 	// 1) 界面全空 → 原样保留环境变量值
 	cfg := base()
 	cfg.OverlayFromSettings()
-	require.Equal(t, "local", cfg.StorageDriver)
-	require.Equal(t, "oss-env.aliyuncs.com", cfg.OssEndpoint)
+	require.Equal(t, "env/uploads", cfg.UploadDir)
+	require.Equal(t, "env/mirror", cfg.MirrorDir)
 	require.Equal(t, "env-cdn-id", cfg.CDNAccessKeyID)
 	require.False(t, cfg.CDNEnabled)
-	// 2026-10-23 新增：厂商与资源标识同样遵循「界面留空 → 保留环境变量」
 	require.Equal(t, "qiniu", cfg.CDNProvider)
 	require.Equal(t, "env-resource", cfg.CDNResourceID)
 
-	// 2) 界面填了 → 覆盖（MinIO 与 OSS 共用同一组界面字段，按驱动二选一）
+	// 2) 界面填了 → 覆盖
 	_, body := c.do("PUT", "/api/admin/settings", map[string]string{
-		"storage_driver":   "oss",
-		"storage_endpoint": "oss-cn-hangzhou.aliyuncs.com",
-		"storage_bucket":   "ui-bucket",
-		"cdn_enabled":      "true",
-		"cdn_provider":     "cloudflare",
-		"cdn_resource_id":  "ui-zone-id",
+		"upload_dir":      "ui/uploads",
+		"mirror_dir":      "ui/mirror",
+		"cdn_enabled":     "true",
+		"cdn_provider":    "cloudflare",
+		"cdn_resource_id": "ui-zone-id",
 	}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 
 	cfg = base()
 	cfg.OverlayFromSettings()
-	require.Equal(t, "oss", cfg.StorageDriver)
-	require.Equal(t, "oss-cn-hangzhou.aliyuncs.com", cfg.OssEndpoint)
-	require.Equal(t, "ui-bucket", cfg.OssBucket)
+	require.Equal(t, "ui/uploads", cfg.UploadDir)
+	require.Equal(t, "ui/mirror", cfg.MirrorDir)
 	require.True(t, cfg.CDNEnabled)
 	require.Equal(t, "cloudflare", cfg.CDNProvider)
 	require.Equal(t, "ui-zone-id", cfg.CDNResourceID)
 
 	// 3) 清空 → 回到环境变量
 	_, body = c.do("PUT", "/api/admin/settings", map[string]string{
-		"storage_driver":   "",
-		"storage_endpoint": "",
-		"storage_bucket":   "",
-		"cdn_enabled":      "",
-		"cdn_provider":     "",
-		"cdn_resource_id":  "",
+		"upload_dir":      "",
+		"mirror_dir":      "",
+		"cdn_enabled":     "",
+		"cdn_provider":    "",
+		"cdn_resource_id": "",
 	}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 
 	cfg = base()
 	cfg.OverlayFromSettings()
-	require.Equal(t, "local", cfg.StorageDriver)
-	require.Equal(t, "oss-env.aliyuncs.com", cfg.OssEndpoint)
+	require.Equal(t, "env/uploads", cfg.UploadDir)
+	require.Equal(t, "env/mirror", cfg.MirrorDir)
 	require.False(t, cfg.CDNEnabled)
 	require.Equal(t, "qiniu", cfg.CDNProvider)
 	require.Equal(t, "env-resource", cfg.CDNResourceID)
+}
+
+// TestStorageConnectionKeysNotInSettings 钉住 0059 的边界：平台连接信息只在
+// storage_profiles，sys_setting 不能再长出第二份；否则档案里自检通过、平台
+// 实例却还在用旧桶，两边都不报错。
+func TestStorageConnectionKeysNotInSettings(t *testing.T) {
+	setupSQLiteEngine(t)
+	cfg := config.Load()
+	cfg.OverlayFromSettings()
+	// 老库里即使还留着历史行，setting 接口也不该把它们当成可配置项下发。
+	// 这里直接查 registry：移除后 Upsert / PUT 都会报「未知设置项」。
+	keys := map[string]bool{}
+	for _, it := range setting.All() {
+		keys[it.Key] = true
+	}
+	for _, key := range []string{
+		"storage_driver", "storage_endpoint", "storage_bucket", "storage_access_key",
+		"storage_secret_key", "storage_use_ssl", "storage_region", "storage_public", "upload_base_url",
+	} {
+		require.False(t, keys[key], "%s 不该还在系统设置里", key)
+	}
+	require.True(t, keys["platform_storage_profile_id"])
 }
 
 // TestCDNProviderValidation 厂商枚举：非法值被拒、合法值可存。
@@ -449,11 +468,11 @@ func TestRestartKeysReportedOnSave(t *testing.T) {
 	require.EqualValues(t, 0, body["code"])
 	require.Empty(t, body["data"].(map[string]interface{})["restartKeys"])
 
-	// 需重启项：点名返回
-	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"storage_driver": "oss"}, adminToken)
+	// 需重启项：点名返回（存储连接信息已进档案，这里用同样需重启的 CDN 项验证）
+	_, body = c.do("PUT", "/api/admin/settings", map[string]string{"cdn_provider": "cloudflare"}, adminToken)
 	require.EqualValues(t, 0, body["code"])
 	keys := body["data"].(map[string]interface{})["restartKeys"].([]interface{})
-	require.Contains(t, keys, "storage_driver")
+	require.Contains(t, keys, "cdn_provider")
 }
 
 // TestTokenAndSignTTLHaveSafetyFloor 第二批写死常量接入设置后的语义：
@@ -634,8 +653,8 @@ func TestSettingsValueValidation(t *testing.T) {
 	for k, v := range map[string]string{
 		"upload_max_mb":        "30",
 		"miniprogram_base_url": "https://api.example.com",
-		"upload_base_url":      "http://127.0.0.1:8080/uploads",
-		"storage_driver":       "oss",
+		"mirror_dir":           "./storage/mirror2",
+		"cdn_provider":         "cloudflare",
 		"pinned_company_id":    "1", // 朗汇（seed 的 1 号租户，enabled）
 	} {
 		_, body := c.do("PUT", "/api/admin/settings", map[string]string{k: v}, adminToken)
@@ -655,15 +674,8 @@ func TestSettingsValueValidation(t *testing.T) {
 	require.EqualValues(t, 1, body["code"])
 	require.Contains(t, body["msg"], "http://")
 
-	_, body = c.do("PUT", "/api/admin/settings",
-		map[string]string{"upload_base_url": "/uploads"}, adminToken)
-	require.EqualValues(t, 1, body["code"], "相对路径当基址会导致小程序拼出错误 URL")
-
-	// 存储驱动：枚举之外的值（重启后会静默降级本地磁盘，运营以为在用对象存储）
-	_, body = c.do("PUT", "/api/admin/settings",
-		map[string]string{"storage_driver": "ftp"}, adminToken)
-	require.EqualValues(t, 1, body["code"])
-	require.Contains(t, body["msg"], "local / minio / oss")
+	// 基址与驱动的校验已随连接信息移进档案保存接口（validateStorageProfile），
+	// 见 storage_profile_test.go；这里只管 sys_setting 自身的项。
 
 	// 锁定租户：不存在 / 已停用的企业会让小程序全部接口报「企业不存在或已停用」
 	_, body = c.do("PUT", "/api/admin/settings",

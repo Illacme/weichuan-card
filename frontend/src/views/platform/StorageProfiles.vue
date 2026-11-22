@@ -22,9 +22,10 @@
           <el-table-column label="档案名" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
-              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储 → 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
+              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未绑定档案的企业用它。连接信息可以在这里改，但改完必须重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
                 <el-tag size="small" type="info">内置</el-tag>
               </el-tooltip>
+              <el-tag v-if="row.purpose === 'platform_primary'" size="small" type="primary">平台自身存储</el-tag>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
               <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
             </template>
@@ -217,8 +218,8 @@
         </el-table>
       </el-tab-pane>
 
-      <!-- 平台自身存储：系统设置里的存储/上传项集中到这里，管理员只进一个模块。
-           后端仍走 sys_setting + 重启（静态路由与上传器启动期构造），首装向导仍在系统设置。 -->
+      <!-- 平台自身存储的部署期配置：连接信息已在「存储档案」标签的那一行里，
+           这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
       <el-tab-pane label="平台自身存储（启动配置）" name="platform">
         <StorageSettingsPanel />
       </el-tab-pane>
@@ -226,19 +227,25 @@
 
     <!-- 存储档案表单 -->
     <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑存储档案' : '新建存储档案'" width="640px">
-      <el-alert v-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
+      <el-alert v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" type="warning" :closable="false" show-icon class="dialog-alert"
+        title="这是平台自己那份存储：连接信息在这里改，保存后必须重启服务"
+        description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用它。改完先点「自检」确认凭据与桶可达，再重启后端；不重启的话界面显示新值、实际上传仍走旧实例。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「启动配置 → 本地上传目录」（upload_dir），这里改不了。" />
+      <el-alert v-else-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
         title="这是系统自带的档案，通常不用改动"
-        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储 → 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
+        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
       <el-alert type="warning" :closable="false" show-icon class="dialog-alert"
         title="凭据以明文入库，回显只给掩码"
         description="请确保数据库备份与访问控制到位。SecretKey 一旦保存就不再回传，忘记只能重新填写。" />
       <el-form label-width="130px" size="small">
         <el-form-item label="档案名"><el-input v-model="storageForm.name" placeholder="例如：主站 OSS" /></el-form-item>
         <el-form-item label="驱动">
-          <el-select v-model="storageForm.driver" style="width: 100%" :disabled="storageForm.builtin">
+          <el-select v-model="storageForm.driver" style="width: 100%" :disabled="storageForm.builtin && storageForm.purpose !== 'platform_primary'">
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
-          <span v-if="storageForm.builtin" class="field-note">
+          <span v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" class="field-note">
+            平台自身存储可选本地或任意云驱动，改完必须重启服务才生效。
+          </span>
+          <span v-else-if="storageForm.builtin" class="field-note">
             驱动锁定为「本地磁盘」，不可删除、也不能改成云存储；这是系统预留的备用盘，你只需改展示名，其余保持默认。
           </span>
         </el-form-item>
@@ -269,7 +276,7 @@
               它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              内置档案的目录继承自「平台自身存储 → 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
+              内置档案的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
               所以这里不用改、也不建议改；真要换位置请到那里改后重启服务，单独改这里会让图片找不到。
             </span>
             <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
@@ -342,8 +349,11 @@ const tab = ref(['storage', 'delivery', 'binding', 'migration', 'platform'].incl
 const loading = ref(false)
 const saving = ref(false)
 const storages = ref<StorageProfile[]>([])
-// 镜像档案只接收异步备份副本，绝不能出现在绑定 / 迁移下拉里（后端也会拒）。
-const writableStorages = computed(() => storages.value.filter((p) => p.purpose !== 'platform_mirror'))
+// 两套内置档案绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
+// 镜像只收备份副本，平台自身存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
+const writableStorages = computed(() => storages.value.filter(
+  (p) => p.purpose !== 'platform_mirror' && p.purpose !== 'platform_primary',
+))
 const deliveries = ref<DeliveryProfile[]>([])
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])

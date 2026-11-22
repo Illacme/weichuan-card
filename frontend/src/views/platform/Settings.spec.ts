@@ -70,18 +70,11 @@ const items: SettingItem[] = [
   { key: 'cdn_access_key_secret', name: 'CDN AccessKeySecret', group: 'storage', type: 'string', value: '', description: 'CDN SK', secret: true, restart: true, readOnly: false, envVar: 'CDN_ACCESS_KEY_SECRET', configured: false },
   { key: 'cdn_resource_id', name: 'CDN 资源标识', group: 'storage', type: 'string', value: '', description: 'Zone ID / Distribution ID', secret: false, restart: true, readOnly: false, envVar: 'CDN_RESOURCE_ID', configured: false },
   { key: 'cdn_endpoint', name: 'CDN 服务端点', group: 'storage', type: 'string', value: '', description: 'CDN 端点', secret: false, restart: true, readOnly: false, envVar: 'CDN_ENDPOINT', configured: false },
-  { key: 'storage_driver', name: '存储方式', group: 'storage', type: 'string', value: 'local', description: '存储驱动', secret: false, restart: true, readOnly: false, envVar: 'STORAGE_DRIVER', options: ['local', 'minio', 'oss', 's3'], configured: true },
-  { key: 'storage_endpoint', name: '存储服务端点', group: 'storage', type: 'string', value: '', description: '对象存储端点', secret: false, restart: true, readOnly: false, envVar: 'MINIO_ENDPOINT', configured: false },
-  { key: 'storage_bucket', name: '存储空间名称', group: 'storage', type: 'string', value: '', description: '存储桶', secret: false, restart: true, readOnly: false, envVar: 'MINIO_BUCKET', configured: false },
-  { key: 'storage_access_key', name: '存储 AccessKey', group: 'storage', type: 'string', value: '', description: '存储 AK', secret: false, restart: true, readOnly: false, envVar: 'MINIO_ACCESS_KEY', configured: false },
-  { key: 'storage_secret_key', name: '存储 SecretKey', group: 'storage', type: 'string', value: '', description: '存储 SecretKey', secret: true, restart: true, readOnly: false, envVar: 'MINIO_SECRET_KEY', configured: false },
-  { key: 'storage_use_ssl', name: '存储启用 HTTPS', group: 'storage', type: 'bool', value: '', description: '存储 SSL', secret: false, restart: true, readOnly: false, envVar: 'MINIO_USE_SSL', configured: false },
-  { key: 'storage_region', name: '存储区域', group: 'storage', type: 'string', value: '', description: 'S3 区域', secret: false, restart: true, readOnly: false, envVar: 'STORAGE_REGION', configured: false },
-  { key: 'storage_public', name: '存储空间公开访问', group: 'storage', type: 'bool', value: 'true', description: '公开桶', secret: false, restart: true, readOnly: false, envVar: 'STORAGE_PUBLIC', configured: true },
+  // 迁移 0059：连接信息已进存储档案，sys_setting 只留指针与部署期目录
+  { key: 'platform_storage_profile_id', name: '平台自身存储档案', group: 'storage', type: 'string', value: '1', description: '指向内置平台档案（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '本地镜像目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
   { key: 'local_mirror_enabled', name: '本地镜像总开关', group: 'storage', type: 'bool', value: 'true', description: '本地镜像总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  { key: 'upload_base_url', name: '文件访问基址', group: 'storage', type: 'string', value: '', description: '文件公开访问地址', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_BASE_URL', configured: false },
   { key: 'cookie_domain', name: '登录 Cookie 作用域', group: 'security', type: 'string', value: '', description: 'Cookie 作用域', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_DOMAIN', configured: false },
   { key: 'cookie_secure', name: '登录 Cookie 强制 HTTPS', group: 'security', type: 'bool', value: 'false', description: 'Cookie Secure', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_SECURE', configured: true },
   { key: 'db_dsn', name: '数据库连接串', group: 'security', type: 'string', value: '******', description: '数据库连接串', secret: true, restart: true, readOnly: true, envVar: 'DB_DSN', configured: true },
@@ -455,8 +448,8 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     // 常驻摘要条：一眼给出「还差几项」及其归属（本页可配 / 环境变量）
     expect(w.find('.ready-bar').exists()).toBe(true)
-    // local 驱动 7 项（文件访问基址仅对象存储需要，不进本地清单）
-    expect(w.text()).toContain('4 / 7 项就绪')
+    // 迁移 0059 后存储连接信息不在 sys_setting，就绪清单从 7 项收敛到 6 项
+    expect(w.text()).toContain('3 / 6 项就绪')
     expect(w.text()).toContain('还有 3 项待处理')
     // 清单本身默认不展开：本页主任务是改配置，不能被清单推到屏幕外
     expect(w.find('.ready-card').exists()).toBe(false)
@@ -477,24 +470,24 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     // 0 就绪会自动拉起向导（stub 不传送门，页面本体仍在同一棵树上，可直接断言）
     expect(w.find('.el-dialog').exists()).toBe(true)
-    expect(w.text()).toContain('0 / 7 项就绪')
+    expect(w.text()).toContain('0 / 6 项就绪')
     expect(w.find('.ready-card').exists()).toBe(true)
   })
 
   it('上线就绪面板：按「本页可配置 / 环境变量 / 配置文件」分组；只读项给可复制写法而非死路入口', async () => {
     const { w } = await setup()
-    // 夹具已配置 jwt_key / pii_enc_key / db_dsn / storage_driver → 4/7；
+    // 夹具已配置 jwt_key / pii_enc_key / db_dsn → 3/6；
     // cookie_secure=false、wx_appid 未配、miniprogram_base_url 未配；
-    // upload_base_url 是云存储专属项，local 驱动下不进清单（假警报修复）
+    // 存储连接信息已进档案，不再出现在这份清单里
     expect(w.text()).toContain('上线就绪检查')
-    expect(w.text()).toContain('4 / 7 项就绪')
+    expect(w.text()).toContain('3 / 6 项就绪')
     // 清单默认收起：点「查看详情」展开后再断言明细
     if (!w.find('.ready-card').exists()) {
       await w.find('.ready-bar-toggle').trigger('click')
       await nextTick()
     }
     const readyRows = w.findAll('.ready-row')
-    expect(readyRows).toHaveLength(7)
+    expect(readyRows).toHaveLength(6)
 
     // 分两组呈现：本页可配 3 项（1 就绪） / 部署环境变量 4 项（3 就绪）
     expect(w.findAll('.ready-section-title')).toHaveLength(2)
@@ -537,7 +530,7 @@ describe('Settings 系统设置', () => {
       data: items.map((it) => (it.key === 'cookie_secure' ? { ...it, value: 'true' } : it)),
     }) as any)
     const { w } = await setup()
-    expect(w.text()).toContain('5 / 7 项就绪')
+    expect(w.text()).toContain('4 / 6 项就绪')
   })
 
   it('PII 加密密钥未配置时进「环境变量」组：给可复制写法 + 点明形同明文的后果', async () => {
@@ -600,18 +593,14 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 品牌名已配置 → 跳过；存储步有未配置项（upload_dir）→ 落在第 2 步
+    // 品牌名已配置 → 跳过；存储步有未配置项（upload_dir / mirror_dir）→ 落在第 2 步
     expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
-    expect(dialogOf(w).text()).toContain('存储与上传')
-    // local 驱动：向导里出现本地上传目录，不出现云凭据
+    expect(dialogOf(w).text()).toContain('存储部署目录')
+    // 迁移 0059 后这一步只管部署目录，驱动 / 桶 / 凭据已移进档案模块
     expect(dialogOf(w).text()).toContain('upload_dir')
+    expect(dialogOf(w).text()).toContain('mirror_dir')
     expect(dialogOf(w).text()).not.toContain('storage_endpoint')
-
-    // 向导内切 minio：端点转亮出现、目录隐藏——联动在向导里同样生效
-    await dialogRow(w, 'storage_driver').find('select.el-select').setValue('minio')
-    await nextTick()
-    expect(dialogRow(w, 'storage_endpoint').text()).toContain('待配置')
-    expect(dialogOf(w).text()).not.toContain('upload_dir')
+    expect(dialogOf(w).text()).toContain('文件存储与分发 → 存储档案')
   })
 
   it('向导「稍后再说」：恢复打开前的草稿，不产生任何提交', async () => {
@@ -631,94 +620,35 @@ describe('Settings 系统设置', () => {
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  // ---- P1：快速开始预设 ----
-  it('快速开始预设：演示 / 生产一键填入推荐值，只出现在第 1 步', async () => {
-    // upload_max_mb 置空：验证「没设过才填」的分支；已有值的 upload_allow_ext 应保持原样
-    vi.mocked(getSettings).mockImplementationOnce(async () => ({
-      code: 0,
-      data: items.map((it) => (it.key === 'upload_max_mb' ? { ...it, value: '', configured: false } : it)),
-    }) as any)
+  // ---- P1：存储连接信息指路 ----
+  it('向导指路条只在第 1 步出现，讲清连接信息去档案模块配置', async () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 默认落在第 2 步（存储）：预设条不出现——已经看着存储项了，不需要再问一遍
+    // 默认落在第 2 步（存储目录）：指路条不出现——已经看着存储项了
     expect(dialogOf(w).find('.wizard-preset').exists()).toBe(false)
 
-    // 回第 1 步：预设条出现
     await dialogOf(w)
       .findAll('.wizard-stepchip')
       .find((c: any) => c.text().includes('品牌与身份'))!
       .trigger('click')
     await nextTick()
-    const preset = dialogOf(w).find('.wizard-preset')
-    expect(preset.exists()).toBe(true)
-    const presetBtn = (text: string) =>
-      preset.findAllComponents({ name: 'ElButton' }).find((b: any) => b.text() === text)!
-
-    // 演示模式：目录与上传限制落推荐值；已设过值的项不被覆盖
-    await presetBtn('演示模式').trigger('click')
-    await nextTick()
-    // 说明还留在第 1 步（预设条是第 1 步专属），讲清填了什么、什么保持原样
-    expect(dialogOf(w).text()).toContain('已按演示模式填入')
-    await dialogOf(w)
-      .findAll('.wizard-stepchip')
-      .find((c: any) => c.text().includes('上传限制'))!
-      .trigger('click')
-    await nextTick()
-    expect((dialogRow(w, 'upload_max_mb').find('input.el-input-number').element as HTMLInputElement).value).toBe('10')
-    expect((dialogRow(w, 'upload_allow_ext').find('input.el-input').element as HTMLInputElement).value).toBe('png,jpg')
-
-    // 预设条里直接跳到存储步，验证生产模式的填入结果
-    await dialogOf(w)
-      .findAll('.wizard-stepchip')
-      .find((c: any) => c.text().includes('品牌与身份'))!
-      .trigger('click')
-    await nextTick()
-    const preset2 = dialogOf(w).find('.wizard-preset')
-    const jumpBtn = preset2.findAll('button.el-button').find((b: any) => b.text() === '去「存储与上传」步')
-    expect(jumpBtn, '填入后应出现跳转按钮').toBeTruthy()
-    await preset2
-      .findAllComponents({ name: 'ElButton' })
-      .find((b: any) => b.text() === '生产模式')!
-      .trigger('click')
-    await nextTick()
-    // 当前模式高亮：生产模式按钮变主色
-    expect(
-      preset2.findAllComponents({ name: 'ElButton' }).find((b: any) => b.text() === '生产模式')!.props('type'),
-    ).toBe('primary')
-    expect(dialogOf(w).text()).toContain('需按你的对象存储手动填写')
-
-    await jumpBtn!.trigger('click')
-    await nextTick()
-    expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
-    // 生产模式：minio + HTTPS 开
-    expect((dialogRow(w, 'storage_driver').find('select.el-select').element as HTMLSelectElement).value).toBe('minio')
-    expect(dialogRow(w, 'storage_use_ssl').find('select.el-select').element.value).toBe('true')
+    const hint = dialogOf(w).find('.wizard-preset')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('文件存储与分发 → 存储档案')
+    expect(hint.text()).toContain('自检')
+    // 连接信息不在向导里，不能再出现「演示 / 生产一键填驱动」的假入口
+    expect(hint.findAllComponents({ name: 'ElButton' })).toHaveLength(0)
   })
 
   // ---- P2：向导内联格式校验 ----
-  it('向导内联校验：地址不合法不放行下一步，行内即时给出错误', async () => {
+  it('存储步不再有地址校验项：连接信息已进档案，向导不再制造假警报', async () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 第 2 步（存储）：先切 minio——文件访问基址是云存储专属项，local 下不出现
-    await dialogRow(w, 'storage_driver').find('select.el-select').setValue('minio')
-    await nextTick()
-    await dialogRow(w, 'upload_base_url').find('input.el-input').setValue('cdn.example.com')
-    await nextTick()
-    // 行内错误即时出现（不用等点下一步），指出该填成什么样
-    expect(dialogRow(w, 'upload_base_url').text()).toContain('不是完整地址')
-
-    // 点下一步：被拦住，仍在第 2 步，并说明是哪一项
-    await dialogButton(w, '下一步').trigger('click')
-    await nextTick()
-    expect(dialogOf(w).text()).toContain('第 2 步 / 共 7 步')
-    expect(vi.mocked(ElMessage.warning).mock.calls[0][0]).toContain('文件访问基址')
-
-    // 改成合法地址：错误消失、放行
-    await dialogRow(w, 'upload_base_url').find('input.el-input').setValue('https://cdn.example.com')
-    await nextTick()
-    expect(dialogRow(w, 'upload_base_url').text()).not.toContain('不是完整地址')
+    expect(dialogRowExists(w, 'upload_base_url')).toBe(false)
+    expect(dialogRowExists(w, 'storage_endpoint')).toBe(false)
+    // 目录项没有默认值，点下一步正常放行（不会被已移走的字段拦住）
     await dialogButton(w, '下一步').trigger('click')
     await nextTick()
     expect(dialogOf(w).text()).toContain('第 3 步 / 共 7 步')
@@ -838,7 +768,7 @@ describe('Settings 系统设置', () => {
     // 保存成功 → 对话框关闭；upload_dir 不属于上线就绪检查的 key，
     // 就绪数保持 4/7（不伪造进度），但该行「待配置」标记应随之消失
     expect(w.find('.el-dialog').exists()).toBe(false)
-    expect(w.text()).toContain('4 / 7 项就绪')
+    expect(w.text()).toContain('3 / 6 项就绪')
   })
 
   it('全新部署（一项都没就绪）进入页面自动拉起配置向导', async () => {
@@ -867,33 +797,31 @@ describe('Settings 系统设置', () => {
     expect(dialogOf(w).text()).toContain('第 1 步 / 共 7 步')
   })
 
-  it('步骤条带每步待配置数：local 下存储步亮 1', async () => {
+  it('步骤条带每步待配置数：存储目录步亮 2', async () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
     const chip = dialogOf(w)
       .findAll('.wizard-stepchip')
-      .find((c: any) => c.text().includes('存储与上传'))
-    // local 驱动下可见项：storage_driver（已配）/ upload_dir（未配）。
-    // upload_base_url 云存储专属，local 下不计入待配置
-    expect(chip!.find('.wizard-stepchip-count').text()).toBe('1')
-    expect(dialogOf(w).text()).toContain('本步 1 项待配置')
+      .find((c: any) => c.text().includes('存储目录'))
+    // 夹具里平台档案指针已配置，本地上传目录 / 镜像目录未配 → 2 项待处理
+    expect(chip!.find('.wizard-stepchip-count').text()).toBe('2')
+    expect(dialogOf(w).text()).toContain('本步 2 项待配置')
   })
 
   it('步内小组标题：项多的步骤按主题分堆，与主列表分区同结构', async () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 默认落在存储步：存储位置 / 访问方式两组
+    // 默认落在存储目录步：指向与部署目录 / 本地镜像备份两组
     expect(dialogOf(w).findAll('.wizard-group-title').map((t: any) => t.text())).toEqual([
-      '存储位置',
-      '访问方式',
+      '指向与部署目录',
+      '本地镜像备份（可选）',
     ])
-    // local 下：本地上传目录在「存储位置」组可见；云凭据被置灰，整组不出现
+    expect(dialogRow(w, 'platform_storage_profile_id').exists()).toBe(true)
     expect(dialogRow(w, 'upload_dir').exists()).toBe(true)
+    expect(dialogRow(w, 'mirror_dir').exists()).toBe(true)
     expect(dialogRowExists(w, 'storage_endpoint')).toBe(false)
-    // 公私总闸补进首配路径：local 态也在「访问方式」组
-    expect(dialogRow(w, 'storage_public').exists()).toBe(true)
 
     // 上传限制步：大小与类型 / 临时链接有效期（与主列表上传组一致）
     await dialogOf(w)
@@ -953,17 +881,12 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    // 文件访问基址是云存储专属：local 下不出现，切 minio 后才该讲格式
-    await dialogRow(w, 'storage_driver').find('select.el-select').setValue('minio')
-    await nextTick()
-    // minio 下就有 upload_base_url：示例占位讲格式、徽标讲填错的后果
-    expect(dialogRow(w, 'upload_base_url').find('input.el-input').attributes('placeholder')).toContain('https://')
-    expect(dialogRow(w, 'upload_base_url').text()).toContain('图片全部打不开')
-    // 切到小程序步：miniprogram_base_url 也有徽标
+    // 文件访问基址已移进档案模块，向导里只剩小程序接口基址需要讲格式
     for (let i = 0; i < 3; i++) {
       await dialogButton(w, '下一步').trigger('click')
       await nextTick()
     }
+    expect(dialogRow(w, 'miniprogram_base_url').find('input.el-input').attributes('placeholder')).toContain('https://')
     expect(dialogRow(w, 'miniprogram_base_url').text()).toContain('小程序直接连不上')
   })
 
@@ -978,7 +901,7 @@ describe('Settings 系统设置', () => {
     const dlg = dialogOf(w)
     // 复用主页 checks 数据：分组 + 就绪数（夹具 4/7，local 驱动无文件访问基址项）
     expect(dlg.text()).toContain('上线就绪')
-    expect(dlg.text()).toContain('4 / 7')
+    expect(dlg.text()).toContain('3 / 6')
     expect(dlg.text()).toContain('本页可配置')
     expect(dlg.text()).toContain('只读项')
     // 只读未就绪项（cookie_secure）给可复制的环境变量写法
@@ -1071,7 +994,8 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     await wizardEntryButton(w).trigger('click')
     await nextTick()
-    await dialogRow(w, 'storage_driver').find('select.el-select').setValue('minio')
+    // 存储连接信息已进档案，这里用同样会触发破坏性确认的本地目录项
+    await dialogRow(w, 'upload_dir').find('input.el-input').setValue('/mnt/new-uploads')
     await nextTick()
     for (let i = 0; i < 5; i++) {
       await dialogButton(w, '下一步').trigger('click')
@@ -1166,12 +1090,13 @@ describe('平台自身存储与档案模块的边界', () => {
     expect(src).toContain('/platform/storage-profiles?tab=platform&focus=')
   })
 
-  it('分组名叫「平台自身存储」而不是「兜底」，并讲清 local 下与内置档案同一块盘', () => {
+  it('分组名叫「平台自身存储」而不是「兜底」，并讲清连接信息已进档案', () => {
     const src = readFileSync('src/views/platform/Settings.vue', 'utf8')
     expect(src).toContain("storage: '平台自身存储（启动配置）'")
     expect(src).not.toContain("storage: '平台兜底存储")
-    // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点，必须点明
-    expect(src).toContain('这里定的是平台自己那份文件存哪')
-    expect(src).toContain('与档案模块的「平台本地存储」是同一块盘')
+    // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点
+    expect(src).toContain('平台自身存储的部署期事实')
+    expect(src).toContain('文件存储与分发 → 存储档案')
+    expect(src).not.toContain('storage_driver')
   })
 })

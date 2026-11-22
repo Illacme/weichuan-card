@@ -4938,6 +4938,8 @@ MySQL 事务**里：要么都成，要么都不成。于是三步的失败面被
 `NewPlatformS3Source` 当场拒绝——所以正向搬迁成功本身就是覆盖生效的证据。
 另有负例：删掉界面里的 `storage_bucket` 后必须回落到诱饵桶并显式报「平台源桶不存在」；
 全程比对 `CHECKSUM TABLE sys_setting`，确认读配置没有顺手写库。
+（迁移 0059 后回填工具优先读 `platform_primary` 档案；这段真桶证据刻意不建该档案，
+验证的是「档案尚未生成时」的 bootstrap 回落分支，正常部署不再走它。）
 
 | # | 动作 | 结果 |
 | --- | --- | --- |
@@ -5806,3 +5808,58 @@ optional 行（未开启镜像的部署不产出，硬占一行会天天显示�
 - **反向验证**：归属校验两种半对写法（只比 scope / 只比 cid）各自必红；
   `checkOwner` 改 `if false` 必红；双清端点跳过云删除必红；
   直传确认去掉 `scheduleMirror` 必红；镜像目录校验改成恒 false 必红。
+
+## 第七十九轮：平台自身存储档案化（迁移 0059，一次切到位）
+
+用户问「`sys_setting` 里的启动配置能不能也存进存储档案，系统设置只留一个指针」，
+并明确拍板：**确认要做，一次切到位，复用现有自检**。结论不只是把字段搬家：
+平台实例必须保持启动期构造、运行期不可变，否则一个请求写新桶、下一个请求写旧桶；
+目录事实也不能塞进档案，否则 `/uploads` 静态路由与对象落点会分叉。
+
+### 三条不能退的决定
+
+1. **连接信息只有一处真值源**。新增 `builtin=true, purpose=platform_primary` 档案，
+   驱动 / 端点 / 桶 / 区域 / AK/SK / 基址 / HTTPS / 公开读全进 `storage_profiles`。
+   `sys_setting` 的 9 个旧 `storage_*` / `upload_base_url` 只在首次生成档案时播种，
+   随即清理；档案已存在时后续启动**只读不覆盖**。不为未商用产品留长期兼容层。
+2. **`sys_setting` 只留部署期事实**：`upload_dir` / `mirror_dir` / `local_mirror_enabled` /
+   CDN / 配额等，外加自动写入的 `platform_storage_profile_id` 指针（排障用，不需手改）。
+   目录仍是唯一真值源，启动时单向同步到三套 builtin 的 `local_dir`。
+3. **复用现成自检与安全边界**。平台档案直接走
+   `POST /api/admin/storage-profiles/:id/check` 与 `buildUploader` 同口径构造；
+   档案不可删、不可绑定给租户、不可作为迁移源 / 目标；前端绑定与迁移下拉同时过滤
+   `platform_primary` 与 `platform_mirror`。租户档案配错仍显式失败，绝不静默回退平台盘。
+
+### 落地触点
+
+- 后端：迁移 `0059` + manifest；`storageprofile/platform.go` 四个新函数
+  （`EnsureBuiltinPlatformPrimary` / `ApplyPlatformConfig` / `BuildPlatformUploader` /
+  `LocalPlatformFallback`）；生产与 devserver 启动链改成按档案构造平台实例；
+  `platformUploader` 降级时回报实际驱动 `local`；`storage-backfill` 优先读平台档案，
+  表不存在时才回落 env / 历史 `sys_setting`。
+- 权限：没有新增路由，沿用档案页的 `PlatformAdminMiddleware`；企业管理员依然连读都 403。
+- 前端：系统设置 storage 组只展示部署目录、镜像总闸、CDN、配额与自动指针；
+  「平台自身存储（启动配置）」标签并入档案模块只是快捷入口；连接信息在档案那一行编辑，
+  保存后提示先自检再重启。向导改为「指路到档案」，不再复制一套驱动表单。
+- 文档：`docs/tenant-storage-design.md` §0.3、`README.md`、`backend/README.md`、
+  `docs/openapi.yaml` 的设置项示例同步收口；OpenAPI 路径数不变（无新接口）。
+
+### 为什么不是「只剩一个指针」那么简单
+
+`cfg.StorageDriver` / `cfg.UploadBaseURL` 等字段在出参归一、签名、安装向导里仍被大量读取；
+让各处运行期去查档案既重复又容易漂移。`ApplyPlatformConfig` 在启动期一次性把档案值同步进
+`cfg` 快照，此后 `cfg` 只读——这正是「平台实例启动期不可变」的落地方式。
+构造失败时降级到 `cfg.UploadDir` 的本地盘，保证管理员能进后台改回来；这属于平台自身的
+自愈底线，与租户侧「配置错必须报错、不许落平台盘」是两回事，不要混为一谈。
+
+### 验证
+
+- 后端：gofmt / vet / build / `go test ./...` 全绿，golangci-lint 0 issues。
+- 前端：type-check / lint / **1890 tests** / Vite build 全过。
+- OpenAPI：137 paths，136 条后端路由全部有契约，226 个 `$ref` 可解析，selftest 通过。
+- 迁移清单 59 个，最后一个 `0059_platform_primary_storage.sql`。
+- **反向验证**四组全部「注入坏实现必红 → 还原复绿 → 文件 sha256 零漂移」：
+  ① 绑定守门漏掉 `platform_primary` → `TestBuiltinProfilesCannotBeWriteTarget:183` 红；
+  ② 迁移守门漏掉 `platform_primary` → 同测试 `:186` 红；
+  ③ 重启时按 env 覆盖档案连接信息 → `TestEnsureBuiltinPlatformPrimary:63` 红；
+  ④ 前端 `writableStorages` 放掉 `platform_primary` → 新增档案页守门红。
