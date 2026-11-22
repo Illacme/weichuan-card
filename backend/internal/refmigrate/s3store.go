@@ -96,7 +96,7 @@ func NewS3Store(cfg S3StoreConfig) (*S3Store, error) {
 		if host != strings.TrimSpace(cfg.Endpoint) {
 			return nil, fmt.Errorf("企业 %d 的 hostHeader=%q 与 endpoint=%q 不是同一个域名："+
 				"回填命令不经 nginx，无法改写 Host/SNI；请用路径风格（hostHeader 留空或等于 endpoint）。"+
-				"客户自有访问域名请配在分发档案的 domain 上，不要改 hostHeader",
+				"客户自有访问域名请配在 CDN分发的 domain 上，不要改 hostHeader",
 				cfg.CompanyID, cfg.HostHeader, cfg.Endpoint)
 		}
 	}
@@ -231,15 +231,15 @@ func TenantTargetFor(prof *storageprofile.Resolver) func(int64) (ObjectStore, er
 		}
 		eff, err := prof.Resolve(cid)
 		if err != nil {
-			return nil, fmt.Errorf("企业 %d 的存储档案读取失败（不回退平台盘）：%w", cid, err)
+			return nil, fmt.Errorf("企业 %d 的文件存储读取失败（不回退平台盘）：%w", cid, err)
 		}
 		if eff.Storage == nil {
-			return nil, fmt.Errorf("企业 %d 没有绑定存储档案（对象在平台盘上）："+
+			return nil, fmt.Errorf("企业 %d 没有绑定文件存储（对象在平台盘上）："+
 				"不回退平台盘——那样对象只会被复制到平台本地目录，客户桶里一个都没有", cid)
 		}
 		sp := eff.Storage
 		if sp.Driver == nginxsnippet.DriverLocal {
-			return nil, fmt.Errorf("企业 %d 的生效档案是本地磁盘（driver=local）：没有可回填的桶，"+
+			return nil, fmt.Errorf("企业 %d 的生效文件存储是本地磁盘（driver=local）：没有可回填的桶，"+
 				"不回退平台盘——对象本来就在平台盘上，复制到平台盘没有意义", cid)
 		}
 		// NginxTarget 已经把 endpoint 剥成 host[:port] 并解析出 use_ssl，

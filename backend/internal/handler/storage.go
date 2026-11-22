@@ -250,9 +250,9 @@ func capabilityHandler(res storage.Resolver) gin.HandlerFunc {
 		reason := ""
 		switch {
 		case driver == "local":
-			// 指路必须落在真实存在的入口：连接信息在「存储与分发 → 存储档案」，
+			// 指路必须落在真实存在的入口：连接信息在「存储与分发 → 文件存储」，
 			// 系统设置里早已没有对象存储的配置项，按旧提示找过去会扑空。
-			reason = "当前为本地磁盘存储：视频会占用服务器磁盘与带宽。请先在「存储与分发 → 存储档案」接入对象存储"
+			reason = "当前为本地磁盘存储：视频会占用服务器磁盘与带宽。请先在「存储与分发 → 文件存储」接入对象存储"
 		case !presign:
 			reason = "当前存储驱动不支持直传预签名，大视频经服务器中转会拖垮服务"
 		}
@@ -384,13 +384,13 @@ func cdnRefreshHandler(rf storage.CDNRefresher) gin.HandlerFunc {
 		if rf == nil {
 			// 五家厂商要求的凭据不同（Cloudflare 是 Token+Zone ID，AK/SK 三家不要资源标识），
 			// 所以提示只指路、不点名具体环境变量，避免指错厂商
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → 分发档案」新建一套并绑定，或给「平台自身 CDN」选好厂商并填全凭据后重启服务"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → CDN分发」新建一套并绑定，或给「平台自身 CDN」选好厂商并填全凭据后重启服务"})
 			return
 		}
 		// 动态刷新器是个壳：包了壳但没有全局刷新器、也没有分发档案绑定时，
 		// 仍然等同「未配置」，不能因为类型非 nil 就把失败伪装成成功。
 		if checker, ok := rf.(interface{ Configured() bool }); ok && !checker.Configured() {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → 分发档案」新建一套并绑定，或在系统设置里填全凭据"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → CDN分发」新建一套并绑定，或在系统设置里填全凭据"})
 			return
 		}
 		var req struct {
@@ -408,17 +408,59 @@ func cdnRefreshHandler(rf storage.CDNRefresher) gin.HandlerFunc {
 	}
 }
 
-// localFileHandler 本地私有文件流：鉴权后按 key 读取，防目录穿越
+// localFileHandler 本地私有文件流：鉴权后按 key 读取。
+//
+// 归属校验与 signerForKey 完全同口径，不能只判空 key 与 ".."：
+//   - t/<cid>/…：租户对象，只能读自己的；平台超管可代读任意企业；
+//   - p/…：平台对象，登录用户都能读（素材 / 小程序码 / 下架占位图）；
+//   - 历史裸键：无归属信息且落在平台盘，只放平台超管。
+//
+// 调用方的企业 ID 只取鉴权中间件写进上下文的值，绝不读 query/form 的 companyId——
+// 那是客户端可控的，拿它判归属等于把越权接口原样留着。
+// 路径先用 ParseRef 收敛成规范对象键（顺带拒绝 ../ 与伪协议），再用 Rel 判越界。
 func localFileHandler(l *storage.LocalUploader) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := c.Query("key")
-		if key == "" || strings.Contains(key, "..") {
+		raw := strings.TrimSpace(c.Query("key"))
+		if raw == "" {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
 			return
 		}
-		fp := filepath.Join(l.Dir, key)
-		abs, err := filepath.Abs(fp)
-		if err != nil || !strings.HasPrefix(abs, filepath.Clean(l.Dir)) {
+
+		cid := middleware.CurrentCompanyID(c)
+		ref, perr := storage.ParseRef(raw)
+		var rel string
+		switch {
+		case perr == nil && ref.Scope == storage.ScopeTenant:
+			if cid > 0 && ref.CompanyID != cid {
+				c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "无权读取该文件"})
+				return
+			}
+			rel = ref.ObjectKey
+		case perr == nil: // ScopePlatform
+			rel = ref.ObjectKey
+		case errors.Is(perr, storage.ErrLegacyRef):
+			if !middleware.IsPlatformAdmin(c) {
+				c.JSON(http.StatusOK, gin.H{"code": 403, "msg": "无权读取该文件"})
+				return
+			}
+			// 历史裸键在盘上没有 p/ 前缀，校验后剥掉归一化加的平台前缀。
+			legacy, nerr := storage.NormalizeRef(raw, "", storage.ScopePlatform, 0)
+			if nerr != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "对象键非法"})
+				return
+			}
+			rel = strings.TrimPrefix(legacy.ObjectKey, storage.PlatformKeyPrefix)
+		default:
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "对象键非法"})
+			return
+		}
+
+		fp := filepath.Join(l.Dir, filepath.FromSlash(rel))
+		root, rerr := filepath.Abs(l.Dir)
+		abs, aerr := filepath.Abs(fp)
+		inside, ierr := filepath.Rel(root, abs)
+		if rerr != nil || aerr != nil || ierr != nil || inside == ".." ||
+			strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "非法路径"})
 			return
 		}

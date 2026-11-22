@@ -50,7 +50,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 	res := db.Where("builtin = ? AND purpose = ?", true, model.ProfilePurposePlatformPrimary).
 		Limit(1).Find(&row)
 	if res.Error != nil {
-		return nil, fmt.Errorf("读取平台自身存储档案失败：%w", res.Error)
+		return nil, fmt.Errorf("读取平台自身存储配置失败：%w", res.Error)
 	}
 	if res.RowsAffected == 0 {
 		name, err := availableBuiltinName(db, builtinPlatformName)
@@ -78,9 +78,9 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 			row.UseSSL = true
 		}
 		if err := db.Create(&row).Error; err != nil {
-			return nil, fmt.Errorf("创建平台自身存储档案失败：%w", err)
+			return nil, fmt.Errorf("创建平台自身存储配置失败：%w", err)
 		}
-		log.Printf("[STORAGE] 已生成内置档案「%s」(id=%d, driver=%s)，平台连接信息以该档案为准",
+		log.Printf("[STORAGE] 已生成系统自带的文件存储「%s」(id=%d, driver=%s)，平台连接信息以它为准",
 			row.Name, row.ID, row.Driver)
 	} else {
 		// local_dir 是部署期事实：换 UPLOAD_DIR 后静态路由 / 本地实例都指向新目录，
@@ -90,7 +90,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 		if want != "" && strings.TrimSpace(row.LocalDir) != want {
 			if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).
 				Update("local_dir", want).Error; err != nil {
-				return nil, fmt.Errorf("同步平台自身存储档案目录失败：%w", err)
+				return nil, fmt.Errorf("同步平台自身存储配置目录失败：%w", err)
 			}
 			row.LocalDir = want
 		}
@@ -99,7 +99,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 	// 指针写入失败不影响启动：下面用的是刚查到的这一行，不依赖 sys_setting 回读。
 	// 但必须留痕，否则「设置里看不到指向」会让人以为平台在用别的档案。
 	if err := setting.Upsert(setting.KeyPlatformStorageProfileID, strconv.FormatInt(row.ID, 10)); err != nil {
-		log.Printf("[STORAGE][WARN] 写入平台自身存储档案指针失败（不影响本次启动）：%v", err)
+		log.Printf("[STORAGE][WARN] 写入平台自身存储配置指针失败（不影响本次启动）：%v", err)
 	}
 	cleanupLegacyPlatformSettings(db)
 	return &row, nil
@@ -111,7 +111,7 @@ func cleanupLegacyPlatformSettings(db *gorm.DB) {
 	}
 	if err := db.Where(map[string]any{"key": legacyPlatformSettingKeys}).
 		Delete(&setting.Setting{}).Error; err != nil {
-		log.Printf("[STORAGE][WARN] 清理旧存储设置项失败（不影响运行，档案已是唯一真值源）：%v", err)
+		log.Printf("[STORAGE][WARN] 清理旧存储设置项失败（不影响运行，文件存储配置已是唯一真值源）：%v", err)
 		return
 	}
 	if err := setting.Reload(); err != nil {
@@ -144,7 +144,7 @@ func ApplyPlatformConfig(cfg *config.Config, sp *model.StorageProfile) {
 // buildUploader，自检与真正上传共用同一套构造口径。
 func BuildPlatformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uploader, error) {
 	if sp == nil {
-		return nil, fmt.Errorf("平台自身存储档案不存在")
+		return nil, fmt.Errorf("平台自身存储配置不存在")
 	}
 	if sp.Driver == nginxsnippet.DriverLocal {
 		base := strings.TrimSpace(sp.BaseURL)

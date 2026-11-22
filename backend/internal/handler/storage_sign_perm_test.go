@@ -16,6 +16,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -94,6 +97,74 @@ func TestSignHandlerChecksObjectOwnership(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "响应应为 JSON：%s", w.Body.String())
 			require.Equal(t, tc.code, resp.Code, "%s", w.Body.String())
 			require.Equal(t, tc.want, resp.Data.Signed[tc.key])
+		})
+	}
+}
+
+// TestLocalFileHandlerChecksObjectOwnership 钉住本地私有文件流的越权边界。
+// 接口在 local + 私有模式下是鉴权后直读本地盘；早先只判空 key 与 ".."，
+// 任意登录用户都能按可枚举的 t/<cid>/… 键读到别家企业的对象。
+// 这里把 signerForKey 的三态口径完整钉一遍，并确认 query companyId 不能冒充身份。
+func TestLocalFileHandlerChecksObjectOwnership(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	write := func(rel, data string) {
+		t.Helper()
+		fp := filepath.Join(dir, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(fp), 0o755))
+		require.NoError(t, os.WriteFile(fp, []byte(data), 0o644))
+	}
+	write("t/5/a.jpg", "tenant5")
+	write("t/9/b.jpg", "tenant9")
+	write("p/library/c.png", "platform")
+	write("old.jpg", "legacy")
+
+	h := localFileHandler(&storage.LocalUploader{Dir: dir})
+	cases := []struct {
+		name     string
+		role     string
+		cid      int64
+		key      string
+		queryCID string // 冒充用的 query companyId；可信上下文必须压过它
+		wantCode int    // 0 表示应当真的读到文件
+		wantBody string
+	}{
+		{"读自己的租户对象", "employee", 5, "t/5/a.jpg", "", 0, "tenant5"},
+		{"读别家租户对象：403", "employee", 5, "t/9/b.jpg", "", 403, ""},
+		{"query 冒充别家企业仍读不到", "employee", 5, "t/9/b.jpg", "9", 403, ""},
+		{"读平台对象", "employee", 5, "p/library/c.png", "", 0, "platform"},
+		{"租户不得读历史裸键", "employee", 5, "old.jpg", "", 403, ""},
+		{"平台超管可代读租户对象", "admin", 0, "t/9/b.jpg", "", 0, "tenant9"},
+		{"平台超管可读历史裸键", "admin", 0, "old.jpg", "", 0, "legacy"},
+		{"路径穿越被拒", "employee", 5, "t/5/../9/b.jpg", "", 1, ""},
+		{"租户不得用绝对 URL 猜键", "employee", 5, "https://evil.example/x.jpg", "", 403, ""},
+		{"平台超管遇到推不出键的绝对 URL：参数错误", "admin", 0, "https://evil.example/x.jpg", "", 1, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("role", tc.role)
+			c.Set("companyId", tc.cid)
+			u := "/api/storage/file?key=" + url.QueryEscape(tc.key)
+			if tc.queryCID != "" {
+				u += "&companyId=" + tc.queryCID
+			}
+			c.Request = httptest.NewRequest(http.MethodGet, u, nil)
+			h(c)
+
+			if tc.wantCode == 0 {
+				require.Equal(t, 200, w.Code)
+				require.Equal(t, tc.wantBody, w.Body.String(), "应读到对象字节而不是 JSON 错误")
+				return
+			}
+			var resp struct {
+				Code int `json:"code"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "响应应为 JSON：%s", w.Body.String())
+			require.Equal(t, tc.wantCode, resp.Code, "%s", w.Body.String())
 		})
 	}
 }

@@ -587,7 +587,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 启用：`STORAGE_PUBLIC=false`（默认 `true`）。对象存储 Bucket 设为私有读。
 - 存储：DB 仍按现有字段保存「公开形态 URL」（`BaseURL/key`），对象本身私有。
 - 访问：前端在需要展示私有文件时，调用 `POST /api/admin/storage/sign`（员工用 `/api/employee/...`）提交已存 URL 列表，后端按 `BaseURL` 前缀反推对象 key，返回 **30 分钟有效**的限时签名 URL（`SignGetURL`），前端用签名 URL 取图。
-- 本地私有：若 `local` 驱动 + `STORAGE_PUBLIC=false`，文件不再经 `/uploads` 静态公开，改用 `GET /api/storage/file?key=...`（鉴权后流式返回，防目录穿越）。
+- 本地私有：若 `local` 驱动 + `STORAGE_PUBLIC=false`，文件不再经 `/uploads` 静态公开，改用 `GET /api/storage/file?key=...`（鉴权后流式返回）。key 须是 `p/…` 平台对象或 `t/<企业ID>/…` 租户对象：租户只能读自己的，平台超管可代读任意企业；历史裸键只放平台超管。调用方的企业 ID 只取登录上下文，query 里的 `companyId` 不参与归属判定。
 - 小程序码已接入私有桶签名通道：`STORAGE_PUBLIC=false` 且存储支持签名时，`/api/wechat/wxacode` 返回 **1 小时有效**的限时签名 URL（每次请求重新签发），二维码内容本身仍按 `WXACODE_TTL_HOURS` 缓存、到期才重新调微信生成；公开桶/本地驱动仍返回公开 URL。
 
 ## 腾讯视频档（系统设置 → 功能开关）

@@ -49,7 +49,7 @@ const storage = (id: number, name: string) => ({
   accessKeyMasked: 'AKIA****MPLE',
 })
 const delivery = (id: number, name: string) => ({
-  id, name, provider: 'aliyun', domain: 'https://cdn.example.com', pathPrefix: '',
+  id, name, provider: 'aliyun', domain: 'https://cdn.example.com',
   endpoint: '', resourceId: '', status: 'ok', lastError: '', version: 1,
   accessKeyConfigured: true, secretKeyConfigured: true, accessKeyMasked: 'AKIA****MPLE',
 })
@@ -152,10 +152,10 @@ describe('存储与分发模块', () => {
     vi.mocked(api.rollbackCompanyBinding).mockResolvedValue({} as any)
     const w = mountPage()
     await flush()
-    // 全局与企业两处回滚入口都要出现（上一套档案是「备份桶」）
+    // 全局与企业两处回滚入口都要出现（切换前的文件存储是「备份桶」）
     expect(w.text()).toContain('回滚到上一套（备份桶）')
-    // el-table-column 的 label 不在 stub 渲染的 text 里，用源码钉住「上一套档案」列存在
-    expect(readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')).toContain('label="上一套档案"')
+    // el-table-column 的 label 不在 stub 渲染的 text 里，用源码钉住「切换前的文件存储」列存在
+    expect(readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')).toContain('label="切换前的文件存储"')
     const globalRollback = w.findAll('button').find((b) => b.text().includes('回滚到上一套'))!
     await globalRollback.trigger('click')
     await flush()
@@ -212,7 +212,7 @@ describe('存储与分发模块', () => {
     await edit.trigger('click')
     await flush()
     // 编辑弹窗顶部要有「应急备用盘 vs 备份保险柜」的对照说明，管理员一眼看懂两者区别
-    expect(w.text()).toContain('这是系统自带的档案，通常不用改动')
+    expect(w.text()).toContain('这是系统自带的文件存储，通常不用改动')
     expect(w.text()).toContain('应急备用盘')
     expect(w.text()).toContain('备份保险柜')
     // 开发者术语不能出现在给管理员看的说明里
@@ -222,7 +222,7 @@ describe('存储与分发模块', () => {
     expect(w.text()).toContain('不可删除')
     // 目录也必须锁死：它与静态路由共用一个真值源，单独改会让租户对象写进
     // /uploads 读不到的目录，全站裂图且不报错。
-    expect(w.text()).toContain('内置档案的目录继承自')
+    expect(w.text()).toContain('系统自带文件存储的目录继承自')
     expect(w.text()).toContain('upload_dir')
     expect(w.text()).toContain('重启服务')
     const dirInput = w.find('input[placeholder="留空使用平台 uploads 目录"]')
@@ -320,7 +320,7 @@ describe('存储与分发模块', () => {
     expect(src).toContain(":disabled=\"storageForm.builtin && storageForm.purpose !== 'platform_primary'\"")
   })
 
-  it('分发档案的内置行不可删、不进绑定下拉，域名指向存储档案', async () => {
+  it('CDN分发的内置行不可删、不进绑定下拉，域名指向文件存储', async () => {
     vi.mocked(api.listDeliveryProfiles).mockResolvedValue([
       { ...delivery(1, '平台自身 CDN'), builtin: true, purpose: 'platform_primary', provider: 'aliyun', domain: '' },
       delivery(2, '客户 CDN'),
@@ -328,9 +328,9 @@ describe('存储与分发模块', () => {
     const w = mountPage()
     await flush()
 
-    // 平台行的域名列不能是空白（会像「没配」），要说清它跟存储档案走
+    // 平台行的域名列不能是空白（会像「没配」），要说清它跟文件存储走
     expect(w.text()).toContain('平台自身 CDN')
-    expect(w.text()).toContain('见「存储档案 → 平台自身存储」的访问基址')
+    expect(w.text()).toContain('见「文件存储 → 平台自身存储」的访问基址')
     expect(w.text()).toContain('https://cdn.example.com')
 
     // 删除按钮对内置行禁用：后端也会拒，但界面上不该给人点
@@ -356,7 +356,7 @@ describe('存储与分发模块', () => {
     expect(menu).not.toContain("path: '/company-storage'")
     // 系统设置里不再内嵌「默认档案」选择块：它与档案模块的绑定页重复，
     // 且少了切换前核对 / force / 回滚，管理员在两处各选一套还以为会同步。
-    // 只保留一条指路；企业管理行内「存储档案」入口仍在。
+    // 只保留一条指路；企业管理行内「文件存储」入口仍在。
     const settings = readFileSync('src/views/platform/Settings.vue', 'utf8')
     const companies = readFileSync('src/views/Companies.vue', 'utf8')
     expect(settings).not.toContain('默认档案（推荐）')
@@ -377,8 +377,8 @@ describe('存储与分发模块', () => {
     const profiles = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(profiles).toMatch(/label="公开读桶">\s*<el-switch[^>]*disabled/)
     expect(profiles).toContain('后端会拒绝 publicRead=false')
-    // 迁移入口已下线：不许文案再把运维指向不存在的「转为存储档案」按钮。
-    expect(profiles).not.toContain('转为存储档案')
+    // 迁移入口已下线：不许文案再把运维指向不存在的「转为文件存储」按钮。
+    expect(profiles).not.toContain('转为文件存储')
     expect(profiles).not.toContain('给自己选「用哪一套」')
   })
 
@@ -413,8 +413,42 @@ describe('存储与分发模块', () => {
     expect(src).toContain(":platform-profile=\"platformPrimaryProfile\"")
     expect(src).toContain("p.purpose === 'platform_primary'")
     expect(src).not.toContain("p.purpose === 'tenant_fallback'")
-    // 顶部「去存储档案修改」必须切到档案标签，否则管理员点了没反应只能自己找。
+    // 顶部「去文件存储修改」必须切到文件存储标签，否则管理员点了没反应只能自己找。
     expect(src).toContain("@goto-profiles=\"tab = 'storage'\"")
+  })
+
+  it('术语统一：界面上只出现「文件存储 / CDN分发」，不再出现旧名「存储档案 / 分发档案」', () => {
+    const files = [
+      'src/views/platform/StorageProfiles.vue',
+      'src/components/StorageSettingsPanel.vue',
+      'src/components/StorageOverview.vue',
+      'src/views/platform/CdnRefresh.vue',
+      'src/views/Companies.vue',
+      'src/utils/storageGuides.ts',
+    ]
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+      expect(src, `${f} 又出现了旧名「存储档案」`).not.toContain('存储档案')
+      expect(src, `${f} 又出现了旧名「分发档案」`).not.toContain('分发档案')
+    }
+    const view = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(view).toContain('label="文件存储"')
+    expect(view).toContain('label="CDN分发"')
+    const guides = readFileSync('src/utils/storageGuides.ts', 'utf8')
+    expect(guides).toContain("term: '文件存储'")
+    expect(guides).toContain("term: 'CDN分发'")
+  })
+
+  it('僵尸字段 pathPrefix 不再出现在类型、表单与帮助文案里', () => {
+    const files = [
+      'src/api/storageProfiles.ts',
+      'src/views/platform/StorageProfiles.vue',
+      'src/utils/storageGuides.ts',
+      'src/views/platform/CdnRefresh.vue',
+    ]
+    for (const f of files) {
+      expect(readFileSync(f, 'utf8'), `${f} 又出现了已删除的僵尸字段 pathPrefix`).not.toContain('pathPrefix')
+    }
   })
 
   it('僵尸字段 pathStyle 不再出现在前端类型与表单里', () => {
@@ -438,15 +472,15 @@ describe('存储与分发模块', () => {
     // 总览默认是极简视图：一句结论 + 三层小图 + 一个动作，细节收进按需展开区
     expect(w.find('.ov-hero').exists()).toBe(true)
     expect(w.find('.ov-toggle').exists()).toBe(true)
-    expect(w.text()).toContain('存储档案')
+    expect(w.text()).toContain('文件存储')
     expect(w.text()).toContain('管「文件存哪」')
     expect(w.text()).toContain('管「老文件怎么搬到新桶」')
   })
 
-  it('新建存储档案弹窗按当前驱动给出官方入口、凭据取法与逐字段说明', async () => {
+  it('新建文件存储弹窗按当前驱动给出官方入口、凭据取法与逐字段说明', async () => {
     const w = mountPage()
     await flush()
-    await w.findAll('button').find((b) => b.text() === '新建存储档案')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '新建文件存储')!.trigger('click')
     await flush()
     const dialog = w.find('.el-dialog')
     const vm: any = w.vm
@@ -490,17 +524,17 @@ describe('存储与分发模块', () => {
     // 否则「默认收起」只在第一次打开时成立。
     vm.storageDialog = false
     await flush()
-    await w.findAll('button').find((b) => b.text() === '新建存储档案')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '新建文件存储')!.trigger('click')
     await flush()
     const reopened = w.find('.el-dialog')
     expect(reopened.find('.vendor-guide-toggle').attributes('aria-expanded')).toBe('false')
     expect(reopened.findAll('a[href]')).toHaveLength(0)
   })
 
-  it('分发档案弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
+  it('CDN分发弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
     const w = mountPage()
     await flush()
-    await w.findAll('button').find((b) => b.text() === '新建分发档案')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '新建CDN分发')!.trigger('click')
     await flush()
     const dialog = w.find('.el-dialog')
     const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
@@ -525,7 +559,7 @@ describe('存储与分发模块', () => {
   it('空表给出引导文案，不让管理员对着白板猜下一步', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('<template #empty>')
-    expect(src).toContain('还没有存储档案')
-    expect(src).toContain('还没有分发档案')
+    expect(src).toContain('还没有文件存储')
+    expect(src).toContain('还没有CDN分发')
   })
 })

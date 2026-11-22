@@ -58,7 +58,7 @@ describe('存储总览页', () => {
     expect(text).toContain('服务器本地磁盘')
   })
 
-  it('接入云平台后结论如实改写，动作换成「管理存储档案」', async () => {
+  it('接入云平台后结论如实改写，动作换成「管理文件存储」', async () => {
     const w = mountPage({
       platformProfile: cloudProfile,
       platformDelivery: cloudDelivery,
@@ -68,7 +68,7 @@ describe('存储总览页', () => {
     const text = w.text()
     expect(text).toContain('文件存在阿里云 OSS，CDN 阿里云 CDN')
     expect(text).not.toContain('不接任何云账号也能正常使用')
-    expect(w.find('button.el-button').text()).toBe('管理存储档案')
+    expect(w.find('button.el-button').text()).toBe('管理文件存储')
   })
 
   it('帮助区默认收起，点开才出现五步流程且每步能跳页签', async () => {
@@ -81,7 +81,7 @@ describe('存储总览页', () => {
     expect(w.find('.ov-toggle').attributes('aria-expanded')).toBe('true')
     expect(w.findAll('.ov-step')).toHaveLength(5)
     expect(w.text()).toContain('先看清楚现在存哪')
-    expect(w.text()).toContain('需要更大容量时，新建存储档案')
+    expect(w.text()).toContain('需要更大容量时，新建文件存储')
     expect(w.text()).toContain('把老文件搬到新桶')
     expect(w.text()).toContain('切换生效')
 
@@ -117,7 +117,7 @@ describe('存储总览页', () => {
     await flush()
     await openHelp(w)
     const text = w.text()
-    for (const term of ['文件对象', '存储档案', '分发档案', '绑定', '迁移任务', '本地镜像', '自检']) {
+    for (const term of ['文件对象', '文件存储', 'CDN分发', '绑定', '迁移任务', '本地镜像', '自检']) {
       expect(text).toContain(term)
     }
     expect(text).toContain('s3.ap-northeast-1.amazonaws.com')

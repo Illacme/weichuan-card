@@ -28,7 +28,7 @@ import (
 //
 // 文案自带完整处置步骤，调用方原样上抛，不要再包一层前缀。
 var ErrProfileTablesMissing = errors.New(
-	`存储档案表不存在（迁移 0054 未应用）：请先执行 ./server migrate；` +
+	`文件存储配置表不存在（迁移 0054 未应用）：请先执行 ./server migrate；` +
 		`若发布包里没有 0054_storage_profiles.sql，说明发布包不完整`)
 
 // ProfileTarget 是「按档案 + 绑定解析出的一家企业的回源目标」。
@@ -57,7 +57,7 @@ func ListProfileTargets(db *gorm.DB) ([]ProfileTarget, error) {
 	// 先探连接，再问表在不在：gorm 的 HasTable 把 error 吞成 false，
 	// 「库连不上」会被误报成「没跑迁移」。
 	if err := db.Exec("SELECT 1").Error; err != nil {
-		return nil, fmt.Errorf("数据库不可达，无法读取存储档案：%w", err)
+		return nil, fmt.Errorf("数据库不可达，无法读取文件存储配置：%w", err)
 	}
 	if !db.Migrator().HasTable(&model.StorageProfile{}) || !db.Migrator().HasTable(&model.StorageBinding{}) {
 		return nil, ErrProfileTablesMissing
@@ -98,7 +98,7 @@ func ListProfileTargets(db *gorm.DB) ([]ProfileTarget, error) {
 		if err != nil {
 			// 绑定指向不存在 / 已停用的档案时，运行时的上传也会报同一个错。
 			// 这里静默跳过等于「这家悄悄回落平台盘」，是比中断生成更坏的结果。
-			return nil, fmt.Errorf("企业 %d 的存储档案绑定不可用（请先修好再生成 snippet）：%w", cid, err)
+			return nil, fmt.Errorf("企业 %d 的文件存储绑定不可用（请先修好再生成 snippet）：%w", cid, err)
 		}
 		if eff.Storage == nil {
 			continue // 没有全局绑定、也没有自己的绑定行 → 对象在平台盘

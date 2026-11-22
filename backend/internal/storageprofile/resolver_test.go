@@ -1,6 +1,15 @@
 package storageprofile
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"weichuan/internal/model"
@@ -101,7 +110,7 @@ func TestDiagnoseNeverEchoesUnderlyingErrors(t *testing.T) {
 		Update("storage_profile_id", 9999).Error)
 	require.NoError(t, r.Touch())
 	_, _, reason = r.Diagnose(7)
-	require.Contains(t, reason, "读取存储档案失败")
+	require.Contains(t, reason, "读取文件存储配置失败")
 	require.NotContains(t, reason, "9999", "底层错误的档案 id 属于内部信息")
 }
 
@@ -181,4 +190,64 @@ func TestOriginForFollowsWriteOwnership(t *testing.T) {
 	origin, handled = r.OriginFor(0)
 	require.False(t, handled)
 	require.Empty(t, origin.Base)
+}
+
+// TestNoLegacyTermInGoStrings 防止旧界面术语回流到管理员/运维可见的 Go 字符串。
+// 只看字符串字面量，不看注释：注释是给维护者看的，历史轮次的措辞允许保留。
+func TestNoLegacyTermInGoStrings(t *testing.T) {
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	root := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(root)
+		require.NotEqual(t, parent, root, "没找到 go.mod")
+		root = parent
+	}
+
+	checkedFiles, checkedStrings := 0, 0
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		checkedFiles++
+		// 0061 删掉的僵尸字段不许回流；词边界避免误伤 UploadsPathPrefix。
+		src, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if regexp.MustCompile(`(?i)(^|[^a-z])pathprefix([^a-z]|$)`).Match(src) {
+			t.Errorf("%s 又出现了已删除的僵尸字段 pathPrefix", path)
+		}
+		fset := token.NewFileSet()
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, unquoteErr := strconv.Unquote(lit.Value)
+			if unquoteErr != nil {
+				return true
+			}
+			checkedStrings++
+			if strings.Contains(value, "档案") {
+				pos := fset.Position(lit.Pos())
+				t.Errorf("%s:%d 出现旧术语「档案」：%s", pos.Filename, pos.Line, value)
+			}
+			return true
+		})
+		return nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, checkedFiles, 100, "守门量尺：必须真的扫到后端源码文件")
+	require.Greater(t, checkedStrings, 1000, "守门量尺：必须真的扫到字符串字面量")
 }

@@ -8,8 +8,8 @@
         <span class="label-text">{{ item.name || item.key }}</span>
         <!-- 格式最易错的项：填错后果写进悬浮徽标（默认不占版面）。
              典型是 miniprogram_base_url：填错小程序直接连不上，而现场才发现。
-             存储连接类（upload_base_url / storage_endpoint）已随 0059 进档案，
-             它们的填错后果写在档案表单里，不再占这里的位置。 -->
+             存储连接类（upload_base_url / storage_endpoint）已随 0059 进文件存储，
+             它们的填错后果写在文件存储表单里，不再占这里的位置。 -->
         <el-tooltip v-if="fieldHint" placement="top" popper-class="si-hint-popper" :content="fieldHint">
           <span class="row-hint" tabindex="0" aria-label="填写说明">?</span>
         </el-tooltip>
@@ -203,7 +203,7 @@ function minOf(item: SettingItem) {
 // / 华为云 OBS / 七牛云 / AWS S3 / R2 等）」，面板宽到 528px > 318px，popper.js
 // 沿 fallback 链翻到 left，下拉整个跑到选择框左侧盖住标签列（2026-10-23 实测）。
 // 所以候选文案保持短：完整说明交给行内的 description，那儿不比下拉里挤着看更清楚。
-// 存储驱动与 CDN 厂商的候选文案已随「连接信息进档案」一起下线（0059 / 0060）：
+// 存储驱动与 CDN 厂商的候选文案已随「连接信息进文件存储」一起下线（0059 / 0060）：
 // 它们不再是设置项，这里只保留仍在设置页出现的小程序码环境版本。
 const OPTION_LABELS: Record<string, string> = {
   'wxacode_env_version|release': 'release（正式版）',
@@ -224,7 +224,7 @@ const fieldHint = computed(() => FIELD_HINTS[props.item.key] || '')
 
 // 示例占位：比笼统的「未设置」更能告诉用户该填成什么样。
 // 与 item.description（讲「是什么、改了会怎样」）互补：示例讲「填什么格式」。
-// 只登记仍在系统设置里的项：存储连接信息与 CDN 凭据已分别进存储档案 / 分发档案
+// 只登记仍在系统设置里的项：存储连接信息与 CDN 凭据已分别进文件存储 / CDN分发
 // （0059 / 0060），它们的示例留在各自的表单里，这里不再保留空转条目。
 const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   upload_dir: '如 ./data/uploads',

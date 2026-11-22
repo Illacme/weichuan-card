@@ -65,10 +65,10 @@ func TestPublicOriginDiagnosisFollowsWriteOwnership(t *testing.T) {
 		mut        func(t *testing.T)
 		wantReason string
 	}{
-		{"没绑分发档案", func(t *testing.T) {
+		{"没绑 CDN分发", func(t *testing.T) {
 			require.NoError(t, db.Model(&model.StorageBinding{}).Where("tenant_id = ?", 1).
 				Update("delivery_profile_id", 0).Error)
-		}, "没有绑定分发域名"},
+		}, "没有绑定公开域名"},
 		{"域名带路径", func(t *testing.T) {
 			require.NoError(t, db.Model(&model.DeliveryProfile{}).Where("id = ?", deliveryID).
 				Update("domain", "https://img.cust.com/prefix").Error)

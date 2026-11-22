@@ -8,8 +8,8 @@
         <h3 class="hero-title">{{ locationTitle }}</h3>
         <p class="hero-desc">{{ locationDesc }}</p>
         <p class="hero-note">
-          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「存储档案 → 平台自身存储」里改；
-          CDN 刷新的厂商与凭据在「分发档案 → 平台自身 CDN」里改。两处保存后都需要重启。
+          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 平台自身存储」里改；
+          CDN 刷新的厂商与凭据在「CDN分发 → 平台自身 CDN」里改。两处保存后都需要重启。
           这里只管服务器目录与本地备份。
         </p>
         <div class="hero-chips">
@@ -18,7 +18,7 @@
         </div>
       </div>
       <div class="hero-action">
-        <el-button type="primary" @click="emit('goto-profiles')">去存储档案修改</el-button>
+        <el-button type="primary" @click="emit('goto-profiles')">去文件存储修改</el-button>
         <el-button link type="primary" @click="emit('goto-deliveries')">改 CDN 刷新凭据</el-button>
         <span class="hero-action-note">改桶 / 密钥 / 访问地址</span>
       </div>
@@ -108,9 +108,9 @@ interface PlatformLocation {
 }
 
 const props = defineProps<{
-  /** 平台自身存储档案；父级已加载时用来在顶部显示「实际存在哪」 */
+  /** 平台自身文件存储；父级已加载时用来在顶部显示「实际存在哪」 */
   platformProfile?: PlatformLocation | null
-  /** 平台自身 CDN 档案（分发档案里 purpose=platform_primary 那一行） */
+  /** 平台自身 CDN 配置（CDN分发里 purpose=platform_primary 那一行） */
   platformDelivery?: { provider?: string } | null
 }>()
 const emit = defineEmits<{
@@ -120,7 +120,7 @@ const emit = defineEmits<{
 
 // 本面板只接管系统设置里 storage / upload 两组，后端仍走 getSettings / updateSettings，
 // 启动期语义不变（静态路由与上传器在 main.go 构造，改完必须重启）。
-// 平台连接信息已进「存储档案」（迁移 0059），这里只剩部署期目录与策略项。
+// 平台连接信息已进「文件存储」（迁移 0059），这里只剩部署期目录与策略项。
 const PANEL_GROUPS = new Set(['storage', 'upload'])
 
 // 常用区只留三件事：本地目录、备份目录、自动备份开关。
@@ -189,7 +189,7 @@ const draft = reactive<Record<string, string>>({})
 const cleared = reactive<Record<string, boolean>>({})
 const restartPending = ref<string[]>([])
 
-// 从内置档案行的「跟随系统设置 →」跳来时带 ?focus=<key>，加载完滚到对应行。
+// 从系统自带文件存储行的「跟随系统设置 →」跳来时带 ?focus=<key>，加载完滚到对应行。
 // 如果目标在高级区，自动展开，避免「点了链接却看不到字段」。
 const focusKey = (() => {
   if (typeof window === 'undefined') return ''
@@ -225,7 +225,7 @@ const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
 const mirrorOn = computed(() => (draft.local_mirror_enabled || '') === 'true')
-// CDN 状态来自分发档案，不再来自本面板的 draft：凭据只有一处真值源。
+// CDN 状态来自CDN分发，不再来自本面板的 draft：凭据只有一处真值源。
 const cdnProvider = computed(() => (props.platformDelivery?.provider || '').trim())
 const cdnOn = computed(() => cdnProvider.value !== '' && cdnProvider.value !== 'none')
 const cdnText = computed(() => {
@@ -236,7 +236,7 @@ const cdnText = computed(() => {
 
 const locationTitle = computed(() => {
   const p = props.platformProfile
-  // 父级档案列表与设置项各自加载：设置项已回来却仍没有档案，说明档案列表没读到，
+  // 父级文件存储列表与设置项各自加载：设置项已回来却仍没有存储配置，说明列表没读到，
   // 不能一直显示「正在读取」，否则管理员会以为页面卡死。
   if (!p) return loading.value ? '正在读取存储位置…' : '暂时读不到存储位置'
   if (p.driver === 'local') return '文件存在服务器本地磁盘'
@@ -246,7 +246,7 @@ const locationTitle = computed(() => {
 
 const locationDesc = computed(() => {
   const p = props.platformProfile
-  if (!p) return '请到「存储档案 → 平台自身存储」核对驱动、桶与访问基址。'
+  if (!p) return '请到「文件存储 → 平台自身存储」核对驱动、桶与访问基址。'
   if (p.driver === 'local') {
     return `实际目录是 ${draft.upload_dir || '（未设置）'}；网站通过 /uploads 直接读取。`
   }

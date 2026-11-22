@@ -63,11 +63,11 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 			return
 		}
 		if req.TenantID < 0 || req.SourceProfileID <= 0 || req.TargetProfileID <= 0 {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请选择源档案与目标档案"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请选择源文件存储与目标文件存储"})
 			return
 		}
 		if req.SourceProfileID == req.TargetProfileID {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源档案与目标档案不能相同"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源文件存储与目标文件存储不能相同"})
 			return
 		}
 		if req.TenantID > 0 {
@@ -79,14 +79,14 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 		}
 		var n int64
 		if err := db.Model(&model.StorageProfile{}).Where("id IN ?", []int64{req.SourceProfileID, req.TargetProfileID}).Count(&n).Error; err != nil || n != 2 {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源或目标档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "源或目标文件存储不存在"})
 			return
 		}
 		// 内置档案不是普通业务桶：镜像是备份落点（里面是副本，不是真数据），
 		// 平台自身存储承载 p/ 平台对象与无绑定企业的字节。两者当迁移源或目标，
 		// 都会让「主写入在哪」这件事实失去唯一答案，自动切换后出参全错。
 		if builtinProfileInvolved(db, req.SourceProfileID, req.TargetProfileID) {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "平台内置档案（自身存储 / 本地镜像）不能作为迁移的源或目标"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的文件存储（平台自身存储 / 本地镜像）不能作为迁移的源或目标"})
 			return
 		}
 		if req.AutoSwitch && req.DryRun {
@@ -185,10 +185,22 @@ func migrationPrefix(tenantID int64) string {
 	return ""
 }
 
+// migrationJobStatus 单独抽出状态查询：这里要把「查不到」与「查出错」分开，
+// 测试也需要精确命中 DB 报错分支（不靠拖库或回调污染同一个 db 会话）。
+var migrationJobStatus = func(db *gorm.DB, jobID int64) (string, error) {
+	var status string
+	err := db.Model(&model.StorageMigrationJob{}).Where("id = ?", jobID).
+		Select("status").Scan(&status).Error
+	return status, err
+}
+
 // runStorageMigration 执行一次迁移。导出供测试直接调用（测试里不靠 sleep 等 goroutine）。
 func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID int64) {
 	var job model.StorageMigrationJob
-	if db.First(&job, jobID).Error != nil {
+	if err := db.First(&job, jobID).Error; err != nil {
+		// 读不到任务行时没法可靠地写终态（可能就是这张表坏了），但至少要留痕，
+		// 不能让一次 DB 故障表现为「任务凭空消失」。
+		log.Printf("[STORAGE_MIGRATION] job=%d 读取任务失败：%v", jobID, err)
 		return
 	}
 	finish := func(status, errMsg string) {
@@ -199,27 +211,27 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 	}
 	src, err := resolver.UploaderForProfile(job.SourceProfileID)
 	if err != nil {
-		finish("failed", "源档案不可用："+err.Error())
+		finish("failed", "源文件存储不可用："+err.Error())
 		return
 	}
 	dst, err := resolver.UploaderForProfile(job.TargetProfileID)
 	if err != nil {
-		finish("failed", "目标档案不可用："+err.Error())
+		finish("failed", "目标文件存储不可用："+err.Error())
 		return
 	}
 	lister, ok := src.(storage.ObjectLister)
 	if !ok {
-		finish("failed", "源档案的驱动不支持列举对象，无法迁移")
+		finish("failed", "源文件存储的驱动不支持列举对象，无法迁移")
 		return
 	}
 	copier, ok := src.(storage.ObjectCopier)
 	if !ok {
-		finish("failed", "源档案的驱动不支持对象复制，无法迁移")
+		finish("failed", "源文件存储的驱动不支持对象复制，无法迁移")
 		return
 	}
 	sink, ok := dst.(storage.ObjectStreamWriter)
 	if !ok {
-		finish("failed", "目标档案的驱动不支持流式写入，无法迁移")
+		finish("failed", "目标文件存储的驱动不支持流式写入，无法迁移")
 		return
 	}
 
@@ -258,8 +270,14 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 	processed := 0
 	for _, key := range keys {
 		// 取消是协作式的：每个对象之间检查一次状态，不会留下半途被强杀的连接。
-		var status string
-		if err := db.Model(&model.StorageMigrationJob{}).Where("id = ?", jobID).Select("status").Scan(&status).Error; err != nil || status != "running" {
+		// DB 查询失败与「明确被取消」必须分开：前者是故障，要让任务进 failed 并留痕，
+		// 否则 goroutine 静默 return，任务永远停在 running，运营看到的是卡住而不是失败。
+		status, statusErr := migrationJobStatus(db, jobID)
+		if statusErr != nil {
+			finish("failed", "检查任务状态失败："+statusErr.Error())
+			return
+		}
+		if status != "running" {
 			return // cancel 接口已经写了终态，这里不要再覆盖
 		}
 		retry := failedKeys[key]
@@ -306,7 +324,7 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 		status = "done"
 	}
 	if job.AutoSwitch && job.Failed == 0 && len(keys) > 0 {
-		// 复制端说「零失败」还不够——独立从目标档案读一遍，确认对象真的齐全，
+		// 复制端说「零失败」还不够——独立从目标文件存储读一遍，确认对象真的齐全，
 		// 再覆盖绑定。两道门各管一段（写 vs 读），任一不过都不切。
 		if err := guardAutoSwitch(resolver, &job); err != nil {
 			finish("failed", err.Error())
@@ -322,25 +340,28 @@ func runStorageMigration(db *gorm.DB, resolver *storageprofile.Resolver, jobID i
 }
 
 func switchBindingAfterMigration(db *gorm.DB, job *model.StorageMigrationJob) error {
-	// 自动切换只换存储档案，保留原有 CDN 分发档案；两者独立是这个模块的设计前提。
-	var b model.StorageBinding
-	res := db.Where("tenant_id = ?", job.TenantID).Limit(1).Find(&b)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		b = model.StorageBinding{TenantID: job.TenantID, Version: 1}
-	} else if b.StorageProfileID != job.TargetProfileID {
-		// 与手动 saveBinding 同一条纪律：档案真变了才记 previous，
-		// 让切过去之后还能一键退回迁移前的那套档案。
-		b.PreviousStorageProfileID = b.StorageProfileID
-		b.PreviousDeliveryProfileID = b.DeliveryProfileID
-	}
-	b.StorageProfileID = job.TargetProfileID
-	b.UpdatedBy = "migration:" + strconv.FormatInt(job.ID, 10)
-	b.Version++
-	b.CreatedAt = time.Now()
-	return db.Save(&b).Error
+	// 自动切换也是一次绑定写入，必须和手动保存/回滚用同一套事务纪律。
+	return db.Transaction(func(tx *gorm.DB) error {
+		// 自动切换只换存储档案，保留原有 CDN 分发档案；两者独立是这个模块的设计前提。
+		var b model.StorageBinding
+		res := tx.Where("tenant_id = ?", job.TenantID).Limit(1).Find(&b)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			b = model.StorageBinding{TenantID: job.TenantID, Version: 1}
+		} else if b.StorageProfileID != job.TargetProfileID {
+			// 与手动 saveBinding 同一条纪律：档案真变了才记 previous，
+			// 让切过去之后还能一键退回迁移前的那套档案。
+			b.PreviousStorageProfileID = b.StorageProfileID
+			b.PreviousDeliveryProfileID = b.DeliveryProfileID
+		}
+		b.StorageProfileID = job.TargetProfileID
+		b.UpdatedBy = "migration:" + strconv.FormatInt(job.ID, 10)
+		b.Version++
+		b.UpdatedAt = time.Now()
+		return tx.Save(&b).Error
+	})
 }
 
 // builtinProfileInvolved 判断给定档案里有没有平台内置档案（自身存储 / 本地镜像）。

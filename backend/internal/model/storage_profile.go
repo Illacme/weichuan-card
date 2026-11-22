@@ -87,7 +87,6 @@ type DeliveryProfile struct {
 	Name       string `gorm:"size:64;uniqueIndex" json:"name"`
 	Provider   string `gorm:"size:24;default:none" json:"provider"`
 	Domain     string `gorm:"size:255" json:"domain"`
-	PathPrefix string `gorm:"column:path_prefix;size:128" json:"pathPrefix"`
 	AccessKey  string `gorm:"column:access_key;size:512" json:"accessKey,omitempty"`
 	SecretKey  string `gorm:"column:secret_key;size:1024" json:"secretKey,omitempty"`
 	Endpoint   string `gorm:"size:255" json:"endpoint"`

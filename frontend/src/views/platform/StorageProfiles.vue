@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       title="存储与分发：配置只存一份，谁用由绑定决定"
-      description="存储档案管文件存哪，分发档案管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。档案与绑定只有平台超管能增删改。"
+      description="文件存储管文件存哪，CDN分发管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。文件存储、CDN分发与绑定只有平台超管能增删改。"
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
@@ -19,17 +19,17 @@
         />
       </el-tab-pane>
 
-      <!-- 存储档案 -->
-      <el-tab-pane label="存储档案" name="storage">
+      <!-- 文件存储 -->
+      <el-tab-pane label="文件存储" name="storage">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.storage.title }}</strong><span>{{ TAB_GUIDES.storage.desc }}</span></div>
         <div class="tab-head tab-head-actions">
-          <el-button type="primary" @click="openStorageDialog(null)">新建存储档案</el-button>
+          <el-button type="primary" @click="openStorageDialog(null)">新建文件存储</el-button>
         </div>
         <el-table :data="storages" v-loading="loading" size="small" border>
-          <el-table-column label="档案名" min-width="150">
+          <el-table-column label="名称" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
-              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未绑定档案的企业用它。连接信息可以在这里改，但改完必须重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
+              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未单独指定存储的企业用它。连接信息可以在这里改，但改完必须重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
                 <el-tag size="small" type="info">内置</el-tag>
               </el-tooltip>
               <el-tag v-if="row.purpose === 'platform_primary'" size="small" type="primary">平台自身存储</el-tag>
@@ -58,19 +58,19 @@
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有存储档案。系统内置的档案会自动出现在这里；需要接云时点右上角「新建存储档案」，官方入口和字段说明都在弹窗里。</div>
+            <div class="table-empty">还没有文件存储。系统自带的文件存储会自动出现在这里；需要接云时点右上角「新建文件存储」，官方入口和字段说明都在弹窗里。</div>
           </template>
         </el-table>
       </el-tab-pane>
 
-      <!-- 分发档案 -->
-      <el-tab-pane label="分发档案" name="delivery">
+      <!-- CDN分发 -->
+      <el-tab-pane label="CDN分发" name="delivery">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.delivery.title }}</strong><span>{{ TAB_GUIDES.delivery.desc }}</span></div>
         <div class="tab-head tab-head-actions">
-          <el-button type="primary" @click="openDeliveryDialog(null)">新建分发档案</el-button>
+          <el-button type="primary" @click="openDeliveryDialog(null)">新建CDN分发</el-button>
         </div>
         <el-table :data="deliveries" v-loading="loading" size="small" border>
-          <el-table-column prop="name" label="档案名" min-width="150">
+          <el-table-column prop="name" label="名称" min-width="150">
             <template #default="{ row }">
               {{ row.name }}
               <el-tooltip v-if="row.builtin" placement="top" :content="deliveryPurposeHint(row)">
@@ -82,12 +82,11 @@
           <el-table-column label="公开域名" min-width="220">
             <template #default="{ row }">
               <span v-if="row.purpose === 'platform_primary'" class="muted">
-                见「存储档案 → 平台自身存储」的访问基址
+                见「文件存储 → 平台自身存储」的访问基址
               </span>
               <span v-else>{{ row.domain }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="pathPrefix" label="路径前缀" min-width="110" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
               <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
@@ -102,7 +101,7 @@
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有分发档案。不开 CDN 不影响使用；需要给访客加速时点右上角「新建分发档案」，各厂商控制台与凭据入口都在弹窗里。</div>
+            <div class="table-empty">还没有CDN分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建CDN分发」，各厂商控制台与凭据入口都在弹窗里。</div>
           </template>
         </el-table>
       </el-tab-pane>
@@ -116,19 +115,19 @@
           :closable="false"
           show-icon
           title="切换全局默认是即时生效的高危操作"
-          description="保存前会自动核对：新档案必须已包含旧档案里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新档案里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
+          description="保存前会自动核对：新文件存储必须已包含当前文件存储里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新文件存储里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
         />
         <div class="binding-card">
           <h4>全局默认（所有企业的共同设置）</h4>
           <p v-if="!boundGlobal" class="muted">
-            当前未配置档案绑定：存储沿用「存储档案 → 平台自身存储」，CDN 刷新沿用「分发档案 → 平台自身 CDN」（两处改动都需重启）。
+            当前未配置绑定：文件存储沿用「文件存储 → 平台自身存储」，CDN 刷新沿用「CDN分发 → 平台自身 CDN」（两处改动都需重启）。
           </p>
           <div class="binding-form">
-            <label>存储档案</label>
-            <el-select v-model="globalStorageId" placeholder="选择存储档案" style="width: 260px">
+            <label>文件存储</label>
+            <el-select v-model="globalStorageId" placeholder="选择文件存储" style="width: 260px">
               <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
-            <label>分发档案</label>
+            <label>CDN分发</label>
             <el-select v-model="globalDeliveryId" placeholder="不启用 CDN" clearable style="width: 260px">
               <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
@@ -152,14 +151,14 @@
           <el-table-column label="企业名称" min-width="160">
             <template #default="{ row }">{{ companyNames[row.tenantId] || `#${row.tenantId}` }}</template>
           </el-table-column>
-          <el-table-column label="存储档案" min-width="170">
+          <el-table-column label="文件存储" min-width="170">
             <template #default="{ row }">
               <el-select v-model="row.storageProfileId" size="small" style="width:100%">
                 <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
               </el-select>
             </template>
           </el-table-column>
-          <el-table-column label="分发档案" min-width="170">
+          <el-table-column label="CDN分发" min-width="170">
             <template #default="{ row }">
               <el-select v-model="row.deliveryProfileId" size="small" clearable style="width:100%">
                 <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
@@ -169,7 +168,7 @@
           <el-table-column label="生效来源" width="90">
             <template #default="{ row }">{{ row.source === 'global' ? '全局' : row.source === 'inherit' ? '继承' : row.source }}</template>
           </el-table-column>
-          <el-table-column label="上一套档案" min-width="140">
+          <el-table-column label="切换前的文件存储" min-width="140">
             <template #default="{ row }">
               <span v-if="row.previousStorageProfileId">{{ profileName(row.previousStorageProfileId) }}</span>
               <span v-else class="muted">无</span>
@@ -199,7 +198,7 @@
           :closable="false"
           show-icon
           title="只复制，不删除"
-          description="历史对象会完整复制到目标档案（含缩略图），源桶对象原样保留，方便回滚与对账。单对象失败会进失败清单，不影响其余对象；仅在零失败时才允许自动切换绑定。视频按流式搬运，不会整段进内存。"
+          description="历史对象会完整复制到目标文件存储（含缩略图），源桶对象原样保留，方便回滚与对账。单对象失败会进失败清单，不影响其余对象；仅在零失败时才允许自动切换绑定。视频按流式搬运，不会整段进内存。"
         />
         <div class="migration-create">
           <label>迁移范围</label>
@@ -207,11 +206,11 @@
             <el-option :value="0" label="全平台（整桶）" />
             <el-option v-for="c in companies" :key="c.id" :value="c.id" :label="`企业：${c.name}`" />
           </el-select>
-          <label>源档案</label>
+          <label>源文件存储</label>
           <el-select v-model="newJob.sourceProfileId" style="width: 200px">
             <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
-          <label>目标档案</label>
+          <label>目标文件存储</label>
           <el-select v-model="newJob.targetProfileId" style="width: 200px">
             <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
@@ -245,7 +244,7 @@
         </el-table>
       </el-tab-pane>
 
-      <!-- 平台自身存储的部署期配置：连接信息已在「存储档案」标签的那一行里，
+      <!-- 平台自身存储的部署期配置：连接信息已在「文件存储」标签的那一行里，
            这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
       <el-tab-pane label="平台自身存储（启动配置）" name="platform">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.platform.title }}</strong><span>{{ TAB_GUIDES.platform.desc }}</span></div>
@@ -258,13 +257,13 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 存储档案表单 -->
-    <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑存储档案' : '新建存储档案'" width="640px">
+    <!-- 文件存储表单 -->
+    <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑文件存储' : '新建文件存储'" width="640px">
       <el-alert v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" type="warning" :closable="false" show-icon class="dialog-alert"
         title="这是平台自己那份存储：连接信息在这里改，保存后必须重启服务"
-        description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未绑定档案的企业用它。改完先点「自检」确认凭据与桶可达，再重启后端；不重启的话界面显示新值、实际上传仍走旧实例。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「启动配置 → 本地上传目录」（upload_dir），这里改不了。" />
+        description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未单独指定存储的企业用它。改完先点「自检」确认凭据与桶可达，再重启后端；不重启的话界面显示新值、实际上传仍走旧实例。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「启动配置 → 本地上传目录」（upload_dir），这里改不了。" />
       <el-alert v-else-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
-        title="这是系统自带的档案，通常不用改动"
+        title="这是系统自带的文件存储，通常不用改动"
         description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
       <!-- 跟着当前驱动变的小抄：默认收起，已经知道去哪拿凭据的人不用看 -->
       <div v-if="currentDriverGuide" class="vendor-guide">
@@ -291,7 +290,7 @@
 
       <el-form label-width="130px" size="small">
         <el-form-item>
-          <template #label>档案名 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'name')" /></template>
+          <template #label>名称 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'name')" /></template>
           <el-input v-model="storageForm.name" placeholder="例如：主站 OSS" />
         </el-form-item>
         <el-form-item>
@@ -354,10 +353,10 @@
               它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              内置档案的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
+              系统自带文件存储的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
               所以这里不用改、也不建议改；真要换位置请到那里改后重启服务，单独改这里会让图片找不到。
             </span>
-            <span v-else class="field-note">迁移到另一套本地档案时，两边要填不同目录，否则源对象会被同名覆盖。</span>
+            <span v-else class="field-note">迁移到另一套本地文件存储时，两边要填不同目录，否则源对象会被同名覆盖。</span>
           </el-form-item>
         </template>
       </el-form>
@@ -368,8 +367,8 @@
       </template>
     </el-dialog>
 
-    <!-- 分发档案表单 -->
-    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑分发档案' : '新建分发档案'" width="600px">
+    <!-- CDN分发表单 -->
+    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑CDN分发' : '新建CDN分发'" width="600px">
       <div v-if="currentCdnGuide" class="vendor-guide">
         <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
           <strong>{{ currentCdnGuide.label }}</strong>
@@ -387,7 +386,7 @@
       </div>
       <el-form label-width="130px" size="small">
         <el-form-item>
-          <template #label>档案名 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'name')" /></template>
+          <template #label>名称 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'name')" /></template>
           <el-input v-model="deliveryForm.name" />
         </el-form-item>
         <el-form-item>
@@ -397,7 +396,7 @@
           </el-select>
         </el-form-item>
         <template v-if="deliveryForm.provider !== 'none'">
-          <!-- 平台自身 CDN 不承载域名：平台对象的出参域名唯一真值源是存储档案的
+          <!-- 平台自身 CDN 不承载域名：平台对象的出参域名唯一真值源是文件存储的
                访问基址，这里再存一份必然出现「改了基址、这里还是旧域名」。 -->
           <el-alert
             v-if="deliveryForm.purpose === 'platform_primary'"
@@ -405,16 +404,12 @@
             :closable="false"
             class="delivery-domain-note"
             title="平台域名不在这里配"
-            description="平台对象（p/ 前缀）的访问域名以「存储档案 → 平台自身存储」里的访问基址为准，这份档案只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
+            description="平台对象（p/ 前缀）的访问域名以「文件存储 → 平台自身存储」里的访问基址为准，这条 CDN分发只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
           />
           <template v-else>
             <el-form-item>
               <template #label>公开域名 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'domain')" /></template>
               <el-input v-model="deliveryForm.domain" placeholder="https://cdn.example.com" />
-            </el-form-item>
-            <el-form-item>
-              <template #label>路径前缀 <FieldHelp v-bind="help(DELIVERY_FIELD_GUIDES, 'pathPrefix')" /></template>
-              <el-input v-model="deliveryForm.pathPrefix" placeholder="一般留空" />
             </el-form-item>
           </template>
           <el-form-item>
@@ -487,18 +482,18 @@ const saving = ref(false)
 // 弹窗里的厂商小抄默认收起：知道去哪拿凭据的人不用先读一屏说明
 const guideOpen = ref(false)
 const storages = ref<StorageProfile[]>([])
-// 两套内置档案绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
+// 两套系统自带的文件存储绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
 // 镜像只收备份副本，平台自身存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
 const writableStorages = computed(() => storages.value.filter(
   (p) => p.purpose !== 'platform_mirror' && p.purpose !== 'platform_primary',
 ))
 // 顶部摘要只读「平台自身存储」这一行，告诉管理员文件实际存在哪；
-// 改连接信息仍去「存储档案」标签，不在启动配置面板里重复一套表单。
+// 改连接信息仍去「文件存储」标签，不在启动配置面板里重复一套表单。
 const platformPrimaryProfile = computed(
   () => storages.value.find((p) => p.purpose === 'platform_primary') || null,
 )
 const deliveries = ref<DeliveryProfile[]>([])
-// 平台自身 CDN 档案不能绑给企业：它的 domain 为空（平台域名真值源是存储档案的
+// 平台自身 CDN 这条分发不能绑给企业：它的 domain 为空（平台域名真值源是文件存储的
 // 访问基址），绑上去企业自己的 CDN 域名反而失效，看起来「配了 CDN」实际全站走平台域名。
 // 后端 validateBindingTargets 同样拒绝，这里只是让下拉里看不到。
 const writableDeliveries = computed(() => deliveries.value.filter(
@@ -510,7 +505,7 @@ const platformDelivery = computed(
 )
 function deliveryPurposeHint(row: { purpose?: string }) {
   if (row.purpose !== 'platform_primary') return ''
-  return '平台自身 CDN：只服务 p/ 平台对象与未绑定分发档案的企业，不可删除、不可绑定给企业；域名见存储档案的访问基址，改完需重启'
+  return '平台自身 CDN：只服务 p/ 平台对象与未绑定CDN分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
 }
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
@@ -545,7 +540,7 @@ const emptyStorage = () => ({
   accessKey: '', secretKey: '', accessKeyMasked: '', builtin: false,
 })
 const emptyDelivery = () => ({
-  id: 0, name: '', provider: 'aliyun', domain: '', pathPrefix: '', endpoint: '',
+  id: 0, name: '', provider: 'aliyun', domain: '', endpoint: '',
   resourceId: '', accessKey: '', secretKey: '', accessKeyMasked: '',
   purpose: '' as DeliveryProfile['purpose'], builtin: false,
 })
@@ -580,7 +575,7 @@ function statusTag(s: string) {
 function statusText(s: string) {
   return s === 'ok' ? '已验证' : s === 'error' ? '失败' : '未自检'
 }
-// 内置档案的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
+// 系统自带文件存储的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
 // 配置已集中到本模块的「平台自身存储」标签；focus 参数让面板加载后滚到对应行。
 function builtinSettingHref(row: { purpose?: string }) {
@@ -629,7 +624,7 @@ function openStorageDialog(row: any | null) {
   storageDialog.value = true
 }
 async function submitStorage() {
-  if (!storageForm.name.trim()) return ElMessage.warning('请填写档案名')
+  if (!storageForm.name.trim()) return ElMessage.warning('请填写名称')
   saving.value = true
   try {
     await saveStorageProfile(storageForm.id || null, { ...storageForm })
@@ -660,7 +655,7 @@ function openDeliveryDialog(row: any | null) {
   deliveryDialog.value = true
 }
 async function submitDelivery() {
-  if (!deliveryForm.name.trim()) return ElMessage.warning('请填写档案名')
+  if (!deliveryForm.name.trim()) return ElMessage.warning('请填写名称')
   saving.value = true
   try {
     await saveDeliveryProfile(deliveryForm.id || null, { ...deliveryForm })
@@ -684,7 +679,7 @@ async function removeDelivery(row: any) {
 }
 
 async function saveGlobal() {
-  if (!globalStorageId.value) return ElMessage.warning('请选择存储档案')
+  if (!globalStorageId.value) return ElMessage.warning('请选择文件存储')
   saving.value = true
   try {
     // force 与后端一致地作用于下一次保存；错误（含缺失对象 key）由请求层原样弹出，
@@ -700,21 +695,21 @@ async function rollbackGlobal() {
   saving.value = true
   try {
     await rollbackGlobalBinding()
-    ElMessage.success('已回滚到切换前的档案')
+    ElMessage.success('已回滚到切换前的文件存储')
     await load()
   } finally {
     saving.value = false
   }
 }
 async function saveCompany(row: any) {
-  if (!row.storageProfileId) return ElMessage.warning('请选择存储档案')
+  if (!row.storageProfileId) return ElMessage.warning('请选择文件存储')
   await saveCompanyBinding(row.tenantId, row.storageProfileId, row.deliveryProfileId || 0, forceCompany.value)
   ElMessage.success('已保存')
   await load()
 }
 async function rollbackCompany(row: any) {
   await rollbackCompanyBinding(row.tenantId)
-  ElMessage.success('已回滚到切换前的档案')
+  ElMessage.success('已回滚到切换前的文件存储')
   await load()
 }
 async function resetCompany(row: any) {
@@ -724,7 +719,7 @@ async function resetCompany(row: any) {
 }
 
 async function createJob() {
-  if (!newJob.sourceProfileId || !newJob.targetProfileId) return ElMessage.warning('请选择源与目标档案')
+  if (!newJob.sourceProfileId || !newJob.targetProfileId) return ElMessage.warning('请选择源与目标文件存储')
   if (newJob.sourceProfileId === newJob.targetProfileId) return ElMessage.warning('源与目标不能相同')
   saving.value = true
   try {

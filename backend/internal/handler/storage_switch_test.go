@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"weichuan/internal/model"
 	"weichuan/internal/storage"
@@ -237,4 +239,59 @@ func TestRollbackDoesNotProbeObjects(t *testing.T) {
 	require.NoError(t, db.Create(&model.StorageBinding{TenantID: 5, StorageProfileID: 2, PreviousStorageProfileID: 1, Version: 2}).Error)
 	// 目的档案是不可达的 minio，若回滚去做列举就会因网络失败；这里应当成功。
 	require.NoError(t, rollbackBinding(db, 5, "tester"), "回滚是应急动作，不得被对象探测卡住")
+}
+
+// TestBindingWritesRunInOneTransaction 直接量「读-改-写是否同一个事务」：
+// 抓 Query/Update 回调里的 ConnPool。分开读写的旧实现拿到的是底层 *sql.DB，
+// 且两个回调的连接池相同却不是事务；修好后必须是同一个 *sql.Tx。
+func TestBindingWritesRunInOneTransaction(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(model.All()...))
+	require.NoError(t, db.Create(&model.StorageProfile{Name: "A", Driver: "local", Status: "ok", Version: 1}).Error)
+	require.NoError(t, db.Create(&model.StorageProfile{Name: "B", Driver: "local", Status: "ok", Version: 1}).Error)
+	created := time.Now().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, db.Create(&model.StorageBinding{
+		TenantID: 5, StorageProfileID: 1, PreviousStorageProfileID: 1,
+		Version: 1, CreatedAt: created,
+	}).Error)
+
+	var queryPool, updatePool any
+	const qName = "test:capture-binding-query"
+	const uName = "test:capture-binding-update"
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(qName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "storage_bindings" {
+			queryPool = tx.Statement.ConnPool
+		}
+	}))
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(uName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "storage_bindings" {
+			updatePool = tx.Statement.ConnPool
+		}
+	}))
+	t.Cleanup(func() {
+		_ = db.Callback().Query().Remove(qName)
+		_ = db.Callback().Update().Remove(uName)
+	})
+
+	assertSameTx := func(step string) {
+		t.Helper()
+		_, isTx := queryPool.(*sql.Tx)
+		require.True(t, isTx, "%s：读绑定必须在事务里，实际连接池类型 %T", step, queryPool)
+		require.True(t, queryPool == updatePool, "%s：读与写必须共用同一个事务", step)
+		queryPool, updatePool = nil, nil
+	}
+
+	require.NoError(t, saveBinding(db, 5, 2, 0, "tester"))
+	assertSameTx("保存绑定")
+	require.NoError(t, rollbackBinding(db, 5, "tester"))
+	assertSameTx("回滚绑定")
+	require.NoError(t, switchBindingAfterMigration(db, &model.StorageMigrationJob{
+		ID: 1, TenantID: 5, TargetProfileID: 2,
+	}))
+	assertSameTx("迁移后自动切换")
+
+	var got model.StorageBinding
+	require.NoError(t, db.Where("tenant_id = ?", 5).First(&got).Error)
+	require.WithinDuration(t, created, got.CreatedAt, time.Second, "重复保存/回滚不能改写 CreatedAt")
 }

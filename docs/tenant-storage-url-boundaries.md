@@ -8,6 +8,9 @@
 > `backend/internal/storage/ref_boundaries_test.go`。
 >
 > 关联：`docs/tenant-storage-design.md` §3.1 / §4、`docs/commercial-readiness.md` 第五十三／五十七轮。
+>
+> **界面术语对照（2026-11-22）**：后台已把「存储档案」改称 **「文件存储」**、
+> 「分发档案」改称 **「CDN分发」**。下文「档案」指同一批配置，代码标识不变。
 
 ---
 

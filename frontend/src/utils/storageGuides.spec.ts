@@ -76,7 +76,7 @@ describe('存储模块的产品化事实表', () => {
     for (const key of ['name', 'driver', 'endpoint', 'bucket', 'region', 'baseUrl', 'hostHeader', 'useSsl', 'publicRead', 'accessKey', 'secretKey', 'localDir']) {
       expect(STORAGE_FIELD_GUIDES[key]?.usage, `存储字段 ${key} 缺说明`).toBeTruthy()
     }
-    for (const key of ['name', 'provider', 'domain', 'pathPrefix', 'endpoint', 'resourceId', 'accessKey', 'secretKey']) {
+    for (const key of ['name', 'provider', 'domain', 'endpoint', 'resourceId', 'accessKey', 'secretKey']) {
       expect(DELIVERY_FIELD_GUIDES[key]?.usage, `分发字段 ${key} 缺说明`).toBeTruthy()
     }
     expect(STORAGE_FIELD_GUIDES.accessKey?.source).toContain('控制台')

@@ -2,7 +2,7 @@
   <el-card>
     <div class="page-bar">
       <h3>CDN 刷新</h3>
-      <!-- 当前生效厂商：值来自「分发档案 → 平台自身 CDN」（迁移 0060 之前是系统设置的
+      <!-- 当前生效厂商：值来自「CDN分发 → 平台自身 CDN」（迁移 0060 之前是系统设置的
            cdn_provider）。没配时后端按 aliyun 回落，这里如实标注，避免「没配过怎么会
            是阿里云」的困惑 -->
       <el-tag v-if="providerTag" size="small" effect="plain">{{ providerTag }}</el-tag>
@@ -22,7 +22,7 @@
     <el-alert
       type="info"
       :closable="false"
-      title="覆盖同名文件的操作（素材采用、小程序码重生成）会自动刷新，这里是手动兜底：直接在对象存储里换了文件、或想让边缘立刻失效时用。支持阿里云 / 腾讯云 / 七牛云 / Cloudflare / AWS CloudFront，平台对象的厂商与凭据在「存储与分发 → 分发档案 → 平台自身 CDN」里配（首次部署也可用环境变量播种），改完需重启服务。条数超过厂商单次上限时会自动分批提交。"
+      title="覆盖同名文件的操作（素材采用、小程序码重生成）会自动刷新，这里是手动兜底：直接在对象存储里换了文件、或想让边缘立刻失效时用。支持阿里云 / 腾讯云 / 七牛云 / Cloudflare / AWS CloudFront，平台对象的厂商与凭据在「存储与分发 → CDN分发 → 平台自身 CDN」里配（首次部署也可用环境变量播种），改完需重启服务。条数超过厂商单次上限时会自动分批提交。"
       style="margin-bottom: 14px"
     />
 
@@ -72,20 +72,20 @@ onMounted(async () => {
   try {
     profiles.value = (await listDeliveryProfiles()) ?? []
   } catch {
-    // 状态条是锦上添花：拿不到档案就只留通用说明，不能因此挡住刷新入口
+    // 状态条是锦上添花：拿不到配置就只留通用说明，不能因此挡住刷新入口
   } finally {
     loaded.value = true
   }
 })
 
-// 平台对象的刷新凭据只有一处真值源：分发档案里 purpose=platform_primary 那一行
-// （迁移 0060 之前是系统设置的 cdn_* 一组）。这里只读，改去档案页。
+// 平台对象的刷新凭据只有一处真值源：CDN分发里 purpose=platform_primary 那一行
+// （迁移 0060 之前是系统设置的 cdn_* 一组）。这里只读，改去 CDN分发页。
 const platform = computed<DeliveryProfile | null>(
   () => profiles.value.find((p) => p.purpose === 'platform_primary') || null,
 )
 const provider = computed(() => (platform.value?.provider || '').trim())
 const providerTag = computed(() => {
-  // 档案还没拉到时不显示：否则会先闪一下「按默认（aliyun）」，像是配过
+  // 配置还没拉到时不显示：否则会先闪一下「按默认（aliyun）」，像是配过
   if (!loaded.value || !platform.value) return ''
   if (!provider.value) return '未配置（不刷新）'
   return `${provider.value}（${cdnProviderLabel(provider.value)}）`
@@ -106,19 +106,19 @@ const blockReason = computed(() => {
   // 设置还没拉到（或拉取失败）时不下判断：宁可不提示，也不误报「未启用」
   if (!loaded.value) return ''
   if (!platform.value) {
-    return '还没读到「平台自身 CDN」档案（旧版本可能尚未生成）。请到「存储与分发 → 分发档案」确认那一行存在，保存后重启服务。'
+    return '还没读到「平台自身 CDN」这条配置（旧版本可能尚未生成）。请到「存储与分发 → CDN分发」确认那一行存在，保存后重启服务。'
   }
   if (!enabled.value) {
-    return 'CDN 刷新当前未启用，提交会被拒绝。请到「存储与分发 → 分发档案 → 平台自身 CDN」选好厂商并填全它要求的凭据，保存后重启服务。'
+    return 'CDN 刷新当前未启用，提交会被拒绝。请到「存储与分发 → CDN分发 → 平台自身 CDN」选好厂商并填全它要求的凭据，保存后重启服务。'
   }
   if (missingKeys.value.length) {
-    return `当前厂商 ${provider.value} 还缺 ${missingKeys.value.join('、')}，提交会被拒绝。请到「存储与分发 → 分发档案 → 平台自身 CDN」补齐后重启服务。`
+    return `当前厂商 ${provider.value} 还缺 ${missingKeys.value.join('、')}，提交会被拒绝。请到「存储与分发 → CDN分发 → 平台自身 CDN」补齐后重启服务。`
   }
   return ''
 })
 
 function goSettings() {
-  // 直达档案页的「分发档案」标签：CDN 凭据只在那里配
+  // 直达配置页的「CDN分发」标签：CDN 凭据只在那里配
   router.push('/platform/storage-profiles?tab=delivery')
 }
 

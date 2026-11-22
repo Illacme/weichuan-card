@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"os"
 	"testing"
 
@@ -136,4 +137,51 @@ func TestCanRunMigration(t *testing.T) {
 	for _, tc := range cases {
 		require.Equal(t, tc.want, canRunMigration(tc.status, tc.failed), "status=%s failed=%d", tc.status, tc.failed)
 	}
+}
+
+// TestRunStorageMigrationStatusQueryFailure 区分「被取消」与「查状态失败」。
+// 旧实现把两者合并成同一个 if 后直接 return：DB 抖动时 goroutine 静默退出，
+// 任务永久停在 running，既没有错误提示也没有失败终态。
+func TestRunStorageMigrationStatusQueryFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.StorageProfile{}, &model.DeliveryProfile{}, &model.StorageBinding{},
+		&model.StorageMigrationJob{}, &model.StorageMigrationError{}))
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	src := &storage.LocalUploader{Dir: srcDir, AllowExt: storage.DefaultAllowExt}
+	require.NoError(t, src.PutObject("t/5/a.png", []byte("a"), "image/png"))
+	srcProfile := model.StorageProfile{Name: "src", Driver: "local", Version: 1, LocalDir: srcDir}
+	dstProfile := model.StorageProfile{Name: "dst", Driver: "local", Version: 1, LocalDir: dstDir}
+	require.NoError(t, db.Create(&srcProfile).Error)
+	require.NoError(t, db.Create(&dstProfile).Error)
+	job := model.StorageMigrationJob{TenantID: 5, SourceProfileID: srcProfile.ID, TargetProfileID: dstProfile.ID, Status: "running"}
+	require.NoError(t, db.Create(&job).Error)
+
+	// 精确命中状态查询失败：真实查询本身由默认实现覆盖在其它用例里。
+	origStatus := migrationJobStatus
+	t.Cleanup(func() { migrationJobStatus = origStatus })
+	migrationJobStatus = func(*gorm.DB, int64) (string, error) {
+		return "", errors.New("injected status query failure")
+	}
+
+	resolver := storageprofile.NewWithLocal(db, srcDir)
+	runStorageMigration(db, resolver, job.ID)
+
+	var got model.StorageMigrationJob
+	require.NoError(t, db.First(&got, job.ID).Error)
+	require.Equal(t, "failed", got.Status, "DB 错误必须写失败终态，不能让任务卡在 running")
+	require.Contains(t, got.Error, "injected status query failure")
+	require.NotNil(t, got.FinishedAt)
+
+	// 反向对照：明确的 canceled 不能被 finish 覆盖成 failed。
+	migrationJobStatus = func(*gorm.DB, int64) (string, error) { return "canceled", nil }
+	require.NoError(t, db.Model(&model.StorageMigrationJob{}).Where("id = ?", job.ID).
+		Updates(map[string]any{"status": "canceled", "error": ""}).Error)
+	runStorageMigration(db, resolver, job.ID)
+	var canceled model.StorageMigrationJob
+	require.NoError(t, db.First(&canceled, job.ID).Error)
+	require.Equal(t, "canceled", canceled.Status)
+	require.Empty(t, canceled.Error)
 }

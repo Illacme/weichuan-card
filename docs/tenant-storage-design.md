@@ -1,5 +1,16 @@
 # 多租户自有存储 · 详细设计（第一阶段）
 
+> **界面术语对照（2026-11-22 定）**：后台界面已把「存储档案」改称 **「文件存储」**，
+> 把「分发档案」改称 **「CDN分发」**。本文历史轮次里出现的「档案」是当时的用词；
+> 读当前口径（§0.x）与界面时，一律按上面对照理解。代码标识（`storage_profiles`、
+> `storageProfileId`、`/api/admin/storage-profiles`）不变，只是用户看到的中文名变了。
+>
+> **当前口径补充（2026-11-22）**：本地私有文件流 `/api/storage/file` 与
+> `/api/employee/storage/file` 按对象键归属读盘：`t/<cid>/…` 只能读自己的、
+> `p/…` 登录用户可读、历史裸键只放平台超管；调用方的企业 ID 只取鉴权上下文，
+> 不认 query 的 `companyId`。`delivery_profiles.path_prefix` 是僵尸字段
+> （唯一消费它的 `Resolver.PublicURL` 无生产调用方），已由迁移 0061 下线。
+>
 > **状态：部分实施。** 本文原为设计稿（2026-11-13 首版只做代码事实核查），
 > 后续多轮已按 §4 分期推进，当前进度：
 >
@@ -21,7 +32,7 @@
 >
 > **现状订正（2026-11-16）**：上表「尚未落地」与 §3.6 的「没有 re-key」都是首版设计当时的口径。配置写接口 / 后台界面、写入侧归一、`UploaderResolver` 注入、存量回填 P3 均已落地。
 >
-> **第七十五轮（2026-11-20）**：`tenant_storage_configs` 与 `server tenant-storage-rekey` 已随旧模型一并删除（产品未商用，不留兼容层）。档案凭据按产品决策明文入库、仅回显掩码，因此「业务 PII 必须在首次写入前定死密钥」的约束不变；档案侧不做 re-key。下文凡提到旧表 / `TENANT_STORAGE_ROUTE` / `--source` 的段落均为历史记录，现行口径以 §0.1 为准。
+> **第七十五轮（2026-11-20）**：`tenant_storage_configs` 与 `server tenant-storage-rekey` 已随旧模型一并删除（产品未商用，不留兼容层）。文件存储凭据按产品决策明文入库、仅回显掩码，因此「业务 PII 必须在首次写入前定死密钥」的约束不变；这一层不做 re-key。下文凡提到旧表 / `TENANT_STORAGE_ROUTE` / `--source` 的段落均为历史记录，现行口径以 §0.1 为准。
 >
 > 文中所有文件路径、标识符与行号都来自对仓库的实读，不引用印象。
 >
@@ -42,9 +53,9 @@
 
 | 曾经的层 | 落点 | 结局 |
 | --- | --- | --- |
-| ① 平台级平铺 | 原为 `sys_setting` 的 `storage_*`，迁移 0059 后为 `storage_profiles` 的 `platform_primary` 内置档案 | **配置已搬进档案**：连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）现在只有 `storage_profiles` 一处真值源；`sys_setting` 只保留 `platform_storage_profile_id` 指针与 `upload_dir` / `mirror_dir` 等部署期目录事实。启动期按档案构造 `Resolver.SetPlatform`，服务 `p/` 平台对象与未绑定档案的企业 |
+| ① 平台级平铺 | 原为 `sys_setting` 的 `storage_*`，迁移 0059 后为 `storage_profiles` 的 `platform_primary` 系统自带配置 | **配置已搬进文件存储**：连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）现在只有 `storage_profiles` 一处真值源；`sys_setting` 只保留 `platform_storage_profile_id` 指针与 `upload_dir` / `mirror_dir` 等部署期目录事实。启动期按该配置构造 `Resolver.SetPlatform`，服务 `p/` 平台对象与未单独指定存储的企业 |
 | ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | **已删除**：模型、handler、rekey 子命令、repository、前端弹窗、`TENANT_STORAGE_ROUTE` 开关、生成器 `--source=legacy` 全部移除；迁移 `0055` DROP 该表 |
-| ③ 档案 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
+| ③ 文件存储 / CDN分发 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
 
 ### 为什么平台自身实例仍要单独存在
 
@@ -56,16 +67,16 @@
 - 它是**启动期一次**构造的进程级实例，运行期零查询；而 ② 是每个上传一次必查的
   表（`company_id` 上的一次必然落空）。删 ② 才是性能收益，删平台实例只有风险。
 - 私有部署靠 `STORAGE_*` / `MINIO_*` / `OSS_*` 起服务的语义保留，但只作为
-  **首次播种**：档案一旦生成，管理员在档案页改的连接信息才是真值源，重新启动
+  **首次播种**：文件存储一旦生成，管理员在「文件存储」页改的连接信息才是真值源，重新启动
   不会再被环境变量或历史 `sys_setting` 覆盖（迁移 0059，见 §0.3）。
 
 #### UI 命名：叫「平台自身存储」，不叫「平台兜底」（2026-11-22 定）
 
 这组配置的分组标签与所在标签页统一叫 **「平台自身存储（启动配置）」**，不用「平台兜底」——后者会让管理员以为它是「出了事才用的备用配置」，从而忽略它其实是平台对象（`p/`）与无绑定企业的**唯一主落点**。「兜底」一词只留给真正退位的那一层：内置档案 `tenant_fallback`（界面「平台本地存储」），它才是云坏掉时的退路。
 
-迁移 0059 后这个标签页只管**部署期目录事实**（`upload_dir` / `mirror_dir` / 总闸 / CDN / 配额）和指向档案的指针；驱动、桶、凭据、基址、公开读已统一到「存储与分发 → 存储档案」里的 `platform_primary` 行，见 §0.3。名字没变，职责收窄了——别再按旧口径去系统设置里找连接信息。
+迁移 0059 后这个标签页只管**部署期目录事实**（`upload_dir` / `mirror_dir` / 总闸 / CDN / 配额）和指向配置的指针；驱动、桶、凭据、基址、公开读已统一到「存储与分发 → 文件存储」里的 `platform_primary` 行，见 §0.3。名字没变，职责收窄了——别再按旧口径去系统设置里找连接信息。
 
-三者语义在界面上必须说得出来：① 是**平台自己那份连接信息 + 启动期目录**（可 local 可云，连接信息在档案、目录在系统设置）；② 「平台本地存储」是 `upload_dir` 那块可被绑定的本地退路盘——① 选 local 时两者是**同一块盘的两个名字**；③ 「平台本地镜像」是 `mirror_dir` 的私有备份副本，只进不出、不可绑定。内置档案详情与悬停提示必须点明目录继承自哪配置项（`upload_dir` / `mirror_dir`）且改后需重启，否则管理员会回到档案里找根本不存在的目录输入框。守门见 `Settings.spec.ts`、`StorageProfiles.spec.ts`、`StorageSettingsPanel.spec.ts` 的对应断言。
+三者语义在界面上必须说得出来：① 是**平台自己那份连接信息 + 启动期目录**（可 local 可云，连接信息在文件存储、目录在启动配置）；② 「平台本地存储」是 `upload_dir` 那块可被绑定的本地退路盘——① 选 local 时两者是**同一块盘的两个名字**；③ 「平台本地镜像」是 `mirror_dir` 的私有备份副本，只进不出、不可绑定。系统自带配置的详情与悬停提示必须点明目录继承自哪配置项（`upload_dir` / `mirror_dir`）且改后需重启，否则管理员会回到文件存储里找根本不存在的目录输入框。守门见 `Settings.spec.ts`、`StorageProfiles.spec.ts`、`StorageSettingsPanel.spec.ts` 的对应断言。
 
 ### 删除 ② 的直接收益
 

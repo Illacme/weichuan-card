@@ -54,13 +54,13 @@ export const ARCHITECTURE_POINTS = [
   },
   {
     title: '「绑定」决定哪家企业用哪套',
-    body: '一套存储配置叫一个「档案」。不特别指定时，所有企业共享同一套（全局默认）；也可以给某家企业单独指定自己的桶。改绑定后下一个请求就生效，不需要重启。',
+    body: '一套「文件存哪、怎么连」的设置，叫做一条「文件存储」。不特别指定时，所有企业共用同一条（全局默认）；也可以给某家企业单独指定自己的桶。改完绑定下一个请求就生效，不需要重启。',
   },
 ] as const
 
 export const DEFAULT_FACTS = [
   '初始状态：本地磁盘 + 不启用 CDN，不填任何云账号也能完整使用。',
-  '系统自带三套存储档案与一套分发档案，负责平台自己的文件和备份，不能删除。',
+  '系统自带三条文件存储与一条 CDN分发，负责平台自己的文件和备份，不能删除。',
   '接云不会丢老文件：先用「迁移任务」把旧文件复制到新桶，再切换绑定；源桶原样保留。',
 ] as const
 
@@ -84,25 +84,25 @@ export const SETUP_STEPS: SetupStep[] = [
   },
   {
     no: 2,
-    title: '需要更大容量时，新建存储档案',
+    title: '需要更大容量时，新建文件存储',
     when: '本地磁盘不够、想用云盘时',
-    body: '先在云平台创建存储桶并拿到密钥，再回到「存储档案」新建一条。填完点「自检」——通过才说明系统真的能读写这个桶。此时还不会影响任何现有文件。',
+    body: '先在云平台创建存储桶并拿到密钥，再回到「文件存储」新建一条。填完点「自检」——通过才说明系统真的能读写这个桶。此时还不会影响任何现有文件。',
     tab: 'storage',
-    action: '去新建存储档案',
+    action: '去新建文件存储',
   },
   {
     no: 3,
     title: '（可选）让访客访问更快',
     when: '访客分布广、图片加载慢时',
-    body: '在云厂商开通 CDN 并指向你的桶，然后到「分发档案」新建一条，填好厂商凭据和公开域名。这一步只影响访客侧 URL，不改变文件存在哪。',
+    body: '在云厂商开通 CDN 并指向你的桶，然后到「CDN分发」新建一条，填好厂商凭据和公开域名。这一步只影响访客侧 URL，不改变文件存在哪。',
     tab: 'delivery',
-    action: '去新建分发档案',
+    action: '去新建 CDN分发',
   },
   {
     no: 4,
     title: '把老文件搬到新桶',
     when: '切换之前，且新桶是空的',
-    body: '在「迁移任务」里选源档案和目标档案，先「试运行」看看数量对不对，再启动搬运。只复制不删除，失败的对象会列出清单。',
+    body: '在「迁移任务」里选源存储和目标存储，先「试运行」看看数量对不对，再启动搬运。只复制不删除，失败的对象会列出清单。',
     tab: 'migration',
     action: '去创建迁移任务',
   },
@@ -110,7 +110,7 @@ export const SETUP_STEPS: SetupStep[] = [
     no: 5,
     title: '切换生效',
     when: '迁移零失败之后',
-    body: '到「绑定关系」选择新档案并保存，下一个请求就走新桶。切错了可以一键回滚。修改的是平台自己的存储或 CDN 凭据时，需要重启服务才生效。',
+    body: '到「绑定关系」选择新文件存储并保存，下一个请求就走新桶。切错了可以一键回滚。修改的是平台自己的存储或 CDN 凭据时，需要重启服务才生效。',
     tab: 'binding',
     action: '去切换绑定',
   },
@@ -118,9 +118,9 @@ export const SETUP_STEPS: SetupStep[] = [
 
 export const STORAGE_GLOSSARY: { term: string; meaning: string }[] = [
   { term: '文件对象', meaning: '一张图片、一段视频或一个小程序码文件。系统里叫「对象」，就是一份文件。' },
-  { term: '存储档案', meaning: '一套「存到哪、怎么连」的配置：哪个云厂商、哪个桶、用什么密钥。可以建多套。' },
-  { term: '分发档案', meaning: '一套「怎么加速访问」的配置：用哪家 CDN、公开域名、刷新凭据。和存储档案互相独立。' },
-  { term: '绑定', meaning: '决定「谁用哪套档案」。不给任何企业单独指定时，所有人用全局默认那套。' },
+  { term: '文件存储', meaning: '一套「文件存哪、怎么连进去」的配置：用本地磁盘还是某个云桶、桶名、访问地址和密钥。可以建多套。' },
+  { term: 'CDN分发', meaning: '一套「让访客更快读到文件」的配置：用哪家 CDN、公开域名、刷新凭据。和文件存储互相独立，同一个桶可以配多套。' },
+  { term: '绑定', meaning: '决定「哪家企业用哪套文件存储和 CDN分发」。不单独指定时，所有人用全局默认那套。' },
   { term: '迁移任务', meaning: '把老桶里的文件复制到新桶，只复制不删除，用于切换前搬家。' },
   { term: '本地镜像', meaning: '系统自动为上传成功的文件在服务器另存一份副本，只做备份、不参与读取。' },
   { term: '自检', meaning: '拿当前填的凭据真实访问一次桶或 CDN，确认能连通。保存配置前建议先点它。' },
@@ -131,7 +131,7 @@ export const STORAGE_GLOSSARY: { term: string; meaning: string }[] = [
 export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
   '/platform/storage-profiles': {
     desc: '图片视频存哪、怎么加速访问',
-    detail: '总览一句话说清现在存哪、CDN 开没开；要接云时点「展开帮助」看五步流程与各家官方地址。档案、绑定、迁移都在这个模块里。',
+    detail: '总览一句话说清现在存哪、CDN 开没开；要接云时点「展开帮助」看五步流程与各家官方地址。文件存储、CDN分发、绑定、迁移都在这个模块里。',
   },
   '/platform/cdn-refresh': {
     desc: '换了文件后让 CDN 立刻更新',
@@ -149,8 +149,8 @@ export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
 
 export const TAB_GUIDES: Record<string, { title: string; desc: string }> = {
   overview: { title: '总览', desc: '一句话说清文件现在存哪、CDN 开没开。要接云时再展开帮助看流程、官方地址与名词解释。' },
-  storage: { title: '存储档案', desc: '管「文件存哪」。每套档案写一次连接信息，多家企业可以共用。' },
-  delivery: { title: '分发档案', desc: '管「访客怎么更快读到」。CDN 与存储互相独立，同一个桶可以配多套加速。' },
+  storage: { title: '文件存储', desc: '管「文件存哪」。每套只写一次连接信息，多家企业可以共用。' },
+  delivery: { title: 'CDN分发', desc: '管「访客怎么更快读到」。CDN 与存储互相独立，同一个桶可以配多套加速。' },
   binding: { title: '绑定关系', desc: '管「谁用哪套」。不单独指定就用全局默认；改完下一个请求立即生效。' },
   migration: { title: '迁移任务', desc: '管「老文件怎么搬到新桶」。只复制不删除，零失败后才建议切换。' },
   platform: { title: '平台自身存储', desc: '平台自己那份文件的启动参数：服务器目录、备份开关和访问基址。通常不用改。' },
@@ -312,7 +312,7 @@ export function cdnGuide(provider: string): PlatformGuide | null {
 
 export const STORAGE_FIELD_GUIDES: Record<string, FieldGuide> = {
   name: {
-    field: 'name', label: '档案名',
+    field: 'name', label: '名称',
     usage: '给这套存储配置起个自己看得懂的名字，方便在绑定和迁移时认出来。',
     rules: '只是显示名，不参与上传或读取，可以随便改。',
   },
@@ -320,7 +320,7 @@ export const STORAGE_FIELD_GUIDES: Record<string, FieldGuide> = {
     field: 'driver', label: '存储方式',
     usage: '决定文件写进哪里：本地磁盘，或某种云对象存储。',
     source: '不确定选哪个时，先看「总览」里的默认说明：本地磁盘开箱即用，云平台需要自己开通。',
-    rules: '内置系统档案里，只有「平台自身存储」能改这一项；另外两套锁定本地磁盘。',
+    rules: '系统自带的文件存储里，只有「平台自身存储」能改这一项；另外两套锁定本地磁盘。',
     note: '改「平台自身存储」的方式后必须重启服务才真正生效。',
   },
   endpoint: {
@@ -373,22 +373,22 @@ export const STORAGE_FIELD_GUIDES: Record<string, FieldGuide> = {
     field: 'accessKey', label: 'AccessKey',
     usage: '访问云厂商 API 的账号标识，相当于「用户名」。',
     source: '本弹窗上方的「创建 AccessKey / 密钥管理」链接直达对应控制台页面。',
-    rules: '编辑已有档案时留空表示不修改；新建时必填。',
+    rules: '编辑已有配置时留空表示不修改；新建时必填。',
     note: '保存后只回显掩码，忘记只能重新生成一对密钥。',
   },
   secretKey: {
     field: 'secretKey', label: 'SecretKey',
     usage: '与 AccessKey 配对的密钥，相当于「密码」。',
     source: '与 AccessKey 在同一页面一次性显示，本弹窗上方有直达链接。',
-    rules: '编辑已有档案时留空表示不修改；新建时必填。',
+    rules: '编辑已有配置时留空表示不修改；新建时必填。',
     note: '以明文入库、回显只给掩码。请保管好数据库备份，并不要贴到聊天工具里。',
   },
   localDir: {
     field: 'localDir', label: '本地根目录',
     usage: '本地磁盘模式下，文件写在服务器的哪个目录。',
-    source: '普通档案可以自由指定；系统内置档案的目录继承自「平台自身存储」里的两个目录设置。',
-    rules: '做迁移时源档案和目标档案必须是不同目录，否则同名文件会被覆盖。',
-    note: '内置档案的目录在这里改不动，要去「平台自身存储」改并重启服务。',
+    source: '自己新建的文件存储可以自由指定；系统自带的那几条目录继承自「平台自身存储」里的两个目录设置。',
+    rules: '做迁移时源存储和目标存储必须是不同目录，否则同名文件会被覆盖。',
+    note: '系统自带的文件存储目录在这里改不动，要去「平台自身存储」改并重启服务。',
   },
 }
 
@@ -405,12 +405,7 @@ export const DELIVERY_FIELD_GUIDES: Record<string, FieldGuide> = {
     field: 'domain', label: '公开域名',
     usage: '访客访问文件时用的 CDN 域名，例如 https://cdn.example.com。',
     source: '在云厂商控制台把域名接入 CDN 并做 CNAME 解析后得到。',
-    rules: '必须是 https:// 开头的完整地址。平台自身的分发档案不填这项，域名以存储档案的访问基址为准。',
-  },
-  pathPrefix: {
-    field: 'pathPrefix', label: '路径前缀',
-    usage: '只加速某个目录下的文件时才需要填，例如 /uploads。',
-    rules: '一般留空，表示整站文件都走这套 CDN。',
+    rules: '必须是 https:// 开头的完整地址。平台自身的 CDN分发不填这项，域名以文件存储的访问基址为准。',
   },
   endpoint: {
     field: 'endpoint', label: '刷新接口地址',
@@ -428,13 +423,13 @@ export const DELIVERY_FIELD_GUIDES: Record<string, FieldGuide> = {
     field: 'accessKey', label: 'AccessKey / Token',
     usage: '调用厂商刷新接口的账号标识。Cloudflare 不使用这一项。',
     source: '本弹窗上方的密钥管理链接直达。',
-    rules: '编辑已有档案时留空表示不修改。',
+    rules: '编辑已有配置时留空表示不修改。',
   },
   secretKey: {
     field: 'secretKey', label: 'SecretKey / API Token',
     usage: '调用刷新接口的密钥。Cloudflare 把 API Token 填在这一项。',
     source: '本弹窗上方的密钥管理链接直达。',
-    rules: '编辑已有档案时留空表示不修改。',
+    rules: '编辑已有配置时留空表示不修改。',
     note: '保存后不再回传真值，忘记只能重新生成。',
   },
 }

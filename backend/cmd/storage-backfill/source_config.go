@@ -38,7 +38,7 @@ func platformSourceConfig(db *gorm.DB) (refmigrate.PlatformS3Config, error) {
 		err := db.Where("builtin = ? AND purpose = ?", true, model.ProfilePurposePlatformPrimary).
 			Limit(1).Find(&sp).Error
 		if err != nil {
-			return refmigrate.PlatformS3Config{}, fmt.Errorf("读取平台自身存储档案失败：%w", err)
+			return refmigrate.PlatformS3Config{}, fmt.Errorf("读取平台自身存储配置失败：%w", err)
 		}
 		if sp.ID > 0 {
 			return platformSourceFromProfile(&sp), nil

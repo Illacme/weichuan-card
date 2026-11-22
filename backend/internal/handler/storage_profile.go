@@ -50,7 +50,6 @@ type deliveryProfileReq struct {
 	Name       *string `json:"name"`
 	Provider   *string `json:"provider"`
 	Domain     *string `json:"domain"`
-	PathPrefix *string `json:"pathPrefix"`
 	AccessKey  *string `json:"accessKey"`
 	SecretKey  *string `json:"secretKey"`
 	Endpoint   *string `json:"endpoint"`
@@ -67,7 +66,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 	r.GET("/api/admin/storage-profiles", plat, func(c *gin.Context) {
 		var rows []model.StorageProfile
 		if err := db.Order("builtin DESC, id ASC").Find(&rows).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取存储档案失败"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取文件存储失败"})
 			return
 		}
 		out := make([]gin.H, 0, len(rows))
@@ -93,7 +92,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		if err := db.Create(row).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：档案名可能已存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：名称可能已存在"})
 			return
 		}
 		storageProfileAudit(c, db, audit.ActionStorageProfileUpdate, row.ID, row)
@@ -111,7 +110,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		var row model.StorageProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		origLocalDir := strings.TrimSpace(row.LocalDir)
@@ -132,14 +131,14 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			//     而删除按钮又是禁用的——形成「删不掉但能改成不可用」的假安全。
 			if row.Purpose != model.ProfilePurposePlatformPrimary &&
 				row.Driver != nginxsnippet.DriverLocal {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案的驱动不可更改：它是云存储不可用时的兜底"})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带文件存储的驱动不可更改：它是云存储不可用时的兜底"})
 				return
 			}
 			// 目录对所有内置档案都锁死：静态路由 r.Static("/uploads", cfg.UploadDir)
 			// 与平台实例都绑在 cfg.UploadDir 上。若内置档案单独改成别的目录，绑定它的
 			// 租户写新目录、静态路由却从旧目录读，全站裂图且两边都不报错。
 			if reqChangedLocalDir {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置档案的目录不可单独修改：请到「平台自身存储 → 本地上传目录 / 本地镜像目录」修改后重启服务"})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带文件存储的目录不可单独修改：请到「平台自身存储 → 本地上传目录 / 本地镜像目录」修改后重启服务"})
 				return
 			}
 			row.LocalDir = origLocalDir
@@ -171,11 +170,11 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		var row model.StorageProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		if row.Builtin {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置本地档案不可删除"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的文件存储不可删除"})
 			return
 		}
 		var bound int64
@@ -184,7 +183,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		if bound > 0 {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "还有 " + strconv.FormatInt(bound, 10) + " 条绑定在使用该档案，请先改绑"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "还有 " + strconv.FormatInt(bound, 10) + " 条绑定在使用该配置，请先改绑"})
 			return
 		}
 		if err := db.Delete(&row).Error; err != nil {
@@ -210,7 +209,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		var row model.StorageProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		cfg := storageProfileUploadConfig(&row)
@@ -242,7 +241,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 	r.GET("/api/admin/delivery-profiles", plat, func(c *gin.Context) {
 		var rows []model.DeliveryProfile
 		if err := db.Order("id ASC").Find(&rows).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取分发档案失败"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取 CDN分发配置失败"})
 			return
 		}
 		out := make([]gin.H, 0, len(rows))
@@ -268,7 +267,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		if err := db.Create(row).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：档案名可能已存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "保存失败：名称可能已存在"})
 			return
 		}
 		audit.Record(db, c, audit.Entry{Action: audit.ActionStorageProfileUpdate, TargetType: "delivery_profile", TargetID: strconv.FormatInt(row.ID, 10),
@@ -287,7 +286,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		var row model.DeliveryProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		var req deliveryProfileReq
@@ -327,7 +326,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		if bound > 0 {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "还有 " + strconv.FormatInt(bound, 10) + " 条绑定在使用该档案，请先改绑"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "还有 " + strconv.FormatInt(bound, 10) + " 条绑定在使用该配置，请先改绑"})
 			return
 		}
 		// 内置分发档案（platform_primary）承载平台对象与未绑定企业的刷新凭据，
@@ -336,11 +335,11 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		// 「不刷新」，不是删档案。
 		var row model.DeliveryProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		if row.Builtin {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "内置分发档案不可删除；要停用刷新请把厂商改成「不刷新」"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的 CDN分发不可删除；要停用刷新请把厂商改成「不刷新」"})
 			return
 		}
 		if err := db.Delete(&model.DeliveryProfile{}, id).Error; err != nil {
@@ -359,7 +358,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		}
 		var row model.DeliveryProfile
 		if db.First(&row, id).Error != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案不存在"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置不存在"})
 			return
 		}
 		// CDN 自检只验「配置足以构造刷新器 + 域名形态合法」，不发起刷新请求：
@@ -410,7 +409,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 		for i := range deliveryRows {
 			deliveryNames[deliveryRows[i].ID] = deliveryRows[i].Name
 		}
-		global := map[string]any{"bound": false, "source": "platform", "note": "未配置档案绑定，沿用系统设置里的平台存储 / CDN"}
+		global := map[string]any{"bound": false, "source": "platform", "note": "未配置绑定，沿用平台自身的存储与 CDN 配置"}
 		out := make([]gin.H, 0, len(rows))
 		for i := range rows {
 			b := &rows[i]
@@ -545,14 +544,14 @@ func rollbackBindingHandler(c *gin.Context, db *gorm.DB, resolver *storageprofil
 // 但必须打日志——「改了没生效」是这套模块最难自查的故障。
 func touchProfileResolver(r *storageprofile.Resolver) {
 	if err := r.Touch(); err != nil {
-		log.Printf("[STORAGE][WARN] 档案缓存重载失败（下一次请求会按指纹重试）：%v", err)
+		log.Printf("[STORAGE][WARN] 文件存储配置缓存重载失败（下一次请求会按指纹重试）：%v", err)
 	}
 }
 
 func profileID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "档案 id 不合法"})
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "配置 ID 不合法"})
 		return 0, false
 	}
 	return id, true
@@ -568,7 +567,7 @@ func bindingIDs(c *gin.Context) (int64, int64, bool, bool) {
 		Force bool `json:"force"`
 	}
 	if c.ShouldBindJSON(&req) != nil || req.StorageProfileID <= 0 {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请选择一个存储档案"})
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误：请选择一套文件存储"})
 		return 0, 0, false, false
 	}
 	return req.StorageProfileID, req.DeliveryProfileID, true, req.Force
@@ -577,7 +576,7 @@ func bindingIDs(c *gin.Context) (int64, int64, bool, bool) {
 func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	var sp model.StorageProfile
 	if err := db.First(&sp, storageID).Error; err != nil {
-		return "存储档案不存在"
+		return "文件存储不存在"
 	}
 	// 两套内置档案绝不能成为租户的写入目标：
 	//   - 平台镜像只接收异步回拉的备份副本，绑定后新文件写进备份目录，
@@ -586,47 +585,52 @@ func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	//     客户文件写进平台桶（或让平台对象写进客户桶），两边都不报错。
 	switch sp.Purpose {
 	case model.ProfilePurposePlatformMirror:
-		return "该档案是平台本地镜像，只用于备份副本，不能绑定为存储写入目标"
+		return "这一套是平台本地镜像，只用于备份副本，不能绑定为存储写入目标"
 	case model.ProfilePurposePlatformPrimary:
-		return "该档案是平台自身存储，只供平台对象与未绑定企业使用，不能绑定给企业"
+		return "这一套是平台自身存储，只供平台对象与未单独指定的企业使用，不能绑定给企业"
 	}
 	if deliveryID == 0 {
 		return ""
 	}
 	var dp model.DeliveryProfile
 	if err := db.First(&dp, deliveryID).Error; err != nil {
-		return "分发档案不存在"
+		return "CDN分发配置不存在"
 	}
 	// 平台自身 CDN 档案只服务 p/ 平台对象：它的 domain 为空（平台域名真值源是
 	// 存储档案的访问基址），绑给企业会让出参回落到平台入口，企业自己的 CDN 域名
 	// 反而失效——看起来「配了 CDN」，实际全站走平台域名。
 	if dp.Purpose == model.DeliveryPurposePlatformPrimary {
-		return "该档案是平台自身 CDN，只供平台对象使用，不能绑定给企业"
+		return "这一条是平台自身 CDN，只供平台对象使用，不能绑定给企业"
 	}
 	return ""
 }
 
 func saveBinding(db *gorm.DB, tenantID, storageID, deliveryID int64, actor string) error {
-	now := time.Now()
-	var b model.StorageBinding
-	res := db.Where("tenant_id = ?", tenantID).Limit(1).Find(&b)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		b = model.StorageBinding{TenantID: tenantID, Version: 1}
-	} else if b.StorageProfileID != storageID || b.DeliveryProfileID != deliveryID {
-		// 档案确实变了才记 previous：重复提交同一绑定不该把「上一套」覆盖成当前值，
-		// 否则回滚会变成 no-op，管理员以为退回去了、其实什么都没动。
-		b.PreviousStorageProfileID = b.StorageProfileID
-		b.PreviousDeliveryProfileID = b.DeliveryProfileID
-	}
-	b.StorageProfileID = storageID
-	b.DeliveryProfileID = deliveryID
-	b.UpdatedBy = actor
-	b.Version++
-	b.CreatedAt = now
-	return db.Save(&b).Error
+	// 读-改-写必须在同一事务里：两个管理员同时切换 / 回滚时，分开的 Find 与 Save
+	// 会把对方刚写进去的 previous 覆盖回旧值，回滚游标静默丢失。
+	return db.Transaction(func(tx *gorm.DB) error {
+		var b model.StorageBinding
+		res := tx.Where("tenant_id = ?", tenantID).Limit(1).Find(&b)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			b = model.StorageBinding{TenantID: tenantID, Version: 1}
+		} else if b.StorageProfileID != storageID || b.DeliveryProfileID != deliveryID {
+			// 档案确实变了才记 previous：重复提交同一绑定不该把「上一套」覆盖成当前值，
+			// 否则回滚会变成 no-op，管理员以为退回去了、其实什么都没动。
+			b.PreviousStorageProfileID = b.StorageProfileID
+			b.PreviousDeliveryProfileID = b.DeliveryProfileID
+		}
+		b.StorageProfileID = storageID
+		b.DeliveryProfileID = deliveryID
+		b.UpdatedBy = actor
+		b.Version++
+		b.UpdatedAt = time.Now()
+		// 不碰 CreatedAt：它是这条绑定创建时间的语义，重复保存不该把它改掉；
+		// 新行的 CreatedAt 交给 gorm 按惯例自动写入。
+		return tx.Save(&b).Error
+	})
 }
 
 func bindingView(b *model.StorageBinding, storageNames, deliveryNames map[int64]string) gin.H {
@@ -684,7 +688,7 @@ func applyStorageProfileReq(row *model.StorageProfile, req *storageProfileReq) {
 
 func validateStorageProfile(row *model.StorageProfile) string {
 	if row.Name == "" {
-		return "请填写档案名"
+		return "请填写名称"
 	}
 	switch row.Driver {
 	case nginxsnippet.DriverLocal, nginxsnippet.DriverMinio, nginxsnippet.DriverOSS, nginxsnippet.DriverS3:
@@ -751,9 +755,6 @@ func applyDeliveryProfileReq(row *model.DeliveryProfile, req *deliveryProfileReq
 	if req.Domain != nil {
 		row.Domain = strings.TrimSpace(*req.Domain)
 	}
-	if req.PathPrefix != nil {
-		row.PathPrefix = strings.Trim(strings.TrimSpace(*req.PathPrefix), "/")
-	}
 	if req.AccessKey != nil {
 		row.AccessKey = strings.TrimSpace(*req.AccessKey)
 	}
@@ -770,7 +771,7 @@ func applyDeliveryProfileReq(row *model.DeliveryProfile, req *deliveryProfileReq
 
 func validateDeliveryProfile(row *model.DeliveryProfile) string {
 	if row.Name == "" {
-		return "请填写档案名"
+		return "请填写名称"
 	}
 	platform := row.Purpose == model.DeliveryPurposePlatformPrimary
 	if row.Provider != storage.CDNProviderNone {
@@ -833,7 +834,7 @@ func storageProfileView(row *model.StorageProfile) gin.H {
 func deliveryProfileView(row *model.DeliveryProfile) gin.H {
 	return gin.H{
 		"id": row.ID, "name": row.Name, "provider": row.Provider, "domain": row.Domain,
-		"pathPrefix": row.PathPrefix, "endpoint": row.Endpoint, "resourceId": row.ResourceID,
+		"endpoint": row.Endpoint, "resourceId": row.ResourceID,
 		"status": row.Status, "lastError": row.LastError, "lastProbeAt": row.LastProbeAt,
 		"version": row.Version, "createdAt": row.CreatedAt, "updatedAt": row.UpdatedAt,
 		"builtin": row.Builtin, "purpose": row.Purpose,

@@ -61,7 +61,7 @@ func buildUploader(cfg *uploaderConfig) (storage.Uploader, error) {
 			"对象公开访问基址为空：云存储必须能拼出可访问 URL，否则存进库的引用是坏的（图会全裂）")
 	}
 	if strings.TrimSpace(cfg.AccessKey) == "" || strings.TrimSpace(cfg.SecretKey) == "" {
-		return nil, errors.New("凭据不完整（AccessKey / SecretKey 缺一）：请到存储档案里补齐")
+		return nil, errors.New("凭据不完整（AccessKey / SecretKey 缺一）：请到文件存储里补齐")
 	}
 	switch cfg.Driver {
 	// minio 与 s3 共用同一套 S3 客户端，与 cmd/server 的 newUploader 口径一致：

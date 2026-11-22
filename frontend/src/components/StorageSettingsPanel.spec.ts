@@ -61,8 +61,8 @@ const item = (key: string, name: string, group: string, value: string, extra: Re
 })
 
 const ITEMS = [
-  // 迁移 0059：连接信息已进存储档案，这里只有指针与部署期目录
-  item('platform_storage_profile_id', '平台自身存储档案', 'storage', '1', { restart: true }),
+  // 迁移 0059：连接信息已进文件存储，这里只有指针与部署期目录
+  item('platform_storage_profile_id', '平台自身文件存储', 'storage', '1', { restart: true }),
   item('upload_dir', '本地上传目录', 'storage', '/srv/uploads', { envVar: 'UPLOAD_DIR', restart: true }),
   item('cdn_enabled', '启用 CDN', 'storage', 'false', { type: 'bool', restart: true }),
   item('cdn_provider', 'CDN 厂商', 'storage', 'aliyun', { restart: true }),
@@ -132,7 +132,7 @@ describe('平台自身存储配置面板', () => {
     // 紧凑模式不渲染 key 文本，所以必须按 data-key 断言「这一行根本不存在」——
     // 只断言 key 字符串不出现会恒真（键名本来就不显示），等于没守。
     expect(text).not.toContain('platform_storage_profile_id')
-    expect(text).not.toContain('平台自身存储档案')
+    expect(text).not.toContain('平台自身文件存储')
     expect(w.find('.row[data-key="platform_storage_profile_id"]').exists()).toBe(false)
     // 高级项默认不占版面
     expect(text).toContain('高级设置（通常不用改）')
@@ -149,25 +149,25 @@ describe('平台自身存储配置面板', () => {
     await flush()
     const text = w.text()
     expect(text).toContain('连接信息（驱动 / 桶 / 凭据 / 访问基址）')
-    expect(text).toContain('存储档案 → 平台自身存储')
-    // CDN 凭据只在一处：分发档案的内置行，不再在本面板留第二份表单
-    expect(text).toContain('分发档案 → 平台自身 CDN')
+    expect(text).toContain('文件存储 → 平台自身存储')
+    // CDN 凭据只在一处：CDN分发的内置行，不再在本面板留第二份表单
+    expect(text).toContain('CDN分发 → 平台自身 CDN')
     expect(text).toContain('保存后都需要重启')
 
-    await w.findAll('button').find((b) => b.text() === '去存储档案修改')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '去文件存储修改')!.trigger('click')
     expect(w.emitted('goto-profiles')).toBeTruthy()
 
     await w.findAll('button').find((b) => b.text() === '改 CDN 刷新凭据')!.trigger('click')
     expect(w.emitted('goto-deliveries')).toBeTruthy()
   })
 
-  it('CDN 状态读分发档案，凭据输入框不在本面板', async () => {
+  it('CDN 状态读CDN分发，凭据输入框不在本面板', async () => {
     const w = mountPanel(LOCAL_PROFILE, { provider: 'cloudflare' })
     await flush()
     // 先展开高级区：否则「行不存在」可能只是因为还没渲染，等于没守
     await openAdvanced(w)
     expect(w.text()).toContain('CDN 刷新 已开启 · Cloudflare')
-    // 关键守门：任何 cdn_* 行都不该出现在这里（凭据只有分发档案一处真值源）
+    // 关键守门：任何 cdn_* 行都不该出现在这里（凭据只有CDN分发一处真值源）
     for (const key of ['cdn_enabled', 'cdn_provider', 'cdn_access_key_id', 'cdn_access_key_secret', 'cdn_resource_id', 'cdn_endpoint']) {
       expect(w.find(`.row[data-key="${key}"]`).exists()).toBe(false)
     }
@@ -175,7 +175,7 @@ describe('平台自身存储配置面板', () => {
     expect(w.text()).not.toContain('AccessKey')
   })
 
-  it('分发档案没读到时不冒充「已关闭」，也不显示空厂商', async () => {
+  it('CDN分发没读到时不冒充「已关闭」，也不显示空厂商', async () => {
     const w = mountPanel(LOCAL_PROFILE, null)
     await flush()
     expect(w.text()).toContain('CDN 刷新 未配置')

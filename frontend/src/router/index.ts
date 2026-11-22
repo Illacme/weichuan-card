@@ -129,7 +129,7 @@ export const routes = [
         meta: { title: 'CDN 刷新', group: '平台管理', platformOnly: true },
       },
       {
-        // 存储与分发：多套存储 / CDN 档案 + 全局与企业绑定 + 一键迁移。
+        // 存储与分发：多套文件存储 / CDN分发 + 全局与企业绑定 + 一键迁移。
         // 与系统设置里遗留的平铺存储项并存：新部署走本模块，旧项保留给存量配置。
         path: 'platform/storage-profiles',
         name: 'storage-profiles',

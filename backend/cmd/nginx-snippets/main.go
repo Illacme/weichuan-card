@@ -79,7 +79,7 @@ func usage() {
       只对账，不改任何文件。配置与 snippet 不一致即非零退出。
 
 数据源二选一，必须显式给：
-  --dsn     从数据库读存储档案与绑定（生产用这个，MySQL 或 SQLite 路径）
+  --dsn     从数据库读文件存储与绑定（生产用这个，MySQL 或 SQLite 路径）
   --targets 读本地 JSON {"tenants":[{companyId,driver,endpoint,bucket,useSsl,hostHeader,enabled}]}
 
 --allow-empty：本次渲染结果不含任何 location 时，允许覆盖已存在的非空 --out
@@ -293,10 +293,10 @@ func reportProfileUnhealthy(targets []repository.ProfileTarget) {
 		}
 	}
 	if names := sortedKeys(failed); len(names) > 0 {
-		fmt.Fprintf(os.Stderr, "⚠️  以下存储档案自检失败（status=error），snippet 仍会生成：%v\n", names)
+		fmt.Fprintf(os.Stderr, "⚠️  以下文件存储自检失败（status=error），snippet 仍会生成：%v\n", names)
 	}
 	if names := sortedKeys(unchecked); len(names) > 0 {
-		fmt.Fprintf(os.Stderr, "⚠️  以下存储档案从未完成自检（status 为空或 unknown）：%v\n", names)
+		fmt.Fprintf(os.Stderr, "⚠️  以下文件存储从未完成自检（status 为空或 unknown）：%v\n", names)
 	}
 }
 

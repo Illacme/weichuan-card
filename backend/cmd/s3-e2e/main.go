@@ -102,12 +102,12 @@ func main() {
 		PublicRead: true, Status: "unknown", Version: 1,
 	}
 	if err := db.Create(&sp).Error; err != nil {
-		fail("写入存储档案失败：%v", err)
+		fail("写入文件存储失败：%v", err)
 	}
 	if err := db.Create(&model.StorageBinding{
 		TenantID: *companyID, StorageProfileID: sp.ID, Version: 1,
 	}).Error; err != nil {
-		fail("写入档案绑定失败：%v", err)
+		fail("写入文件存储绑定失败：%v", err)
 	}
 
 	platform := &storage.LocalUploader{
@@ -121,7 +121,7 @@ func main() {
 		fail("Resolver.For(%d) 失败：%v", *companyID, err)
 	}
 	if _, isMinio := up.(*storage.MinioUploader); !isMinio {
-		fail("Resolver 回的不是租户实例（拿到的类型 %T）——档案绑定没生效", up)
+		fail("Resolver 回的不是租户实例（拿到的类型 %T）——文件存储绑定没生效", up)
 	}
 	ok("Resolver.For 取到租户实例（%T），驱动 %s", up, res.DriverFor(*companyID))
 
@@ -227,7 +227,7 @@ func main() {
 		fail("改错凭据失败：%v", err)
 	}
 	if err := res.Touch(); err != nil {
-		fail("重载档案失败：%v", err)
+		fail("重载文件存储失败：%v", err)
 	}
 	upBad, err := res.For(*companyID)
 	if err != nil {
@@ -249,7 +249,7 @@ func main() {
 		fail("清空凭据失败：%v", err)
 	}
 	if err := res.Touch(); err != nil {
-		fail("重载档案失败：%v", err)
+		fail("重载文件存储失败：%v", err)
 	}
 	if _, err := res.For(*companyID); err == nil {
 		fail("凭据缺失时 Resolver.For 竟然成功——校验被跳过了")

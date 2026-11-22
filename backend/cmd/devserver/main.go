@@ -190,24 +190,24 @@ func main() {
 	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
 	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
-		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
+		log.Printf("[STORAGE][WARN] 系统自带的本地文件存储不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
 	}
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
 	if mirrorErr != nil {
-		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
+		log.Printf("[STORAGE][WARN] 平台本地镜像文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
 	// 与生产同款：平台连接信息在内置档案里，本地联调也走同一条构造链，
 	// 否则「档案配好了」只在线上生效，dev 永远用另一套，等于没验证。
 	platformProfile, perr := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
 	if perr != nil {
-		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", perr)
+		log.Fatalf("[STORAGE][FATAL] 平台自身存储配置不可用：%v", perr)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	// 平台 CDN 档案同款：dev 也要生成这一行，否则「分发档案」页在联调环境里
 	// 看不到内置行，界面分支只有线上才第一次跑。
 	platformDelivery, perr := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
 	if perr != nil {
-		log.Fatalf("[CDN][FATAL] 平台自身 CDN 档案不可用：%v", perr)
+		log.Fatalf("[CDN][FATAL] 平台自身的 CDN分发配置不可用：%v", perr)
 	}
 	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
@@ -228,7 +228,7 @@ func main() {
 	up, upErr := storageprofile.BuildPlatformUploader(platformProfile, cfg)
 	platformDriver := platformProfile.Driver
 	if upErr != nil {
-		log.Printf("[WARN] 平台自身存储档案 %d 初始化失败，已降级为本地磁盘：%v", platformProfile.ID, upErr)
+		log.Printf("[WARN] 平台自身存储配置 %d 初始化失败，已降级为本地磁盘：%v", platformProfile.ID, upErr)
 		up = storageprofile.LocalPlatformFallback(cfg)
 		platformDriver = "local"
 	}

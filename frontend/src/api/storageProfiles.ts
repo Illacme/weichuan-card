@@ -1,6 +1,6 @@
 import http from './request'
 
-/** 存储档案（迁移 0054）：连接信息只存一份，绑定它的企业共享。 */
+/** 文件存储（迁移 0054）：连接信息只存一份，绑定它的企业共享。 */
 export interface StorageProfile {
   id: number
   name: string
@@ -19,7 +19,7 @@ export interface StorageProfile {
   lastProbeAt: string | null
   version: number
   builtin: boolean
-  /** 内置档案用途：platform_primary=平台自身存储，tenant_fallback=租户退路，platform_mirror=平台镜像；普通档案为空。 */
+  /** 系统自带配置的用途：platform_primary=平台自身存储，tenant_fallback=租户退路，platform_mirror=平台镜像；自己新建的为空。 */
   purpose?: '' | 'platform_primary' | 'tenant_fallback' | 'platform_mirror'
   accessKeyConfigured: boolean
   secretKeyConfigured: boolean
@@ -31,13 +31,12 @@ export interface DeliveryProfile {
   name: string
   provider: string
   domain: string
-  pathPrefix: string
   endpoint: string
   resourceId: string
   status: string
   lastError: string
   version: number
-  /** 内置档案：启动时生成，不可删除、不可绑定给企业（迁移 0060） */
+  /** 系统自带配置：启动时生成，不可删除、不可绑定给企业（迁移 0060） */
   builtin?: boolean
   /** platform_primary = 平台自身 CDN：只服务 p/ 平台对象，域名不在这里配 */
   purpose?: string
@@ -52,7 +51,7 @@ export interface StorageBinding {
   storageProfileName: string
   deliveryProfileId: number
   deliveryProfileName: string
-  /** 切换前的那一套档案，供一键回滚。0=从未切换过（不可回滚）。 */
+  /** 切换前的那一套文件存储，供一键回滚。0=从未切换过（不可回滚）。 */
   previousStorageProfileId: number
   previousDeliveryProfileId: number
   version: number
@@ -134,7 +133,7 @@ export function saveCompanyBinding(companyId: number, storageProfileId: number, 
 export function resetCompanyBinding(companyId: number) {
   return http.delete(`/admin/storage-bindings/companies/${companyId}`)
 }
-/** 一键回滚到切换前的档案（交换语义，可反复回滚来回切）。 */
+/** 一键回滚到切换前的文件存储（交换语义，可反复回滚来回切）。 */
 export function rollbackGlobalBinding() {
   return http.post('/admin/storage-bindings/global/rollback')
 }

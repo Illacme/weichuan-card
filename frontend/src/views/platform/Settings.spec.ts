@@ -65,9 +65,9 @@ const items: SettingItem[] = [
   { key: 'wxacode_env_version', name: '小程序码环境版本', group: 'wechat', type: 'string', value: 'release', description: '出码指向哪个版本', secret: false, restart: false, readOnly: false, envVar: '', options: ['release', 'trial', 'develop'], configured: true },
   { key: 'access_token_ttl_minutes', name: '登录凭证有效期', group: 'auth', type: 'int', value: '15', description: 'access 有效期', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'login_rate_limit_per_min', name: '登录尝试频率限制', group: 'auth', type: 'int', value: '10', description: '登录限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  // 迁移 0059 / 0060：连接信息进存储档案、CDN 凭据进分发档案，sys_setting 只留两个指针
-  { key: 'platform_storage_profile_id', name: '平台自身存储档案', group: 'storage', type: 'string', value: '1', description: '指向内置平台档案（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
-  { key: 'platform_delivery_profile_id', name: '平台自身 CDN 档案', group: 'storage', type: 'string', value: '1', description: '指向内置平台 CDN 档案（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
+  // 迁移 0059 / 0060：连接信息进文件存储、CDN 凭据进CDN分发，sys_setting 只留两个指针
+  { key: 'platform_storage_profile_id', name: '平台自身存储配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的文件存储（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
+  { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '本地镜像目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
   { key: 'local_mirror_enabled', name: '本地镜像总开关', group: 'storage', type: 'bool', value: 'true', description: '本地镜像总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
@@ -596,7 +596,7 @@ describe('Settings 系统设置', () => {
     expect(dialogOf(w).text()).toContain('upload_dir')
     expect(dialogOf(w).text()).toContain('mirror_dir')
     expect(dialogOf(w).text()).not.toContain('storage_endpoint')
-    expect(dialogOf(w).text()).toContain('存储与分发 → 存储档案')
+    expect(dialogOf(w).text()).toContain('存储与分发 → 文件存储')
   })
 
   it('向导「稍后再说」：恢复打开前的草稿，不产生任何提交', async () => {
@@ -631,7 +631,7 @@ describe('Settings 系统设置', () => {
     await nextTick()
     const hint = dialogOf(w).find('.wizard-preset')
     expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('存储与分发 → 存储档案')
+    expect(hint.text()).toContain('存储与分发 → 文件存储')
     expect(hint.text()).toContain('自检')
     // 连接信息不在向导里，不能再出现「演示 / 生产一键填驱动」的假入口
     expect(hint.findAllComponents({ name: 'ElButton' })).toHaveLength(0)
@@ -1094,7 +1094,7 @@ describe('平台自身存储与档案模块的边界', () => {
     expect(src).not.toContain("storage: '平台兜底存储")
     // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点
     expect(src).toContain('平台自身存储的部署期事实')
-    expect(src).toContain('存储与分发 → 存储档案')
+    expect(src).toContain('存储与分发 → 文件存储')
     expect(src).not.toContain('storage_driver')
   })
 })

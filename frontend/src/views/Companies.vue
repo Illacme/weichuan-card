@@ -77,7 +77,7 @@
           <template #default="{ row }">
             <el-button type="primary" link @click="openAdmins(row)">管理员</el-button>
             <el-button type="primary" link @click="openWX(row)">凭据</el-button>
-            <el-button type="primary" link @click="openProfiles(row)">存储档案</el-button>
+            <el-button type="primary" link @click="openProfiles(row)">文件存储</el-button>
             <el-button type="primary" link @click="openReleases(row)">版本</el-button>
             <el-button type="primary" link @click="openLicense(row)">授权</el-button>
             <el-button type="primary" link :disabled="locked" @click="openEdit(row)">编辑</el-button>
@@ -437,25 +437,25 @@
       </template>
     </el-dialog>
 
-    <!-- 存储档案：平台统一维护的多套档案（可切换、凭据不回显、即时生效、可迁移）。
+    <!-- 文件存储：平台统一维护的多套配置（可切换、凭据不回显、即时生效、可迁移）。
          它也是 cmd/nginx-snippets 生成 /uploads/t/<cid>/ 回源段的唯一数据源，
          所以「客户自己的桶」与「接入层回源」是同一份配置，不再有两个入口。 -->
-    <el-dialog v-model="profileVisible" :title="`存储档案 · ${profileCompany?.name || ''}`" width="520px">
+    <el-dialog v-model="profileVisible" :title="`文件存储 · ${profileCompany?.name || ''}`" width="520px">
       <el-alert
         type="info"
         :closable="false"
         show-icon
         class="profile-dialog-alert"
-        title="选择本企业使用哪一套档案"
+        title="选择本企业使用哪一套文件存储"
         description="保存后新上传立即生效，历史对象不会自动搬迁。不选则继承「存储与分发 → 绑定关系」里的全局默认。"
       />
       <el-form label-width="110px" size="small">
-        <el-form-item label="存储档案">
+        <el-form-item label="文件存储">
           <el-select v-model="profileStorageId" placeholder="继承全局默认" clearable style="width: 100%">
             <el-option v-for="p in profileOptions.storages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="分发档案">
+        <el-form-item label="CDN分发">
           <el-select v-model="profileDeliveryId" placeholder="不启用 CDN" clearable style="width: 100%">
             <el-option v-for="p in profileOptions.deliveries" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
@@ -801,7 +801,7 @@ function wxTip(row: any) {
     : '未配置独立小程序，当前回落到平台全局小程序；点「凭据」可代填'
 }
 
-// 存储档案选择：平台超管代企业从多套档案里选一套。
+// 文件存储选择：平台超管代企业从多套配置里选一套。
 const profileVisible = ref(false)
 const profileCompany = ref<any>(null)
 const profileOptions = ref<{ storages: { id: number; name: string }[]; deliveries: { id: number; name: string }[] }>({
@@ -832,7 +832,7 @@ async function openProfiles(row: any) {
 async function saveProfiles() {
   if (!profileCompany.value) return
   if (!profileStorageId.value) {
-    ElMessage.warning('请选择存储档案；要继承全局默认请点「恢复继承」')
+    ElMessage.warning('请选择文件存储；要继承全局默认请点「恢复继承」')
     return
   }
   profileSaving.value = true

@@ -56,12 +56,12 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 	if err := db.Model(&model.StorageProfile{}).
 		Where("builtin = ? AND purpose = ?", true, "").
 		Update("purpose", model.ProfilePurposeTenantFallback).Error; err != nil {
-		return nil, fmt.Errorf("补齐内置档案用途失败：%w", err)
+		return nil, fmt.Errorf("补齐系统自带文件存储的用途失败：%w", err)
 	}
 	var row model.StorageProfile
 	res := db.Where("builtin = ? AND purpose = ?", true, purpose).Limit(1).Find(&row)
 	if res.Error != nil {
-		return nil, fmt.Errorf("读取内置档案失败：%w", res.Error)
+		return nil, fmt.Errorf("读取系统自带文件存储失败：%w", res.Error)
 	}
 	want := strings.TrimSpace(dir)
 	if res.RowsAffected > 0 {
@@ -79,7 +79,7 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 		}
 		if len(updates) > 0 {
 			if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
-				return nil, fmt.Errorf("补全内置档案失败：%w", err)
+				return nil, fmt.Errorf("补全系统自带文件存储失败：%w", err)
 			}
 			_ = db.First(&row, row.ID).Error
 		}
@@ -96,7 +96,7 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 		Status: "unknown", Builtin: true, Purpose: purpose, Version: 1,
 	}
 	if err := db.Create(&row).Error; err != nil {
-		return nil, fmt.Errorf("创建内置档案失败：%w", err)
+		return nil, fmt.Errorf("创建系统自带文件存储失败：%w", err)
 	}
 	return &row, nil
 }
@@ -112,11 +112,11 @@ func availableBuiltinName(db *gorm.DB, base string) (string, error) {
 	for _, name := range candidates {
 		var n int64
 		if err := db.Model(&model.StorageProfile{}).Where("name = ?", name).Count(&n).Error; err != nil {
-			return "", fmt.Errorf("检查档案名冲突失败：%w", err)
+			return "", fmt.Errorf("检查文件存储名称冲突失败：%w", err)
 		}
 		if n == 0 {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("无法为内置档案分配不冲突的名称")
+	return "", fmt.Errorf("无法为系统自带文件存储分配不冲突的名称")
 }

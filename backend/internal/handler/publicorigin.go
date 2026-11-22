@@ -62,7 +62,7 @@ func publicOriginFor(cid int64) model.Origin {
 // 没注入解析器时如实说明「未接入」，而不是假装生效。
 func publicOriginDiagnosis(cid int64) (base string, active bool, reason string) {
 	if profileOriginDiag == nil {
-		return "", false, "本进程未接入存储档案解析"
+		return "", false, "本进程未接入文件存储解析"
 	}
 	return profileOriginDiag(cid)
 }

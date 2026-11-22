@@ -369,6 +369,33 @@ if "--selftest" in sys.argv:
     )
     sys.exit(0)
 
+# CDN provider 枚举必须与后端真值源一致：后端 validateDeliveryProfile 只认
+# CDNProviders + none，契约曾多写 custom，管理员照着填会被保存接口拒掉且无提示。
+cdn_src = strip_go_comments((BACKEND / "internal/storage/cdn.go").read_text(encoding="utf-8"))
+providers_block = re.search(r"var\s+CDNProviders\s*=\s*\[\]string\{([^}]*)\}", cdn_src, re.S)
+if not providers_block or not re.search(r'CDNProviderNone\s*=\s*"none"', cdn_src):
+    fail("解析不到后端 CDNProviders：契约枚举失去真值源，禁止放行")
+provider_consts = dict(re.findall(r'(CDNProvider[A-Za-z0-9_]*)\s*=\s*"([a-z0-9_-]+)"', cdn_src))
+provider_names = re.findall(r"CDNProvider[A-Za-z0-9_]*", providers_block.group(1))
+if not provider_names or any(n not in provider_consts for n in provider_names):
+    fail(f"后端 CDNProviders 里的常量解析不全：{provider_names}，禁止放行")
+backend_providers = ["none"] + [provider_consts[n] for n in provider_names]
+if len(backend_providers) < 6:
+    fail(f"后端 CDNProviders 只解析出 {len(backend_providers)} 项，量尺失灵，禁止放行")
+doc_providers = (
+    spec.get("components", {})
+    .get("schemas", {})
+    .get("DeliveryProfileSave", {})
+    .get("properties", {})
+    .get("provider", {})
+    .get("enum")
+)
+if doc_providers != backend_providers:
+    fail(
+        f"DeliveryProfileSave.provider 枚举与后端不一致：契约 {doc_providers}，"
+        f"后端支持 {backend_providers}（写契约里后端不认的值会让保存静默失败）"
+    )
+
 if problems:
     for p in problems:
         print(f"❌ {p}", file=sys.stderr)

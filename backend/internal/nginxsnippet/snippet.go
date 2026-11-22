@@ -199,7 +199,7 @@ func Render(targets []Target) (string, error) {
 	sort.Slice(live, func(i, j int) bool { return live[i].CompanyID < live[j].CompanyID })
 
 	var b strings.Builder
-	b.WriteString("# 由 nginx-snippets 从存储档案（storage_profiles）生成，勿手改。\n")
+	b.WriteString("# 由 nginx-snippets 从文件存储配置（storage_profiles）生成，勿手改。\n")
 	b.WriteString("# 被 include 进 nginx-site.live.conf 的 server{} 里；$uploads_cache 由 http 级的 map 提供。\n")
 	if len(live) == 0 {
 		b.WriteString("# 当前没有任何租户接管存储：全部 /uploads/ 请求走回退段（平台盘）。\n")

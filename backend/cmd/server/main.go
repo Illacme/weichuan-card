@@ -359,26 +359,26 @@ func main() {
 	// 每个部署都必须有一套不可删除的本地兜底档案：云桶欠费 / 凭据配错 / 网络不通时，
 	// 管理员至少还能把默认切回本地，而不是连上传都救不回来。
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
-		log.Printf("[STORAGE][WARN] 内置本地档案不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
+		log.Printf("[STORAGE][WARN] 系统自带的本地文件存储不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
 	}
 	// 第二套不可删档案：平台本地镜像落点。只做备份副本，不参与绑定解析。
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
 	if mirrorErr != nil {
-		log.Printf("[STORAGE][WARN] 平台本地镜像档案不可用（本地备份功能将不可用）：%v", mirrorErr)
+		log.Printf("[STORAGE][WARN] 平台本地镜像文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
 	// 平台自身存储的连接信息放在第三套内置档案里（迁移 0059），sys_setting 只留
 	// 一个指向它的 id。启动期读一次：档案首次生成时用历史 sys_setting / 环境变量
 	// 播种，之后管理员在档案页改的值才是真值源，重启只会被读取、不会被覆盖。
 	platformProfile, err := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
 	if err != nil {
-		log.Fatalf("[STORAGE][FATAL] 平台自身存储档案不可用：%v", err)
+		log.Fatalf("[STORAGE][FATAL] 平台自身存储配置不可用：%v", err)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	// 平台自身的 CDN 刷新凭据放在第四套内置档案里（迁移 0060）：与 0059 同构，
 	// sys_setting 只留一个指针。那组 cdn_* 与分发档案的字段级重复，填两处必然漂移。
 	platformDelivery, err := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
 	if err != nil {
-		log.Fatalf("[CDN][FATAL] 平台自身 CDN 档案不可用：%v", err)
+		log.Fatalf("[CDN][FATAL] 平台自身的 CDN分发配置不可用：%v", err)
 	}
 	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
@@ -387,7 +387,7 @@ func main() {
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.SetProfileOriginDiag(profiles.Diagnose)
 	handler.SetProfileOwnerResolver(profiles.OwnerOf)
-	handler.RegisterStorageProfiles(r, db, profiles)  // 存储 / 分发档案 + 全局与企业绑定
+	handler.RegisterStorageProfiles(r, db, profiles)  // 文件存储 / CDN分发 + 全局与企业绑定
 	handler.RegisterStorageMigration(r, db, profiles) // 一键迁移任务
 	handler.RegisterMPRelease(r, db, cfg)             // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)                     // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
@@ -414,7 +414,7 @@ func main() {
 		log.Printf("cdn refresh enabled (provider=%s, endpoint=%s)",
 			storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
 	default:
-		log.Printf("cdn refresh off：平台自身 CDN 档案选了「不刷新」（在「存储与分发 → 分发档案」里改）")
+		log.Printf("cdn refresh off：平台自身的 CDN分发配置选了「不刷新」（在「存储与分发 → CDN分发」里改）")
 	}
 	// 多套 CDN：档案绑定优先，没绑定沿用上面这份平台刷新器。
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
@@ -577,7 +577,7 @@ func platformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uplo
 	if err == nil {
 		return up, sp.Driver
 	}
-	log.Printf("[WARN] 平台自身存储档案 %d 初始化失败：%v；已降级为本地磁盘存储。"+
-		"请到「存储与分发 → 存储档案 → 平台自身存储」修正后重启服务。", sp.ID, err)
+	log.Printf("[WARN] 平台自身存储配置 %d 初始化失败：%v；已降级为本地磁盘存储。"+
+		"请到「存储与分发 → 文件存储 → 平台自身存储」修正后重启服务。", sp.ID, err)
 	return storageprofile.LocalPlatformFallback(cfg), "local"
 }

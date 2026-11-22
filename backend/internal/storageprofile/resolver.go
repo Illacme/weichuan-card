@@ -181,7 +181,7 @@ func (r *Resolver) fingerprint() (string, error) {
  (SELECT COUNT(*) FROM storage_bindings)`
 	var maxS, maxD, maxB, countS, countD, countB int64
 	if err := r.db.Raw(q).Row().Scan(&maxS, &maxD, &maxB, &countS, &countD, &countB); err != nil {
-		return "", fmt.Errorf("读取档案指纹失败：%w", err)
+		return "", fmt.Errorf("读取配置指纹失败：%w", err)
 	}
 	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", maxS, maxD, maxB, countS, countD, countB), nil
 }
@@ -190,15 +190,15 @@ func (r *Resolver) reload() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.db == nil {
-		return fmt.Errorf("档案解析器：数据库为空")
+		return fmt.Errorf("文件存储解析器：数据库为空")
 	}
 	var sps []model.StorageProfile
 	if err := r.db.Find(&sps).Error; err != nil {
-		return fmt.Errorf("读取存储档案：%w", err)
+		return fmt.Errorf("读取文件存储配置：%w", err)
 	}
 	var dps []model.DeliveryProfile
 	if err := r.db.Find(&dps).Error; err != nil {
-		return fmt.Errorf("读取分发档案：%w", err)
+		return fmt.Errorf("读取 CDN分发配置：%w", err)
 	}
 	var bs []model.StorageBinding
 	if err := r.db.Find(&bs).Error; err != nil {
@@ -257,7 +257,7 @@ func snapshotFingerprint(sps []model.StorageProfile, dps []model.DeliveryProfile
 func (r *Resolver) Resolve(cid int64) (Effective, error) {
 	s := r.snapshot()
 	if s == nil {
-		return Effective{}, fmt.Errorf("档案快照未就绪")
+		return Effective{}, fmt.Errorf("配置快照未就绪")
 	}
 	if v, ok := s.resolved.Load(cid); ok {
 		rr := v.(resolveResult)
@@ -280,16 +280,16 @@ func (s *Snapshot) resolve(cid int64) (Effective, error) {
 	}
 	sp := s.Storages[b.StorageProfileID]
 	if sp == nil {
-		return Effective{}, fmt.Errorf("绑定引用的存储档案 %d 不存在", b.StorageProfileID)
+		return Effective{}, fmt.Errorf("绑定引用的文件存储 %d 不存在", b.StorageProfileID)
 	}
 	if sp.Status == "deprecated" {
-		return Effective{}, fmt.Errorf("绑定引用的存储档案 %d 已停用", sp.ID)
+		return Effective{}, fmt.Errorf("绑定引用的文件存储 %d 已停用", sp.ID)
 	}
 	var dp *model.DeliveryProfile
 	if b.DeliveryProfileID > 0 {
 		dp = s.Deliveries[b.DeliveryProfileID]
 		if dp == nil || dp.Status == "deprecated" {
-			return Effective{}, fmt.Errorf("绑定引用的分发档案 %d 不存在或已停用", b.DeliveryProfileID)
+			return Effective{}, fmt.Errorf("绑定引用的 CDN分发 %d 不存在或已停用", b.DeliveryProfileID)
 		}
 	}
 	return Effective{Storage: sp, Delivery: dp, Version: b.Version + sp.Version}, nil
@@ -430,7 +430,7 @@ func NginxTarget(cid int64, sp *model.StorageProfile) nginxsnippet.Target {
 func (r *Resolver) UploaderForProfile(id int64) (storage.Uploader, error) {
 	var sp model.StorageProfile
 	if err := r.db.First(&sp, id).Error; err != nil {
-		return nil, fmt.Errorf("读取存储档案 %d 失败：%w", id, err)
+		return nil, fmt.Errorf("读取文件存储 %d 失败：%w", id, err)
 	}
 	if sp.Driver == nginxsnippet.DriverLocal {
 		return r.localUploader(&sp), nil
@@ -505,16 +505,16 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 	eff, err := r.Resolve(cid)
 	if err != nil {
 		log.Printf("[STORAGE-PROFILE] diagnose cid=%d resolve_failed: %v", cid, err)
-		return "", false, "读取存储档案失败：请联系管理员检查服务端日志"
+		return "", false, "读取文件存储配置失败：请联系管理员检查服务端日志"
 	}
 	if eff.Storage == nil {
-		return "", false, "该企业未绑定存储档案：对象走平台统一入口"
+		return "", false, "该企业未绑定文件存储：对象走平台统一入口"
 	}
 	if eff.Storage.Driver == nginxsnippet.DriverLocal {
-		return "", false, "生效档案是本地磁盘：对象在平台盘上，没有可用的客户域名"
+		return "", false, "生效的文件存储是本地磁盘：对象在平台盘上，没有可用的客户域名"
 	}
 	if eff.Delivery == nil || eff.Delivery.Domain == "" {
-		return "", false, "生效档案没有绑定分发域名：对象 URL 仍以平台统一入口开头"
+		return "", false, "生效的 CDN分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
 	}
 	clean, err := storage.ValidatePublicOrigin(eff.Delivery.Domain)
 	if err != nil {
@@ -522,7 +522,7 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 		return "", false, "分发域名不合法：需为 http(s)://host[:port]，且不带路径 / 查询 / 片段"
 	}
 	if clean == "" {
-		return "", false, "生效档案没有绑定分发域名：对象 URL 仍以平台统一入口开头"
+		return "", false, "生效的 CDN分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
 	}
 	if !eff.Storage.PublicRead {
 		return "", false, "桶未开启公开读（publicRead=false）：客户域名直连私有桶会 403"
@@ -582,20 +582,6 @@ func (r *Resolver) CDNRefresherFor(urls ...string) storage.CDNRefresher {
 		return nil
 	}
 	return rf
-}
-
-// PublicURL 按分发档案拼出对外 URL；没有分发档案时返回空串（调用方回退既有逻辑）。
-func (r *Resolver) PublicURL(cid int64, key string) string {
-	eff, err := r.Resolve(cid)
-	if err != nil || eff.Delivery == nil || eff.Delivery.Domain == "" {
-		return ""
-	}
-	domain := strings.TrimRight(eff.Delivery.Domain, "/")
-	prefix := strings.Trim(eff.Delivery.PathPrefix, "/")
-	if prefix != "" {
-		return domain + "/" + prefix + "/" + strings.TrimLeft(key, "/")
-	}
-	return domain + "/" + strings.TrimLeft(key, "/")
 }
 
 // HasDeliveryBinding 回报是否至少有一套可用的分发档案绑定。
@@ -675,7 +661,7 @@ func (d *DynamicCDN) refreshByBinding(urls []string) error {
 	if d.prof != nil {
 		eff, err := d.prof.Resolve(TenantFromURLs(urls...))
 		if err != nil {
-			return fmt.Errorf("读取分发档案失败，已拒绝静默回落到平台 CDN：%w", err)
+			return fmt.Errorf("读取 CDN分发配置失败，已拒绝静默回落到平台 CDN：%w", err)
 		}
 		if eff.Delivery != nil {
 			if eff.Delivery.Provider == storage.CDNProviderNone || eff.Delivery.Provider == "" {
@@ -687,7 +673,7 @@ func (d *DynamicCDN) refreshByBinding(urls []string) error {
 				ResourceID: eff.Delivery.ResourceID,
 			})
 			if err != nil {
-				return fmt.Errorf("分发档案的 CDN 凭据无效，已拒绝静默回落到平台 CDN：%w", err)
+				return fmt.Errorf("CDN分发的凭据无效，已拒绝静默回落到平台 CDN：%w", err)
 			}
 			return rf.Refresh(urls)
 		}

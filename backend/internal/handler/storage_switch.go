@@ -39,13 +39,13 @@ func verifySwitchObjects(src, dst storage.ObjectLister, prefix string) ([]string
 		}
 		return nil
 	}); err != nil {
-		return nil, 0, fmt.Errorf("列举当前档案对象失败：%w", err)
+		return nil, 0, fmt.Errorf("列举当前文件存储的对象失败：%w", err)
 	}
 	if err := dst.ListObjects(prefix, func(key string, _ int64) error {
 		delete(present, key)
 		return nil
 	}); err != nil {
-		return nil, 0, fmt.Errorf("列举目标档案对象失败：%w", err)
+		return nil, 0, fmt.Errorf("列举目标文件存储的对象失败：%w", err)
 	}
 
 	total := len(present)
@@ -82,7 +82,7 @@ func listerForProfile(resolver *storageprofile.Resolver, profileID int64) (stora
 	}
 	lister, ok := up.(storage.ObjectLister)
 	if !ok {
-		return nil, fmt.Errorf("档案 %d 的驱动不支持对象列举，无法在切换前核对完整性", profileID)
+		return nil, fmt.Errorf("文件存储 %d 的驱动不支持对象列举，无法在切换前核对完整性", profileID)
 	}
 	return lister, nil
 }
@@ -98,11 +98,11 @@ func verifyProfileSwitch(resolver *storageprofile.Resolver, tenantID, srcProfile
 	prefix := migrationPrefix(tenantID)
 	src, err := listerForProfile(resolver, srcProfileID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("读取当前档案：%w", err)
+		return nil, 0, fmt.Errorf("读取当前文件存储：%w", err)
 	}
 	dst, err := listerForProfile(resolver, dstProfileID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("读取目标档案：%w", err)
+		return nil, 0, fmt.Errorf("读取目标文件存储：%w", err)
 	}
 	return verifySwitchObjects(src, dst, prefix)
 }
@@ -110,8 +110,8 @@ func verifyProfileSwitch(resolver *storageprofile.Resolver, tenantID, srcProfile
 // switchNotReadyError 把核对结果转成给管理员看的错误。
 // 带上缺失 key 示例与明确处置路径——只说「对象不全」会让管理员无从下手。
 func switchNotReadyError(missing []string, total int) error {
-	return fmt.Errorf("目标档案尚未包含当前档案的全部对象：缺失 %d 个（示例：%s）。"+
-		"请先运行迁移任务把对象复制到目标档案、确认零失败后再切换；"+
+	return fmt.Errorf("目标文件存储尚未包含当前文件存储的全部对象：缺失 %d 个（示例：%s）。"+
+		"请先运行迁移任务把对象复制到目标文件存储、确认零失败后再切换；"+
 		"若确认无需搬迁（例如目标本就是新桶），可显式强制切换",
 		total, strings.Join(missing, "、"))
 }
@@ -169,7 +169,7 @@ func guardAutoSwitch(resolver *storageprofile.Resolver, job *model.StorageMigrat
 		return err
 	}
 	if total > 0 {
-		return fmt.Errorf("迁移后核对发现目标档案仍缺失 %d 个对象（示例：%s），已拒绝自动切换绑定；"+
+		return fmt.Errorf("迁移后核对发现目标文件存储仍缺失 %d 个对象（示例：%s），已拒绝自动切换绑定；"+
 			"请重试迁移失败对象后再切", total, strings.Join(missing, "、"))
 	}
 	return nil
@@ -191,38 +191,43 @@ func guardAutoSwitch(resolver *storageprofile.Resolver, job *model.StorageMigrat
 //  3. 但目标档案本身必须有效（存在 / 非镜像 / 非停用），否则回滚会指向一个坏档案，
 //     等于从一个故障跳到另一个故障。
 func rollbackBinding(db *gorm.DB, tenantID int64, actor string) error {
-	var b model.StorageBinding
-	res := db.Where("tenant_id = ?", tenantID).Limit(1).Find(&b)
-	if res.Error != nil {
-		return fmt.Errorf("读取绑定失败：%w", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return fmt.Errorf("该范围没有绑定记录，没有可回滚的切换")
-	}
-	if b.PreviousStorageProfileID <= 0 {
-		return fmt.Errorf("这条绑定从未切换过档案（或已是初始状态），没有可回滚的目标")
-	}
-	if msg := validateBindingTargets(db, b.PreviousStorageProfileID, b.PreviousDeliveryProfileID); msg != "" {
-		return fmt.Errorf("切换前的档案已不可用，无法回滚：%s", msg)
-	}
-	var sp model.StorageProfile
-	if err := db.First(&sp, b.PreviousStorageProfileID).Error; err != nil {
-		return fmt.Errorf("切换前的存储档案已不存在，无法回滚")
-	}
-	if sp.Status == "deprecated" {
-		return fmt.Errorf("切换前的存储档案已停用，无法回滚")
-	}
+	// 与 saveBinding 同一条纪律：校验、读旧值、交换写入必须在同一事务里。
+	// 否则「读到 previous A」和「写回 previous B」之间插入一次并发切换，
+	// 那次切换记下的回滚游标就会被这次回滚覆盖，且没有任何报错。
+	return db.Transaction(func(tx *gorm.DB) error {
+		var b model.StorageBinding
+		res := tx.Where("tenant_id = ?", tenantID).Limit(1).Find(&b)
+		if res.Error != nil {
+			return fmt.Errorf("读取绑定失败：%w", res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("该范围没有绑定记录，没有可回滚的切换")
+		}
+		if b.PreviousStorageProfileID <= 0 {
+			return fmt.Errorf("这条绑定从未切换过文件存储（或已是初始状态），没有可回滚的目标")
+		}
+		if msg := validateBindingTargets(tx, b.PreviousStorageProfileID, b.PreviousDeliveryProfileID); msg != "" {
+			return fmt.Errorf("切换前的文件存储已不可用，无法回滚：%s", msg)
+		}
+		var sp model.StorageProfile
+		if err := tx.First(&sp, b.PreviousStorageProfileID).Error; err != nil {
+			return fmt.Errorf("切换前的文件存储已不存在，无法回滚")
+		}
+		if sp.Status == "deprecated" {
+			return fmt.Errorf("切换前的文件存储已停用，无法回滚")
+		}
 
-	curStorage, curDelivery := b.StorageProfileID, b.DeliveryProfileID
-	b.StorageProfileID = b.PreviousStorageProfileID
-	b.DeliveryProfileID = b.PreviousDeliveryProfileID
-	b.PreviousStorageProfileID = curStorage
-	b.PreviousDeliveryProfileID = curDelivery
-	b.UpdatedBy = actor
-	b.Version++
-	b.UpdatedAt = time.Now()
-	if err := db.Save(&b).Error; err != nil {
-		return fmt.Errorf("回滚写入失败：%w", err)
-	}
-	return nil
+		curStorage, curDelivery := b.StorageProfileID, b.DeliveryProfileID
+		b.StorageProfileID = b.PreviousStorageProfileID
+		b.DeliveryProfileID = b.PreviousDeliveryProfileID
+		b.PreviousStorageProfileID = curStorage
+		b.PreviousDeliveryProfileID = curDelivery
+		b.UpdatedBy = actor
+		b.Version++
+		b.UpdatedAt = time.Now()
+		if err := tx.Save(&b).Error; err != nil {
+			return fmt.Errorf("回滚写入失败：%w", err)
+		}
+		return nil
+	})
 }

@@ -120,7 +120,7 @@ func main() {
 	if err := db.Where("tenant_id = ?", *cid).Delete(&model.StorageBinding{}).Error; err != nil {
 		fail("删除绑定失败：%v", err)
 	}
-	fmt.Println("已删除该企业的档案绑定")
+	fmt.Println("已删除该企业的文件存储绑定")
 }
 
 func prepare(ctx context.Context, client *minio.Client, dsn, ak, sk, endpoint, bucket string, cid int64, clean bool) {
@@ -173,17 +173,17 @@ func prepare(ctx context.Context, client *minio.Client, dsn, ak, sk, endpoint, b
 		CreatedAt: now, UpdatedAt: now, Version: 1,
 	}
 	if err := db.Where("name = ?", name).Delete(&model.StorageProfile{}).Error; err != nil {
-		fail("清掉旧档案失败：%v", err)
+		fail("清掉旧文件存储失败：%v", err)
 	}
 	if err := db.Create(&sp).Error; err != nil {
-		fail("写存储档案失败：%v", err)
+		fail("写文件存储失败：%v", err)
 	}
 	if err := db.Create(&model.StorageBinding{
 		TenantID: cid, StorageProfileID: sp.ID, Version: 1, UpdatedBy: "backfill-e2e-prep",
 	}).Error; err != nil {
-		fail("写档案绑定失败：%v", err)
+		fail("写文件存储绑定失败：%v", err)
 	}
-	fmt.Printf("桶 %s 就绪；company_id=%d 档案 #%d 已绑定（清理了 %d 个旧对象）\n", bucket, cid, sp.ID, len(stale))
+	fmt.Printf("桶 %s 就绪；company_id=%d 文件存储 #%d 已绑定（清理了 %d 个旧对象）\n", bucket, cid, sp.ID, len(stale))
 }
 
 // putSourceObject 往平台源桶写一个「历史形态」对象：键是 legacyRel 推出的
