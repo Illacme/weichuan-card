@@ -84,6 +84,20 @@ describe('存储模块的产品化事实表', () => {
     expect(DELIVERY_FIELD_GUIDES.resourceId?.source).toContain('Cloudflare')
   })
 
+  // A3 守门：私有桶是受支持的配置，但它是「读侧」能力而不是「出参」能力。
+  // 文案若退回「不支持私有桶」，用户会以为桶权限设错了；若漏掉 nginx reload，
+  // 切换后匿名回源仍会 403，而界面看起来一切正常。
+  it('私有桶说明强调地址不变、后端签名与回源配置需重载', () => {
+    const text = Object.values(STORAGE_FIELD_GUIDES.publicRead).join('')
+    expect(text).toContain('可关闭')
+    expect(text).toContain('/uploads/')
+    expect(text).toContain('现签后跳转')
+    expect(text).toContain('reload nginx')
+    expect(text).not.toContain('系统不接受私有桶')
+    expect(text).not.toContain('当前固定为开启')
+    expect(STORAGE_FIELD_GUIDES.bucket.note).not.toContain('只支持公开读桶')
+  })
+
   it('架构叙事、默认事实、配置流程、术语与菜单说明都在，且流程能跳到真实页签', () => {
     expect(ARCHITECTURE_POINTS).toHaveLength(3)
     expect(DEFAULT_FACTS.join('')).toContain('初始状态：本地磁盘')

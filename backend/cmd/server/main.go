@@ -420,6 +420,9 @@ func main() {
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
 	// /uploads 静态托管：local 驱动下用户文件与小程序码均落本地并由本路由托管；
 	// minio/oss 驱动下用户文件/小程序码走对象存储，此路由仅作空目录兜底，无副作用。
+	// 私有桶租户是唯一例外：出参仍是这条稳定路径，读侧由中间件现签后 302。
+	handler.SetPrivateReadResolver(profiles.PrivateRead)
+	r.Use(handler.PrivateObjectRedirect(profiles))
 	r.Static("/uploads", cfg.UploadDir)
 	// 该用哪个存储实例：平台那份，还是租户档案里配的桶。
 	//

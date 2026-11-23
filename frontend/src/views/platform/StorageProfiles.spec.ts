@@ -384,8 +384,17 @@ describe('存储与分发模块', () => {
     expect(settings).not.toContain('已选默认档案时不再生效')
     expect(settings).not.toContain('企业管理 → 自有桶')
     const profiles = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
-    expect(profiles).toMatch(/label="公开读桶">\s*<el-switch[^>]*disabled/)
-    expect(profiles).toContain('后端会拒绝 publicRead=false')
+    // 私有桶现在可配：开关放开，只有平台自身那份仍锁死公开读。
+    expect(profiles).toContain('v-model="storageForm.publicRead"')
+    // 必须整段盯着开关：只断言 v-model 存在的话，贴回一个静态 disabled 仍会全绿。
+    const sw = profiles.match(/<el-switch\s+v-model="storageForm\.publicRead"[\s\S]*?\/>/)?.[0] ?? ''
+    expect(sw, '公开读开关块没找到，守门空转').toBeTruthy()
+    expect(sw).not.toMatch(/\sdisabled(?:\s|=|>)/)
+    expect(sw).toContain(':disabled=')
+    expect(profiles).toContain(`storageForm.builtin && storageForm.purpose === 'platform_primary'`)
+    expect(profiles).toContain('私有桶已开启：访客地址不变')
+    expect(profiles).not.toContain('当前只支持公开读桶')
+    expect(profiles).not.toContain('后端会拒绝 publicRead=false')
     // 迁移入口已下线：不许文案再把运维指向不存在的「转为文件存储」按钮。
     expect(profiles).not.toContain('转为文件存储')
     expect(profiles).not.toContain('给自己选「用哪一套」')

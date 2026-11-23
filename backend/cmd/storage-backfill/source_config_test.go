@@ -48,7 +48,6 @@ func TestPlatformSourceConfigReadsEnv(t *testing.T) {
 	require.False(t, cfg.UseSSL)
 }
 
-
 // TestPlatformSourceConfigPrefersBuiltinProfile 钉住真值源：档案存在时必须读档案，
 // 不能被环境变量盖掉——否则回填工具会去一个早已不用的旧桶里找对象，报
 // 「源对象不存在」，而生产上传明明是好的。

@@ -65,6 +65,10 @@ func TestRefWiringGate(t *testing.T) {
 		filepath.Join(root, "mirror", "mirror.go"):            true,
 		filepath.Join(root, "mirror", "mirror_test.go"):       true,
 		filepath.Join(root, "handler", "mirror_hook_test.go"): true,
+		// 第八十七轮：私有桶读侧签名跳转。它只解析 /uploads/t/<cid>/ 路径并校验
+		// 键归属（不生成新键），与 signHandler 同一口径；签的是库里已有的对象键。
+		filepath.Join(root, "handler", "private_object.go"):      true,
+		filepath.Join(root, "handler", "private_object_test.go"): true,
 	}
 
 	writeAPI := regexp.MustCompile(`storage\.(NormalizeRef|NormalizeOrKeep|ObjectKeyFor|ParseRef|IsNormalizedRef)\s*\(`)

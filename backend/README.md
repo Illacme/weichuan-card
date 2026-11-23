@@ -517,9 +517,11 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   同理，**改桶名必须同时改 hostHeader**，否则旧桶名进 Host、新桶名进 path。
   hostHeader 是回源侧 Host / TLS SNI，**不是**客户自有访问域名：后者填在
   `delivery_profiles.domain`，两者互不影响。
-- `publicRead` 当前必须为 true。私有桶需要预签名链路、出参契约会跟着变，本期没做：
-  档案保存校验与上传侧构造都会显式拒绝 false。回填侧不拦——凭据在手就能写对象，
-  公开读与否只影响端上能否直接取。
+- `publicRead` 可关（仅绑定到企业的对象存储）：出参不变，仍是稳定的
+  `/uploads/t/<企业id>/...`；`nginx-snippets` 为该企业生成「回本进程」的 location，
+  `handler.PrivateObjectRedirect` 按 key 归属取该租户的 `Signer` 现签短 TTL GET URL 后回 302。
+  写入侧照常用凭据直传桶，回填侧也不拦。平台自身那份必须公开读（`p/` 对象无逐租户签名链路），
+  本地驱动同样不能私有读。切换公开/私有后要重新生成并 reload nginx snippet。
 
 > ⚠️ `use_ssl` / `public_read` 这两列**不许加 gorm `default` 标签**：带 default 时 GORM 会把
 > 零值从 INSERT 省略、交给库默认值，「新建时选 false」会被翻回 true（自检与上传按 https 发，
@@ -591,6 +593,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 启用：`STORAGE_PUBLIC=false`（默认 `true`）。对象存储 Bucket 设为私有读。
 - 存储：DB 仍按现有字段保存「公开形态 URL」（`BaseURL/key`），对象本身私有。
 - 访问：前端在需要展示私有文件时，调用 `POST /api/admin/storage/sign`（员工用 `/api/employee/...`）提交已存 URL 列表，后端按 `BaseURL` 前缀反推对象 key，返回 **30 分钟有效**的限时签名 URL（`SignGetURL`），前端用签名 URL 取图。
+- 租户私有桶（档案 `publicRead=false`）走的是**另一条、对端上透明的链路**：公开 GET 仍返回 `/uploads/t/<企业id>/...`，`nginx-snippets` 为该企业生成指向本进程的 location，中间件现签后回 302（`Cache-Control: no-store`），TTL 取 `sign_get_ttl_minutes`（默认 30 分钟）。前端与小程序不需要调用签名接口，也不需要重签；但桶域名要进小程序的 `downloadFile` 合法域名（与私有桶小程序码同要求），且这些对象不要过客户 CDN。切换公开/私有后必须重新生成并 reload snippet，否则旧的匿名回源 location 会继续打到私有桶吃 403；`nginx-snippets check` 会把它报成「未重新生成」而不是「一致」。
 - 本地私有：若 `local` 驱动 + `STORAGE_PUBLIC=false`，文件不再经 `/uploads` 静态公开，改用 `GET /api/storage/file?key=...`（鉴权后流式返回）。key 须是 `p/…` 平台对象或 `t/<企业ID>/…` 租户对象：租户只能读自己的，平台超管可代读任意企业；历史裸键只放平台超管。调用方的企业 ID 只取登录上下文，query 里的 `companyId` 不参与归属判定。
 - 小程序码已接入私有桶签名通道：`STORAGE_PUBLIC=false` 且存储支持签名时，`/api/wechat/wxacode` 返回 **1 小时有效**的限时签名 URL（每次请求重新签发），二维码内容本身仍按 `WXACODE_TTL_HOURS` 缓存、到期才重新调微信生成；公开桶/本地驱动仍返回公开 URL。
 

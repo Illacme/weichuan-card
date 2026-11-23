@@ -310,7 +310,7 @@ func ensureBucket(ctx context.Context, c *minio.Client, bucket string) error {
 			return fmt.Errorf("MakeBucket: %w", err)
 		}
 	}
-	// 第一阶段只支持公开读桶：nginx 回源那一跳不带签名。
+	// 本装置只建公开读桶：verify 阶段的 nginx 回源那一跳不带签名。
 	// 策略设不上必须当场失败——等到 nginx 回 403 时，报错长得像「键写错了」。
 	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucket)
 	if err := c.SetBucketPolicy(ctx, bucket, policy); err != nil {

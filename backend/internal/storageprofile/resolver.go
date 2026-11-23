@@ -401,7 +401,7 @@ func uploaderConfigFor(sp *model.StorageProfile, cid int64) *uploaderConfig {
 		CompanyID: cid, Driver: sp.Driver, Endpoint: ep, Bucket: sp.Bucket,
 		Region: sp.Region, UseSSL: useSSL, HostHeader: sp.HostHeader,
 		AccessKey: sp.AccessKey, SecretKey: sp.SecretKey, BaseURL: sp.BaseURL,
-		PublicRead: sp.PublicRead,
+		PublicRead: sp.PublicRead, Purpose: sp.Purpose,
 	}
 }
 
@@ -442,6 +442,9 @@ func NginxTarget(cid int64, sp *model.StorageProfile) nginxsnippet.Target {
 		UseSSL:     useSSL,
 		HostHeader: sp.HostHeader,
 		Enabled:    true,
+		// 私有桶不能生成匿名回源桶的 location：那条路径不带签名，必 403。
+		// 生成器改为把 /uploads/t/<cid>/ 指向后端，由它现签后 302。
+		Private: !sp.PublicRead,
 	}
 }
 
@@ -513,6 +516,23 @@ func (r *Resolver) OriginFor(cid int64) (model.Origin, bool) {
 	return model.Origin{Base: base, CompanyID: cid}, true
 }
 
+// PrivateRead 判断该租户的对象是否必须走后端限时签名跳转。
+//
+// 只认**租户自己的生效档案**：平台对象、未绑定企业、本地驱动都不在此列。
+// 与 OriginFor 相反，这里返回 true 时出参仍用平台统一入口，只是读侧多一跳签名。
+// 注意它不替代 nginx snippet：切成私有后必须重新 render + reload，否则
+// 旧的匿名回源 location 会继续直连桶，请求根本到不了这里的签名逻辑。
+func (r *Resolver) PrivateRead(cid int64) bool {
+	if cid <= 0 {
+		return false
+	}
+	eff, err := r.Resolve(cid)
+	if err != nil || eff.Storage == nil {
+		return false
+	}
+	return !eff.Storage.PublicRead && eff.Storage.Driver != nginxsnippet.DriverLocal
+}
+
 // Diagnose 是 OriginFor 的诊断版：除了结论还给出「为什么没生效」。
 // 只有运维诊断接口（/api/public/settings?companyId=）用它，出参路径一律走 OriginFor。
 //
@@ -545,7 +565,7 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 		return "", false, "生效的 CDN 分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
 	}
 	if !eff.Storage.PublicRead {
-		return "", false, "桶未开启公开读（publicRead=false）：客户域名直连私有桶会 403"
+		return "", false, "该桶是私有桶：对象走平台统一入口，由后端签发限时访问地址；客户域名不能直连私有桶"
 	}
 	return clean, true, ""
 }

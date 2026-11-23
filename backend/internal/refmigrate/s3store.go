@@ -222,7 +222,7 @@ var _ ObjectStore = (*S3Store)(nil)
 // 等把流量切到客户桶才发现那边一个对象都没有。
 //
 // 私有桶（public_read=false）不拦回填：凭据在手就能写对象，「公开读与否」
-// 只影响端上能不能直接取，那是上传侧 buildUploader 的边界，不是搬迁的边界。
+// 只影响端上怎么读（匿名直连还是后端签名跳转），那是读侧的边界，不是搬迁的边界。
 // 两条链路对同一份配置解释不同，与「没有绑定必须转成错误」是同一条纪律。
 func TenantTargetFor(prof *storageprofile.Resolver) func(int64) (ObjectStore, error) {
 	return func(cid int64) (ObjectStore, error) {

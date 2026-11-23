@@ -7,6 +7,7 @@ import (
 
 	"weichuan/internal/config"
 	"weichuan/internal/model"
+	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/storage"
 
 	"github.com/glebarez/sqlite"
@@ -123,8 +124,8 @@ func TestBuiltinStorageProfileDriverAndDirLocked(t *testing.T) {
 // 回归背景：模型上曾给 use_ssl / public_read 挂 `default:true`，GORM 会把零值从
 // INSERT 里省略、交给库默认值，于是「新建时选 useSsl=false」保存后仍是 true——
 // 自检与上传都会按 https 发，而运营以为配的是 http（自建 MinIO 走 80 时必然连不上，
-// 报的却是「凭据错误」）。public_read 同理，虽然接口目前拒绝 false，
-// 但靠「接口恰好拦住」来保模型正确性是脆的，两列一起摘掉 default 标签。
+// 报的却是「凭据错误」）。public_read 同理：私有桶现在合法，
+// 靠接口兜住零值只会掩盖模型错误，两列一起摘掉 default 标签。
 func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
 	r, db := bindingEngine(t)
 	c := newTestClient(r, t)
@@ -143,15 +144,38 @@ func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
 	require.False(t, row.UseSSL, "useSsl=false 必须真的落成 false")
 	require.True(t, row.PublicRead)
 
-	// 私有桶目前被接口显式拒绝（第一阶段只支持公开读桶）。
-	// 这条断言同时钉住「拒绝的理由要说清」，否则运营只会看到一句没头没尾的失败。
+	// 私有桶现在可以保存，false 同样不能被子弹回 true。
 	_, body = c.do("POST", "/api/admin/storage-profiles", map[string]any{
 		"name": "private-bucket", "driver": "minio", "endpoint": "s.example.com", "bucket": "assets",
 		"baseUrl": "https://card.example.com/uploads", "publicRead": false,
 		"accessKey": "AK", "secretKey": "SK",
 	}, token)
-	require.EqualValues(t, 1, body["code"])
-	require.Contains(t, body["msg"], "公开读")
+	require.EqualValues(t, 0, body["code"], body["msg"])
+	id = int64(body["data"].(map[string]interface{})["id"].(float64))
+	row = model.StorageProfile{} // 复用带主键的结构体会被 GORM 叠加成 id=2 AND id=1
+	require.NoError(t, db.First(&row, id).Error)
+	require.False(t, row.PublicRead, "publicRead=false 必须真的落成 false")
+}
+
+// 私有桶只对「绑定到企业的对象存储」开放：平台自身那份和本地磁盘都没有
+// 逐租户的签名跳转，放过去会得到「配置保存成功、p/ 对象全裂」的静默失败。
+func TestPrivateReadRejectedForPlatformAndLocal(t *testing.T) {
+	base := model.StorageProfile{
+		Name: "x", Driver: nginxsnippet.DriverMinio, Endpoint: "s.example.com",
+		Bucket: "assets", BaseURL: "https://card.example.com/uploads",
+		AccessKey: "AK", SecretKey: "SK", PublicRead: false,
+	}
+	platform := base
+	platform.Builtin = true
+	platform.Purpose = model.ProfilePurposePlatformPrimary
+	require.Contains(t, validateStorageProfile(&platform), "公开读")
+
+	local := base
+	local.Driver = nginxsnippet.DriverLocal
+	require.Contains(t, validateStorageProfile(&local), "本地磁盘")
+
+	normal := base
+	require.Empty(t, validateStorageProfile(&normal))
 }
 
 // 内置档案不能当租户写入目标，也不能参与迁移：

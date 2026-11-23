@@ -373,9 +373,18 @@
             <template #label>使用 HTTPS <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'useSsl')" /></template>
             <el-switch v-model="storageForm.useSsl" />
           </el-form-item>
-          <el-form-item label="公开读桶">
-            <el-switch v-model="storageForm.publicRead" disabled />
-            <span class="field-note">当前只支持公开读桶：私有桶需要限时签名链路，后端会拒绝 publicRead=false</span>
+          <el-form-item>
+            <template #label>公开读桶 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'publicRead')" /></template>
+            <el-switch
+              v-model="storageForm.publicRead"
+              :disabled="storageForm.builtin && storageForm.purpose === 'platform_primary'"
+            />
+            <span v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" class="field-note">
+              平台自身存放的是所有企业共用的素材与小程序码，必须允许匿名读取。
+            </span>
+            <span v-else-if="!storageForm.publicRead" class="field-note">
+              私有桶已开启：访客地址不变，取图时由后端临时签名跳转。切换后请重新生成并 reload nginx 回源配置。
+            </span>
           </el-form-item>
           <el-form-item>
             <template #label>AccessKey <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'accessKey')" /></template>

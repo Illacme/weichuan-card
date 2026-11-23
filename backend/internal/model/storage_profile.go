@@ -20,7 +20,8 @@ import "time"
 //
 // 普通档案为空串。内置档案都不可删，但它们**不是**可互换的：把镜像档案绑给租户
 // 会让备份副本变成主写入目标，把平台档案绑给租户会让 p/ 对象写进客户桶。
-// platform_primary 的连接信息可在界面改（改完重启），目录仍跟随 cfg.UploadDir。
+// platform_primary 的连接信息可在界面改、保存即生效，目录仍跟随 cfg.UploadDir。
+// 私有读（public_read=false）只对绑定到企业的档案开放：p/ 对象没有逐租户签名链路。
 const (
 	ProfilePurposePlatformPrimary = "platform_primary"
 	ProfilePurposeTenantFallback  = "tenant_fallback"
@@ -44,7 +45,7 @@ type StorageProfile struct {
 	//
 	// 刻意**不加** gorm 的 default 标签：带 default 时 GORM 会把零值从 INSERT 里省略、
 	// 交给库默认值，于是「新建时选 false」被翻回 true。use_ssl 与 public_read 都踩过
-	// 这个坑（public_read 被翻回 true 等于把私有桶当公开桶用，uploadroute 会放行）。
+	// 这个坑（public_read 被翻回 true 等于把私有桶当公开桶用，出参会按匿名可读拼 URL）。
 	// 默认值一律由创建方显式给出：handler 的 create 与 EnsureBuiltinLocal。
 	UseSSL bool `gorm:"column:use_ssl" json:"useSsl"`
 	// LocalDir 仅 driver=local 使用：该档案自己的根目录。

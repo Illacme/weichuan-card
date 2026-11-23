@@ -234,6 +234,10 @@ func main() {
 	}
 	var refresher storage.CDNRefresher // 开发态不接 CDN
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)
+	// 与生产同构：私有桶租户的 /uploads/t/<cid>/ 走后端现签 302，不落本地盘。
+	// dev 默认全是本地档案，注入后判定恒 false，中间件直接放行。
+	handler.SetPrivateReadResolver(profiles.PrivateRead)
+	r.Use(handler.PrivateObjectRedirect(profiles))
 	// 联调期 /uploads 下的文件（含种子素材）经常被同名覆盖，浏览器按 Last-Modified
 	// 启发式缓存会拿到旧图（症状：小程序已更新、后台还是旧图标）→ 开发态一律 no-cache。
 	r.Use(func(c *gin.Context) {

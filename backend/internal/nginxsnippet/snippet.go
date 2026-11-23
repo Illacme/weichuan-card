@@ -48,6 +48,10 @@ type Target struct {
 	// 也是 TLS SNI 的取值）。留空时退化成 Endpoint。
 	HostHeader string `json:"hostHeader"`
 	Enabled    bool   `json:"enabled"`
+	// Private 表示这是私有读桶：**绝不**生成匿名回源桶的 location（必 403）。
+	// 改成把 /uploads/t/<cid>/ 交给本进程，由 handler.PrivateObjectRedirect
+	// 现签 GET URL 后 302；外部 URL 一字不变。
+	Private bool `json:"private"`
 }
 
 // NeedsSnippet 判断这个租户是否需要一段 location。
@@ -169,6 +173,19 @@ const headerBlock = `        add_header Cache-Control $uploads_cache always;
         add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
 `
 
+// 私有桶的回源目标不是桶，而是本进程。地址必须与 nginx-site.live.conf
+// 里 /api/、/uploads/ 两段的 proxy_pass 一致；改那两处时这里要同步。
+const privateBackendUpstream = "http://127.0.0.1:8080"
+
+// 302 不能被缓存：签名 URL 只是一张短时凭据，缓存住等于把它固化下来。
+// 同样因为 location 里有 add_header，server 级安全头整组失效，必须逐条重声明。
+const privateHeaderBlock = `        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+`
+
 // Render 渲染整份 snippet。输出**只有 location 段**，不含 map、不含 server：
 // 生产上它要被 include 进 nginx-site.live.conf 那个 server{} 里
 // （`$uploads_cache` 那个 map 已经在 http 级存在，snippet 里再定义一次就是重复定义，
@@ -211,6 +228,10 @@ func Render(targets []Target) (string, error) {
 }
 
 func writeLocation(b *strings.Builder, t Target) {
+	if t.Private {
+		writePrivateLocation(b, t)
+		return
+	}
 	fmt.Fprintf(b, "\n    # 租户 %d · driver=%s · bucket=%s · key 前缀 t/%d/\n",
 		t.CompanyID, t.Driver, t.Bucket, t.CompanyID)
 	// 尾斜杠是隔离边界，别删：没有它，/uploads/t/50/... 会被 t/5 吞掉。
@@ -240,6 +261,26 @@ func writeLocation(b *strings.Builder, t Target) {
 	b.WriteString("    }\n")
 }
 
+// writePrivateLocation 给私有桶租户生成「回本进程签名」的 location。
+//
+// 这里没有 rewrite：外部 URL 就是后端静态路由的真实路径，中间件按 cid 判定。
+// 桶的 endpoint / bucket 不出现在配置里——它们只在后端签名时用，写进 nginx
+// 反而会让人误以为这里还能匿名取对象。
+func writePrivateLocation(b *strings.Builder, t Target) {
+	fmt.Fprintf(b, "\n    # 租户 %d · driver=%s · bucket=%s · 私有桶：经后端现签后 302 到对象存储\n",
+		t.CompanyID, t.Driver, t.Bucket)
+	fmt.Fprintf(b, "    # 匿名直连私有桶必 403；这里只把请求交给后端，签名 URL 由后端按 key 归属现签。\n")
+	fmt.Fprintf(b, "    location ^~ /uploads/t/%d/ {\n", t.CompanyID)
+	fmt.Fprintf(b, "        proxy_pass %s;\n", privateBackendUpstream)
+	b.WriteString("        proxy_set_header Host $host;\n")
+	b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+	b.WriteString("        proxy_set_header X-Forwarded-For $remote_addr;\n")
+	b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+	b.WriteString("        proxy_read_timeout 60s;\n")
+	b.WriteString(privateHeaderBlock)
+	b.WriteString("    }\n")
+}
+
 // Diff 是「配置表」与「已生成的 snippet」之间的差集，两个方向都是故障：
 //
 //	Missing：配了桶却没有 snippet → 这些请求落回平台盘 → 文件不在那儿 → 404，页面裂；
@@ -247,9 +288,14 @@ func writeLocation(b *strings.Builder, t Target) {
 type Diff struct {
 	Missing []int64
 	Extra   []int64
+	// ModeMismatch 是「cid 有 location，但回源方向错了」：公开桶切成私有（或反过来）
+	// 后忘了重新生成。只比 cid 的对账会放过它，而旧的匿名回源打到私有桶必 403。
+	ModeMismatch []int64
 }
 
-func (d Diff) OK() bool { return len(d.Missing) == 0 && len(d.Extra) == 0 }
+func (d Diff) OK() bool {
+	return len(d.Missing) == 0 && len(d.Extra) == 0 && len(d.ModeMismatch) == 0
+}
 
 func (d Diff) String() string {
 	if d.OK() {
@@ -262,10 +308,15 @@ func (d Diff) String() string {
 	if len(d.Extra) > 0 {
 		parts = append(parts, fmt.Sprintf("有 snippet 但配置表没启用（白开了个口子）：%v", d.Extra))
 	}
+	if len(d.ModeMismatch) > 0 {
+		parts = append(parts, fmt.Sprintf("公开读/私有读切换后未重新生成 snippet（私有桶匿名回源会 403）：%v", d.ModeMismatch))
+	}
 	return strings.Join(parts, "；")
 }
 
-var locationCID = regexp.MustCompile(`(?m)^\s*location\s+\^~\s+/uploads/t/(\d+)/\s*\{`)
+// locationBlock 连花括号体一起抓：只抓 cid 的话，公开/私有切换后回源方向错了
+// 也照样「一致」，而那正是私有桶 403 的唯一成因。
+var locationBlock = regexp.MustCompile(`(?ms)^\s*location\s+\^~\s+/uploads/t/(\d+)/\s*\{(.*?)^\s*\}`)
 
 // Reconcile 对账：targets 里该有 snippet 的集合，必须与 snippet 文本里的 location 集合相等。
 //
@@ -273,33 +324,38 @@ var locationCID = regexp.MustCompile(`(?m)^\s*location\s+\^~\s+/uploads/t/(\d+)/
 // 任何一步漏掉的表现都只是「新租户的图不显示」，而平台侧没有任何报错。
 // 所以让它在生成阶段就报出来，而不是等用户发现裂图。
 func Reconcile(targets []Target, snippet string) Diff {
-	want := make(map[int64]bool, len(targets))
+	want := make(map[int64]bool, len(targets)) // cid -> 是否私有
 	for _, t := range targets {
 		if t.NeedsSnippet() {
-			want[t.CompanyID] = true
+			want[t.CompanyID] = t.Private
 		}
 	}
-	got := make(map[int64]bool, len(want))
-	for _, m := range locationCID.FindAllStringSubmatch(snippet, -1) {
+	got := make(map[int64]bool, len(want)) // cid -> snippet 里实际是不是私有分支
+	for _, m := range locationBlock.FindAllStringSubmatch(snippet, -1) {
 		var cid int64
 		if _, err := fmt.Sscanf(m[1], "%d", &cid); err != nil {
 			continue
 		}
-		got[cid] = true
+		got[cid] = strings.Contains(m[2], privateBackendUpstream)
 	}
 
 	var d Diff
-	for cid := range want {
-		if !got[cid] {
+	for cid, priv := range want {
+		actual, ok := got[cid]
+		switch {
+		case !ok:
 			d.Missing = append(d.Missing, cid)
+		case actual != priv:
+			d.ModeMismatch = append(d.ModeMismatch, cid)
 		}
 	}
 	for cid := range got {
-		if !want[cid] {
+		if _, ok := want[cid]; !ok {
 			d.Extra = append(d.Extra, cid)
 		}
 	}
 	sort.Slice(d.Missing, func(i, j int) bool { return d.Missing[i] < d.Missing[j] })
 	sort.Slice(d.Extra, func(i, j int) bool { return d.Extra[i] < d.Extra[j] })
+	sort.Slice(d.ModeMismatch, func(i, j int) bool { return d.ModeMismatch[i] < d.ModeMismatch[j] })
 	return d
 }

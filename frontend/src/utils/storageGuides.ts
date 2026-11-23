@@ -340,7 +340,7 @@ export const STORAGE_FIELD_GUIDES: Record<string, FieldGuide> = {
     usage: '桶就是云端放文件的文件夹，所有图片视频都写进它。',
     source: '在云厂商控制台先创建一个桶，把桶名抄过来。',
     rules: '桶名通常是全局唯一的，创建后一般不能改名。',
-    note: '桶需要允许公开读取，否则访客看不到图片；当前系统只支持公开读桶。',
+    note: '公开读桶可直接访问；私有桶也能用，访客取图时由后端临时签名。两种都要填对访问基址。',
   },
   region: {
     field: 'region', label: '地域（Region）',
@@ -369,10 +369,10 @@ export const STORAGE_FIELD_GUIDES: Record<string, FieldGuide> = {
   },
   publicRead: {
     field: 'publicRead', label: '公开读桶',
-    usage: '让访客无需签名就能直接打开桶里的图片。',
-    source: '需要在云厂商控制台把桶设置为「公共读」。',
-    rules: '当前固定为开启，系统不接受私有桶。',
-    note: '桶权限和这里的开关是两回事：这里固定开启，但云控制台没设公共读照样裂图。',
+    usage: '决定访客取图时是直接从桶读取，还是由后端签发短时访问地址。',
+    source: '要与云厂商控制台的桶权限保持一致；平台自身固定公开读。',
+    rules: '可关闭：对象仍是本站 /uploads/ 地址，后端现签后跳转；仅绑定到企业的对象存储支持。',
+    note: '切换后须重新生成并 reload nginx 回源配置。私有桶不走客户 CDN，未开本地镜像时没有备份副本。',
   },
   accessKey: {
     field: 'accessKey', label: 'AccessKey',

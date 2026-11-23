@@ -76,7 +76,6 @@ func TestEnsureBuiltinPlatformDeliverySeedSemantics(t *testing.T) {
 	require.Equal(t, storage.CDNProviderAliyun, row2.Provider)
 }
 
-
 func TestBuildPlatformRefresher(t *testing.T) {
 	// 明确「不刷新」不是错误
 	rf, err := BuildPlatformRefresher(&model.DeliveryProfile{Provider: storage.CDNProviderNone})

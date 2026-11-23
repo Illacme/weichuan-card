@@ -378,7 +378,7 @@ CdnRefresh 的「去设置」守门从断言 router 跳转改为断言 `goto-set
 
 - 性能优化（多域名分流、按文件类型 / 图片子集选平台、同步到多个 CDN）；
 - 客户自有域名（端上域名一变，小程序合法域名就要逐个登记）；
-- 私有桶限时签名接入统一入口（第一阶段按公开读桶试点，见 R1）；
+- 私有桶限时签名接入统一入口（第一阶段按公开读桶试点，见 R1；第八十七轮已落地：出参不变，读侧由后端按 key 归属现签后 302）；
 - 小程序包内 `.js/.wxml/.wxss/.json` 与管理后台 `/assets/`、`/theme-previews/`
   —— 前者必须随包、不允许远程加载，后者是 Vite/nginx 本地产物，都不在
   `storage.Uploader` 抽象范围内。
@@ -810,7 +810,8 @@ MySQL 实跑记录（2026-11-13，本地 `mysql:8.0.46` 容器）：
 3. **校验不重写**：endpoint 不许带 scheme、bucket 不许含路径与 `..`、hostHeader 不许含引号，
    全部复用 `nginxsnippet.Target.Validate` 单点（写入侧复制一份必然与生成侧漂移，
    漂移的表现是「接口说存成功了，生成器却报错」）。只在写入侧加两条**产品边界**：
-   第一阶段只支持公开读桶（私有桶要预签名链路）、启用时必须凭据齐全。
+   启用时必须凭据齐全。第一阶段只支持公开读桶；第八十七轮起租户对象存储可关公开读——
+   出参仍是稳定的 `/uploads/t/<cid>/`，读侧由后端现签短时 URL 后 302，平台自身仍必须公开读。
 4. **改了配置就作废上一次自检结论**（`status` 回 `unknown`）。否则「改完地址但没重新自检」
    的后台会一直显示上一次的绿点，读的人会以为新配置已经验过了。
 
@@ -954,8 +955,9 @@ type Resolver interface {
   要么按租户分别 Purge，要么接受清整个 `/uploads/` 会误伤所有租户缓存；第一阶段
   建议 `refreshCDN` 增加 `companyID` 参数，先用平台 refresher 按精确 URL 清。
 
-**第一阶段试点口径**：租户桶公开读 + 单租户试点。私有桶签名、跨地域 CDN、
-客户自有域名都留到后续阶段再评估。
+**第一阶段试点口径**：租户桶公开读 + 单租户试点。私有桶签名已在第八十七轮落地
+（仅租户对象；出参不变、读侧跳转，切换后需重载 nginx snippet）；跨地域 CDN、
+客户自有域名仍留到后续阶段再评估。
 
 > ✅ **R1 已实测（2026-11-13 / 第五十五轮）**：结论「**有条件成立**」，
 > 装置与证据在 `tools/nginx-r1-check/`，完整记录见 `docs/tenant-storage-r1-feasibility.md`。
@@ -1159,8 +1161,9 @@ type Resolver interface {
 >    写入校验与 `ResolveRef(raw, origin)` 出参 origin 的裁判；`ref.go` 里那份私有
 >    `cleanOrigin` 已删除。两套规则漂移的表现是「后台说存成功、端上拼出带路径的怪地址」，
 >    且没有任何报错。
-> 3. **`public_read` 变成运行时消费**。`Config.PublicRead` + `uploadroute.build` 显式拒绝
->    私有桶；此前只有写入侧 `validateTenantStorageRow` 会看，库里被手工改成 0 时运行时
+> 3. **`public_read` 变成运行时消费**。历史上 `uploadroute.build` 显式拒绝私有桶；
+>    第八十七轮起只对平台自身档案保留该拒绝，租户私有桶改由读侧签名跳转消费。
+>    此前只有写入侧 `validateTenantStorageRow` 会看，库里被手工改成 0 时运行时
 >    照样按公开读拼 URL、零报错。回填侧 `TenantTargetFor` 不调 `build`，不受影响
 >    （凭据在手就能写对象），由 `TestTenantTargetForIgnoresPublicReadAndOrigin` 钉住。
 > 4. **不假装自有域名已经承载流量**。出参侧按租户选 origin（`ResolveRef` 的 origin

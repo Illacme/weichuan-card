@@ -4274,6 +4274,7 @@ endpoint 不许带 scheme、bucket 不许含路径与 `..`、hostHeader 不许�
 
 只在写入侧加两条**产品边界**（生成器没资格判，因为私有桶的 snippet 也是对的）：
 第一阶段只支持公开读桶；启用时必须凭据齐全。
+（历史记录：第八十七轮已放开租户私有桶，且生成器新增了私有桶分支；平台自身仍必须公开读。）
 
 ### 反向验证五处
 
@@ -6118,3 +6119,35 @@ ResolveRef）本来就走动态快照，改基址后用户看到的 URL 早已�
   ② DynamicCDN 退回固定 base → 平台 CDN 守门红；③ effectiveBaseURL 退回 cfg → 注入守门红；
   ④ 前端 driver.note 贴回"必须重启" → 文案守门红。
 - 目录类（upload_dir / mirror_dir）行为未动，相关"改后重启"守门保持原样通过。
+
+## 第八十七轮：私有桶签名链路（A3——租户桶可关公开读）
+
+**用户诉求**：A3 是产品评估里"宣称支持但接口硬拒"的一条——`SECURITY.md` 写了
+"私有桶支持限时签名访问"，但多租户档案接口与上传侧构造都显式拒绝
+`public_read=false`，用户无从判断到底支不支持。方案在"后端签名跳转 / nginx 注入签名 /
+后端流式代理 / 出参直签"中由用户拍板选**后端签名跳转**：出参契约不变，前端与小程序零改动。
+
+**根因与关键发现**：签名能力其实早已就绪（`storage.Signer`、两个 `/storage/sign` 端点、
+按归属选实例的 `signerForKey`、小程序码私有桶签名），真正卡点是三处：① 写入侧两道硬拒；
+② nginx snippet 不看 `public_read`，照旧生成匿名回源桶的 location，私有桶必 403；
+③ 文档口径分裂（安全声明说支持、用户手册说不接受）。
+另外，`OriginFor` 在私有桶时本就回落平台统一入口——出参仍是稳定的 `/uploads/t/<cid>/...`，
+"私有桶要改出参契约"是过时判断。
+
+**落地**：
+- `storageprofile`：`buildUploader` 只对 `platform_primary` 保留私有桶拒绝；
+  `uploaderConfig` 带 `Purpose`，`NginxTarget` 映射 `Private`；新增 `Resolver.PrivateRead(cid)`。
+- `handler/private_object.go`：挂在 `/uploads` 静态路由前的中间件，只处理 `t/<cid>/` 路径，
+  用 `ParseRef` 校验归属后调 `res.For(cid).(storage.Signer).SignGetURL`（TTL 复用
+  `sign_get_ttl_minutes`，默认 30 分钟）回 302 + `Cache-Control: no-store`；只签租户对象，
+  p/ 与历史裸键不签。错误只进服务端日志，不外泄 endpoint / bucket。
+- `nginxsnippet`：`Target.Private` 让生成器输出"回本进程"的 location（no-store + 安全头），
+  不再生成匿名回源桶的 `proxy_pass` / `rewrite`；仍参与 `Reconcile` 对账。
+- 边界：平台自身存储与本地磁盘不支持私有读；私有桶对象不走客户 CDN；未开本地镜像时
+  没有平台侧备份副本；切换公开读后必须重新生成并 reload nginx snippet，小程序需把桶域名
+  加入 `downloadFile` 合法域名。
+- 前端放开「公开读桶」开关（平台自身仍锁定），字段说明、系统设置、用户手册、
+  `SECURITY.md` 口径全部同步。
+
+**验证**：新增后端 middleware / `PrivateRead` / 平台私有拒绝 / snippet 私有分支四组测试，
+前端私有桶文案守门；反向验证覆盖"判定关掉必须回落静态路径"与"私有 location 不得出现匿名回源配置"。

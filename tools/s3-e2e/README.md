@@ -60,7 +60,8 @@ cd tools/s3-e2e && bash run.sh
 
 - **不是云厂商桶**：没有 TLS/SNI、没有 CDN、没有 CORS、没有跨区一致性。TLS 那条
   目前只有 `tools/nginx-r1-check` 的桩证据（缺 `proxy_ssl_server_name` → 421）。
-- **只覆盖公开读桶**：nginx 回源那一跳不带签名，私有桶需要另一条链路（未实现）。
+- **只覆盖公开读桶**：本装置建的桶和档案都是公开读。私有桶由后端现签后 302 的链路
+  目前只由单测覆盖（`private_object_test.go`、`private_snippet_test.go`），没有真桶 e2e。
 - **只覆盖平台统一入口**：`public_base_url`（客户自有域名）仍是空值路径。
 - **不覆盖存量对象**：本装置上传的都是新对象。第六十六轮新增的
   `tools/backfill-e2e/` 补齐了「真桶 + 存量对象」灰度——那份装置复用同一个

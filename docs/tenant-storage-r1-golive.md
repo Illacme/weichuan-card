@@ -231,8 +231,9 @@ A：重复 include 了 snippet（显式 include + extension 通配都加了）�
 A：两种成因，先分清是哪一种：
 1. **对象进了客户桶，但 nginx 不认识前缀** → 忘了重新 `render` + `reload`。查 snippet 里有没有
    该企业的 `location`（`check` 会告诉你）。
-2. **对象还在平台盘** → 绑定没生效。查该企业有没有被更具体的绑定覆盖、文件存储 `driver` 是不是
-   还是 local、桶 `public_read` 是不是 false（私有桶直连会 403）。
+2. **对象还在平台盘或取图 403** → 查该企业有没有被更具体的绑定覆盖、文件存储 `driver` 是不是
+   还是 local。桶 `public_read=false`（私有桶）本身合法，但必须重新 `render` + `reload`：
+   新版 snippet 会把 `/uploads/t/<企业id>/` 指向后端现签并 302，旧版仍是匿名回源私有桶，必 403。
 
 ---
 

@@ -695,6 +695,17 @@ func validateStorageProfile(row *model.StorageProfile) string {
 	default:
 		return "驱动不在支持范围内（local / minio / oss / s3）"
 	}
+	// 私有读只对「绑定到企业的对象存储」有意义：平台对象走匿名静态入口，
+	// 本地磁盘没有 Signer。这两个判定必须在 local 的早退之前做，
+	// 否则「本地 + 私有」会被当成普通本地配置存下来，读侧却完全没有签名能力。
+	if !row.PublicRead {
+		if row.Builtin || row.Purpose == model.ProfilePurposePlatformPrimary {
+			return "平台自身存储必须开启公开读：私有桶只支持绑定到企业的文件存储"
+		}
+		if row.Driver == nginxsnippet.DriverLocal {
+			return "本地磁盘无法签发限时访问地址：私有桶请选对象存储驱动（minio / oss / s3）"
+		}
+	}
 	if row.Driver == nginxsnippet.DriverLocal {
 		// 内置 local 只代表平台盘，不需要桶地址；也不可被绑定为「客户自有桶」之外的新用途。
 		return ""
@@ -714,9 +725,6 @@ func validateStorageProfile(row *model.StorageProfile) string {
 	}
 	if cfg.HostHeader != "" && cfg.HostHeader != cfg.Endpoint && !strings.HasPrefix(cfg.HostHeader, cfg.Bucket+".") {
 		return "hostHeader 留空表示路径风格；虚拟主机风格必须写成 <桶名>.<域名>"
-	}
-	if !row.PublicRead {
-		return "第一阶段只支持公开读桶（私有桶需要预签名链路，尚未实现）"
 	}
 	if row.AccessKey == "" || row.SecretKey == "" {
 		return "请填写 AccessKey 与 SecretKey"

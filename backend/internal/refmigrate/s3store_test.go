@@ -446,9 +446,9 @@ func TestTenantTargetForBuildsS3StoreNotLocalStore(t *testing.T) {
 
 // TestTenantTargetForIgnoresPublicReadAndOrigin 钉住「两条链路对同一份配置解释不同」：
 //
-// 上传侧 buildUploader 会因 public_read=false 显式拒绝（私有桶要预签名）；回填侧
-// 只按 company_id 拿凭据把对象写进桶里，公开读与否、访客侧域名是什么
-// 都与「能不能写对象」无关。若有人图省事把那条拒绝搬进 TenantTargetFor，
+// 租户私有桶现在合法：上传侧能构造实例，读侧走后端签名跳转；回填侧只按
+// company_id 拿凭据把对象写进桶里，公开读与否、访客侧域名是什么都与
+// 「能不能写对象」无关。若有人图省事在 TenantTargetFor 里加 public_read 闸门，
 // 这条必红——那会让「私有桶租户的历史对象搬不了」，而报错看起来像配置问题。
 func TestTenantTargetForIgnoresPublicReadAndOrigin(t *testing.T) {
 	db := newTenantDB(t)

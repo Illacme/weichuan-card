@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"weichuan/internal/model"
 	"weichuan/internal/nginxsnippet"
 	"weichuan/internal/storage"
 )
@@ -32,12 +33,16 @@ type uploaderConfig struct {
 	// 一旦换成客户域名就剥不掉基址，URL 里也没有 /uploads/ 段，
 	// NormalizeOrKeep 会把它判成外链原样写库，media_check 反推键失败。
 	BaseURL string
-	// PublicRead 桶是否公开读。只支持公开读桶：私有桶需要预签名链路，
-	// 出参契约（存裸键还是存 URL）会跟着变，本期没做。
+	// PublicRead 桶是否公开读。私有桶（false）仅用于**租户云档案**：
+	// 出参仍是稳定的 /uploads/t/<cid>/...，读侧由后端现签 GET URL 后 302 回源
+	// （handler.PrivateObjectRedirect），不需要前端/小程序感知签名过期。
 	//
-	// 读进来并在 build 里显式拒绝，是为了堵住「库里被人手工改成 0」：
-	// 否则配置位与实际行为脱钩却没有任何报错。
+	// 平台自身档案（Purpose=platform_primary）必须公开读：p/ 对象没有逐租户
+	// 的回源 location，私有化之后只能靠应用层鉴权，而公开名片页上的素材是匿名的。
 	PublicRead bool
+	// Purpose 只对内置档案非空。带上它是为了堵住「库里手工把平台档案改成
+	// public_read=0」——否则配置位与实际行为脱钩却没有任何报错。
+	Purpose string
 }
 
 // 单文件上限的兜底值。运行时会被 storage.UploadLimitBytes（系统设置
@@ -49,16 +54,16 @@ const maxBytes = 10 * 1024 * 1024
 // nginxsnippet.Target.Validate 单点验过；在读取侧再验一遍等于把同一套规则
 // 写两份，迟早漂移成「接口说存成功、这里报错」。
 func buildUploader(cfg *uploaderConfig) (storage.Uploader, error) {
-	// 私有桶没有预签名链路，继续按公开读拼 URL 会得到一个「上传成功、端上全 403」
-	// 的结果。这里必须拒，而不是忽略这一列。
-	if !cfg.PublicRead {
+	// 平台自身那份必须公开读；租户私有桶的读侧由签名跳转接管，不在这里拒。
+	if !cfg.PublicRead && cfg.Purpose == model.ProfilePurposePlatformPrimary {
 		return nil, errors.New(
-			"桶未开启公开读（public_read=false）：只支持公开读桶，" +
-				"私有桶需要预签名链路、出参契约会跟着变，本期未实现；不按公开读拼 URL")
+			"平台自身存储必须开启公开读（public_read=true）：p/ 平台对象走匿名静态入口，" +
+				"没有租户级的签名跳转；私有化请改用绑定到企业的文件存储")
 	}
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, errors.New(
-			"对象公开访问基址为空：云存储必须能拼出可访问 URL，否则存进库的引用是坏的（图会全裂）")
+			"上传返回基址为空：写入侧要据此把上传结果剥回对象键（存裸键），" +
+				"否则存进库的引用是坏的；私有桶同样需要这一列")
 	}
 	if strings.TrimSpace(cfg.AccessKey) == "" || strings.TrimSpace(cfg.SecretKey) == "" {
 		return nil, errors.New("凭据不完整（AccessKey / SecretKey 缺一）：请到文件存储里补齐")

@@ -84,7 +84,7 @@ func TestPublicOriginDiagnosisFollowsWriteOwnership(t *testing.T) {
 		{"私有桶", func(t *testing.T) {
 			require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", profileID).
 				Update("public_read", false).Error)
-		}, "403"},
+		}, "私有桶"},
 	}
 	require.GreaterOrEqual(t, len(cases), 5, "量尺要有读数：负例集合不能被悄悄删短")
 	for _, tc := range cases {

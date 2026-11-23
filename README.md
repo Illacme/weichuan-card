@@ -103,7 +103,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 | 小程序 | `pinned_company_id` | 企业独立版锁定租户（>0 锁定且该企业须存在并启用，0 = 平台模式） |
 | 上传 | `upload_max_mb` | 单文件上传上限（MB，1~1024） |
 | 上传 | `upload_allow_ext` | 允许上传的扩展名（逗号分隔） |
-| 上传 | `presign_put_ttl_minutes` / `sign_get_ttl_minutes` | 直传 PUT / 私有桶 GET 签名链接有效期（分钟；填 0 或负数回落默认值 15 / 30） |
+| 上传 | `presign_put_ttl_minutes` / `sign_get_ttl_minutes` | 直传 PUT / 私有桶 GET 签名链接有效期（分钟；填 0 或负数回落默认值 15 / 30；后者也管租户私有桶取图时的 302 跳转签名） |
 | 微信 | `wxacode_ttl_hours` | 小程序码缓存有效期（小时；未设置或填 0 回部署默认值 720） |
 | 微信 | `wxacode_sign_ttl_minutes` | 私有桶下小程序码签名链接有效期（分钟；填 0 或负数回落默认值 60） |
 | 微信 | `wx_appid` | 小程序 AppID（留空回退 `WX_APPID`，改完即时生效） |
