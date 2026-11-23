@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       title="存储与分发：配置只存一份，谁用由绑定决定"
-      description="文件存储管文件存哪，CDN 分发管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。文件存储、CDN 分发与绑定只有平台超管能增删改。"
+      description="默认本地磁盘、不开 CDN，直接可用；不给任何企业单独指定时，所有人默认用同一套。配置与绑定只有平台超管能改。"
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
@@ -23,6 +23,7 @@
       <el-tab-pane label="文件存储" name="storage">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.storage.title }}</strong><span>{{ TAB_GUIDES.storage.desc }}</span></div>
         <div class="tab-head tab-head-actions">
+          <el-button link type="primary" @click="showTechCols = !showTechCols">{{ showTechCols ? '收起技术列' : '更多列' }}</el-button>
           <el-button type="primary" @click="openStorageDialog(null)">新建文件存储</el-button>
         </div>
         <el-table :data="storages" v-loading="loading" size="small" border>
@@ -35,6 +36,7 @@
               <el-tag v-if="row.purpose === 'platform_primary'" size="small" type="primary">平台自身存储</el-tag>
               <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
               <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
+              <el-tag v-if="usageLabel(row.id, 'storage')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'storage') }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="driver" label="驱动" width="90" />
@@ -46,8 +48,8 @@
               <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="accessKeyMasked" label="AK" min-width="120" />
-          <el-table-column prop="version" label="版本" width="70" />
+          <el-table-column v-if="showTechCols" prop="accessKeyMasked" label="AK 掩码" min-width="120" />
+          <el-table-column v-if="showTechCols" prop="version" label="版本" width="70" />
           <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openStorageDialog(row)">编辑</el-button>
@@ -67,7 +69,7 @@
       <el-tab-pane label="CDN 分发" name="delivery">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.delivery.title }}</strong><span>{{ TAB_GUIDES.delivery.desc }}</span></div>
         <div class="tab-head tab-head-actions">
-          <el-button type="primary" @click="openDeliveryDialog(null)">新建CDN 分发</el-button>
+          <el-button type="primary" @click="openDeliveryDialog(null)">新建 CDN 分发</el-button>
         </div>
         <el-table :data="deliveries" v-loading="loading" size="small" border>
           <el-table-column prop="name" label="名称" min-width="150">
@@ -76,6 +78,7 @@
               <el-tooltip v-if="row.builtin" placement="top" :content="deliveryPurposeHint(row)">
                 <el-tag size="small" type="info" effect="plain" class="builtin-tag">内置</el-tag>
               </el-tooltip>
+              <el-tag v-if="usageLabel(row.id, 'delivery')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'delivery') }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="provider" label="厂商" width="120" />
@@ -101,15 +104,9 @@
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有CDN 分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建CDN 分发」，各厂商控制台与凭据入口都在弹窗里。</div>
+            <div class="table-empty">还没有 CDN 分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建 CDN 分发」，各厂商控制台与凭据入口都在弹窗里。</div>
           </template>
         </el-table>
-      </el-tab-pane>
-
-      <!-- CDN 缓存刷新：原来独立成菜单，现与配置凭据的「CDN 分发」并排 -->
-      <el-tab-pane label="CDN 缓存刷新" name="refresh">
-        <div class="tab-guide"><strong>{{ TAB_GUIDES.refresh.title }}</strong><span>{{ TAB_GUIDES.refresh.desc }}</span></div>
-        <CdnRefresh @goto-settings="tab = 'delivery'" />
       </el-tab-pane>
 
       <!-- 迁移任务 -->
@@ -123,23 +120,31 @@
           title="只复制，不删除"
           description="历史对象会完整复制到目标文件存储（含缩略图），源桶对象原样保留，方便回滚与对账。单对象失败会进失败清单，不影响其余对象；仅在零失败时才允许自动切换绑定。视频按流式搬运，不会整段进内存。"
         />
-        <div class="migration-create">
-          <label>迁移范围</label>
-          <el-select v-model="newJob.tenantId" style="width: 240px">
-            <el-option :value="0" label="全平台（整桶）" />
-            <el-option v-for="c in companies" :key="c.id" :value="c.id" :label="`企业：${c.name}`" />
-          </el-select>
-          <label>源文件存储</label>
-          <el-select v-model="newJob.sourceProfileId" style="width: 200px">
-            <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-          <label>目标文件存储</label>
-          <el-select v-model="newJob.targetProfileId" style="width: 200px">
-            <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
-          </el-select>
-          <el-checkbox v-model="newJob.dryRun">试运行（只统计不复制）</el-checkbox>
-          <el-checkbox v-model="newJob.autoSwitch" :disabled="newJob.dryRun">成功后自动切换绑定</el-checkbox>
-          <el-button type="primary" :loading="saving" @click="createJob">创建任务</el-button>
+        <div class="migration-card">
+          <div class="migration-fields">
+            <label>迁移范围
+              <el-select v-model="newJob.tenantId">
+                <el-option :value="0" label="全平台（整桶）" />
+                <el-option v-for="c in companies" :key="c.id" :value="c.id" :label="`企业：${c.name}`" />
+              </el-select>
+            </label>
+            <label>源文件存储
+              <el-select v-model="newJob.sourceProfileId">
+                <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
+              </el-select>
+            </label>
+            <label>目标文件存储
+              <el-select v-model="newJob.targetProfileId">
+                <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
+              </el-select>
+            </label>
+          </div>
+          <p class="migration-hint">先勾「试运行」核对对象数量，确认无误再启动真正的复制；源桶原样保留，不会删除。</p>
+          <div class="migration-actions">
+            <el-checkbox v-model="newJob.dryRun">试运行（只统计不复制）</el-checkbox>
+            <el-checkbox v-model="newJob.autoSwitch" :disabled="newJob.dryRun">成功后自动切换绑定</el-checkbox>
+            <el-button type="primary" :loading="saving" @click="createJob">创建任务</el-button>
+          </div>
         </div>
         <el-table :data="jobs" v-loading="loading" size="small" border>
           <el-table-column prop="id" label="ID" width="70" />
@@ -164,6 +169,9 @@
               <el-button link type="primary" @click="openErrors(row)">失败清单</el-button>
             </template>
           </el-table-column>
+          <template #empty>
+            <div class="table-empty">还没有迁移任务。先把老文件复制过去、核对失败清单为空，再到「绑定关系」切换。</div>
+          </template>
         </el-table>
       </el-tab-pane>
 
@@ -176,7 +184,7 @@
           :closable="false"
           show-icon
           title="切换全局默认是即时生效的高危操作"
-          description="保存前会自动核对：新文件存储必须已包含当前文件存储里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新文件存储里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
+          description="保存前会核对新文件存储是否包含当前全部对象，缺一个就拒绝切换；先搬历史对象请用「迁移任务」。切错可一键回滚，但回滚只换绑定、不搬对象。仅当目标本来就是新桶时，才勾「强制切换」跳过核对。"
         />
         <div class="binding-card">
           <h4>全局默认（所有企业的共同设置）</h4>
@@ -227,7 +235,7 @@
             </template>
           </el-table-column>
           <el-table-column label="生效来源" width="90">
-            <template #default="{ row }">{{ row.source === 'global' ? '全局' : row.source === 'inherit' ? '继承' : row.source }}</template>
+            <template #default="{ row }">{{ sourceLabel(row.source) }}</template>
           </el-table-column>
           <el-table-column label="切换前的文件存储" min-width="140">
             <template #default="{ row }">
@@ -248,6 +256,12 @@
             </template>
           </el-table-column>
         </el-table>
+      </el-tab-pane>
+
+      <!-- CDN 缓存刷新是运维动作：放在五步配置流程之后，不打断建档案→迁移→切绑定 -->
+      <el-tab-pane label="CDN 缓存刷新" name="refresh">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.refresh.title }}</strong><span>{{ TAB_GUIDES.refresh.desc }}</span></div>
+        <CdnRefresh compact @goto-settings="tab = 'delivery'" />
       </el-tab-pane>
 
       <!-- 平台自身存储的部署期配置：连接信息已在「文件存储」标签的那一行里，
@@ -374,7 +388,7 @@
     </el-dialog>
 
     <!-- CDN 分发表单 -->
-    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑CDN 分发' : '新建CDN 分发'" width="600px">
+    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑 CDN 分发' : '新建 CDN 分发'" width="600px">
       <div v-if="currentCdnGuide" class="vendor-guide">
         <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
           <strong>{{ currentCdnGuide.label }}</strong>
@@ -488,6 +502,8 @@ const loading = ref(false)
 const saving = ref(false)
 // 弹窗里的厂商小抄默认收起：知道去哪拿凭据的人不用先读一屏说明
 const guideOpen = ref(false)
+// AK 掩码与版本号是排障用的技术列，默认收起，别让管理员第一眼先看到它们
+const showTechCols = ref(false)
 const storages = ref<StorageProfile[]>([])
 // 两套系统自带的文件存储绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
 // 镜像只收备份副本，平台自身存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
@@ -510,6 +526,13 @@ const writableDeliveries = computed(() => deliveries.value.filter(
 const platformDelivery = computed(
   () => deliveries.value.find((p) => p.purpose === 'platform_primary') || null,
 )
+function sourceLabel(source?: string) {
+  if (source === 'global') return '全局'
+  if (source === 'inherit') return '继承'
+  if (source === 'platform') return '平台自带'
+  if (source === 'profile') return '单独绑定'
+  return source || '—'
+}
 function deliveryPurposeHint(row: { purpose?: string }) {
   if (row.purpose !== 'platform_primary') return ''
   return '平台自身 CDN：只服务 p/ 平台对象与未绑定CDN 分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
@@ -521,6 +544,27 @@ const globalBinding = ref<StorageBinding | null>(null)
 const globalStorageId = ref<number | undefined>(undefined)
 const globalDeliveryId = ref<number | undefined>(undefined)
 const boundGlobal = computed(() => !!globalStorageId.value)
+
+// 在档案列表里直接回答「谁在用这套」，不用跳到绑定页逐行对 ID。
+// 读的是已保存的绑定（不是表单里的草稿值），避免还没保存就误标「使用中」。
+function countUses(rows: StorageBinding[], key: 'storageProfileId' | 'deliveryProfileId') {
+  const counts = new Map<number, number>()
+  for (const row of rows) {
+    const id = row[key]
+    if (id) counts.set(id, (counts.get(id) || 0) + 1)
+  }
+  return counts
+}
+const storageUseCounts = computed(() => countUses(companyBindings.value, 'storageProfileId'))
+const deliveryUseCounts = computed(() => countUses(companyBindings.value, 'deliveryProfileId'))
+function usageLabel(id: number | undefined, kind: 'storage' | 'delivery') {
+  if (!id) return ''
+  const isStorage = kind === 'storage'
+  const globalId = isStorage ? globalBinding.value?.storageProfileId : globalBinding.value?.deliveryProfileId
+  if (globalId === id) return '全局默认'
+  const n = (isStorage ? storageUseCounts.value : deliveryUseCounts.value).get(id) || 0
+  return n ? `${n} 家企业` : ''
+}
 // 强制切换默认关：正常切换必须先迁移完整。只有确认目标本就是新桶时才勾。
 const forceGlobal = ref(false)
 const forceCompany = ref(false)
@@ -773,9 +817,16 @@ function exportErrors() {
 .binding-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .force-row { margin-top: 10px; }
 .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.binding-form label, .migration-create label { font-size: 13px; color: #606266; }
+.binding-form label, .migration-fields label { font-size: 13px; color: #606266; }
+.usage-tag { margin-left: 6px; }
 .company-title { font-size: 14px; margin: 0 0 10px; }
-.migration-create { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.migration-card { padding: 14px 16px; margin-bottom: 16px; border: 1px solid #ebeef5; border-radius: 8px; background: #fafcff; }
+.migration-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.migration-fields label { display: flex; flex-direction: column; gap: 6px; }
+.migration-fields .el-select, .migration-fields select.el-select { width: 100%; }
+.migration-hint { margin: 12px 0; color: #909399; font-size: 12px; }
+.migration-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.migration-actions .el-button { margin-left: auto; }
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
 .builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
@@ -800,4 +851,8 @@ function exportErrors() {
 .variant-table th { background: #fff; }
 .dialog-footnote { margin: 2px 0 0; color: #a8abb2; font-size: 12px; line-height: 1.6; }
 .table-empty { padding: 28px 16px; color: #909399; font-size: 13px; line-height: 1.8; }
+@media (max-width: 900px) {
+  .migration-fields { grid-template-columns: 1fr; }
+  .migration-actions .el-button { margin-left: 0; }
+}
 </style>

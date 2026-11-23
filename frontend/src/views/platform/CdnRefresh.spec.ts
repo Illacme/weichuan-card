@@ -179,4 +179,18 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
       expect(a.attributes('target')).toBe('_blank')
     }
   })
+
+  it('嵌入模块页签时不再重复渲染页面标题', async () => {
+    vi.mocked(listDeliveryProfiles).mockResolvedValue([profile({ provider: 'aliyun' })] as never)
+    const w = mount(CdnRefresh, {
+      props: { compact: true },
+      global: {
+        stubs: { 'el-card': ElCard, 'el-alert': ElAlert, 'el-tag': ElTag, 'el-input': ElInput, 'el-button': ElButton },
+      },
+    })
+    await vi.waitFor(() => expect(listDeliveryProfiles).toHaveBeenCalled())
+    await nextTick()
+    expect(w.findAll('h3')).toHaveLength(0)
+    expect(w.text()).toContain('提交刷新')
+  })
 })

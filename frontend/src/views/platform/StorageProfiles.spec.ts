@@ -474,6 +474,8 @@ describe('存储与分发模块', () => {
     expect(src).toContain('label="CDN 缓存刷新"')
     expect(src).toContain('name="refresh"')
     expect(src.indexOf('name="migration"')).toBeLessThan(src.indexOf('name="binding"'))
+    // 手动清缓存是运维动作，排在五步配置流程之后，不打断「建档案→迁移→切绑定」
+    expect(src.indexOf('name="binding"')).toBeLessThan(src.indexOf('name="refresh"'))
     expect((src.match(/class="tab-guide"/g) || []).length).toBeGreaterThanOrEqual(5)
     const w = mountPage()
     await flush()
@@ -544,7 +546,7 @@ describe('存储与分发模块', () => {
   it('CDN 分发弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
     const w = mountPage()
     await flush()
-    await w.findAll('button').find((b) => b.text() === '新建CDN 分发')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '新建 CDN 分发')!.trigger('click')
     await flush()
     const dialog = w.find('.el-dialog')
     const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
@@ -566,10 +568,50 @@ describe('存储与分发模块', () => {
     expect(helpTitles).toContain('资源标识')
   })
 
+  it('档案列表默认只给业务列，技术列按需展开；并直接标出谁在用', async () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    // 默认隐藏靠 v-if 真渲染控制，不是把列做成空内容
+    expect(src).toContain('v-if="showTechCols" prop="accessKeyMasked" label="AK 掩码"')
+    expect(src).toContain('v-if="showTechCols" prop="version" label="版本"')
+    // 使用中标签必须真渲染在档案行上，不能只留一个没人调用的函数
+    expect(src).toContain('v-if="usageLabel(row.id, \'storage\')"')
+    expect(src).toContain('v-if="usageLabel(row.id, \'delivery\')"')
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    expect(vm.showTechCols).toBe(false)
+    // 使用中标签读已保存的绑定，不读表单草稿
+    expect(vm.usageLabel(1, 'storage')).toBe('全局默认')
+    expect(vm.usageLabel(3, 'delivery')).toBe('全局默认')
+    expect(vm.usageLabel(999, 'storage')).toBe('')
+    const toggle = w.findAll('button').find((b) => b.text() === '更多列')!
+    await toggle.trigger('click')
+    await flush()
+    expect(toggle.text()).toBe('收起技术列')
+    expect(vm.showTechCols).toBe(true)
+  })
+
+  it('迁移表单按三栏排布并先提示试运行，空任务表给出下一步', () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain('class="migration-fields"')
+    expect(src).toContain('先勾「试运行」核对对象数量')
+    expect(src).toContain('还没有迁移任务')
+  })
+
+  it('绑定来源显示中文语义，不把后端枚举直接抛给管理员', async () => {
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    expect(vm.sourceLabel('global')).toBe('全局')
+    expect(vm.sourceLabel('inherit')).toBe('继承')
+    expect(vm.sourceLabel('platform')).toBe('平台自带')
+    expect(vm.sourceLabel('profile')).toBe('单独绑定')
+  })
+
   it('空表给出引导文案，不让管理员对着白板猜下一步', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('<template #empty>')
     expect(src).toContain('还没有文件存储')
-    expect(src).toContain('还没有CDN 分发')
+    expect(src).toContain('还没有 CDN 分发')
   })
 })

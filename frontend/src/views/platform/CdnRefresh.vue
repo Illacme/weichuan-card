@@ -1,6 +1,6 @@
 <template>
   <el-card>
-    <div class="page-bar">
+    <div v-if="!compact" class="page-bar">
       <h3>CDN 缓存刷新</h3>
       <!-- 当前生效厂商：值来自「CDN 分发 → 平台自身 CDN」（迁移 0060 之前是系统设置的
            cdn_provider）。没配时后端按 aliyun 回落，这里如实标注，避免「没配过怎么会
@@ -61,6 +61,7 @@ import {
 } from '@/utils/cdn'
 import { cdnGuide } from '@/utils/storageGuides'
 
+defineProps<{ compact?: boolean }>()
 const emit = defineEmits<{ (e: 'goto-settings'): void }>()
 const urls = ref('')
 const loading = ref(false)
