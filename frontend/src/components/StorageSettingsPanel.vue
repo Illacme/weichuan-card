@@ -8,9 +8,9 @@
         <h3 class="hero-title">{{ locationTitle }}</h3>
         <p class="hero-desc">{{ locationDesc }}</p>
         <p class="hero-note">
-          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 主存储」里改；
-          CDN 刷新的厂商与凭据在「CDN 分发 → 平台自身 CDN」里改。两处保存后都需要重启。
-          这里只管服务器目录与本地备份。
+          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 主存储」里改，
+          CDN 刷新的厂商与凭据在「CDN 分发 → 平台自身 CDN」里改——两处保存即生效，无需重启。
+          这里只管服务器目录与本地备份，这两类改动仍需重启。
         </p>
         <div class="hero-chips">
           <span class="chip" :class="{ 'chip-on': mirrorOn }">本地备份 {{ mirrorOn ? '已开启' : '未开启' }}</span>

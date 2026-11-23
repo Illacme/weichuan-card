@@ -428,6 +428,10 @@ func main() {
 	// 历史上这里还有 TENANT_STORAGE_ROUTE 开关与 tenant_storage_configs 分流，
 	// 第七十五轮随该表一起删除：产品未商用，兼容层不值得每个请求多查一次库。
 	profiles.SetPlatform(up, platformDriver)
+	// 平台主存储的访问基址 / 公开读在运行期由主存储档案决定（保存即生效）。
+	// 注入 profiles 的动态读取函数；未读到档案时它内部回落 cfg，行为与旧版一致。
+	// 目录类（upload_dir / mirror_dir）不在此列，改目录仍需重启。
+	handler.SetPlatformRuntime(profiles.PlatformBaseURL, profiles.PlatformPublic)
 	var effective storage.Resolver = profiles
 	handler.RegisterUpload(r, db, cfg, effective, refresher)  // POST /api/admin/upload + /api/employee/upload（图片异步送检）
 	handler.RegisterStorage(r, db, effective, refresher, cfg) // 直传预签名 / 私有桶签名 / CDN 刷新 / 本地私有文件流

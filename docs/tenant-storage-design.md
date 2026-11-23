@@ -162,7 +162,7 @@
 
 | 用途 | 装什么 | 谁能改 |
 | --- | --- | --- |
-| `platform_primary` | 平台自身连接信息：驱动 / 端点 / 桶 / 区域 / AK/SK / 基址 / HTTPS / 公开读；目录字段只是 `upload_dir` 的镜像 | 平台超管在档案页改，保存后**重启**生效；可复用档案自检 |
+| `platform_primary` | 平台自身连接信息：驱动 / 端点 / 桶 / 区域 / AK/SK / 基址 / HTTPS / 公开读；目录字段只是 `upload_dir` 的镜像 | 平台超管在档案页改，**保存即生效**（Resolver 按 version 现建平台实例，无需重启）；可复用档案自检。目录字段仍跟随 `upload_dir`，改目录需重启 |
 | `tenant_fallback` | `upload_dir` 那块本地退路盘 | 只改展示名；驱动锁 local，目录跟随 `upload_dir` |
 | `platform_mirror` | `mirror_dir` 那块私有备份盘 | 只改展示名；驱动锁 local，目录跟随 `mirror_dir` |
 

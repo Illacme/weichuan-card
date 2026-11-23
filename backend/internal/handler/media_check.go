@@ -72,7 +72,7 @@ func mediaCheckParams(db *gorm.DB, cfg config.Config, companyID int64, openid st
 		Cred:      wxAppOf(db, companyID, cfg),
 		OpenID:    openid,
 		PushReady: resolveWXMsgToken(cfg) != "",
-		BaseURL:   cfg.UploadBaseURL,
+		BaseURL:   effectiveBaseURL(cfg),
 		Scene:     wechat.SceneProfile,
 	}
 }
@@ -410,7 +410,7 @@ func mediaCheckConfig(db *gorm.DB, cfg config.Config) gin.HandlerFunc {
 // msgPushURL 由上传基址推出推送地址：上传基址是唯一一处「本服务对外是什么地址」
 // 的配置，再单开一项只为了拼一个 URL，运维必然会漏配其中一个。
 func msgPushURL(cfg config.Config) string {
-	base := strings.TrimRight(strings.TrimSpace(cfg.UploadBaseURL), "/")
+	base := strings.TrimRight(strings.TrimSpace(effectiveBaseURL(cfg)), "/")
 	base = strings.TrimSuffix(base, "/uploads")
 	if base == "" {
 		return ""

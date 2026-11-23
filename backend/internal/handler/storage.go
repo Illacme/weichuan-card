@@ -299,7 +299,7 @@ func signHandler(res storage.Resolver, cfg config.Config) gin.HandlerFunc {
 			// 从存库的资源引用反推对象键（云驱动绝对基址 / 本地 /uploads/ 相对路径 /
 			// 裸键都覆盖）。先判 /uploads/ 再判基址，修复了旧实现在 UploadBaseURL
 			// 为空时把 /uploads/x.jpg 错截成 uploads/x.jpg 的旧 bug（多一层目录）。
-			key, err := storage.ObjectKeyFromURL(u, cfg.UploadBaseURL)
+			key, err := storage.ObjectKeyFromURL(u, effectiveBaseURL(cfg))
 			if err != nil || key == "" {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "无法解析对象 key: " + u})
 				return
@@ -384,7 +384,7 @@ func cdnRefreshHandler(rf storage.CDNRefresher) gin.HandlerFunc {
 		if rf == nil {
 			// 五家厂商要求的凭据不同（Cloudflare 是 Token+Zone ID，AK/SK 三家不要资源标识），
 			// 所以提示只指路、不点名具体环境变量，避免指错厂商
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → CDN 分发」新建一套并绑定，或给「平台自身 CDN」选好厂商并填全凭据后重启服务"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "CDN 刷新未配置：请在「存储与分发 → CDN 分发」新建一套并绑定，或给「平台自身 CDN」选好厂商并填全凭据后保存即生效"})
 			return
 		}
 		// 动态刷新器是个壳：包了壳但没有全局刷新器、也没有分发档案绑定时，

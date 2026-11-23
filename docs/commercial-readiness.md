@@ -6086,3 +6086,35 @@ OpenAPI 契约；新增路由重定向、页签顺序、嵌入组件与文档术
 **验证**：新增页签顺序、技术列默认收起、使用中标签、迁移卡片与空状态、来源映射、
 紧凑模式等守门；全量 Vitest / type-check / lint / Vite build、后端 go test / vet / build、
 OpenAPI 契约、反向验证均通过。
+
+## 第八十六轮：关键配置保存即生效（A1——去掉"改凭据要重启"）
+
+**用户诉求**：A1 是产品评估里"体验最重的一条"——主存储驱动/凭据/基址、CDN 厂商与凭据
+改完必须重启，与"绑定改完下一个请求生效"形成两套语义，管理员最容易踩。
+范围经用户拍板锁定：本轮做**凭据 + 驱动 + 访问基址**热更新，目录类
+（upload_dir / mirror_dir）保留重启（绑 gin 静态路由与镜像回拉，风险高、收益低）。
+
+**根因**：0059/0060 后连接信息已收进内置档案，但① 平台上传器 / 刷新器在启动期构造一次、
+作为固定指针注入各 handler；② 少数辅助路径读的是启动期 cfg 值拷贝。出参侧（OriginFor /
+ResolveRef）本来就走动态快照，改基址后用户看到的 URL 早已是新的。
+
+**不改语义、只改"何时生效"的落地**：
+- `storageprofile/platform_live.go`：Resolver 按主存储内置档案 version 现建并缓存平台上传器
+  （`Platform()` / `DriverFor()`），按平台 CDN 内置档案 version 现建刷新器
+  （`PlatformCDNRefresher()`）；整份快照放 atomic.Value，并发请求要么全旧要么全新。
+  **只认 `purpose=platform_primary` 的内置行，绝不读全局绑定**（p/ 对象借用客户桶取图必 404）。
+  构造失败保留上一份可用实例并记日志、修正后保存即恢复（改错可自愈）。
+- `DynamicCDN` 的平台对象分支改走动态刷新器；无平台 CDN 档案（未迁移旧库）才回落启动 base，
+  档案存在但 provider=none 是明确"不刷新"，不得回落。
+- `handler/platform_runtime.go`：用函数注入（沿用 SetProfileOriginResolver 模式）让写入归一、
+  内容安全下架、私有桶签名、小程序码签名在运行期读 `PlatformBaseURL()` / `PlatformPublic()`；
+  未注入时回落 cfg，单测与旧库行为不变。两个 main 入口注入。
+- 前端文案与文档同步：驱动/凭据/基址/厂商说明改为"保存即生效、无需重启"，
+  重启话术只留给目录类；加源码级守门防止旧话术回贴。
+
+**验证**：
+- 后端：gofmt / vet / build / `go test ./...` 全绿；新增 7 条热更新守门测试。
+- **反向验证**四组全部"注入坏实现必红 → 还原复绿"：① Platform() 退回固定指针 → 3 条红；
+  ② DynamicCDN 退回固定 base → 平台 CDN 守门红；③ effectiveBaseURL 退回 cfg → 注入守门红；
+  ④ 前端 driver.note 贴回"必须重启" → 文案守门红。
+- 目录类（upload_dir / mirror_dir）行为未动，相关"改后重启"守门保持原样通过。

@@ -32,6 +32,10 @@ import (
 
 // storageRefStrictEnv 控制写入侧是否做落库前归一。
 //
+// 【基址热更新】本文件与同包其他辅助路径的 cfg.UploadBaseURL 一律通过
+// effectiveBaseURL(cfg) 读取：生产入口注入 profiles.PlatformBaseURL 后，
+// 改主存储访问基址保存即生效；未注入（单测 / 旧库）时回落 cfg 原值。
+//
 // 默认**开**（未设即生效）；设成 0 / false 退回第五十八轮的行为：收到什么写什么。
 //
 // 为什么「默认开 + 可关」而不是「默认关 + 可开」：收敛不默认生效等于代码写了但
@@ -70,7 +74,7 @@ func normalizeResourceRef(cfg config.Config, companyID int64, field, raw string)
 	if !storageRefStrict() {
 		return raw, nil // 回滚模式：第五十八轮及以前的旧行为
 	}
-	key, kind, err := storage.NormalizeOrKeep(raw, cfg.UploadBaseURL, scopeOf(companyID), companyID)
+	key, kind, err := storage.NormalizeOrKeep(raw, effectiveBaseURL(cfg), scopeOf(companyID), companyID)
 	if err != nil {
 		return "", err
 	}

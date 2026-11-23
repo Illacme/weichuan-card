@@ -19,12 +19,13 @@ import (
 //
 // 三件事必须分清：
 //   - 连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）在 storage_profiles，
-//     由档案页统一编辑、统一自检；
+//     由档案页统一编辑、统一自检，保存即生效（Resolver 按 version 现建平台实例）；
 //   - 目录事实（upload_dir / mirror_dir）留在 sys_setting，改完必须重启；
 //   - sys_setting 里只多一个指向档案的 id，便于排障时确认「平台实际用哪一套」。
 //
-// 平台实例仍是启动期构造、运行期不可变：改档案只改库、不换进程里的实例，
-// 避免一个请求写新桶、下一个请求又写旧桶。要确保生效必须重启。
+// 平台实例由 Resolver 按档案 version 现建、整份替换（见 platform_live.go），
+// 保存即生效；并发请求要么全用旧实例、要么全用新实例，不会一个请求写新桶、
+// 下一个请求又写旧桶。构造失败时保留上一份可用实例，改错可自愈。
 
 const builtinPlatformName = "主存储"
 
@@ -97,8 +98,10 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 //
 // 业务代码里仍有大量读取 cfg.StorageDriver / cfg.StoragePublic / cfg.UploadBaseURL
 // 的地方（出参归一化、签名、日志、安装向导）。让它们各自去读档案既重复又容易漂移，
-// 所以在启动期一次性同步：此后 cfg 只读，档案改动必须重启才生效——与内置档案的
-// 语义一致，也保持平台实例运行期不可变。
+// 所以启动期一次性同步给这些读者。此后运行期要跟着档案变的路径不读这份 cfg：
+// 平台实例走 Resolver.Platform()，基址 / 公开读走 PlatformBaseURL/PlatformPublic
+// 的函数注入（见 platform_live.go 与 handler/platform_runtime.go），保存即生效。
+// cfg 本身保持只读，只有目录类字段（upload_dir/mirror_dir）仍属启动配置。
 func ApplyPlatformConfig(cfg *config.Config, sp *model.StorageProfile) {
 	if cfg == nil || sp == nil {
 		return

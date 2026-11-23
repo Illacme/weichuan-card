@@ -22,7 +22,7 @@
     <el-alert
       type="info"
       :closable="false"
-      title="覆盖同名文件的操作（素材采用、小程序码重生成）会自动刷新，这里是手动兜底：直接在对象存储里换了文件、或想让边缘立刻失效时用。支持阿里云 / 腾讯云 / 七牛云 / Cloudflare / AWS CloudFront，平台对象的厂商与凭据在「存储与分发 → CDN 分发 → 平台自身 CDN」里配（首次部署也可用环境变量播种），改完需重启服务。条数超过厂商单次上限时会自动分批提交。"
+      title="覆盖同名文件的操作（素材采用、小程序码重生成）会自动刷新，这里是手动兜底：直接在对象存储里换了文件、或想让边缘立刻失效时用。支持阿里云 / 腾讯云 / 七牛云 / Cloudflare / AWS CloudFront，平台对象的厂商与凭据在「存储与分发 → CDN 分发 → 平台自身 CDN」里配（首次部署也可用环境变量播种），保存即生效、无需重启。条数超过厂商单次上限时会自动分批提交。"
       style="margin-bottom: 14px"
     />
 
@@ -107,13 +107,13 @@ const blockReason = computed(() => {
   // 设置还没拉到（或拉取失败）时不下判断：宁可不提示，也不误报「未启用」
   if (!loaded.value) return ''
   if (!platform.value) {
-    return '还没读到「平台自身 CDN」这条配置（旧版本可能尚未生成）。请到「存储与分发 → CDN 分发」确认那一行存在，保存后重启服务。'
+    return '还没读到「平台自身 CDN」这条配置（旧版本可能尚未生成）。请到「存储与分发 → CDN 分发」确认那一行存在并保存。'
   }
   if (!enabled.value) {
-    return 'CDN 刷新当前未启用，提交会被拒绝。请到「存储与分发 → CDN 分发 → 平台自身 CDN」选好厂商并填全它要求的凭据，保存后重启服务。'
+    return 'CDN 刷新当前未启用，提交会被拒绝。请到「存储与分发 → CDN 分发 → 平台自身 CDN」选好厂商并填全它要求的凭据，保存即生效。'
   }
   if (missingKeys.value.length) {
-    return `当前厂商 ${provider.value} 还缺 ${missingKeys.value.join('、')}，提交会被拒绝。请到「存储与分发 → CDN 分发 → 平台自身 CDN」补齐后重启服务。`
+    return `当前厂商 ${provider.value} 还缺 ${missingKeys.value.join('、')}，提交会被拒绝。请到「存储与分发 → CDN 分发 → 平台自身 CDN」补齐后保存即生效。`
   }
   return ''
 })

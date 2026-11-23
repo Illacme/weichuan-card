@@ -246,6 +246,8 @@ func main() {
 	// 与生产同一套解析：平台实例由 SetPlatform 注入，租户桶只看档案绑定。
 	// 联调即验证契约，不能因为「dev 就固定走平台」让租户路由在生产才第一次跑。
 	profiles.SetPlatform(up, platformDriver)
+	// 与生产一致：基址 / 公开读在运行期由主存储档案决定（保存即生效）。
+	handler.SetPlatformRuntime(profiles.PlatformBaseURL, profiles.PlatformPublic)
 	var effective storage.Resolver = profiles
 	handler.RegisterUpload(r, db, cfg, effective, refresher)
 	handler.RegisterMediaCheck(r, db, cfg, effective, refresher)

@@ -109,4 +109,26 @@ describe('存储模块的产品化事实表', () => {
     expect(driverGuide('local')?.links).toHaveLength(0)
     expect(cdnGuide('none')?.links).toHaveLength(0)
   })
+
+  // A1 热更新守门：连接信息（驱动/凭据/桶/基址）与 CDN 凭据保存即生效，
+  // 文案里不能再叫管理员重启。目录类（upload_dir/mirror_dir）仍属启动配置，
+  // 那部分"改完重启"的说明必须保留，不能一刀切删掉。
+  it('连接信息与 CDN 凭据说明保存即生效，重启话术只留给目录类', () => {
+    const liveTexts = [
+      STORAGE_FIELD_GUIDES.driver.note!,
+      DELIVERY_FIELD_GUIDES.provider.note!,
+      SETUP_STEPS.find((s) => s.tab === 'binding')!.body,
+      TAB_GUIDES.platform.desc,
+    ]
+    for (const text of liveTexts) {
+      expect(text).toContain('保存即生效')
+      // "无需重启"里的"需重启"是子串，不能误判；只挡明确要求重启的旧话术。
+      expect(text).not.toContain('必须重启')
+      expect(text).not.toContain('后重启')
+      expect(text).not.toContain('再重启')
+      expect(text).not.toContain('改完重启')
+    }
+    // 目录字段仍明确要重启，避免管理员以为换目录也能热更新。
+    expect(STORAGE_FIELD_GUIDES.localDir.note).toContain('重启')
+  })
 })

@@ -305,7 +305,7 @@ func RegisterWechat(r *gin.Engine, db *gorm.DB, cfg config.Config, res storage.R
 // resolveWxacodeURL 公开桶返回公开 URL；私有桶（且存储支持签名）返回限时 GET URL（每次重签，1 小时有效）。
 // 本地驱动无 Signer：静态路由已托管，回退公开 URL。
 func resolveWxacodeURL(e wxacodeEntry, cfg config.Config, up storage.Uploader) (string, error) {
-	if cfg.StoragePublic {
+	if effectivePublic(cfg) {
 		return e.publicURL, nil
 	}
 	if s, ok := up.(storage.Signer); ok {

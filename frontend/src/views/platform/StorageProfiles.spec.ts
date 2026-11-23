@@ -316,13 +316,15 @@ describe('存储与分发模块', () => {
     expect(src).toContain("p.purpose !== 'platform_primary'")
     expect(src).toContain("p.purpose !== 'platform_mirror'")
 
-    // 主存储的编辑弹窗保留驱动可改与「重启 + 自检」提示，
+    // 主存储的编辑弹窗保留驱动可改；连接信息保存即生效，不能再叫管理员重启。
     // 另外两套 builtin 仍锁 local；不能因为都是 builtin 就一刀切锁死。
     const edit = w.findAll('button').filter((b) => b.text() === '编辑')[0]
     await edit.trigger('click')
     await flush()
     expect(w.text()).toContain('连接信息在这里改')
-    expect(w.text()).toContain('重启')
+    expect(w.text()).toContain('保存即生效')
+    expect(w.text()).not.toContain('保存后必须重启')
+    expect(w.text()).not.toContain('再重启后端')
     expect(w.text()).toContain('不可删除')
     expect(src).toContain(":disabled=\"storageForm.builtin && storageForm.purpose !== 'platform_primary'\"")
   })

@@ -152,7 +152,8 @@ describe('主存储配置面板', () => {
     expect(text).toContain('文件存储 → 主存储')
     // CDN 凭据只在一处：CDN 分发的内置行，不再在本面板留第二份表单
     expect(text).toContain('CDN 分发 → 平台自身 CDN')
-    expect(text).toContain('保存后都需要重启')
+    expect(text).toContain('两处保存即生效，无需重启')
+    expect(text).toContain('这两类改动仍需重启')
 
     await w.findAll('button').find((b) => b.text() === '去文件存储修改')!.trigger('click')
     expect(w.emitted('goto-profiles')).toBeTruthy()

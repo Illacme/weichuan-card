@@ -78,6 +78,17 @@ type Resolver struct {
 	// 它不参与租户路由判定——「这家有没有自己的桶」只看绑定。
 	platform       storage.Uploader
 	platformDriver string
+	// platformUp / platformCDNUp 缓存按内置档案 version 现建的平台实例。
+	// 每次整份替换（见 platform_live.go），并发读无锁；为空表示尚未建成。
+	platformUp    atomic.Value // *platformInstance
+	platformCDNUp atomic.Value // *platformRefresherEntry
+	// 构建串行化：两个请求同时发现 version 变化、各自慢构建时，旧版本的慢构建
+	// 完成得比新版本晚会把新实例覆盖回旧实例。加互斥锁保证"先到先构建、后到
+	// 看到缓存直接用"，构建期间其它请求短等，不会撕裂。
+	platformBuildMu    sync.Mutex
+	platformCDNBuildMu sync.Mutex
+	// 告警按 version 去重，避免凭据配错期间每个请求都打一行 WARN 刷屏。
+	warnedStorageVer string
 
 	snap atomic.Value // *Snapshot
 	mu   sync.Mutex
@@ -308,11 +319,15 @@ func (r *Resolver) For(cid int64) (storage.Uploader, error) {
 	return r.Platform(), nil
 }
 
-// Platform 恒返回平台自身那一份实例，**不参与**档案解析。
-// 理由见 SetPlatform 与 storage.Resolver.Platform 的注释。
+// Platform 返回平台自身那一份实例，**不参与**任何租户绑定解析。
+//
+// 平台实例的真值源是「主存储」内置档案（迁移 0059）：改了凭据/驱动/基址后
+// 由 livePlatform 按档案 version 现建，保存即生效，不再需要重启。
+// 只有档案还没读到（旧库/启动瞬间）或构造失败时才回落到启动期注入的兜底实例，
+// 保证管理员还能进后台修正配置。理由见 SetPlatform 与 storage.Resolver.Platform。
 func (r *Resolver) Platform() storage.Uploader {
-	if r.platform == nil {
-		return nil
+	if inst := r.livePlatform(); inst != nil && inst.up != nil {
+		return inst.up
 	}
 	return r.platform
 }
@@ -324,6 +339,11 @@ func (r *Resolver) DriverFor(cid int64) string {
 		if eff, err := r.Resolve(cid); err == nil && eff.Storage != nil {
 			return eff.Storage.Driver
 		}
+	}
+	// 平台驱动跟随主存储档案实时变化（换驱动后界面能力探测立即反映新落点），
+	// 与 Platform() 用的是同一份 livePlatform 快照，不会出现"显示新驱动、实例还是旧的"。
+	if inst := r.livePlatform(); inst != nil && inst.driver != "" {
+		return inst.driver
 	}
 	if r.platformDriver == "" {
 		return "local"
@@ -617,7 +637,25 @@ func NewDynamicCDN(base storage.CDNRefresher, prof *Resolver) storage.CDNRefresh
 
 // Configured 让 handler 能区分「没配 CDN」与「配了但这次刷新失败」。
 func (d *DynamicCDN) Configured() bool {
-	return d.base != nil || (d.prof != nil && d.prof.HasDeliveryBinding())
+	if d.base != nil || (d.prof != nil && d.prof.HasDeliveryBinding()) {
+		return true
+	}
+	// 平台自身 CDN 档案热更新后可能新配了厂商，启动期 base 还是 nil——
+	// 这里按当前档案再判一次，避免界面一直显示「未启用」。
+	return d.prof != nil && d.prof.PlatformCDNConfigured()
+}
+
+// platformRefresher 返回当前平台刷新器：档案存在时以档案为真值源（found=true，
+// rf 可能为 nil 表示明确不刷新/凭据无效），档案不存在才回落启动期 base。
+func (d *DynamicCDN) platformRefresher() storage.CDNRefresher {
+	if d.prof == nil {
+		return d.base
+	}
+	rf, found := d.prof.PlatformCDNRefresher()
+	if found {
+		return rf
+	}
+	return d.base
 }
 
 // Refresh 按 URL 归属选 CDN 刷新器。
@@ -642,9 +680,11 @@ func (d *DynamicCDN) Refresh(urls []string) error {
 	platformURLs, rest := splitPlatformURLs(urls)
 	var errs []error
 	if len(platformURLs) > 0 {
-		// 平台没配 CDN（provider=none）时是明确「不刷新」，不是失败。
-		if d.base != nil {
-			if err := d.base.Refresh(platformURLs); err != nil {
+		// 平台刷新器按「平台自身 CDN」档案实时构造；档案选中「不刷新」时返回
+		// nil，是明确决定而非失败。凭据无效时 PlatformCDNRefresher 记日志并
+		// 返回 (nil,true)，这里不报错——刷新是增强，不能挡住平台对象覆盖写。
+		if rf := d.platformRefresher(); rf != nil {
+			if err := rf.Refresh(platformURLs); err != nil {
 				errs = append(errs, err)
 			}
 		}

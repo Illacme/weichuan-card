@@ -328,7 +328,7 @@ export STORAGE_PUBLIC="true"
 export STORAGE_REF_STRICT="1"
 # CDN 刷新（覆盖写后使边缘缓存失效）：CDN_ENABLED=1 + 厂商 + 该厂商要求的凭据。
 # 迁移 0060 起这些值只在**首次启动**时播种进「分发档案 → 平台自身 CDN」，
-# 之后真值源是那份档案（后台改，改完重启），环境变量不再覆盖它。
+# 之后真值源是那份档案（后台改，保存即生效、无需重启），环境变量不再覆盖它。
 export CDN_ENABLED="false"
 # 厂商：aliyun / tencent / qiniu / cloudflare / cloudfront（留空按 aliyun）
 export CDN_PROVIDER="aliyun"
@@ -401,9 +401,13 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 [`docs/tenant-storage-design.md`](../docs/tenant-storage-design.md)。
 
 - **运行期真值源是 `storage_profiles` 里 `purpose=platform_primary` 的内置档案**（迁移 0059），
-  档案页统一编辑 / 自检，改完必须重启。下面的 `STORAGE_*` / `MINIO_*` / `OSS_*` / `UPLOAD_BASE_URL`
+  档案页统一编辑 / 自检，**保存即生效**：`Resolver.Platform()` / `DriverFor()` 按档案 version 现建
+  平台实例，访问基址与公开读由 `PlatformBaseURL()` / `PlatformPublic()` 在运行期读取并注入 handler；
+  运行期构造失败保留上一份可用实例并记日志，修正后保存即恢复。启动期仍用下面这些字段播种一次，
+  构造失败降级本地盘（见 `platformUploader`）。下面的 `STORAGE_*` / `MINIO_*` / `OSS_*` / `UPLOAD_BASE_URL`
   仍是私有部署与老库的**首次播种入口**：档案不存在时用它们生成档案，之后不再覆盖档案里的值；
   `sys_setting` 里那组旧 `storage_*` 同样只在播种时读一次，随即清理。
+  目录类 `upload_dir` / `mirror_dir` 绑在静态路由与镜像回拉上，改目录仍需重启。
 - 业务代码（handler / 前端 / 小程序）完全不变；启动链按档案调用
   `storageprofile.EnsureBuiltinPlatformPrimary` → `ApplyPlatformConfig` → `BuildPlatformUploader`
   → `profiles.SetPlatform`，统一满足 `storage.Uploader` 接口。构造失败降级本地盘并回报实际驱动 `local`：
@@ -412,7 +416,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   - `oss`：写入阿里云 OSS，需 `OSS_*` 环境变量；`UPLOAD_BASE_URL` 设为 bucket 公网域名或绑定的自定义域名/CDN。
   - `s3`：与 `minio` 共用同一套实现与字段，只表达「这是一朵 S3 兼容云」（COS / OBS / 七牛 / AWS S3 / R2）。**七牛的端点按空间所在区域分域名**：`s3.<区域>.qiniucs.com`（如 `s3.cn-south-1.qiniucs.com`），区域只能从控制台存储空间概览的「S3 域名」弹窗里看——匿名探测在所有区域都只回 `NotSupportAnonymous`，探不出来。填错时报的是 S3 错误码（签名不匹配 / NoSuchBucket），看着像密钥错，实际是端点点错了。`UPLOAD_BASE_URL` 要填**存储空间自己绑定的 CDN 域名**，不是这个 S3 端点。
     - **访问域名先自测再填**：`curl -I https://<CDN域名>/<一个已上传对象>` 必须是 `200` 且 `Content-Type` 为 `video/mp4`。七牛 CDN 域名如果没在控制台启用 HTTPS，会返回 `403` + `X-Error-Info: httpsDisabled`，而 443 端口上挂的是 CDN 厂商的默认证书（主机名不匹配）；此时 `http://` 能取到对象、`https://` 一律取不到。表现是**图片可能还看得见（走了别的域名）、视频却是一块黑屏 + 00:00**，且小程序不会弹任何错误。
-    - **七牛 S3 的对象名带目录前缀**：经 S3 兼容端点上传的文件，在控制台「文件管理」里是 `aitel/87200d3a….mp4` 这种带空间名的路径，不是裸文件名。于是 `UPLOAD_BASE_URL` 必须把这一层一起带上（`http://<CDN域名>/aitel`），只填裸域名会拼出 `http://<CDN域名>/87200d3a….mp4` → 404，而 `http://<CDN域名>/aitel/87200d3a….mp4` 才是 200。**自测**：对同一个已上传对象分别 `curl -I http://<CDN域名>/<对象名>` 和 `curl -I http://<CDN域名>/aitel/<对象名>`，哪个 200 就按哪个填。改完要重启服务，且**只影响新上传**——已入库的完整 URL 不会自动更新，要重新上传或改库记录。基址允许带路径这一点由 `minio_test.go` 的 `TestMinioBaseURLPathPrefix` 钉住。
+    - **七牛 S3 的对象名带目录前缀**：经 S3 兼容端点上传的文件，在控制台「文件管理」里是 `aitel/87200d3a….mp4` 这种带空间名的路径，不是裸文件名。于是 `UPLOAD_BASE_URL` 必须把这一层一起带上（`http://<CDN域名>/aitel`），只填裸域名会拼出 `http://<CDN域名>/87200d3a….mp4` → 404，而 `http://<CDN域名>/aitel/87200d3a….mp4` 才是 200。**自测**：对同一个已上传对象分别 `curl -I http://<CDN域名>/<对象名>` 和 `curl -I http://<CDN域名>/aitel/<对象名>`，哪个 200 就按哪个填。在后台「主存储」里改基址**保存即生效、无需重启**；若改的是首次播种用的环境变量则需重启。基址**只影响新上传**——已入库的完整 URL（第五十四轮之前的老对象）不会自动更新，要重新上传或改库记录。基址允许带路径这一点由 `minio_test.go` 的 `TestMinioBaseURLPathPrefix` 钉住。
       - 但**第五十九轮之后保存的表单不再落绝对 URL**，而是落裸键 `t/<cid>/x`（服务端落库前归一，见 `docs/tenant-storage-url-boundaries.md` §5.5）。裸键出参时按 `/uploads/` 相对路径拼，因此 `UPLOAD_BASE_URL` 改不改都不影响它们——真正还受影响的只剩「第五十四轮之前入库的老对象」，那批要靠 P3 存量搬迁处理。
     - 对象存储还要配**跨域规则允许 `PUT`**：直传是浏览器直接 PUT，没配会被拦下并静默回退成经应用服务器中转（大视频占服务器带宽）。后台上传进度条会明确显示「已改用服务器中转」；字节发完后会切到「正在写入云存储…」并显示已等待秒数——那段是服务器在把文件**再写一次对象存储**，没有任何上传进度事件，不是百分比算错了。
 - 三种实现都做了**统一的大小 / 类型白名单校验**（`checkFile`），对象命名布局一致（用户上传放 `uploads/<rand>`，小程序码放 `wxacode/<staffId>.jpg`），便于从本地平滑迁移到对象存储。
@@ -564,7 +568,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 小程序端：原生 `wx.uploadFile` 只能 multipart POST，不便做 raw PUT；小程序仍走普通 `/api/employee/upload` 服务端上传（能力已具备），直传预签名主要在 PC 后台生效。
 
 ### 2. CDN 刷新（五家厂商）
-- 启用：在「存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，保存后重启；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
+- 启用：在「存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，**保存即生效、无需重启**（`DynamicCDN` 按该档案 version 现建平台刷新器）；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
 - 各家要填什么（界面按厂商联动只显示需要的字段）：
 
   | 厂商 | AccessKeyId 位 | AccessKeySecret 位 | 资源标识 | 默认端点 | 单次上限 |
