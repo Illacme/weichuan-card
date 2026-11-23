@@ -180,7 +180,7 @@ describe('存储与分发模块', () => {
     const vm: any = w.vm
     vm.newJob.sourceProfileId = 1
     vm.newJob.targetProfileId = 1
-    const createButton = w.findAll('button').find((b) => b.text() === '创建任务')!
+    const createButton = w.findAll('button').find((b) => b.text() === '创建并启动')!
     await createButton.trigger('click')
     await flush()
     expect(api.createMigrationJob).not.toHaveBeenCalled()
@@ -248,6 +248,8 @@ describe('存储与分发模块', () => {
     expect(w.text()).toContain('平台镜像')
     // 两条内置档案的悬停提示各自可区分，管理员不会混为一谈
     const tips = w.findAllComponents({ name: 'ElTooltip' })
+      // 列表里还有「连通性」的自检时间提示，这里只挑档案用途说明那一批。
+      .filter((t) => !String(t.props('content')).includes('自检'))
     expect(tips).toHaveLength(2)
     expect(tips[0].props('content')).toContain('系统自带的备用盘')
     expect(tips[1].props('content')).toContain('系统自带的备份盘')
@@ -294,6 +296,7 @@ describe('存储与分发模块', () => {
     expect(w.text()).toContain('租户退路')
     expect(w.text()).toContain('平台镜像')
     const tips = w.findAllComponents({ name: 'ElTooltip' })
+      .filter((t) => !String(t.props('content')).includes('自检'))
     expect(tips).toHaveLength(3)
     expect(tips[0].props('content')).toContain('p/ 平台对象')
     expect(tips[0].props('content')).toContain('不能绑定给企业')
@@ -594,7 +597,8 @@ describe('存储与分发模块', () => {
   it('迁移表单按三栏排布并先提示试运行，空任务表给出下一步', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('class="migration-fields"')
-    expect(src).toContain('先勾「试运行」核对对象数量')
+    // 创建即启动后，「先试运行核对数量」的指引必须跟着改，否则会让人去找已经不存在的第二步。
+    expect(src).toContain('勾「试运行」后点「创建并启动」')
     expect(src).toContain('还没有迁移任务')
   })
 
@@ -608,10 +612,165 @@ describe('存储与分发模块', () => {
     expect(vm.sourceLabel('profile')).toBe('单独绑定')
   })
 
-  it('空表给出引导文案，不让管理员对着白板猜下一步', () => {
+  it('两个列表的空表文案点明「空表＝没加载出来」，而不是「还没有」', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('<template #empty>')
-    expect(src).toContain('还没有文件存储')
-    expect(src).toContain('还没有 CDN 分发')
+    // 系统自带 3 套文件存储 + 1 条平台 CDN 都是启动时必生成的。
+    // 真为空只可能是没读到数据，写成「还没有…」会让管理员以为一切正常、继续等。
+    expect(src).toContain('读不到文件存储列表')
+    expect(src).toContain('读不到 CDN 分发列表')
+    expect(src).not.toContain('还没有文件存储')
+    expect(src).not.toContain('还没有 CDN 分发')
+  })
+
+  it('厂商列与迁移状态显示中文，不把后端枚举抛给管理员', async () => {
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    // 同一个模块里「CDN 缓存刷新」显示「阿里云」，列表不能显示 aliyun。
+    expect(vm.providerLabel('aliyun')).toBe('阿里云')
+    expect(vm.providerLabel('cloudfront')).toBe('AWS CloudFront')
+    expect(vm.providerLabel('none')).toBe('不启用 CDN')
+    expect(vm.providerLabel('')).toBe('不启用 CDN')
+    // 迁移状态：running/done/failed 是给代码看的。
+    expect(vm.migrationStatus('running').text).toBe('进行中')
+    expect(vm.migrationStatus('done').text).toBe('已完成')
+    expect(vm.migrationStatus('failed').text).toBe('失败')
+    expect(vm.migrationStatus('canceled').text).toBe('已取消')
+    // 后端将来加新状态：不许渲染成空标签，原样回显。
+    expect(vm.migrationStatus('paused').text).toBe('paused')
+    expect(vm.migrationStatus('').text).toBe('未知')
+  })
+
+  it('迁移进度自动刷新是真的：有 running 任务且在迁移页签才轮询，离开即停', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.listMigrationJobs).mockResolvedValue([
+        { id: 1, tenantId: 0, sourceProfileId: 1, targetProfileId: 2, status: 'running', done: 1, total: 3, failed: 0, error: '' },
+      ] as any)
+      const w = mountPage()
+      await flush()
+      const vm: any = w.vm
+      const calls = () => vi.mocked(api.listMigrationJobs).mock.calls.length
+
+      // 不在迁移页签：不该有任何轮询，否则后台页签也在偷偷打接口。
+      const base = calls()
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(calls()).toBe(base)
+
+      vm.tab = 'migration'
+      await flush()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(calls(), '弹「进度会自动刷新」就必须真的刷新').toBeGreaterThan(base)
+
+      // 离开页签立刻停：不能留着定时器继续打接口。
+      vm.tab = 'storage'
+      await flush()
+      const afterLeave = calls()
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(calls()).toBe(afterLeave)
+
+      w.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('迁移任务全部结束时不轮询', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(api.listMigrationJobs).mockResolvedValue([
+        { id: 2, tenantId: 0, sourceProfileId: 1, targetProfileId: 2, status: 'done', done: 3, total: 3, failed: 0, error: '' },
+      ] as any)
+      const w = mountPage()
+      await flush()
+      const vm: any = w.vm
+      vm.tab = 'migration'
+      await flush()
+      const base = vi.mocked(api.listMigrationJobs).mock.calls.length
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(vi.mocked(api.listMigrationJobs).mock.calls.length).toBe(base)
+      w.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('企业覆盖表只显示真实企业，tenantId=0 的全局行不许混进来', async () => {
+    // 后端把全局绑定也放进了 companies，前端不滤就会多出一行「企业 ID 0 / #0」。
+    vi.mocked(api.listStorageBindings).mockResolvedValue({
+      global: { storageProfileId: 1, deliveryProfileId: 3, source: 'profile' },
+      companies: [
+        { tenantId: 0, storageProfileId: 1, deliveryProfileId: 3, source: 'global' },
+        { tenantId: 9, storageProfileId: 2, deliveryProfileId: 0, source: 'inherit' },
+      ],
+      storageProfiles: {}, deliveryProfiles: {},
+    } as any)
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    expect(vm.companyBindings.map((r: any) => r.tenantId)).toEqual([9])
+    // 总览的「谁在用」计数必须跟着只数真实企业。
+    expect(vm.companyBindings.length).toBe(1)
+    w.unmount()
+  })
+
+  it('页签名与页内说明标题必须同名，避免同一页出现两个名字', () => {
+    const page = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    const m = page.match(/<el-tab-pane label="([^"]+)" name="platform">/)
+    expect(m, '找不到 platform 页签').toBeTruthy()
+    const tabLabel = m![1]
+    const guides = readFileSync('src/utils/storageGuides.ts', 'utf8')
+    const title = guides.match(/platform: \{ title: '([^']+)'/)![1]
+    expect(title).toBe(tabLabel)
+    // 访问基址在「文件存储」里改：说明必须把它指向那一页，不能写成自己的职责。
+    const desc = guides.match(/platform: \{ title: '[^']+', desc: '([^']+)'/)![1]
+    expect(desc).not.toContain('备份开关和访问基址')
+    expect(desc).toContain('「文件存储」')
+  })
+
+  it('创建迁移任务即自动启动，不用再点一次「启动 / 续跑」', async () => {
+    vi.mocked(api.createMigrationJob).mockResolvedValue({ id: 42 } as any)
+    vi.mocked(api.runMigrationJob).mockResolvedValue({} as any)
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    vm.newJob.sourceProfileId = 1
+    vm.newJob.targetProfileId = 2
+    await vm.createJob()
+    await flush()
+    expect(api.createMigrationJob).toHaveBeenCalled()
+    expect(api.runMigrationJob, '建完还让人再点一次是多余步骤').toHaveBeenCalledWith(42)
+    expect(vi.mocked(ElMessage.success).mock.calls.some((c) => String(c[0]).includes('任务已启动'))).toBe(true)
+    w.unmount()
+  })
+
+  it('启动失败时仍告诉用户「任务已创建」，不让人以为白做一次', async () => {
+    vi.mocked(api.createMigrationJob).mockResolvedValue({ id: 43 } as any)
+    vi.mocked(api.runMigrationJob).mockRejectedValue(new Error('boom') as never)
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    vm.newJob.sourceProfileId = 1
+    vm.newJob.targetProfileId = 2
+    await vm.createJob()
+    await flush()
+    const warned = vi.mocked(ElMessage.warning).mock.calls.map((c) => String(c[0])).join('|')
+    expect(warned).toContain('任务已创建')
+    expect(warned).toContain('启动失败')
+    w.unmount()
+  })
+
+  it('连通性标签带「上次自检」时间：没有时间戳的「已验证」不可信', async () => {
+    const w = mountPage()
+    await flush()
+    const vm: any = w.vm
+    // 用本地时间字符串，避免时区把断言变成 flaky
+    expect(vm.probeHint({ status: 'ok', lastProbeAt: '2026-11-23T12:05:00' })).toBe('上次自检：2026-11-23 12:05')
+    expect(vm.probeHint({ status: 'ok', lastProbeAt: null })).toContain('没有记录到时间')
+    expect(vm.probeHint({ status: 'unknown' })).toContain('还没自检过')
+    // 后端建任务写的是 created，漏映射会直接显示英文。
+    expect(vm.migrationStatus('created').text).toBe('待启动')
+    w.unmount()
   })
 })

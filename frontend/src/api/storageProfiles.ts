@@ -35,6 +35,8 @@ export interface DeliveryProfile {
   resourceId: string
   status: string
   lastError: string
+  /** 上次自检时间：只有「已验证」+ 一个近的时间戳，才说明这套配置现在还能用 */
+  lastProbeAt?: string | null
   version: number
   /** 系统自带配置：启动时生成，不可删除、不可绑定给企业（迁移 0060） */
   builtin?: boolean

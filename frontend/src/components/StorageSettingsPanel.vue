@@ -169,8 +169,11 @@ const FRIENDLY: Record<string, { name: string; desc: string }> = {
     desc: '浏览器直接上传到云存储时，链接多少分钟内有效。',
   },
   sign_get_ttl_minutes: {
-    name: '私有桶下载链接有效期',
-    desc: '只有关闭公开读时才用到；填 0 用默认值。',
+    // 旧描述写「只有关闭公开读时才用到」，但后端 SignGetURL 走的是独立的
+    // 批量签名接口（storage.go 的 signerForKey → SignGetURL），跟 publicRead 无关。
+    // 按旧文案理解会以为这项是死的，其实是「把对象地址换成限时链接」时的有效期。
+    name: '签名下载链接有效期',
+    desc: '把对象地址换成限时下载链接时的有效期（分钟）；小程序或第三方要临时地址时用到，填 0 用默认值。',
   },
 }
 

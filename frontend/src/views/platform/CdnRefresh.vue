@@ -45,6 +45,7 @@
     <div class="actions">
       <el-button type="primary" :loading="loading" @click="refresh">提交刷新</el-button>
       <span class="count">共 {{ urlList.length }} 条</span>
+      <span v-if="duplicateCount" class="count">已忽略 {{ duplicateCount }} 条重复</span>
     </div>
   </el-card>
 </template>
@@ -122,12 +123,16 @@ function goSettings() {
   emit('goto-settings')
 }
 
-const urlList = computed(() =>
+const rawUrls = computed(() =>
   urls.value
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
 )
+// 去重但保序：同一批里重复贴同一个 URL 是常见操作，不去重只会虚报条数、
+// 多打一遍厂商接口（部分厂商对同一条重复提交会报错）。
+const urlList = computed(() => Array.from(new Set(rawUrls.value)))
+const duplicateCount = computed(() => rawUrls.value.length - urlList.value.length)
 
 async function refresh() {
   if (!urlList.value.length) {

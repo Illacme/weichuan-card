@@ -290,4 +290,15 @@ describe('平台自身存储配置面板', () => {
       window.history.replaceState({}, '', oldHref)
     }
   })
+
+  it('签名下载链接有效期按真实用途描述，不再说「只有关闭公开读时才用到」', async () => {
+    const w = mountPanel()
+    await flush()
+    await openAdvanced(w)
+    const text = w.text()
+    // 后端 sign_get_ttl 走的是独立的批量签名接口，跟 publicRead 无关；
+    // 旧文案会让人以为这项是死的，于是没人敢填。
+    expect(text).toContain('签名下载链接有效期')
+    expect(text).not.toContain('只有关闭公开读时才用到')
+  })
 })

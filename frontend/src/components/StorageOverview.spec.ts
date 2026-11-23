@@ -123,4 +123,38 @@ describe('存储总览页', () => {
     expect(text).toContain('s3.ap-northeast-1.amazonaws.com')
     expect(text).toContain('不带')
   })
+
+  it('总览必须回答「有没有企业单独指定」，不能把 globalBinding 当摆设', async () => {
+    // 只看平台自身存储会让人以为全站都在一个桶里；例外情况必须写出来。
+    const noException = mountPage({
+      platformProfile: cloudProfile, platformDelivery: cloudDelivery,
+      globalBinding: { storageProfileId: 1 }, companyBindingCount: 0,
+    })
+    await flush()
+    expect(noException.text()).toContain('全部企业都用全局默认那套')
+
+    const withException = mountPage({
+      platformProfile: cloudProfile, platformDelivery: cloudDelivery,
+      globalBinding: { storageProfileId: 1 }, companyBindingCount: 3,
+    })
+    await flush()
+    expect(withException.text()).toContain('另有 3 家企业单独指定')
+
+    // 没设全局默认时也不能沉默：要说清默认落点是平台自身存储。
+    const noGlobal = mountPage({
+      platformProfile: cloudProfile, platformDelivery: cloudDelivery,
+      globalBinding: null, companyBindingCount: 2,
+    })
+    await flush()
+    expect(noGlobal.text()).toContain('还没设置全局默认')
+    expect(noGlobal.text()).toContain('2 家企业单独指定')
+  })
+
+  it('示意图是横向排布，箭头就不能写成竖向下指', async () => {
+    // ov-flow 是 display:flex 横排；写「↓」会让人以为节点是上下堆叠的。
+    const w = mountPage({ platformProfile: localProfile, platformDelivery: noCdn })
+    await flush()
+    const arrows = w.findAll('.ov-arrow').map((a) => a.text())
+    expect(arrows).toEqual(['请求 →', '回源 →'])
+  })
 })

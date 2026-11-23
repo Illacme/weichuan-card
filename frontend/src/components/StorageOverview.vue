@@ -19,18 +19,19 @@
         <span>访客</span>
         <strong>手机 / 浏览器</strong>
       </div>
-      <div class="ov-arrow">读取 ↓</div>
+      <div class="ov-arrow">请求 →</div>
       <div class="ov-node" :class="cdnActive ? 'ov-node-on' : 'ov-node-off'">
         <span>CDN · 可选</span>
         <strong>{{ cdnLabel }}</strong>
       </div>
-      <div class="ov-arrow">回源 ↓</div>
+      <div class="ov-arrow">回源 →</div>
       <div class="ov-node ov-node-storage">
         <span>存储 · 必有</span>
         <strong>{{ storageLabel }}</strong>
       </div>
     </section>
-    <p class="ov-flow-note">上传方向相反：后台写文件 → 存储；只有开了 CDN 才需要经过 CDN 到访客。</p>
+    <p class="ov-flow-note">上面是请求方向（访客 → CDN → 存储）；文件按相反方向回到访客。上传不经过 CDN：后台直接把文件写进存储。</p>
+    <p class="ov-usage">{{ usageLine }}</p>
 
     <div class="ov-help-bar">
       <span>要接云平台？展开看配置步骤、各家官方地址和名词解释。</span>
@@ -95,6 +96,8 @@ const props = defineProps<{
   platformProfile?: StorageProfile | null
   platformDelivery?: DeliveryProfile | null
   globalBinding?: StorageBinding | null
+  /** 有多少家企业单独指定了自己的文件存储（含只改 CDN 的，用于提示存在例外）。 */
+  companyBindingCount?: number
 }>()
 
 const emit = defineEmits<{ (e: 'goto', tab: string): void }>()
@@ -125,6 +128,21 @@ const subline = computed(() =>
 )
 const actionText = computed(() => (isDefaultLocal.value ? '我要接入云平台' : '管理文件存储'))
 
+// 总览必须回答「除了默认那套，还有没有例外」：只看平台自身存储会让人以为
+// 全站都在这一个桶里，实际可能有企业单独指定。globalBinding 此前是声明了没人用的死 prop。
+const usageLine = computed(() => {
+  const n = props.companyBindingCount || 0
+  const hasGlobal = !!props.globalBinding?.storageProfileId
+  if (hasGlobal) {
+    return n
+      ? `归属：全局默认对未单独指定的企业生效；另有 ${n} 家企业单独指定了自己的文件存储。`
+      : '归属：全部企业都用全局默认那套，没有企业单独指定。'
+  }
+  return n
+    ? `归属：还没设置全局默认，未指定的企业用平台自身存储；其中 ${n} 家企业单独指定了自己的文件存储。`
+    : '归属：还没设置全局默认，所有企业都用平台自身存储。'
+})
+
 const storageVendors = Object.values(DRIVER_GUIDES).filter((g) => g.key !== 'local')
 const cdnVendors = Object.values(CDN_GUIDES).filter((g) => g.key !== 'none')
 </script>
@@ -148,6 +166,7 @@ const cdnVendors = Object.values(CDN_GUIDES).filter((g) => g.key !== 'none')
 .ov-node-storage span { color: #4a9a63; }
 .ov-arrow { color: #a8abb2; font-size: 12px; }
 .ov-flow-note { margin: 0; text-align: center; color: #909399; font-size: 12px; }
+.ov-usage { margin: 10px 0 0; text-align: center; color: #606266; font-size: 12px; line-height: 1.7; }
 .ov-help-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; padding: 10px 14px; border: 1px solid #ebeef5; border-radius: 6px; color: #606266; font-size: 13px; }
 .ov-toggle { border: 0; background: transparent; color: #409eff; font-size: 13px; cursor: help; }
 .ov-help { margin-top: 10px; padding: 4px 18px 18px; border: 1px solid #ebeef5; border-radius: 6px; }

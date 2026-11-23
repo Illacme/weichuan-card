@@ -160,8 +160,22 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled()
   })
 
-  it('空输入不发请求：先提示，避免一次必然失败的往返', async () => {
+  it('重复 URL 会去重并提示忽略条数，不虚报也不重复打厂商接口', async () => {
     const { w } = await setup(ON_ALIYUN)
+    await w.find('textarea').setValue(
+      'https://cdn.example.com/a.png\nhttps://cdn.example.com/a.png\nhttps://cdn.example.com/b.jpg\n',
+    )
+    expect(w.text()).toContain('共 2 条')
+    expect(w.text()).toContain('已忽略 1 条重复')
+    await submitButton(w).trigger('click')
+    await nextTick()
+    expect(vi.mocked(cdnRefresh)).toHaveBeenCalledWith([
+      'https://cdn.example.com/a.png',
+      'https://cdn.example.com/b.jpg',
+    ])
+  })
+
+  it('空输入不发请求：先提示，避免一次必然失败的往返', async () => {    const { w } = await setup(ON_ALIYUN)
     await submitButton(w).trigger('click')
     await nextTick()
     expect(vi.mocked(cdnRefresh)).not.toHaveBeenCalled()

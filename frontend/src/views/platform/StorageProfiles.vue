@@ -15,6 +15,7 @@
           :platform-profile="platformPrimaryProfile"
           :platform-delivery="platformDelivery"
           :global-binding="globalBinding"
+          :company-binding-count="companyBindings.length"
           @goto="tab = $event"
         />
       </el-tab-pane>
@@ -43,9 +44,11 @@
           <el-table-column prop="endpoint" label="Endpoint" min-width="160" />
           <el-table-column prop="bucket" label="Bucket" min-width="120" />
           <el-table-column prop="baseUrl" label="上传返回基址" min-width="180" />
-          <el-table-column label="连通性" width="100">
+          <el-table-column label="连通性" width="110">
             <template #default="{ row }">
-              <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+              <el-tooltip placement="top" :content="probeHint(row)">
+                <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column v-if="showTechCols" prop="accessKeyMasked" label="AK 掩码" min-width="120" />
@@ -60,7 +63,7 @@
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有文件存储。系统自带的文件存储会自动出现在这里；需要接云时点右上角「新建文件存储」，官方入口和字段说明都在弹窗里。</div>
+            <div class="table-empty">读不到文件存储列表。系统自带的三条内置存储一定会出现在这里，所以空表意味着数据没加载出来——先刷新页面；仍为空就检查后端服务是否正常。</div>
           </template>
         </el-table>
       </el-tab-pane>
@@ -81,7 +84,9 @@
               <el-tag v-if="usageLabel(row.id, 'delivery')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'delivery') }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="provider" label="厂商" width="120" />
+          <el-table-column label="厂商" width="130">
+            <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+          </el-table-column>
           <el-table-column label="公开域名" min-width="220">
             <template #default="{ row }">
               <span v-if="row.purpose === 'platform_primary'" class="muted">
@@ -92,7 +97,9 @@
           </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+              <el-tooltip placement="top" :content="probeHint(row)">
+                <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column prop="version" label="版本" width="70" />
@@ -101,10 +108,11 @@
               <el-button link type="primary" @click="openDeliveryDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkDelivery(row)">自检</el-button>
               <el-button link type="danger" :disabled="row.builtin" @click="removeDelivery(row)">删除</el-button>
+              <span v-if="row.builtin" class="builtin-no-delete">系统自带 · 不可删</span>
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有 CDN 分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建 CDN 分发」，各厂商控制台与凭据入口都在弹窗里。</div>
+            <div class="table-empty">读不到 CDN 分发列表。系统自带的「平台自身 CDN」一定会出现在这里，所以空表意味着数据没加载出来——先刷新页面；仍为空就检查后端服务是否正常。</div>
           </template>
         </el-table>
       </el-tab-pane>
@@ -139,11 +147,11 @@
               </el-select>
             </label>
           </div>
-          <p class="migration-hint">先勾「试运行」核对对象数量，确认无误再启动真正的复制；源桶原样保留，不会删除。</p>
+          <p class="migration-hint">勾「试运行」后点「创建并启动」，只会统计对象数量、不复制；确认数量无误后取消勾选，再建一个正式任务。源桶原样保留，不会被删除。</p>
           <div class="migration-actions">
             <el-checkbox v-model="newJob.dryRun">试运行（只统计不复制）</el-checkbox>
             <el-checkbox v-model="newJob.autoSwitch" :disabled="newJob.dryRun">成功后自动切换绑定</el-checkbox>
-            <el-button type="primary" :loading="saving" @click="createJob">创建任务</el-button>
+            <el-button type="primary" :loading="saving" @click="createJob">创建并启动</el-button>
           </div>
         </div>
         <el-table :data="jobs" v-loading="loading" size="small" border>
@@ -154,7 +162,11 @@
           <el-table-column label="源 → 目标" min-width="190">
             <template #default="{ row }">{{ profileName(row.sourceProfileId) }} → {{ profileName(row.targetProfileId) }}</template>
           </el-table-column>
-          <el-table-column prop="status" label="状态" width="100" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="migrationStatus(row.status).type" size="small">{{ migrationStatus(row.status).text }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="进度" min-width="140">
             <template #default="{ row }">
               <el-progress :percentage="percent(row)" :status="row.failed ? 'exception' : undefined" />
@@ -209,11 +221,15 @@
           </div>
           <div class="force-row">
             <el-checkbox v-model="forceGlobal">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+            <span class="force-note">只对下一次「保存全局默认」生效，保存后自动取消勾选</span>
           </div>
         </div>
         <div class="company-head">
           <h4 class="company-title">企业覆盖（没有绑定行则继承全局）</h4>
-          <el-checkbox v-model="forceCompany">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+          <div class="company-head-right">
+            <el-checkbox v-model="forceCompany">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+            <span class="force-note">只对下一次企业「保存」生效，保存后自动取消勾选</span>
+          </div>
         </div>
         <el-table :data="companyBindings" v-loading="loading" size="small" border>
           <el-table-column prop="tenantId" label="企业 ID" width="90" />
@@ -255,6 +271,9 @@
               <el-button link type="danger" @click="resetCompany(row)">恢复继承</el-button>
             </template>
           </el-table-column>
+          <template #empty>
+            <div class="table-empty">还没有企业单独指定存储，全部继承全局默认。要为企业指定，去「企业管理」列表里点该企业的「文件存储」按钮。</div>
+          </template>
         </el-table>
       </el-tab-pane>
 
@@ -470,7 +489,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listStorageProfiles, saveStorageProfile, deleteStorageProfile, checkStorageProfile,
@@ -490,6 +509,9 @@ import {
   STORAGE_FIELD_GUIDES, DELIVERY_FIELD_GUIDES, driverGuide, cdnGuide,
   type FieldGuide,
 } from '@/utils/storageGuides'
+// 厂商列必须显示中文名：同一模块里「CDN 缓存刷新」已经显示「阿里云 CDN」，
+// 列表却显示 aliyun 原始 code，会让人以为是两个不同字段。
+import { cdnProviderLabel } from '@/utils/cdn'
 
 // 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「平台自身存储」面板消费。
 // 第一次进来落在「总览」：先看懂架构和现状，再去改配置。
@@ -535,7 +557,7 @@ function sourceLabel(source?: string) {
 }
 function deliveryPurposeHint(row: { purpose?: string }) {
   if (row.purpose !== 'platform_primary') return ''
-  return '平台自身 CDN：只服务 p/ 平台对象与未绑定CDN 分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
+  return '平台自身 CDN：只服务 p/ 平台对象与未绑定 CDN 分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
 }
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
@@ -626,6 +648,40 @@ function statusTag(s: string) {
 function statusText(s: string) {
   return s === 'ok' ? '已验证' : s === 'error' ? '失败' : '未自检'
 }
+// 「已验证」只说明上一次自检通过过，不说明现在还行：3 分钟前和 3 天前是两回事。
+// 时间戳后端本来就有（lastProbeAt），只是之前没显示，等于把判断依据藏起来了。
+function probeHint(row: { status?: string; lastProbeAt?: string | null }) {
+  if (row.lastProbeAt) return `上次自检：${formatTime(row.lastProbeAt)}`
+  return row.status === 'ok' ? '自检通过，但没有记录到时间' : '还没自检过，点右侧「自检」跑一次'
+}
+function formatTime(iso: string) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+// 厂商列不能直接渲染后端原始值：同模块的「CDN 缓存刷新」显示「阿里云 CDN」，
+// 列表却显示 aliyun，同一屏两套口径，排查时最容易以为这是两个不同字段。
+function providerLabel(p?: string) {
+  const v = (p || '').trim()
+  if (!v || v === 'none') return '不启用 CDN'
+  return cdnProviderLabel(v)
+}
+// 迁移状态同理：running / done / failed 是给代码看的，管理员要的是中文。
+const MIGRATION_STATUS: Record<string, { text: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
+  // 后端建任务时写的是 "created"，不是 "pending"；漏了它新任务会显示英文。
+  created: { text: '待启动', type: 'info' },
+  pending: { text: '待启动', type: 'info' },
+  running: { text: '进行中', type: 'warning' },
+  done: { text: '已完成', type: 'success' },
+  failed: { text: '失败', type: 'danger' },
+  canceled: { text: '已取消', type: 'info' },
+}
+function migrationStatus(s?: string) {
+  const key = (s || '').trim()
+  // 后端加了新状态也不许留空标签：原样回显，至少让人知道有这回事。
+  return MIGRATION_STATUS[key] || { text: key || '未知', type: 'info' as const }
+}
 // 系统自带文件存储的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
 // 配置已集中到本模块的「平台自身存储」标签；focus 参数让面板加载后滚到对应行。
@@ -659,13 +715,42 @@ async function load() {
     globalBinding.value = g && g.storageProfileId ? (g as StorageBinding) : null
     globalStorageId.value = g?.storageProfileId || undefined
     globalDeliveryId.value = g?.deliveryProfileId || undefined
-    companyBindings.value = bs.companies || []
+    // 后端把 tenant_id=0 的全局行也放进了 companies，直接渲染会在「企业覆盖」
+    // 表里多出一行「企业 ID 0 / #0」。归属判定与计数都只该看真实企业。
+    companyBindings.value = (bs.companies || []).filter((r) => r.tenantId > 0)
   } finally {
     loading.value = false
   }
 }
 
 onMounted(load)
+
+// 「进度会自动刷新」这句话必须是真的。之前只有一句提示、没有任何定时器，
+// 启动后界面一直停在启动前的数字，管理员只能靠切页签重进才看到进度。
+// 只在「迁移任务」页签且确实有 running 任务时轮询：离开页签或任务结束立刻停。
+const POLL_MS = 3000
+let pollTimer: ReturnType<typeof setInterval> | null = null
+const hasRunningJob = computed(() => jobs.value.some((j) => j.status === 'running'))
+async function refreshJobs() {
+  try {
+    // 不置 loading：否则整张表每 3 秒闪一次遮罩，比不刷新更难用。
+    jobs.value = await listMigrationJobs()
+  } catch {
+    // 轮询是锦上添花，网络抖一下不该把整页打成错误态，下个周期再试。
+  }
+}
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+watch([tab, hasRunningJob], () => {
+  const need = tab.value === 'migration' && hasRunningJob.value
+  if (need && !pollTimer) pollTimer = setInterval(refreshJobs, POLL_MS)
+  else if (!need) stopPolling()
+})
+onUnmounted(stopPolling)
 
 function openStorageDialog(row: any | null) {
   Object.assign(storageForm, emptyStorage(), row || {})
@@ -736,6 +821,8 @@ async function saveGlobal() {
     // force 与后端一致地作用于下一次保存；错误（含缺失对象 key）由请求层原样弹出，
     // 这里不吞掉，避免「保存失败」变成一句没有信息的空话。
     await saveGlobalBinding(globalStorageId.value, globalDeliveryId.value || 0, forceGlobal.value)
+    // 强制切换是「一次性放行」，用完立刻复位：留着勾选会让下一次切换也静默跳过核对。
+    forceGlobal.value = false
     ElMessage.success('全局默认已切换，下一个请求即生效')
     await load()
   } finally {
@@ -755,6 +842,8 @@ async function rollbackGlobal() {
 async function saveCompany(row: any) {
   if (!row.storageProfileId) return ElMessage.warning('请选择文件存储')
   await saveCompanyBinding(row.tenantId, row.storageProfileId, row.deliveryProfileId || 0, forceCompany.value)
+  // 与全局默认一致：一次性放行，不许残留成「以后都不核对」。
+  forceCompany.value = false
   ElMessage.success('已保存')
   await load()
 }
@@ -774,8 +863,21 @@ async function createJob() {
   if (newJob.sourceProfileId === newJob.targetProfileId) return ElMessage.warning('源与目标不能相同')
   saving.value = true
   try {
-    await createMigrationJob({ ...newJob })
-    ElMessage.success('任务已创建，点「启动 / 续跑」开始')
+    const job = await createMigrationJob({ ...newJob })
+    // 建完还要再点一次「启动」是多余的一步。除非启动这一步失败，
+    // 否则创建即开跑；启动失败也不能把「任务已创建」这件事吞掉。
+    if (job?.id) {
+      try {
+        await runMigrationJob(job.id)
+        ElMessage.success(newJob.dryRun
+          ? '试运行已启动，跑完看「进度」里的对象数量'
+          : '任务已启动，进度每 3 秒自动刷新')
+      } catch {
+        ElMessage.warning('任务已创建，但启动失败；可在列表里点「启动 / 续跑」重试')
+      }
+    } else {
+      ElMessage.success('任务已创建，点「启动 / 续跑」开始')
+    }
     await load()
   } finally {
     saving.value = false
@@ -783,7 +885,7 @@ async function createJob() {
 }
 async function startJob(row: any) {
   await runMigrationJob(row.id)
-  ElMessage.success('已启动，进度会自动刷新')
+  ElMessage.success('已启动，进度每 3 秒自动刷新')
   await load()
 }
 async function stopJob(row: any) {
@@ -816,6 +918,8 @@ function exportErrors() {
 .binding-card h4 { margin: 0 0 10px; font-size: 14px; }
 .binding-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .force-row { margin-top: 10px; }
+.force-note { margin-left: 10px; color: #c0c4cc; font-size: 12px; }
+.company-head-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .binding-form label, .migration-fields label { font-size: 13px; color: #606266; }
 .usage-tag { margin-left: 6px; }
