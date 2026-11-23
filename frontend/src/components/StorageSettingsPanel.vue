@@ -10,10 +10,10 @@
         <p class="hero-note">
           连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 主存储」里改，
           CDN 刷新的厂商与凭据在「CDN 分发 → 平台自身 CDN」里改——两处保存即生效，无需重启。
-          这里只管服务器目录与本地备份，这两类改动仍需重启。
+          这里管服务器目录（改完需重启）与备份存储开关（即时生效）。
         </p>
         <div class="hero-chips">
-          <span class="chip" :class="{ 'chip-on': mirrorOn }">本地备份 {{ mirrorOn ? '已开启' : '未开启' }}</span>
+          <span class="chip" :class="{ 'chip-on': mirrorOn }">备份存储 {{ mirrorOn ? '已开启' : '未开启' }}</span>
           <span class="chip" :class="{ 'chip-on': cdnOn }">CDN 刷新 {{ cdnText }}</span>
         </div>
       </div>
@@ -123,7 +123,7 @@ const emit = defineEmits<{
 // 平台连接信息已进「文件存储」（迁移 0059），这里只剩部署期目录与策略项。
 const PANEL_GROUPS = new Set(['storage', 'upload'])
 
-// 常用区只留三件事：本地目录、备份目录、自动备份开关。
+// 常用区只留三件事：上传目录、备份存储目录、备份存储开关。
 // 指针（platform_storage_profile_id）由系统自动维护，不给管理员看，也不允许改。
 const BASIC_KEYS = ['upload_dir', 'mirror_dir', 'local_mirror_enabled']
 
@@ -141,11 +141,11 @@ const FRIENDLY: Record<string, { name: string; desc: string }> = {
     desc: '选「服务器本地磁盘」时，图片 / 视频 / 小程序码保存在这里。换目录后旧文件不会自动搬过去，必须重启。',
   },
   mirror_dir: {
-    name: '本地备份目录',
+    name: '备份存储目录',
     desc: '云端上传成功后，系统在这里留一份副本。不要放在上传目录下面；改完要重启。',
   },
   local_mirror_enabled: {
-    name: '自动本地备份',
+    name: '备份存储开关',
     desc: '打开后，云端文件会自动在服务器另存一份；每家企业还要在「企业管理」里单独打开。',
   },
   storage_quota_mb: {

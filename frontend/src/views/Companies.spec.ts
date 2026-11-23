@@ -1005,7 +1005,7 @@ describe('企业管理 · 登录页白标码', () => {
 
   // 本地镜像按租户开关：默认关闭，平台超管逐家打开；保存必须把 false/true
   // 原样带上去。只改前端展示不改 payload 会让开关变成摆设。
-  it('编辑企业：本地镜像开关回填并随保存提交', async () => {
+  it('编辑企业：备份存储开关回填并随保存提交', async () => {
     mocks.listCompanies.mockImplementation(async () =>
       paged(companies.map((c) => (c.id === 1 ? { ...c, localMirrorEnabled: true } : c)))
     )

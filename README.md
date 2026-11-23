@@ -117,7 +117,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 | 登录与令牌 | `login_rate_limit_per_min` / `refresh_rate_limit_per_min` | 每 IP 每分钟登录 / 刷新次数（防爆破；填 0 或负数回落默认值 10 / 60） |
 | 主存储 | `platform_storage_profile_id` | 平台自身文件存储指针（系统自动指向内置的 `platform_primary` 档案，不需要手工改） |
 | 主存储 | `upload_dir` / `mirror_dir` | 本地上传目录 / 备份存储目录（改后需重启；驱动、桶、凭据、基址请到「存储与分发 → 文件存储」改） |
-| 主存储 | `local_mirror_enabled` | 本地镜像总闸（每家企业还要单独打开开关） |
+| 主存储 | `local_mirror_enabled` | 备份存储开关（每家企业还要单独打开自己的开关） |
 | 主存储 | `platform_delivery_profile_id` | 平台自身 CDN 档案指针（系统自动指向内置的「平台自身 CDN」CDN 分发；厂商与凭据请到「存储与分发 → CDN 分发」改，保存即生效、无需重启） |
 | 安全与基础设施 | `db_dsn` / `jwt_key` / `cookie_secure` / `cookie_domain` | **只读**，仅掩码展示当前值，修改走环境变量**或配置文件**（默认 `data/runtime.env`）后重启 |
 | 功能开关 | `metrics_enabled` | 是否开放 `/metrics`（Prometheus 指标）；留空则跟随 `METRICS_ENABLED` |

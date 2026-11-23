@@ -126,8 +126,12 @@ describe('主存储配置面板', () => {
     expect(text).toContain('图片 / 视频 / 小程序码存哪')
     expect(text).toContain('文件存在服务器本地磁盘')
     expect(text).toContain('服务器上传目录')
-    expect(text).toContain('本地备份目录')
-    expect(text).toContain('自动本地备份')
+    expect(text).toContain('备份存储目录')
+    expect(text).toContain('备份存储开关')
+    // 「目录要重启、开关即时生效」必须分开说：后端 mirror.go 明确按请求读
+    // local_mirror_enabled，笼统写「两类改动仍需重启」会让管理员误判开关没生效。
+    expect(text).toContain('改完需重启')
+    expect(text).toContain('即时生效')
     // 内部指针不给管理员看：它由系统自动维护，展示只会增加困惑。
     // 紧凑模式不渲染 key 文本，所以必须按 data-key 断言「这一行根本不存在」——
     // 只断言 key 字符串不出现会恒真（键名本来就不显示），等于没守。
@@ -153,7 +157,8 @@ describe('主存储配置面板', () => {
     // CDN 凭据只在一处：CDN 分发的内置行，不再在本面板留第二份表单
     expect(text).toContain('CDN 分发 → 平台自身 CDN')
     expect(text).toContain('两处保存即生效，无需重启')
-    expect(text).toContain('这两类改动仍需重启')
+    expect(text).toContain('改完需重启')
+    expect(text).toContain('备份存储开关（即时生效）')
 
     await w.findAll('button').find((b) => b.text() === '去文件存储修改')!.trigger('click')
     expect(w.emitted('goto-profiles')).toBeTruthy()

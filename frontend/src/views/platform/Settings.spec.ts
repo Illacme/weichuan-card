@@ -70,7 +70,7 @@ const items: SettingItem[] = [
   { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN 分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '备份存储目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
-  { key: 'local_mirror_enabled', name: '备份存储开关', group: 'storage', type: 'bool', value: 'true', description: '本地镜像总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'local_mirror_enabled', name: '备份存储开关', group: 'storage', type: 'bool', value: 'true', description: '备份存储总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'cookie_domain', name: '登录 Cookie 作用域', group: 'security', type: 'string', value: '', description: 'Cookie 作用域', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_DOMAIN', configured: false },
   { key: 'cookie_secure', name: '登录 Cookie 强制 HTTPS', group: 'security', type: 'bool', value: 'false', description: 'Cookie Secure', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_SECURE', configured: true },
   { key: 'db_dsn', name: '数据库连接串', group: 'security', type: 'string', value: '******', description: '数据库连接串', secret: true, restart: true, readOnly: true, envVar: 'DB_DSN', configured: true },
