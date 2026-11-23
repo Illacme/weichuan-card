@@ -4420,14 +4420,14 @@ paths:
           description: code=0（data.ok / detail / error / status / checkedScope）
   /api/admin/delivery-profiles:
     get:
-      summary: CDN分发列表（平台超管）
+      summary: CDN 分发列表（平台超管）
       description: 独立于文件存储：同一桶可配多套 CDN 域名。凭据只回掩码。
       tags: [平台管理]
       responses:
         "200":
           description: code=0（data 为配置数组）
     post:
-      summary: 新建CDN分发（平台超管）
+      summary: 新建CDN 分发（平台超管）
       description: provider=none 表示不启用 CDN；其他厂商要有合法域名与刷新凭据。
       tags: [平台管理]
       requestBody:
@@ -4440,7 +4440,7 @@ paths:
           description: code=0；code=1 校验不通过 / 名称重复
   /api/admin/delivery-profiles/{id}:
     put:
-      summary: 修改CDN分发（平台超管）
+      summary: 修改CDN 分发（平台超管）
       tags: [平台管理]
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -4453,7 +4453,7 @@ paths:
         "200":
           description: code=0；code=1 校验不通过
     delete:
-      summary: 删除CDN分发（平台超管）
+      summary: 删除CDN 分发（平台超管）
       description: 仍有绑定时拒绝删除。
       tags: [平台管理]
       parameters:
@@ -4463,7 +4463,7 @@ paths:
           description: code=0；code=1 仍有绑定
   /api/admin/delivery-profiles/{id}/check:
     post:
-      summary: CDN分发配置自检（平台超管）
+      summary: CDN 分发配置自检（平台超管）
       description: 只验配置完整性与域名形态，**不发起真实刷新请求**（那会污染 CDN 且证明不了域名配对）。
       tags: [平台管理]
       parameters:
@@ -4563,7 +4563,7 @@ paths:
       description: |
         `tenantId=0` 表示整桶（平台对象），>0 只搬 `t/<id>/` 前缀。
         `dryRun=true` 只统计不复制；`autoSwitch=true` 仅在零失败且非试运行时
-        把对应绑定切到目标文件存储（保留原 CDN分发）。只复制不删除源对象。
+        把对应绑定切到目标文件存储（保留原 CDN 分发）。只复制不删除源对象。
       tags: [平台管理]
       requestBody:
         required: true
@@ -7035,7 +7035,7 @@ components:
       type: object
       description: 所有字段均可省略；省略即保留原值
       properties:
-        name: { type: string, description: CDN分发名，全局唯一 }
+        name: { type: string, description: CDN 分发名，全局唯一 }
         provider: { type: string, enum: [none, aliyun, tencent, qiniu, cloudflare, cloudfront] }
         domain: { type: string, description: 公开访问域名，含 https:// 前缀 }
         accessKey: { type: string }

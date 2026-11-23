@@ -416,7 +416,7 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
   storage: [
     // 指针由系统自动维护，放在最前让排障的人一眼看到「平台实际用哪套文件存储」
     'platform_storage_profile_id',
-    // 平台自身 CDN 的指针：同样由系统维护，CDN 凭据在「CDN分发」里
+    // 平台自身 CDN 的指针：同样由系统维护，CDN 凭据在「CDN 分发」里
     'platform_delivery_profile_id',
     // 部署期目录事实：改完必须重启，文件存储里的连接信息改完同样必须重启
     'upload_dir',
@@ -845,7 +845,7 @@ function destructiveWarnings(): string[] {
 // ---- 依赖联动 ----
 // 以下拉 / 开关的当前草稿值为准：用户刚切换就能看到哪些项「转亮 / 置灰」，不必先保存再刷新。
 // 存储驱动的联动随连接信息移到了「存储与分发 → 文件存储」，CDN 的联动随凭据移到了
-// 「CDN分发 → 平台自身 CDN」（迁移 0060）；这里只剩微信凭据一条。
+// 「CDN 分发 → 平台自身 CDN」（迁移 0060）；这里只剩微信凭据一条。
 const wxAppidFilled = computed(
   () => !!(draft.wx_appid || '').trim() || !!items.value.find((i) => i.key === 'wx_appid')?.configured,
 )

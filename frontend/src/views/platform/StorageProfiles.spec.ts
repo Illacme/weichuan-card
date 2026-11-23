@@ -117,7 +117,7 @@ describe('存储与分发模块', () => {
     const w = mountPage()
     await flush()
     // 绑定页签的 el-select 按 id 顺序：全局存储、全局分发
-    const selects = w.findAll('select')
+    const selects = w.find('.binding-card').findAll('select')
     await selects[0].setValue('2')
     await flush()
     const saveButton = w.findAll('button').find((b) => b.text() === '保存全局默认')!
@@ -320,7 +320,7 @@ describe('存储与分发模块', () => {
     expect(src).toContain(":disabled=\"storageForm.builtin && storageForm.purpose !== 'platform_primary'\"")
   })
 
-  it('CDN分发的内置行不可删、不进绑定下拉，域名指向文件存储', async () => {
+  it('CDN 分发的内置行不可删、不进绑定下拉，域名指向文件存储', async () => {
     vi.mocked(api.listDeliveryProfiles).mockResolvedValue([
       { ...delivery(1, '平台自身 CDN'), builtin: true, purpose: 'platform_primary', provider: 'aliyun', domain: '' },
       delivery(2, '客户 CDN'),
@@ -404,7 +404,7 @@ describe('存储与分发模块', () => {
 
   it('新增「平台自身存储」标签，把系统设置的存储/上传项收进同一模块', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
-    expect(src).toContain('label="平台自身存储（启动配置）"')
+    expect(src).toContain('label="平台自身配置"')
     expect(src).not.toContain('label="平台兜底配置"')
     expect(src).toContain('name="platform"')
     expect(src).toContain('StorageSettingsPanel')
@@ -417,7 +417,7 @@ describe('存储与分发模块', () => {
     expect(src).toContain("@goto-profiles=\"tab = 'storage'\"")
   })
 
-  it('术语统一：界面上只出现「文件存储 / CDN分发」，不再出现旧名「存储档案 / 分发档案」', () => {
+  it('术语统一：界面上只出现「文件存储 / CDN 分发」，不再出现旧名「存储档案 / 分发档案」', () => {
     const files = [
       'src/views/platform/StorageProfiles.vue',
       'src/components/StorageSettingsPanel.vue',
@@ -425,18 +425,23 @@ describe('存储与分发模块', () => {
       'src/views/platform/CdnRefresh.vue',
       'src/views/Companies.vue',
       'src/utils/storageGuides.ts',
+      // 文档曾滞后于界面改名，守门必须一并覆盖，否则「界面改了、README 还指死链」
+      '../README.md',
+      '../docs/storage-user-guide.md',
+      '../docs/launch-checklist.md',
     ]
     for (const f of files) {
       const src = readFileSync(f, 'utf8')
       expect(src, `${f} 又出现了旧名「存储档案」`).not.toContain('存储档案')
       expect(src, `${f} 又出现了旧名「分发档案」`).not.toContain('分发档案')
+      expect(src, `${f} 的厂商名缺空格，应为「CDN 分发」`).not.toContain('CDN分发')
     }
     const view = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(view).toContain('label="文件存储"')
-    expect(view).toContain('label="CDN分发"')
+    expect(view).toContain('label="CDN 分发"')
     const guides = readFileSync('src/utils/storageGuides.ts', 'utf8')
     expect(guides).toContain("term: '文件存储'")
-    expect(guides).toContain("term: 'CDN分发'")
+    expect(guides).toContain("term: 'CDN 分发'")
   })
 
   it('僵尸字段 pathPrefix 不再出现在类型、表单与帮助文案里', () => {
@@ -465,9 +470,14 @@ describe('存储与分发模块', () => {
     expect(src).toContain('?tab=xxx 直达指定页签')
     expect(src).toContain("|| 'overview'")
     expect(src).toContain('name="overview"')
+    // CDN 缓存刷新已并进模块；迁移在绑定之前，与五步引导「先搬后切」一致
+    expect(src).toContain('label="CDN 缓存刷新"')
+    expect(src).toContain('name="refresh"')
+    expect(src.indexOf('name="migration"')).toBeLessThan(src.indexOf('name="binding"'))
     expect((src.match(/class="tab-guide"/g) || []).length).toBeGreaterThanOrEqual(5)
     const w = mountPage()
     await flush()
+    expect(w.findComponent({ name: 'CdnRefresh' }).exists()).toBe(true)
     expect(w.find('.storage-overview').exists()).toBe(true)
     // 总览默认是极简视图：一句结论 + 三层小图 + 一个动作，细节收进按需展开区
     expect(w.find('.ov-hero').exists()).toBe(true)
@@ -531,10 +541,10 @@ describe('存储与分发模块', () => {
     expect(reopened.findAll('a[href]')).toHaveLength(0)
   })
 
-  it('CDN分发弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
+  it('CDN 分发弹窗给出厂商控制台，Cloudflare 点名 API Token 与 Zone ID', async () => {
     const w = mountPage()
     await flush()
-    await w.findAll('button').find((b) => b.text() === '新建CDN分发')!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '新建CDN 分发')!.trigger('click')
     await flush()
     const dialog = w.find('.el-dialog')
     const hrefs = () => dialog.findAll('a[href]').map((a) => a.attributes('href') || '')
@@ -560,6 +570,6 @@ describe('存储与分发模块', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('<template #empty>')
     expect(src).toContain('还没有文件存储')
-    expect(src).toContain('还没有CDN分发')
+    expect(src).toContain('还没有CDN 分发')
   })
 })

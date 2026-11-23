@@ -89,17 +89,18 @@ describe('存储模块的产品化事实表', () => {
     expect(DEFAULT_FACTS.join('')).toContain('初始状态：本地磁盘')
     expect(DEFAULT_FACTS.join('')).toContain('不填任何云账号')
     expect(STORAGE_GLOSSARY.length).toBeGreaterThanOrEqual(6)
-    const tabs = new Set(['overview', 'storage', 'delivery', 'binding', 'migration', 'platform'])
+    const tabs = new Set(['overview', 'storage', 'delivery', 'refresh', 'migration', 'binding', 'platform'])
     expect(SETUP_STEPS).toHaveLength(5)
     for (const step of SETUP_STEPS) {
       expect(tabs.has(step.tab), `流程第 ${step.no} 步指向不存在的页签`).toBe(true)
       expect(step.when).toBeTruthy()
       expect(step.body.length).toBeGreaterThan(20)
     }
-    for (const path of ['/platform/storage-profiles', '/platform/cdn-refresh', '/platform/backup', '/platform/settings']) {
+    for (const path of ['/platform/storage-profiles', '/platform/backup', '/platform/settings']) {
       expect(MENU_GUIDES[path]?.desc, `菜单 ${path} 缺悬停说明`).toBeTruthy()
     }
     for (const key of tabs) expect(TAB_GUIDES[key]?.desc, `页签 ${key} 缺说明`).toBeTruthy()
+    expect(TAB_GUIDES.refresh.title).toBe('CDN 缓存刷新')
   })
 
   it('未知驱动 / 厂商返回 null，界面不会拿别家的凭据说明冒充', () => {

@@ -121,7 +121,7 @@ const headline = computed(() =>
 const subline = computed(() =>
   isDefaultLocal.value
     ? '这是系统默认配置，不接任何云账号也能正常使用。只有磁盘不够或访客访问慢时才需要改动。'
-    : '后台上传的文件写到这里，访客按上面的路径读取。要换存储或加速方式，去「文件存储」或「CDN分发」页改。',
+    : '后台上传的文件写到这里，访客按上面的路径读取。要换存储或加速方式，去「文件存储」或「CDN 分发」页改。',
 )
 const actionText = computed(() => (isDefaultLocal.value ? '我要接入云平台' : '管理文件存储'))
 

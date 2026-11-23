@@ -60,7 +60,7 @@ export const ARCHITECTURE_POINTS = [
 
 export const DEFAULT_FACTS = [
   '初始状态：本地磁盘 + 不启用 CDN，不填任何云账号也能完整使用。',
-  '系统自带三条文件存储与一条 CDN分发，负责平台自己的文件和备份，不能删除。',
+  '系统自带三条文件存储与一条 CDN 分发，负责平台自己的文件和备份，不能删除。',
   '接云不会丢老文件：先用「迁移任务」把旧文件复制到新桶，再切换绑定；源桶原样保留。',
 ] as const
 
@@ -94,9 +94,9 @@ export const SETUP_STEPS: SetupStep[] = [
     no: 3,
     title: '（可选）让访客访问更快',
     when: '访客分布广、图片加载慢时',
-    body: '在云厂商开通 CDN 并指向你的桶，然后到「CDN分发」新建一条，填好厂商凭据和公开域名。这一步只影响访客侧 URL，不改变文件存在哪。',
+    body: '在云厂商开通 CDN 并指向你的桶，然后到「CDN 分发」新建一条，填好厂商凭据和公开域名。这一步只影响访客侧 URL，不改变文件存在哪。',
     tab: 'delivery',
-    action: '去新建 CDN分发',
+    action: '去新建 CDN 分发',
   },
   {
     no: 4,
@@ -119,8 +119,8 @@ export const SETUP_STEPS: SetupStep[] = [
 export const STORAGE_GLOSSARY: { term: string; meaning: string }[] = [
   { term: '文件对象', meaning: '一张图片、一段视频或一个小程序码文件。系统里叫「对象」，就是一份文件。' },
   { term: '文件存储', meaning: '一套「文件存哪、怎么连进去」的配置：用本地磁盘还是某个云桶、桶名、访问地址和密钥。可以建多套。' },
-  { term: 'CDN分发', meaning: '一套「让访客更快读到文件」的配置：用哪家 CDN、公开域名、刷新凭据。和文件存储互相独立，同一个桶可以配多套。' },
-  { term: '绑定', meaning: '决定「哪家企业用哪套文件存储和 CDN分发」。不单独指定时，所有人用全局默认那套。' },
+  { term: 'CDN 分发', meaning: '一套「让访客更快读到文件」的配置：用哪家 CDN、公开域名、刷新凭据。和文件存储互相独立，同一个桶可以配多套。' },
+  { term: '绑定', meaning: '决定「哪家企业用哪套文件存储和 CDN 分发」。不单独指定时，所有人用全局默认那套。' },
   { term: '迁移任务', meaning: '把老桶里的文件复制到新桶，只复制不删除，用于切换前搬家。' },
   { term: '本地镜像', meaning: '系统自动为上传成功的文件在服务器另存一份副本，只做备份、不参与读取。' },
   { term: '自检', meaning: '拿当前填的凭据真实访问一次桶或 CDN，确认能连通。保存配置前建议先点它。' },
@@ -131,11 +131,7 @@ export const STORAGE_GLOSSARY: { term: string; meaning: string }[] = [
 export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
   '/platform/storage-profiles': {
     desc: '图片视频存哪、怎么加速访问',
-    detail: '总览一句话说清现在存哪、CDN 开没开；要接云时点「展开帮助」看五步流程与各家官方地址。文件存储、CDN分发、绑定、迁移都在这个模块里。',
-  },
-  '/platform/cdn-refresh': {
-    desc: '换了文件后让 CDN 立刻更新',
-    detail: '日常替换同名文件时系统会自动刷新；这里只在直接在云控制台换文件、或需要立刻让边缘节点失效时手动使用。',
+    detail: '总览一句话说清现在存哪、CDN 开没开；要接云时点「展开帮助」看五步流程与各家官方地址。文件存储、CDN 分发、缓存刷新、迁移、绑定都在这个模块里。',
   },
   '/platform/backup': {
     desc: '检查数据库和文件备份是否齐全',
@@ -150,7 +146,8 @@ export const MENU_GUIDES: Record<string, { desc: string; detail: string }> = {
 export const TAB_GUIDES: Record<string, { title: string; desc: string }> = {
   overview: { title: '总览', desc: '一句话说清文件现在存哪、CDN 开没开。要接云时再展开帮助看流程、官方地址与名词解释。' },
   storage: { title: '文件存储', desc: '管「文件存哪」。每套只写一次连接信息，多家企业可以共用。' },
-  delivery: { title: 'CDN分发', desc: '管「访客怎么更快读到」。CDN 与存储互相独立，同一个桶可以配多套加速。' },
+  delivery: { title: 'CDN 分发', desc: '管「访客怎么更快读到」。CDN 与存储互相独立，同一个桶可以配多套加速。' },
+  refresh: { title: 'CDN 缓存刷新', desc: '手动让边缘缓存立刻失效。日常覆盖同名文件会自动刷新，这里只用于直接在桶里换过文件或要立刻清缓存。' },
   binding: { title: '绑定关系', desc: '管「谁用哪套」。不单独指定就用全局默认；改完下一个请求立即生效。' },
   migration: { title: '迁移任务', desc: '管「老文件怎么搬到新桶」。只复制不删除，零失败后才建议切换。' },
   platform: { title: '平台自身存储', desc: '平台自己那份文件的启动参数：服务器目录、备份开关和访问基址。通常不用改。' },
@@ -405,7 +402,7 @@ export const DELIVERY_FIELD_GUIDES: Record<string, FieldGuide> = {
     field: 'domain', label: '公开域名',
     usage: '访客访问文件时用的 CDN 域名，例如 https://cdn.example.com。',
     source: '在云厂商控制台把域名接入 CDN 并做 CNAME 解析后得到。',
-    rules: '必须是 https:// 开头的完整地址。平台自身的 CDN分发不填这项，域名以文件存储的访问基址为准。',
+    rules: '必须是 https:// 开头的完整地址。平台自身的 CDN 分发不填这项，域名以文件存储的访问基址为准。',
   },
   endpoint: {
     field: 'endpoint', label: '刷新接口地址',

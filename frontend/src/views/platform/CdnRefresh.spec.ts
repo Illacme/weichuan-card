@@ -3,8 +3,8 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
-// 平台 CDN 凭据的真值源是「CDN分发 → 平台自身 CDN」（迁移 0060），
-// 不再是系统设置的 cdn_* 一组：这里 mock 的是CDN分发接口。
+// 平台 CDN 凭据的真值源是「CDN 分发 → 平台自身 CDN」（迁移 0060），
+// 不再是系统设置的 cdn_* 一组：这里 mock 的是CDN 分发接口。
 vi.mock('@/api/storageProfiles', () => ({ listDeliveryProfiles: vi.fn() }))
 vi.mock('@/api/storage', () => ({ cdnRefresh: vi.fn() }))
 vi.mock('element-plus', () => ({
@@ -101,17 +101,17 @@ describe('CdnRefresh 平台管理 · CDN 刷新', () => {
     // 说明里点明支持五家 + 自动刷新触发点 + 凭据在哪改
     expect(text).toContain('CloudFront')
     expect(text).toContain('自动刷新')
-    expect(text).toContain('CDN分发')
+    expect(text).toContain('CDN 分发')
   })
 
-  it('未启用：先点明缺口并给去CDN分发的入口，省一次无效提交', async () => {
-    const { w, router } = await setup([profile({ provider: 'none' })])
+  it('未启用：先点明缺口并给去CDN 分发的入口，省一次无效提交', async () => {
+    const { w } = await setup([profile({ provider: 'none' })])
     expect(w.text()).toContain('CDN 刷新当前未启用')
     await w.findAll('button.el-button').find((b: any) => b.text().includes('去设置'))!.trigger('click')
     await nextTick()
-    // 直达「CDN分发」标签：CDN 凭据只在那里配，不再指去系统设置
-    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/platform/storage-profiles'))
-    expect(router.currentRoute.value.query.tab).toBe('delivery')
+    // 嵌在模块里改为上抛事件：同页 router.push 带不同 query 不会切页签
+    expect(w.emitted('goto-settings')).toBeTruthy()
+    expect(w.text()).not.toContain('系统设置')
   })
 
   it('CloudFront 缺资源标识：点名缺的那一项', async () => {

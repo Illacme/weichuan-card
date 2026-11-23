@@ -55,7 +55,7 @@ func EnsureBuiltinPlatformDelivery(db *gorm.DB, cfg config.Config) (*model.Deliv
 	res := db.Where("builtin = ? AND purpose = ?", true, model.DeliveryPurposePlatformPrimary).
 		Limit(1).Find(&row)
 	if res.Error != nil {
-		return nil, fmt.Errorf("读取平台自身的 CDN分发配置失败：%w", res.Error)
+		return nil, fmt.Errorf("读取平台自身的 CDN 分发配置失败：%w", res.Error)
 	}
 	if res.RowsAffected == 0 {
 		name, err := availableBuiltinDeliveryName(db, builtinPlatformDeliveryName)
@@ -72,15 +72,15 @@ func EnsureBuiltinPlatformDelivery(db *gorm.DB, cfg config.Config) (*model.Deliv
 			Purpose: model.DeliveryPurposePlatformPrimary, Version: 1,
 		}
 		if err := db.Create(&row).Error; err != nil {
-			return nil, fmt.Errorf("创建平台自身的 CDN分发配置失败：%w", err)
+			return nil, fmt.Errorf("创建平台自身的 CDN 分发配置失败：%w", err)
 		}
-		log.Printf("[CDN] 已生成系统自带的 CDN分发「%s」(id=%d, provider=%s)，平台 CDN 刷新凭据以它为准",
+		log.Printf("[CDN] 已生成系统自带的 CDN 分发「%s」(id=%d, provider=%s)，平台 CDN 刷新凭据以它为准",
 			row.Name, row.ID, row.Provider)
 	}
 
 	// 指针写入失败不影响启动：下面用的是刚查到的这一行，不依赖 sys_setting 回读。
 	if err := setting.Upsert(setting.KeyPlatformDeliveryProfileID, strconv.FormatInt(row.ID, 10)); err != nil {
-		log.Printf("[CDN][WARN] 写入平台 CDN分发配置指针失败（不影响本次启动）：%v", err)
+		log.Printf("[CDN][WARN] 写入平台 CDN 分发配置指针失败（不影响本次启动）：%v", err)
 	}
 	cleanupLegacyCDNSettings(db)
 	return &row, nil
@@ -110,13 +110,13 @@ func availableBuiltinDeliveryName(db *gorm.DB, base string) (string, error) {
 	for _, name := range candidates {
 		var n int64
 		if err := db.Model(&model.DeliveryProfile{}).Where("name = ?", name).Count(&n).Error; err != nil {
-			return "", fmt.Errorf("检查 CDN分发名称冲突失败：%w", err)
+			return "", fmt.Errorf("检查 CDN 分发名称冲突失败：%w", err)
 		}
 		if n == 0 {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("无法为系统自带的 CDN分发分配不冲突的名称")
+	return "", fmt.Errorf("无法为系统自带的 CDN 分发分配不冲突的名称")
 }
 
 func cleanupLegacyCDNSettings(db *gorm.DB) {
@@ -125,7 +125,7 @@ func cleanupLegacyCDNSettings(db *gorm.DB) {
 	}
 	if err := db.Where(map[string]any{"key": legacyCDNSettingKeys}).
 		Delete(&setting.Setting{}).Error; err != nil {
-		log.Printf("[CDN][WARN] 清理旧 CDN 设置项失败（不影响运行，CDN分发配置已是唯一真值源）：%v", err)
+		log.Printf("[CDN][WARN] 清理旧 CDN 设置项失败（不影响运行，CDN 分发配置已是唯一真值源）：%v", err)
 		return
 	}
 	if err := setting.Reload(); err != nil {

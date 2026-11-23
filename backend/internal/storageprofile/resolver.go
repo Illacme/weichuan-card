@@ -198,7 +198,7 @@ func (r *Resolver) reload() error {
 	}
 	var dps []model.DeliveryProfile
 	if err := r.db.Find(&dps).Error; err != nil {
-		return fmt.Errorf("读取 CDN分发配置：%w", err)
+		return fmt.Errorf("读取 CDN 分发配置：%w", err)
 	}
 	var bs []model.StorageBinding
 	if err := r.db.Find(&bs).Error; err != nil {
@@ -289,7 +289,7 @@ func (s *Snapshot) resolve(cid int64) (Effective, error) {
 	if b.DeliveryProfileID > 0 {
 		dp = s.Deliveries[b.DeliveryProfileID]
 		if dp == nil || dp.Status == "deprecated" {
-			return Effective{}, fmt.Errorf("绑定引用的 CDN分发 %d 不存在或已停用", b.DeliveryProfileID)
+			return Effective{}, fmt.Errorf("绑定引用的 CDN 分发 %d 不存在或已停用", b.DeliveryProfileID)
 		}
 	}
 	return Effective{Storage: sp, Delivery: dp, Version: b.Version + sp.Version}, nil
@@ -514,7 +514,7 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 		return "", false, "生效的文件存储是本地磁盘：对象在平台盘上，没有可用的客户域名"
 	}
 	if eff.Delivery == nil || eff.Delivery.Domain == "" {
-		return "", false, "生效的 CDN分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
+		return "", false, "生效的 CDN 分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
 	}
 	clean, err := storage.ValidatePublicOrigin(eff.Delivery.Domain)
 	if err != nil {
@@ -522,7 +522,7 @@ func (r *Resolver) Diagnose(cid int64) (base string, active bool, reason string)
 		return "", false, "分发域名不合法：需为 http(s)://host[:port]，且不带路径 / 查询 / 片段"
 	}
 	if clean == "" {
-		return "", false, "生效的 CDN分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
+		return "", false, "生效的 CDN 分发没有绑定公开域名：对象 URL 仍以平台统一入口开头"
 	}
 	if !eff.Storage.PublicRead {
 		return "", false, "桶未开启公开读（publicRead=false）：客户域名直连私有桶会 403"
@@ -661,7 +661,7 @@ func (d *DynamicCDN) refreshByBinding(urls []string) error {
 	if d.prof != nil {
 		eff, err := d.prof.Resolve(TenantFromURLs(urls...))
 		if err != nil {
-			return fmt.Errorf("读取 CDN分发配置失败，已拒绝静默回落到平台 CDN：%w", err)
+			return fmt.Errorf("读取 CDN 分发配置失败，已拒绝静默回落到平台 CDN：%w", err)
 		}
 		if eff.Delivery != nil {
 			if eff.Delivery.Provider == storage.CDNProviderNone || eff.Delivery.Provider == "" {
@@ -673,7 +673,7 @@ func (d *DynamicCDN) refreshByBinding(urls []string) error {
 				ResourceID: eff.Delivery.ResourceID,
 			})
 			if err != nil {
-				return fmt.Errorf("CDN分发的凭据无效，已拒绝静默回落到平台 CDN：%w", err)
+				return fmt.Errorf("CDN 分发的凭据无效，已拒绝静默回落到平台 CDN：%w", err)
 			}
 			return rf.Refresh(urls)
 		}

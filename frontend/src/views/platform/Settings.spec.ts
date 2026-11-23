@@ -65,9 +65,9 @@ const items: SettingItem[] = [
   { key: 'wxacode_env_version', name: '小程序码环境版本', group: 'wechat', type: 'string', value: 'release', description: '出码指向哪个版本', secret: false, restart: false, readOnly: false, envVar: '', options: ['release', 'trial', 'develop'], configured: true },
   { key: 'access_token_ttl_minutes', name: '登录凭证有效期', group: 'auth', type: 'int', value: '15', description: 'access 有效期', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'login_rate_limit_per_min', name: '登录尝试频率限制', group: 'auth', type: 'int', value: '10', description: '登录限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  // 迁移 0059 / 0060：连接信息进文件存储、CDN 凭据进CDN分发，sys_setting 只留两个指针
+  // 迁移 0059 / 0060：连接信息进文件存储、CDN 凭据进CDN 分发，sys_setting 只留两个指针
   { key: 'platform_storage_profile_id', name: '平台自身存储配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的文件存储（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
-  { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
+  { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN 分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '本地镜像目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
   { key: 'local_mirror_enabled', name: '本地镜像总开关', group: 'storage', type: 'bool', value: 'true', description: '本地镜像总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },

@@ -378,7 +378,7 @@ func main() {
 	// sys_setting 只留一个指针。那组 cdn_* 与分发档案的字段级重复，填两处必然漂移。
 	platformDelivery, err := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
 	if err != nil {
-		log.Fatalf("[CDN][FATAL] 平台自身的 CDN分发配置不可用：%v", err)
+		log.Fatalf("[CDN][FATAL] 平台自身的 CDN 分发配置不可用：%v", err)
 	}
 	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)
@@ -387,7 +387,7 @@ func main() {
 	handler.SetProfileOriginResolver(profiles.OriginFor)
 	handler.SetProfileOriginDiag(profiles.Diagnose)
 	handler.SetProfileOwnerResolver(profiles.OwnerOf)
-	handler.RegisterStorageProfiles(r, db, profiles)  // 文件存储 / CDN分发 + 全局与企业绑定
+	handler.RegisterStorageProfiles(r, db, profiles)  // 文件存储 / CDN 分发 + 全局与企业绑定
 	handler.RegisterStorageMigration(r, db, profiles) // 一键迁移任务
 	handler.RegisterMPRelease(r, db, cfg)             // 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回（平台超管代租户）
 	handler.RegisterAdmins(r, db)                     // 平台超管账号管理：列表/新增/改用户名/重置密码/删除
@@ -414,7 +414,7 @@ func main() {
 		log.Printf("cdn refresh enabled (provider=%s, endpoint=%s)",
 			storage.CDNProviderLabel(cfg.CDNProvider), storage.CDNDefaultEndpoint(cfg.CDNProvider))
 	default:
-		log.Printf("cdn refresh off：平台自身的 CDN分发配置选了「不刷新」（在「存储与分发 → CDN分发」里改）")
+		log.Printf("cdn refresh off：平台自身的 CDN 分发配置选了「不刷新」（在「存储与分发 → CDN 分发」里改）")
 	}
 	// 多套 CDN：档案绑定优先，没绑定沿用上面这份平台刷新器。
 	refresher = storageprofile.NewDynamicCDN(refresher, profiles)

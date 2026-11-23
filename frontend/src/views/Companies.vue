@@ -455,7 +455,7 @@
             <el-option v-for="p in profileOptions.storages" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="CDN分发">
+        <el-form-item label="CDN 分发">
           <el-select v-model="profileDeliveryId" placeholder="不启用 CDN" clearable style="width: 100%">
             <el-option v-for="p in profileOptions.deliveries" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>

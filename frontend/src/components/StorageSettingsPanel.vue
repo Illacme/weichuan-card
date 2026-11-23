@@ -9,7 +9,7 @@
         <p class="hero-desc">{{ locationDesc }}</p>
         <p class="hero-note">
           连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 平台自身存储」里改；
-          CDN 刷新的厂商与凭据在「CDN分发 → 平台自身 CDN」里改。两处保存后都需要重启。
+          CDN 刷新的厂商与凭据在「CDN 分发 → 平台自身 CDN」里改。两处保存后都需要重启。
           这里只管服务器目录与本地备份。
         </p>
         <div class="hero-chips">
@@ -110,7 +110,7 @@ interface PlatformLocation {
 const props = defineProps<{
   /** 平台自身文件存储；父级已加载时用来在顶部显示「实际存在哪」 */
   platformProfile?: PlatformLocation | null
-  /** 平台自身 CDN 配置（CDN分发里 purpose=platform_primary 那一行） */
+  /** 平台自身 CDN 配置（CDN 分发里 purpose=platform_primary 那一行） */
   platformDelivery?: { provider?: string } | null
 }>()
 const emit = defineEmits<{
@@ -225,7 +225,7 @@ const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
 const mirrorOn = computed(() => (draft.local_mirror_enabled || '') === 'true')
-// CDN 状态来自CDN分发，不再来自本面板的 draft：凭据只有一处真值源。
+// CDN 状态来自CDN 分发，不再来自本面板的 draft：凭据只有一处真值源。
 const cdnProvider = computed(() => (props.platformDelivery?.provider || '').trim())
 const cdnOn = computed(() => cdnProvider.value !== '' && cdnProvider.value !== 'none')
 const cdnText = computed(() => {

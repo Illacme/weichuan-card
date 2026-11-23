@@ -96,7 +96,7 @@ func NewS3Store(cfg S3StoreConfig) (*S3Store, error) {
 		if host != strings.TrimSpace(cfg.Endpoint) {
 			return nil, fmt.Errorf("企业 %d 的 hostHeader=%q 与 endpoint=%q 不是同一个域名："+
 				"回填命令不经 nginx，无法改写 Host/SNI；请用路径风格（hostHeader 留空或等于 endpoint）。"+
-				"客户自有访问域名请配在 CDN分发的 domain 上，不要改 hostHeader",
+				"客户自有访问域名请配在 CDN 分发的 domain 上，不要改 hostHeader",
 				cfg.CompanyID, cfg.HostHeader, cfg.Endpoint)
 		}
 	}

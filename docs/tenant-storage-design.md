@@ -1,7 +1,7 @@
 # 多租户自有存储 · 详细设计（第一阶段）
 
 > **界面术语对照（2026-11-22 定）**：后台界面已把「存储档案」改称 **「文件存储」**，
-> 把「分发档案」改称 **「CDN分发」**。本文历史轮次里出现的「档案」是当时的用词；
+> 把「分发档案」改称 **「CDN 分发」**。本文历史轮次里出现的「档案」是当时的用词；
 > 读当前口径（§0.x）与界面时，一律按上面对照理解。代码标识（`storage_profiles`、
 > `storageProfileId`、`/api/admin/storage-profiles`）不变，只是用户看到的中文名变了。
 >
@@ -55,7 +55,7 @@
 | --- | --- | --- |
 | ① 平台级平铺 | 原为 `sys_setting` 的 `storage_*`，迁移 0059 后为 `storage_profiles` 的 `platform_primary` 系统自带配置 | **配置已搬进文件存储**：连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）现在只有 `storage_profiles` 一处真值源；`sys_setting` 只保留 `platform_storage_profile_id` 指针与 `upload_dir` / `mirror_dir` 等部署期目录事实。启动期按该配置构造 `Resolver.SetPlatform`，服务 `p/` 平台对象与未单独指定存储的企业 |
 | ② 按企业一套 | `tenant_storage_configs`（迁移 0044） | **已删除**：模型、handler、rekey 子命令、repository、前端弹窗、`TENANT_STORAGE_ROUTE` 开关、生成器 `--source=legacy` 全部移除；迁移 `0055` DROP 该表 |
-| ③ 文件存储 / CDN分发 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
+| ③ 文件存储 / CDN 分发 + 绑定 | `storage_profiles` / `delivery_profiles` / `storage_bindings` | **唯一模型**：上传路由、出参 origin、配额判定、nginx snippet 生成、一键迁移全部只读这一套 |
 
 ### 为什么平台自身实例仍要单独存在
 
@@ -313,6 +313,32 @@ resource_id / endpoint 是**字段级重复**：同一家 CDN 的同一份凭据
 
 **教训**：面向用户的「完整」应该是**可展开的完整**，不是默认铺满。信息量不变而默认可见量下降，
 才算简化；只加不删就是复杂度搬运。
+
+## 0.7 第三个入口收进模块：CDN 缓存刷新成页签（2026-11-23）
+
+**问题**：侧栏平台管理组里，`CDN 刷新` 排在父模块 `存储与分发` 前面，而它的配置凭据
+又只在后者的「CDN 分发」页签里——用户在这两个入口之间来回跳，还得自己判断
+「配厂商」和「清缓存」是不是一回事。备份入口也被挤到最后一位。
+
+**做法（纯前端 + 文档，不动后端与运行时语义）**：
+
+- `CdnRefresh.vue` 嵌入 `StorageProfiles.vue` 成为第七个页签 `CDN 缓存刷新`，
+  紧挨「CDN 分发」；组件不再 `router.push`，改为上抛 `goto-settings`，
+  由宿主切到 `delivery` 页签。原因：页签状态只在 setup 里按 URL 初始化一次，
+  同页不同 query 的 `router.push` 不会触发切页。
+- 旧路由 `/platform/cdn-refresh` 保留为重定向到 `/platform/storage-profiles?tab=refresh`，
+  去掉 `group` 让它不再出现在侧栏，保留 `platformOnly` 守卫防止绕过权限。
+- 页签顺序调整为 **迁移任务 → 绑定关系**，与五步引导「④ 先搬、⑤ 后切」一致；
+  `平台自身存储（启动配置）` 页签缩短为 `平台自身配置`（它实际还管配额、上传限制与
+  CDN 状态，原名太窄）。改名只改 `label`，`name="platform"` 不变，`?tab=` 深链不失效。
+- 侧栏顺序改为 企业管理 → 存储与分发 → 备份与恢复 → 系统设置 → 账号管理 → 操作日志；
+  备份页首屏补一句「恢复走 `scripts/restore.sh`，不在这里一键完成」。
+- 界面术语全部统一为 `文件存储` / `CDN 分发`（含空格），并把守门从 `frontend/src`
+  扩展到 README、用户指南与上线清单——上一轮改名后这两份文档仍指旧名，说明只守代码不守文档
+  等于没守。
+
+**守门**：路由重定向、页签顺序、嵌入组件存在、侧栏不再含旧入口、文档旧术语均新增断言；
+CdnRefresh 的「去设置」守门从断言 router 跳转改为断言 `goto-settings` 事件。
 
 ## 0. 解决什么，不解决什么
 

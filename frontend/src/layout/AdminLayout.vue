@@ -372,23 +372,22 @@ const allMenuGroups = [
   },
   {
     // 仅平台超级管理员可见：企业管理（开通/停用企业、企业管理员管理）
-    // + CDN 刷新（平台级基础设施操作，覆盖同名对象的场景已自动刷新，此处为手动兜底）
+    // + 存储与分发（含文件存储 / CDN 分发 / 缓存刷新 / 迁移 / 绑定）
     group: '平台管理',
     icon: School,
     platformOnly: true,
     items: [
       { path: '/companies', title: '企业管理' },
-      { path: '/platform/cdn-refresh', title: 'CDN 刷新' },
-      // 存储与分发：多套文件存储 / CDN分发 + 绑定 + 一键迁移（平台超管专属）
+      // 存储与分发：多套文件存储 / CDN 分发 + 绑定 + 一键迁移（平台超管专属）
       { path: '/platform/storage-profiles', title: '存储与分发' },
+      // 备份与恢复：三件套是否齐全 / 多新鲜，可临时补一份并下载；紧挨主模块便于一起排查
+      { path: '/platform/backup', title: '备份与恢复' },
       // 系统设置：运行参数（品牌名 / 上传限制 / 小程序码 TTL / 特性开关）后台维护
       { path: '/platform/settings', title: '系统设置' },
       // 账号管理：平台超管账号改名 / 新增 / 重置密码 / 删除
       { path: '/platform/accounts', title: '账号管理' },
       // 操作日志：后台写操作与登录失败审计（只读）
       { path: '/platform/audit-logs', title: '操作日志' },
-      // 备份与恢复：三件套是否齐全 / 多新鲜，可临时补一份并下载
-      { path: '/platform/backup', title: '备份与恢复' },
     ],
   },
 ]

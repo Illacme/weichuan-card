@@ -121,15 +121,15 @@ export const routes = [
         meta: { title: '企业管理', group: '平台管理', platformOnly: true },
       },
       {
-        // CDN 刷新：平台级基础设施操作（覆盖同名对象的场景已自动刷新，此处为手动兜底），
-        // 仅平台超级管理员可见可访问
+        // 旧独立入口保留为重定向：手动清缓存已并进「存储与分发 → CDN 缓存刷新」页签。
+        // 不标 group，避免它继续出现在侧栏；保留 platformOnly 守卫，防止绕过权限。
         path: 'platform/cdn-refresh',
         name: 'cdn-refresh',
-        component: () => import('@/views/platform/CdnRefresh.vue'),
-        meta: { title: 'CDN 刷新', group: '平台管理', platformOnly: true },
+        redirect: '/platform/storage-profiles?tab=refresh',
+        meta: { title: 'CDN 缓存刷新', platformOnly: true },
       },
       {
-        // 存储与分发：多套文件存储 / CDN分发 + 全局与企业绑定 + 一键迁移。
+        // 存储与分发：多套文件存储 / CDN 分发 + 全局与企业绑定 + 一键迁移。
         // 与系统设置里遗留的平铺存储项并存：新部署走本模块，旧项保留给存量配置。
         path: 'platform/storage-profiles',
         name: 'storage-profiles',

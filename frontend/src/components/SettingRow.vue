@@ -224,7 +224,7 @@ const fieldHint = computed(() => FIELD_HINTS[props.item.key] || '')
 
 // 示例占位：比笼统的「未设置」更能告诉用户该填成什么样。
 // 与 item.description（讲「是什么、改了会怎样」）互补：示例讲「填什么格式」。
-// 只登记仍在系统设置里的项：存储连接信息与 CDN 凭据已分别进文件存储 / CDN分发
+// 只登记仍在系统设置里的项：存储连接信息与 CDN 凭据已分别进文件存储 / CDN 分发
 // （0059 / 0060），它们的示例留在各自的表单里，这里不再保留空转条目。
 const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   upload_dir: '如 ./data/uploads',

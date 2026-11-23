@@ -93,6 +93,13 @@ describe('路由守卫', () => {
     expect(await goto(r, '/platform/settings')).toBe('/platform/settings')
   })
 
+  it('旧 CDN 刷新链接重定向到模块的缓存刷新页签', async () => {
+    setSession({ loggedIn: true, isPlatform: true, companyId: 0 })
+    const r = makeRouter()
+    expect(await goto(r, '/platform/cdn-refresh')).toBe('/platform/storage-profiles')
+    expect(r.currentRoute.value.query.tab).toBe('refresh')
+  })
+
   it('微信绑定管理两类管理员都放行（企业管理员要能解绑本企业员工）', async () => {
     // 反查是平台超管专属，但清单 / 解绑是两类管理员共用的；误标 platformOnly
     // 会把企业管理员整页挡在门外。页面内再按 auth.isPlatform 收窄反查入口。

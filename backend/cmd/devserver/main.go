@@ -207,7 +207,7 @@ func main() {
 	// 看不到内置行，界面分支只有线上才第一次跑。
 	platformDelivery, perr := storageprofile.EnsureBuiltinPlatformDelivery(db, cfg)
 	if perr != nil {
-		log.Fatalf("[CDN][FATAL] 平台自身的 CDN分发配置不可用：%v", perr)
+		log.Fatalf("[CDN][FATAL] 平台自身的 CDN 分发配置不可用：%v", perr)
 	}
 	storageprofile.ApplyPlatformDeliveryConfig(&cfg, platformDelivery)
 	profiles := storageprofile.NewWithLocal(db, cfg.UploadDir)

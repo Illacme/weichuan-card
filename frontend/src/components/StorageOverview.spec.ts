@@ -117,7 +117,7 @@ describe('存储总览页', () => {
     await flush()
     await openHelp(w)
     const text = w.text()
-    for (const term of ['文件对象', '文件存储', 'CDN分发', '绑定', '迁移任务', '本地镜像', '自检']) {
+    for (const term of ['文件对象', '文件存储', 'CDN 分发', '绑定', '迁移任务', '本地镜像', '自检']) {
       expect(text).toContain(term)
     }
     expect(text).toContain('s3.ap-northeast-1.amazonaws.com')

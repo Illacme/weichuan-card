@@ -493,7 +493,7 @@ func TestDeliveryDomainDoesNotRelaxUpstreamHostBoundary(t *testing.T) {
 	_, err := newTarget(t, db)(7)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "不是同一个域名")
-	require.Contains(t, err.Error(), "CDN分发",
+	require.Contains(t, err.Error(), "CDN 分发",
 		"报错要指出自有域名该配在哪，而不是让人去改 hostHeader")
 
 	// 换成路径风格（hostHeader 留空）后，同一个自有域名不再拦回填——

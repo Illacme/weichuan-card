@@ -264,9 +264,15 @@ describe('layout/AdminLayout', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).toContain(':title="menuHint(m.path, m.title)"')
     expect(src).toContain("import { MENU_GUIDES } from '@/utils/storageGuides'")
-    for (const path of ['/platform/storage-profiles', '/platform/cdn-refresh', '/platform/backup', '/platform/settings']) {
+    for (const path of ['/platform/storage-profiles', '/platform/backup', '/platform/settings']) {
       expect(src, `${path} 也要在菜单里给出说明`).toContain(`path: '${path}'`)
     }
+    // 手动清缓存已并进模块页签，侧栏不再有独立入口
+    expect(src).not.toContain("path: '/platform/cdn-refresh'")
+    // 主模块紧挨备份入口，别再让子功能排在父模块前面
+    expect(src.indexOf("path: '/platform/storage-profiles'")).toBeLessThan(
+      src.indexOf("path: '/platform/backup'"),
+    )
   })
 
   beforeEach(() => {

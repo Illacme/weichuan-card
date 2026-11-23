@@ -241,7 +241,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 	r.GET("/api/admin/delivery-profiles", plat, func(c *gin.Context) {
 		var rows []model.DeliveryProfile
 		if err := db.Order("id ASC").Find(&rows).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取 CDN分发配置失败"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "读取 CDN 分发配置失败"})
 			return
 		}
 		out := make([]gin.H, 0, len(rows))
@@ -339,7 +339,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			return
 		}
 		if row.Builtin {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的 CDN分发不可删除；要停用刷新请把厂商改成「不刷新」"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的 CDN 分发不可删除；要停用刷新请把厂商改成「不刷新」"})
 			return
 		}
 		if err := db.Delete(&model.DeliveryProfile{}, id).Error; err != nil {
@@ -594,7 +594,7 @@ func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	}
 	var dp model.DeliveryProfile
 	if err := db.First(&dp, deliveryID).Error; err != nil {
-		return "CDN分发配置不存在"
+		return "CDN 分发配置不存在"
 	}
 	// 平台自身 CDN 档案只服务 p/ 平台对象：它的 domain 为空（平台域名真值源是
 	// 存储档案的访问基址），绑给企业会让出参回落到平台入口，企业自己的 CDN 域名

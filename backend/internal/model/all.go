@@ -26,7 +26,7 @@ func All() []interface{} {
 		&StorageUsage{},          // 按租户累计的存储用量（上传字节数 / 文件数，配额检查用）
 		&StorageBackfillRef{},    // 存量回填台账（P3；old_value 是回滚依据，见 migrations/0045）
 		&StorageProfile{},        // 文件存储：多套连接配置，供绑定引用（0054）
-		&DeliveryProfile{},       // CDN分发配置：域名与刷新凭据，独立于存储（0054）
+		&DeliveryProfile{},       // CDN 分发配置：域名与刷新凭据，独立于存储（0054）
 		&StorageBinding{},        // 文件存储绑定：全局默认 + 企业覆盖（0054）
 		&StorageMigrationJob{},   // 一键迁移任务（0054）
 		&StorageMigrationError{}, // 迁移失败对象清单（0054）

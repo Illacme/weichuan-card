@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       title="存储与分发：配置只存一份，谁用由绑定决定"
-      description="文件存储管文件存哪，CDN分发管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。文件存储、CDN分发与绑定只有平台超管能增删改。"
+      description="文件存储管文件存哪，CDN 分发管访问加速，绑定决定谁用哪套；不给任何企业单独指定时，所有人默认用同一套。默认本地磁盘、不开 CDN，直接可用。文件存储、CDN 分发与绑定只有平台超管能增删改。"
     />
 
     <el-tabs v-model="tab" class="storage-tabs">
@@ -63,11 +63,11 @@
         </el-table>
       </el-tab-pane>
 
-      <!-- CDN分发 -->
-      <el-tab-pane label="CDN分发" name="delivery">
+      <!-- CDN 分发 -->
+      <el-tab-pane label="CDN 分发" name="delivery">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.delivery.title }}</strong><span>{{ TAB_GUIDES.delivery.desc }}</span></div>
         <div class="tab-head tab-head-actions">
-          <el-button type="primary" @click="openDeliveryDialog(null)">新建CDN分发</el-button>
+          <el-button type="primary" @click="openDeliveryDialog(null)">新建CDN 分发</el-button>
         </div>
         <el-table :data="deliveries" v-loading="loading" size="small" border>
           <el-table-column prop="name" label="名称" min-width="150">
@@ -101,92 +101,15 @@
             </template>
           </el-table-column>
           <template #empty>
-            <div class="table-empty">还没有CDN分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建CDN分发」，各厂商控制台与凭据入口都在弹窗里。</div>
+            <div class="table-empty">还没有CDN 分发。不开 CDN 不影响使用；需要给访客加速时点右上角「新建CDN 分发」，各厂商控制台与凭据入口都在弹窗里。</div>
           </template>
         </el-table>
       </el-tab-pane>
 
-      <!-- 绑定关系 -->
-      <el-tab-pane label="绑定关系" name="binding">
-        <div class="tab-guide"><strong>{{ TAB_GUIDES.binding.title }}</strong><span>{{ TAB_GUIDES.binding.desc }}</span></div>
-        <el-alert
-          class="binding-alert"
-          type="warning"
-          :closable="false"
-          show-icon
-          title="切换全局默认是即时生效的高危操作"
-          description="保存前会自动核对：新文件存储必须已包含当前文件存储里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新文件存储里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
-        />
-        <div class="binding-card">
-          <h4>全局默认（所有企业的共同设置）</h4>
-          <p v-if="!boundGlobal" class="muted">
-            当前未配置绑定：文件存储沿用「文件存储 → 平台自身存储」，CDN 刷新沿用「CDN分发 → 平台自身 CDN」（两处改动都需重启）。
-          </p>
-          <div class="binding-form">
-            <label>文件存储</label>
-            <el-select v-model="globalStorageId" placeholder="选择文件存储" style="width: 260px">
-              <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
-            </el-select>
-            <label>CDN分发</label>
-            <el-select v-model="globalDeliveryId" placeholder="不启用 CDN" clearable style="width: 260px">
-              <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
-            </el-select>
-            <el-button type="primary" :loading="saving" @click="saveGlobal">保存全局默认</el-button>
-            <el-button
-              v-if="globalBinding && globalBinding.previousStorageProfileId"
-              :loading="saving"
-              @click="rollbackGlobal"
-            >回滚到上一套（{{ profileName(globalBinding.previousStorageProfileId) }}）</el-button>
-          </div>
-          <div class="force-row">
-            <el-checkbox v-model="forceGlobal">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
-          </div>
-        </div>
-        <div class="company-head">
-          <h4 class="company-title">企业覆盖（没有绑定行则继承全局）</h4>
-          <el-checkbox v-model="forceCompany">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
-        </div>
-        <el-table :data="companyBindings" v-loading="loading" size="small" border>
-          <el-table-column prop="tenantId" label="企业 ID" width="90" />
-          <el-table-column label="企业名称" min-width="160">
-            <template #default="{ row }">{{ companyNames[row.tenantId] || `#${row.tenantId}` }}</template>
-          </el-table-column>
-          <el-table-column label="文件存储" min-width="170">
-            <template #default="{ row }">
-              <el-select v-model="row.storageProfileId" size="small" style="width:100%">
-                <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="CDN分发" min-width="170">
-            <template #default="{ row }">
-              <el-select v-model="row.deliveryProfileId" size="small" clearable style="width:100%">
-                <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="生效来源" width="90">
-            <template #default="{ row }">{{ row.source === 'global' ? '全局' : row.source === 'inherit' ? '继承' : row.source }}</template>
-          </el-table-column>
-          <el-table-column label="切换前的文件存储" min-width="140">
-            <template #default="{ row }">
-              <span v-if="row.previousStorageProfileId">{{ profileName(row.previousStorageProfileId) }}</span>
-              <span v-else class="muted">无</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="220">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="saveCompany(row)">保存</el-button>
-              <el-button
-                v-if="row.previousStorageProfileId"
-                link
-                type="warning"
-                @click="rollbackCompany(row)"
-              >回滚</el-button>
-              <el-button link type="danger" @click="resetCompany(row)">恢复继承</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+      <!-- CDN 缓存刷新：原来独立成菜单，现与配置凭据的「CDN 分发」并排 -->
+      <el-tab-pane label="CDN 缓存刷新" name="refresh">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.refresh.title }}</strong><span>{{ TAB_GUIDES.refresh.desc }}</span></div>
+        <CdnRefresh @goto-settings="tab = 'delivery'" />
       </el-tab-pane>
 
       <!-- 迁移任务 -->
@@ -244,9 +167,92 @@
         </el-table>
       </el-tab-pane>
 
+      <!-- 绑定关系 -->
+      <el-tab-pane label="绑定关系" name="binding">
+        <div class="tab-guide"><strong>{{ TAB_GUIDES.binding.title }}</strong><span>{{ TAB_GUIDES.binding.desc }}</span></div>
+        <el-alert
+          class="binding-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="切换全局默认是即时生效的高危操作"
+          description="保存前会自动核对：新文件存储必须已包含当前文件存储里的全部对象，缺一个就拒绝切换，避免切过去访客拿到裂图。搬运历史对象请用「迁移任务」。切错了可一键回滚到切换前那套——回滚只换绑定、不搬对象，切换后新上传的对象仍在新文件存储里，属预期；仅当你确认目标本就是新桶、无需搬迁时，才勾选「强制切换」跳过核对。"
+        />
+        <div class="binding-card">
+          <h4>全局默认（所有企业的共同设置）</h4>
+          <p v-if="!boundGlobal" class="muted">
+            当前未配置绑定：文件存储沿用「文件存储 → 平台自身存储」，CDN 刷新沿用「CDN 分发 → 平台自身 CDN」（两处改动都需重启）。
+          </p>
+          <div class="binding-form">
+            <label>文件存储</label>
+            <el-select v-model="globalStorageId" placeholder="选择文件存储" style="width: 260px">
+              <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <label>CDN 分发</label>
+            <el-select v-model="globalDeliveryId" placeholder="不启用 CDN" clearable style="width: 260px">
+              <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-button type="primary" :loading="saving" @click="saveGlobal">保存全局默认</el-button>
+            <el-button
+              v-if="globalBinding && globalBinding.previousStorageProfileId"
+              :loading="saving"
+              @click="rollbackGlobal"
+            >回滚到上一套（{{ profileName(globalBinding.previousStorageProfileId) }}）</el-button>
+          </div>
+          <div class="force-row">
+            <el-checkbox v-model="forceGlobal">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+          </div>
+        </div>
+        <div class="company-head">
+          <h4 class="company-title">企业覆盖（没有绑定行则继承全局）</h4>
+          <el-checkbox v-model="forceCompany">强制切换（目标可能缺对象，跳过核对）</el-checkbox>
+        </div>
+        <el-table :data="companyBindings" v-loading="loading" size="small" border>
+          <el-table-column prop="tenantId" label="企业 ID" width="90" />
+          <el-table-column label="企业名称" min-width="160">
+            <template #default="{ row }">{{ companyNames[row.tenantId] || `#${row.tenantId}` }}</template>
+          </el-table-column>
+          <el-table-column label="文件存储" min-width="170">
+            <template #default="{ row }">
+              <el-select v-model="row.storageProfileId" size="small" style="width:100%">
+                <el-option v-for="p in writableStorages" :key="p.id" :label="p.name" :value="p.id" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="CDN 分发" min-width="170">
+            <template #default="{ row }">
+              <el-select v-model="row.deliveryProfileId" size="small" clearable style="width:100%">
+                <el-option v-for="p in writableDeliveries" :key="p.id" :label="p.name" :value="p.id" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="生效来源" width="90">
+            <template #default="{ row }">{{ row.source === 'global' ? '全局' : row.source === 'inherit' ? '继承' : row.source }}</template>
+          </el-table-column>
+          <el-table-column label="切换前的文件存储" min-width="140">
+            <template #default="{ row }">
+              <span v-if="row.previousStorageProfileId">{{ profileName(row.previousStorageProfileId) }}</span>
+              <span v-else class="muted">无</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="220">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="saveCompany(row)">保存</el-button>
+              <el-button
+                v-if="row.previousStorageProfileId"
+                link
+                type="warning"
+                @click="rollbackCompany(row)"
+              >回滚</el-button>
+              <el-button link type="danger" @click="resetCompany(row)">恢复继承</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
       <!-- 平台自身存储的部署期配置：连接信息已在「文件存储」标签的那一行里，
            这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
-      <el-tab-pane label="平台自身存储（启动配置）" name="platform">
+      <el-tab-pane label="平台自身配置" name="platform">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.platform.title }}</strong><span>{{ TAB_GUIDES.platform.desc }}</span></div>
         <StorageSettingsPanel
           :platform-profile="platformPrimaryProfile"
@@ -367,8 +373,8 @@
       </template>
     </el-dialog>
 
-    <!-- CDN分发表单 -->
-    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑CDN分发' : '新建CDN分发'" width="600px">
+    <!-- CDN 分发表单 -->
+    <el-dialog v-model="deliveryDialog" :title="deliveryForm.id ? '编辑CDN 分发' : '新建CDN 分发'" width="600px">
       <div v-if="currentCdnGuide" class="vendor-guide">
         <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
           <strong>{{ currentCdnGuide.label }}</strong>
@@ -404,7 +410,7 @@
             :closable="false"
             class="delivery-domain-note"
             title="平台域名不在这里配"
-            description="平台对象（p/ 前缀）的访问域名以「文件存储 → 平台自身存储」里的访问基址为准，这条 CDN分发只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
+            description="平台对象（p/ 前缀）的访问域名以「文件存储 → 平台自身存储」里的访问基址为准，这条 CDN 分发只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
           />
           <template v-else>
             <el-form-item>
@@ -462,6 +468,7 @@ import {
 } from '@/api/storageProfiles'
 import { listCompanies, type CompanyItem } from '@/api/tenants'
 import StorageSettingsPanel from '@/components/StorageSettingsPanel.vue'
+import CdnRefresh from './CdnRefresh.vue'
 import StorageOverview from '@/components/StorageOverview.vue'
 import FieldHelp from '@/components/FieldHelp.vue'
 import {
@@ -472,7 +479,7 @@ import {
 
 // 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「平台自身存储」面板消费。
 // 第一次进来落在「总览」：先看懂架构和现状，再去改配置。
-const VALID_TABS = ['overview', 'storage', 'delivery', 'binding', 'migration', 'platform']
+const VALID_TABS = ['overview', 'storage', 'delivery', 'refresh', 'migration', 'binding', 'platform']
 const initialTab = typeof window !== 'undefined'
   ? (new URLSearchParams(window.location.search).get('tab') || 'overview')
   : 'overview'
@@ -505,7 +512,7 @@ const platformDelivery = computed(
 )
 function deliveryPurposeHint(row: { purpose?: string }) {
   if (row.purpose !== 'platform_primary') return ''
-  return '平台自身 CDN：只服务 p/ 平台对象与未绑定CDN分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
+  return '平台自身 CDN：只服务 p/ 平台对象与未绑定CDN 分发的企业，不可删除、不可绑定给企业；域名见文件存储的访问基址，改完需重启'
 }
 const jobs = ref<MigrationJob[]>([])
 const companies = ref<CompanyItem[]>([])
