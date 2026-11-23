@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 本文件负责把「平台自身存储」的配置解析成 S3 源适配器需要的那一组值。
+// 本文件负责把「平台主存储」的配置解析成 S3 源适配器需要的那一组值。
 //
 // 唯一真值源是 storage_profiles 里 purpose=platform_primary 的内置档案
 // （迁移 0059）——与生产上传侧同一份连接信息、同一处自检。回填命令只读配置，
@@ -38,7 +38,7 @@ func platformSourceConfig(db *gorm.DB) (refmigrate.PlatformS3Config, error) {
 		err := db.Where("builtin = ? AND purpose = ?", true, model.ProfilePurposePlatformPrimary).
 			Limit(1).Find(&sp).Error
 		if err != nil {
-			return refmigrate.PlatformS3Config{}, fmt.Errorf("读取平台自身存储配置失败：%w", err)
+			return refmigrate.PlatformS3Config{}, fmt.Errorf("读取平台主存储配置失败：%w", err)
 		}
 		if sp.ID > 0 {
 			return platformSourceFromProfile(&sp), nil

@@ -33,7 +33,7 @@ func platformTestConfig() config.Config {
 	}
 }
 
-// 平台自身存储档案是平台连接信息的唯一真值源：首次从部署配置播种，
+// 平台主存储档案是平台连接信息的唯一真值源：首次从部署配置播种，
 // 之后管理员在档案里改过的值绝不能被每次启动的 ensure 覆盖回去。
 func TestEnsureBuiltinPlatformPrimary(t *testing.T) {
 	db := platformTestDB(t)

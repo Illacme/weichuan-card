@@ -27,23 +27,28 @@
           <el-button link type="primary" @click="showTechCols = !showTechCols">{{ showTechCols ? '收起技术列' : '更多列' }}</el-button>
           <el-button type="primary" @click="openStorageDialog(null)">新建文件存储</el-button>
         </div>
-        <el-table :data="storages" v-loading="loading" size="small" border>
-          <el-table-column label="名称" min-width="150">
+        <el-table :data="orderedStorages" v-loading="loading" size="small" border>
+          <el-table-column label="名称" min-width="240">
             <template #default="{ row }">
-              {{ row.name }}
-              <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未单独指定存储的企业用它。连接信息可以在这里改，但改完必须重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
-                <el-tag size="small" type="info">内置</el-tag>
-              </el-tooltip>
-              <el-tag v-if="row.purpose === 'platform_primary'" size="small" type="primary">平台自身存储</el-tag>
-              <el-tag v-if="row.purpose === 'tenant_fallback'" size="small" type="warning">租户退路</el-tag>
-              <el-tag v-if="row.purpose === 'platform_mirror'" size="small" type="success">平台镜像</el-tag>
-              <el-tag v-if="usageLabel(row.id, 'storage')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'storage') }}</el-tag>
+              <div class="name-cell">
+                <div class="name-line">
+                  <el-tag v-if="roleOf(row.purpose)" size="small" :type="roleOf(row.purpose)!.type">{{ roleOf(row.purpose)!.badge }}</el-tag>
+                  <span class="name-text">{{ row.name }}</span>
+                  <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未单独指定存储的企业用它。连接信息可以在这里改，但改完必须重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份盘 · 目录继承自「平台主存储（启动配置）→ 本地镜像目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的备用盘 · 目录继承自「平台主存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
+                    <el-tag size="small" type="info" effect="plain">内置</el-tag>
+                  </el-tooltip>
+                  <el-tag v-if="usageLabel(row.id, 'storage')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'storage') }}</el-tag>
+                </div>
+                <div class="name-duty">{{ dutyOf(row) }}</div>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column prop="driver" label="驱动" width="90" />
-          <el-table-column prop="endpoint" label="Endpoint" min-width="160" />
-          <el-table-column prop="bucket" label="Bucket" min-width="120" />
-          <el-table-column prop="baseUrl" label="上传返回基址" min-width="180" />
+          <el-table-column label="位置" min-width="220">
+            <template #default="{ row }">{{ locationOf(row) }}</template>
+          </el-table-column>
+          <el-table-column v-if="showTechCols" prop="endpoint" label="服务地址" min-width="160" />
+          <el-table-column v-if="showTechCols" prop="bucket" label="存储桶" min-width="120" />
+          <el-table-column v-if="showTechCols" prop="baseUrl" label="上传返回基址" min-width="180" />
           <el-table-column label="连通性" width="110">
             <template #default="{ row }">
               <el-tooltip placement="top" :content="probeHint(row)">
@@ -90,7 +95,7 @@
           <el-table-column label="公开域名" min-width="220">
             <template #default="{ row }">
               <span v-if="row.purpose === 'platform_primary'" class="muted">
-                见「文件存储 → 平台自身存储」的访问基址
+                见「文件存储 → 平台主存储」的访问基址
               </span>
               <span v-else>{{ row.domain }}</span>
             </template>
@@ -201,7 +206,7 @@
         <div class="binding-card">
           <h4>全局默认（所有企业的共同设置）</h4>
           <p v-if="!boundGlobal" class="muted">
-            当前未配置绑定：文件存储沿用「文件存储 → 平台自身存储」，CDN 刷新沿用「CDN 分发 → 平台自身 CDN」（两处改动都需重启）。
+            当前未配置绑定：文件存储沿用「文件存储 → 平台主存储」，CDN 刷新沿用「CDN 分发 → 平台自身 CDN」（两处改动都需重启）。
           </p>
           <div class="binding-form">
             <label>文件存储</label>
@@ -283,7 +288,7 @@
         <CdnRefresh compact @goto-settings="tab = 'delivery'" />
       </el-tab-pane>
 
-      <!-- 平台自身存储的部署期配置：连接信息已在「文件存储」标签的那一行里，
+      <!-- 平台主存储的部署期配置：连接信息已在「文件存储」标签的那一行里，
            这里只留目录 / 镜像总闸 / CDN 等启动期参数，同样改完重启。 -->
       <el-tab-pane label="平台自身配置" name="platform">
         <div class="tab-guide"><strong>{{ TAB_GUIDES.platform.title }}</strong><span>{{ TAB_GUIDES.platform.desc }}</span></div>
@@ -303,7 +308,7 @@
         description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未单独指定存储的企业用它。改完先点「自检」确认凭据与桶可达，再重启后端；不重启的话界面显示新值、实际上传仍走旧实例。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「启动配置 → 本地上传目录」（upload_dir），这里改不了。" />
       <el-alert v-else-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
         title="这是系统自带的文件存储，通常不用改动"
-        description="「平台本地存储」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「平台本地镜像」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），平台镜像的目录继承自「平台自身存储（启动配置）→ 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
+        description="「本地应急盘」是应急备用盘：平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「本地备份盘」是备份保险柜：图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「平台主存储（启动配置）→ 本地上传目录」（upload_dir），平台镜像的目录继承自「平台主存储（启动配置）→ 本地镜像目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
       <!-- 跟着当前驱动变的小抄：默认收起，已经知道去哪拿凭据的人不用看 -->
       <div v-if="currentDriverGuide" class="vendor-guide">
         <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
@@ -338,7 +343,7 @@
             <el-option v-for="d in drivers" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
           <span v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" class="field-note">
-            平台自身存储可选本地或任意云驱动，改完必须重启服务才生效。
+            平台主存储可选本地或任意云驱动，改完必须重启服务才生效。
           </span>
           <span v-else-if="storageForm.builtin" class="field-note">
             驱动锁定为「本地磁盘」，不可删除、也不能改成云存储；这是系统预留的备用盘，你只需改展示名，其余保持默认。
@@ -388,11 +393,11 @@
             <template #label>本地根目录 <FieldHelp v-bind="help(STORAGE_FIELD_GUIDES, 'localDir')" /></template>
             <el-input v-model="storageForm.localDir" :disabled="storageForm.builtin" placeholder="留空使用平台 uploads 目录" />
             <span v-if="storageForm.builtin && storageForm.purpose === 'platform_mirror'" class="field-note">
-              这是备份保险柜：备份目录继承自「平台自身存储 → 本地镜像目录」（mirror_dir），改那里后需重启才生效；图片传到云端后系统自动在这里留一份副本。
+              这是备份保险柜：备份目录继承自「平台主存储 → 本地镜像目录」（mirror_dir），改那里后需重启才生效；图片传到云端后系统自动在这里留一份副本。
               它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              系统自带文件存储的目录继承自「平台自身存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
+              系统自带文件存储的目录继承自「平台主存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
               所以这里不用改、也不建议改；真要换位置请到那里改后重启服务，单独改这里会让图片找不到。
             </span>
             <span v-else class="field-note">迁移到另一套本地文件存储时，两边要填不同目录，否则源对象会被同名覆盖。</span>
@@ -443,7 +448,7 @@
             :closable="false"
             class="delivery-domain-note"
             title="平台域名不在这里配"
-            description="平台对象（p/ 前缀）的访问域名以「文件存储 → 平台自身存储」里的访问基址为准，这条 CDN 分发只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
+            description="平台对象（p/ 前缀）的访问域名以「文件存储 → 平台主存储」里的访问基址为准，这条 CDN 分发只提供 CDN 厂商与刷新凭据。改完保存后需重启服务。"
           />
           <template v-else>
             <el-form-item>
@@ -513,7 +518,7 @@ import {
 // 列表却显示 aliyun 原始 code，会让人以为是两个不同字段。
 import { cdnProviderLabel } from '@/utils/cdn'
 
-// 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「平台自身存储」面板消费。
+// 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「平台主存储」面板消费。
 // 第一次进来落在「总览」：先看懂架构和现状，再去改配置。
 const VALID_TABS = ['overview', 'storage', 'delivery', 'refresh', 'migration', 'binding', 'platform']
 const initialTab = typeof window !== 'undefined'
@@ -528,11 +533,64 @@ const guideOpen = ref(false)
 const showTechCols = ref(false)
 const storages = ref<StorageProfile[]>([])
 // 两套系统自带的文件存储绝不能出现在绑定 / 迁移下拉里（后端也会拒）：
-// 镜像只收备份副本，平台自身存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
+// 镜像只收备份副本，平台主存储装的是 p/ 平台对象，绑给企业会把两边字节写混。
 const writableStorages = computed(() => storages.value.filter(
   (p) => p.purpose !== 'platform_mirror' && p.purpose !== 'platform_primary',
 ))
-// 顶部摘要只读「平台自身存储」这一行，告诉管理员文件实际存在哪；
+
+// 业务存储在前，三条内置机制压到最后：管理员日常维护的是自己建的那几套；
+// 内置三条是「平台的运行机制」，不是他要在列表里挑的方案。
+const BUILTIN_ORDER: Record<string, number> = {
+  platform_primary: 0,
+  tenant_fallback: 1,
+  platform_mirror: 2,
+}
+const orderedStorages = computed(() => [...storages.value].sort((a, b) => {
+  const au = a.purpose ? 1 : 0
+  const bu = b.purpose ? 1 : 0
+  if (au !== bu) return au - bu
+  if (au === 1) {
+    const d = (BUILTIN_ORDER[a.purpose as string] ?? 9) - (BUILTIN_ORDER[b.purpose as string] ?? 9)
+    if (d !== 0) return d
+  }
+  return a.id - b.id
+}))
+
+// 名字本身说不清职责，所以用徽标把「这一行在系统里是什么角色」摆在最前面：
+// 主存储 / 应急 / 备份，三个词互不相似，比三个近义地名好认。
+function roleOf(purpose?: string) {
+  switch (purpose) {
+    case 'platform_primary': return { badge: '主存储', type: 'primary' as const }
+    case 'tenant_fallback': return { badge: '应急', type: 'warning' as const }
+    case 'platform_mirror': return { badge: '备份', type: 'success' as const }
+    default: return null
+  }
+}
+const DRIVER_LABELS: Record<string, string> = {
+  local: '本地磁盘',
+  minio: 'MinIO / S3 兼容',
+  oss: '阿里云 OSS',
+  s3: 'S3 兼容云',
+}
+// 每行一句话讲清「它替系统扛什么」，不用悬停也不用点开说明。
+function dutyOf(row: { purpose?: string }) {
+  switch (row.purpose) {
+    case 'platform_primary': return '文件写在这里，访客也从这里读；没单独指定存储的企业都用它'
+    case 'tenant_fallback': return '主存储连不上时，上传还能落到这里——它保的是「还能用」'
+    case 'platform_mirror': return '上传成功后自动再留一份本地副本，只写不读，用来找回'
+    default: return '可以绑定给企业，也可以作为迁移的源或目标'
+  }
+}
+// 本地盘没有 endpoint / bucket，三列全空；合成一列「位置」才说得清文件到底在哪。
+function locationOf(row: { driver?: string; localDir?: string; bucket?: string }) {
+  if ((row.driver || '').trim() === 'local') {
+    const dir = String(row.localDir || '').trim()
+    return dir ? `本地磁盘 · ${dir}` : '本地磁盘 · 目录继承系统设置'
+  }
+  const label = DRIVER_LABELS[(row.driver || '').trim()] || row.driver || '云存储'
+  return `${label} · ${(row.bucket || '').trim() || '未填存储桶'}`
+}
+// 顶部摘要只读「平台主存储」这一行，告诉管理员文件实际存在哪；
 // 改连接信息仍去「文件存储」标签，不在启动配置面板里重复一套表单。
 const platformPrimaryProfile = computed(
   () => storages.value.find((p) => p.purpose === 'platform_primary') || null,
@@ -684,7 +742,7 @@ function migrationStatus(s?: string) {
 }
 // 系统自带文件存储的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
-// 配置已集中到本模块的「平台自身存储」标签；focus 参数让面板加载后滚到对应行。
+// 配置已集中到本模块的「平台主存储」标签；focus 参数让面板加载后滚到对应行。
 function builtinSettingHref(row: { purpose?: string }) {
   const key = row.purpose === 'platform_mirror' ? 'mirror_dir' : 'upload_dir'
   return `/platform/storage-profiles?tab=platform&focus=${key}`
@@ -923,6 +981,10 @@ function exportErrors() {
 .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .binding-form label, .migration-fields label { font-size: 13px; color: #606266; }
 .usage-tag { margin-left: 6px; }
+.name-cell { display: flex; flex-direction: column; gap: 3px; }
+.name-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.name-text { font-weight: 500; }
+.name-duty { color: #909399; font-size: 12px; line-height: 1.5; }
 .company-title { font-size: 14px; margin: 0 0 10px; }
 .migration-card { padding: 14px 16px; margin-bottom: 16px; border: 1px solid #ebeef5; border-radius: 8px; background: #fafcff; }
 .migration-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }

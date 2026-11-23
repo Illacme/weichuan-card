@@ -11,28 +11,65 @@ import (
 
 // 内置本地档案：每个部署都有两套，且都不可删除（handler 拦）、驱动锁定为 local。
 //
-//   - tenant_fallback「平台本地存储」：租户退路，目录与 cfg.UploadDir 同源，
+//   - tenant_fallback「本地应急盘」：租户退路，目录与 cfg.UploadDir 同源，
 //     静态路由 /uploads 直接托管它。服务「云配置全坏时还能上传」。
-//   - platform_mirror「平台本地镜像」：备份落点，目录为 cfg.MirrorDir，
+//   - platform_mirror「本地备份盘」：备份落点，目录为 cfg.MirrorDir，
 //     不在 /uploads 下，PublicRead=false。只接收「上传成功后从云回拉」的副本，
 //     **不允许被任何绑定引用**（绑定它等于把备份副本变成主写入目标）。
 //
-// 第三套内置档案 platform_primary「平台自身存储」在 platform.go：它承载平台
+// 第三套内置档案 platform_primary「平台主存储」在 platform.go：它承载平台
 // 自己的连接信息，驱动可以是云；与上面两套「本地盘用途」不是一回事，别混用。
 //
 // 为什么不写进迁移 SQL：目录取决于部署时的 UPLOAD_DIR / MIRROR_DIR，基址取决于
 // UPLOAD_BASE_URL，都不是迁移能知道的。放到启动时 ensure，升级与首装同一套逻辑。
 const (
-	builtinLocalName  = "平台本地存储"
-	builtinMirrorName = "平台本地镜像"
+	builtinLocalName  = "本地应急盘"
+	builtinMirrorName = "本地备份盘"
 )
+
+// 旧默认名：2026-11-23 之前种下的展示名。三个名字里两个都带「平台」、两个都带
+// 「本地」，用户分不清「平台主存储 / 平台本地存储 / 平台本地镜像」谁是谁，
+// 于是改成按职责命名（主存储 / 应急 / 备份）。
+//
+// 改名放在启动 ensure 里而不是迁移 SQL：SQLite 与 devserver 走 AutoMigrate、
+// 根本不执行 migrations，只有在这里改才能让三种部署形态表现一致。
+const (
+	legacyBuiltinLocalName    = "平台本地存储"
+	legacyBuiltinMirrorName   = "平台本地镜像"
+	legacyBuiltinPlatformName = "平台自身存储"
+)
+
+// renameBuiltinIfLegacy 把「还叫旧默认名」的内置档案改成新角色名。
+//
+// 两条边界：
+//  1. 管理员自己改过的名字不动——只认字符串完全等于旧默认名的情况；
+//  2. 新名字已被别的档案占用时不改：name 有唯一索引，硬改会让整个进程起不来，
+//     宁可继续显示旧名，也不能为了好看挡住启动。
+func renameBuiltinIfLegacy(db *gorm.DB, row *model.StorageProfile, legacy, want string) error {
+	if row == nil || strings.TrimSpace(row.Name) != legacy {
+		return nil
+	}
+	var n int64
+	if err := db.Model(&model.StorageProfile{}).Where("name = ?", want).Count(&n).Error; err != nil {
+		return fmt.Errorf("检查内置存储改名冲突失败：%w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).
+		Update("name", want).Error; err != nil {
+		return fmt.Errorf("更新系统自带文件存储的展示名失败：%w", err)
+	}
+	row.Name = want
+	return nil
+}
 
 // EnsureBuiltinLocal 保证「租户退路」内置档案存在并返回它。
 func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile, error) {
 	return ensureBuiltin(db, model.ProfilePurposeTenantFallback, builtinLocalName, dir, baseURL, true)
 }
 
-// EnsureBuiltinMirror 保证「平台本地镜像」内置档案存在并返回它。
+// EnsureBuiltinMirror 保证「本地备份盘」内置档案存在并返回它。
 // 镜像副本不对外公开，所以 baseURL 传空；目录可由部署配置修改，但启动后不可在界面改。
 func EnsureBuiltinMirror(db *gorm.DB, dir string) (*model.StorageProfile, error) {
 	return ensureBuiltin(db, model.ProfilePurposePlatformMirror, builtinMirrorName, dir, "", false)
@@ -65,6 +102,14 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 	}
 	want := strings.TrimSpace(dir)
 	if res.RowsAffected > 0 {
+		// 先按旧默认名改成角色名，再走下面那些「保内容」的更新。
+		legacy := legacyBuiltinLocalName
+		if purpose == model.ProfilePurposePlatformMirror {
+			legacy = legacyBuiltinMirrorName
+		}
+		if err := renameBuiltinIfLegacy(db, &row, legacy, name); err != nil {
+			return nil, err
+		}
 		// 已存在：展示名保留管理员改过的值；local_dir 必须跟随启动配置，
 		// 仅在值确实不同时更新，避免每次启动都无谓写库并惊动档案版本。
 		updates := map[string]any{}

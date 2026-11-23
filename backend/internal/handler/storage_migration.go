@@ -83,10 +83,10 @@ func RegisterStorageMigration(r *gin.Engine, db *gorm.DB, resolver *storageprofi
 			return
 		}
 		// 内置档案不是普通业务桶：镜像是备份落点（里面是副本，不是真数据），
-		// 平台自身存储承载 p/ 平台对象与无绑定企业的字节。两者当迁移源或目标，
+		// 平台主存储承载 p/ 平台对象与无绑定企业的字节。两者当迁移源或目标，
 		// 都会让「主写入在哪」这件事实失去唯一答案，自动切换后出参全错。
 		if builtinProfileInvolved(db, req.SourceProfileID, req.TargetProfileID) {
-			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的文件存储（平台自身存储 / 本地镜像）不能作为迁移的源或目标"})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带的文件存储（平台主存储 / 本地镜像）不能作为迁移的源或目标"})
 			return
 		}
 		if req.AutoSwitch && req.DryRun {

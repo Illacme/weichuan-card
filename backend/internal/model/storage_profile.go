@@ -16,7 +16,7 @@ import "time"
 //   - platform_primary：平台自身那份存储的连接信息（驱动 / 桶 / 凭据 / 基址），
 //     启动期由它构造平台实例并 SetPlatform；sys_setting 只留一个指向它的 id；
 //   - tenant_fallback：租户退路，dir 与 cfg.UploadDir 同源；
-//   - platform_mirror：平台本地镜像落点，独立目录，私有，不参与任何绑定。
+//   - platform_mirror：本地备份盘落点，独立目录，私有，不参与任何绑定。
 //
 // 普通档案为空串。内置档案都不可删，但它们**不是**可互换的：把镜像档案绑给租户
 // 会让备份副本变成主写入目标，把平台档案绑给租户会让 p/ 对象写进客户桶。

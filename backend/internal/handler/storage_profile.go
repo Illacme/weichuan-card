@@ -138,7 +138,7 @@ func RegisterStorageProfiles(r *gin.Engine, db *gorm.DB, resolver *storageprofil
 			// 与平台实例都绑在 cfg.UploadDir 上。若内置档案单独改成别的目录，绑定它的
 			// 租户写新目录、静态路由却从旧目录读，全站裂图且两边都不报错。
 			if reqChangedLocalDir {
-				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带文件存储的目录不可单独修改：请到「平台自身存储 → 本地上传目录 / 本地镜像目录」修改后重启服务"})
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "系统自带文件存储的目录不可单独修改：请到「平台主存储 → 本地上传目录 / 本地镜像目录」修改后重启服务"})
 				return
 			}
 			row.LocalDir = origLocalDir
@@ -581,13 +581,13 @@ func validateBindingTargets(db *gorm.DB, storageID, deliveryID int64) string {
 	// 两套内置档案绝不能成为租户的写入目标：
 	//   - 平台镜像只接收异步回拉的备份副本，绑定后新文件写进备份目录，
 	//     备份脚本与出参域名都不认这个落点；
-	//   - 平台自身存储装的是 p/ 平台对象与无绑定企业的字节，绑定给租户会把
+	//   - 平台主存储装的是 p/ 平台对象与无绑定企业的字节，绑定给租户会把
 	//     客户文件写进平台桶（或让平台对象写进客户桶），两边都不报错。
 	switch sp.Purpose {
 	case model.ProfilePurposePlatformMirror:
-		return "这一套是平台本地镜像，只用于备份副本，不能绑定为存储写入目标"
+		return "这一套是本地备份盘，只用于备份副本，不能绑定为存储写入目标"
 	case model.ProfilePurposePlatformPrimary:
-		return "这一套是平台自身存储，只供平台对象与未单独指定的企业使用，不能绑定给企业"
+		return "这一套是平台主存储，只供平台对象与未单独指定的企业使用，不能绑定给企业"
 	}
 	if deliveryID == 0 {
 		return ""

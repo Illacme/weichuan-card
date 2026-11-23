@@ -87,7 +87,7 @@ func TestBuiltinStorageProfileDriverAndDirLocked(t *testing.T) {
 	up := &storage.LocalUploader{Dir: cfg.UploadDir, BaseURL: cfg.UploadBaseURL, AllowExt: storage.DefaultAllowExt}
 	r := buildEngine(t, db, cfg, up, nil)
 
-	row := model.StorageProfile{Name: "平台本地存储", Driver: "local", Builtin: true, PublicRead: true, Version: 1}
+	row := model.StorageProfile{Name: "本地应急盘", Driver: "local", Builtin: true, PublicRead: true, Version: 1}
 	require.NoError(t, db.Create(&row).Error)
 
 	c := newTestClient(r, t)
@@ -156,7 +156,7 @@ func TestStorageProfileCreateKeepsExplicitFalseBools(t *testing.T) {
 
 // 内置档案不能当租户写入目标，也不能参与迁移：
 //   - 平台镜像是备份落点，一旦绑上，新文件写进备份目录，主出参域名却不认它；
-//   - 平台自身存储装的是 p/ 平台对象，绑给租户会把两边字节写混且都不报错。
+//   - 平台主存储装的是 p/ 平台对象，绑给租户会把两边字节写混且都不报错。
 func TestBuiltinProfilesCannotBeWriteTarget(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -166,17 +166,17 @@ func TestBuiltinProfilesCannotBeWriteTarget(t *testing.T) {
 		Name: "普通桶", Driver: "minio", Version: 1,
 	}).Error)
 	require.NoError(t, db.Create(&model.StorageProfile{
-		Name: "平台本地镜像", Driver: "local", Builtin: true,
+		Name: "本地备份盘", Driver: "local", Builtin: true,
 		Purpose: model.ProfilePurposePlatformMirror, Version: 1,
 	}).Error)
 	require.NoError(t, db.Create(&model.StorageProfile{
-		Name: "平台自身存储", Driver: "local", Builtin: true,
+		Name: "平台主存储", Driver: "local", Builtin: true,
 		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
 	}).Error)
 	var normal, mirror, platform model.StorageProfile
 	require.NoError(t, db.First(&normal, "name = ?", "普通桶").Error)
-	require.NoError(t, db.First(&mirror, "name = ?", "平台本地镜像").Error)
-	require.NoError(t, db.First(&platform, "name = ?", "平台自身存储").Error)
+	require.NoError(t, db.First(&mirror, "name = ?", "本地备份盘").Error)
+	require.NoError(t, db.First(&platform, "name = ?", "平台主存储").Error)
 
 	require.Empty(t, validateBindingTargets(db, normal.ID, 0))
 	require.Contains(t, validateBindingTargets(db, mirror.ID, 0), "不能绑定")

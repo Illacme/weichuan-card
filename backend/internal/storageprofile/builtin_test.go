@@ -35,7 +35,7 @@ func TestEnsureBuiltinLocal(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
-// 第二套不可删档案：平台本地镜像。它与租户退路档案同属 builtin，但用途完全不同，
+// 第二套不可删档案：本地备份盘。它与租户退路档案同属 builtin，但用途完全不同，
 // 必须按 purpose 精确寻址——若查询只按 builtin=true，先创建的退路档案会被
 // 镜像 ensure 当成自己，导致镜像目录写进 uploads（私有对象被静态路由公开）。
 func TestEnsureBuiltinMirror(t *testing.T) {
@@ -109,4 +109,54 @@ func TestEnsureBuiltinLocalDoesNotBind(t *testing.T) {
 	var n int64
 	require.NoError(t, db.Model(&model.StorageBinding{}).Count(&n).Error)
 	require.EqualValues(t, 0, n)
+}
+
+// 老库里的内置行还叫「平台本地存储 / 平台本地镜像」等旧名：启动 ensure 必须把它们
+// 升级成角色名，否则升级后的部署仍然显示三个分不清的名字。
+func TestBuiltinLegacyNameUpgradedOnStartup(t *testing.T) {
+	db := testDB(t)
+	local, err := EnsureBuiltinLocal(db, "/data/uploads", "")
+	require.NoError(t, err)
+	// 模拟升级前的库：展示名还是旧默认值
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", local.ID).
+		Update("name", legacyBuiltinLocalName).Error)
+
+	again, err := EnsureBuiltinLocal(db, "/data/uploads", "")
+	require.NoError(t, err)
+	require.Equal(t, local.ID, again.ID)
+	require.Equal(t, builtinLocalName, again.Name, "仍叫旧默认名的内置行必须升级成角色名")
+}
+
+// 新名已被别的档案占用时不改名：name 有唯一索引，硬改会让整个进程起不来。
+// 宁可继续显示旧名，也不能为了好看挡住启动。
+func TestBuiltinLegacyNameKeptWhenNewNameTaken(t *testing.T) {
+	db := testDB(t)
+	require.NoError(t, db.Create(&model.StorageProfile{
+		Name: builtinMirrorName, Driver: "local", Version: 1,
+	}).Error)
+	legacy := model.StorageProfile{
+		Name: legacyBuiltinMirrorName, Driver: "local", Builtin: true,
+		Purpose: model.ProfilePurposePlatformMirror, Version: 1,
+	}
+	require.NoError(t, db.Create(&legacy).Error)
+
+	got, err := EnsureBuiltinMirror(db, "/data/mirror")
+	require.NoError(t, err)
+	require.Equal(t, legacy.ID, got.ID)
+	require.Equal(t, legacyBuiltinMirrorName, got.Name, "撞名时保留旧名，不能违反唯一索引")
+}
+
+// 平台主存储走同一个 helper，单独钉一次。
+func TestRenameBuiltinPlatformLegacyName(t *testing.T) {
+	db := testDB(t)
+	row := model.StorageProfile{
+		Name: legacyBuiltinPlatformName, Driver: "local", Builtin: true,
+		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
+	}
+	require.NoError(t, db.Create(&row).Error)
+	require.NoError(t, renameBuiltinIfLegacy(db, &row, legacyBuiltinPlatformName, builtinPlatformName))
+
+	var got model.StorageProfile
+	require.NoError(t, db.First(&got, row.ID).Error)
+	require.Equal(t, builtinPlatformName, got.Name)
 }

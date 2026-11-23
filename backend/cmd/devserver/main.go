@@ -194,13 +194,13 @@ func main() {
 	}
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
 	if mirrorErr != nil {
-		log.Printf("[STORAGE][WARN] 平台本地镜像文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
+		log.Printf("[STORAGE][WARN] 本地备份盘文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
 	// 与生产同款：平台连接信息在内置档案里，本地联调也走同一条构造链，
 	// 否则「档案配好了」只在线上生效，dev 永远用另一套，等于没验证。
 	platformProfile, perr := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
 	if perr != nil {
-		log.Fatalf("[STORAGE][FATAL] 平台自身存储配置不可用：%v", perr)
+		log.Fatalf("[STORAGE][FATAL] 平台主存储配置不可用：%v", perr)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	// 平台 CDN 档案同款：dev 也要生成这一行，否则「分发档案」页在联调环境里
@@ -228,7 +228,7 @@ func main() {
 	up, upErr := storageprofile.BuildPlatformUploader(platformProfile, cfg)
 	platformDriver := platformProfile.Driver
 	if upErr != nil {
-		log.Printf("[WARN] 平台自身存储配置 %d 初始化失败，已降级为本地磁盘：%v", platformProfile.ID, upErr)
+		log.Printf("[WARN] 平台主存储配置 %d 初始化失败，已降级为本地磁盘：%v", platformProfile.ID, upErr)
 		up = storageprofile.LocalPlatformFallback(cfg)
 		platformDriver = "local"
 	}

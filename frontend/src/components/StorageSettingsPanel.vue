@@ -8,7 +8,7 @@
         <h3 class="hero-title">{{ locationTitle }}</h3>
         <p class="hero-desc">{{ locationDesc }}</p>
         <p class="hero-note">
-          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 平台自身存储」里改；
+          连接信息（驱动 / 桶 / 凭据 / 访问基址）在「文件存储 → 平台主存储」里改；
           CDN 刷新的厂商与凭据在「CDN 分发 → 平台自身 CDN」里改。两处保存后都需要重启。
           这里只管服务器目录与本地备份。
         </p>
@@ -249,7 +249,7 @@ const locationTitle = computed(() => {
 
 const locationDesc = computed(() => {
   const p = props.platformProfile
-  if (!p) return '请到「文件存储 → 平台自身存储」核对驱动、桶与访问基址。'
+  if (!p) return '请到「文件存储 → 平台主存储」核对驱动、桶与访问基址。'
   if (p.driver === 'local') {
     return `实际目录是 ${draft.upload_dir || '（未设置）'}；网站通过 /uploads 直接读取。`
   }

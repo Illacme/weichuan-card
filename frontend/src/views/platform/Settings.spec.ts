@@ -66,7 +66,7 @@ const items: SettingItem[] = [
   { key: 'access_token_ttl_minutes', name: '登录凭证有效期', group: 'auth', type: 'int', value: '15', description: 'access 有效期', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'login_rate_limit_per_min', name: '登录尝试频率限制', group: 'auth', type: 'int', value: '10', description: '登录限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   // 迁移 0059 / 0060：连接信息进文件存储、CDN 凭据进CDN 分发，sys_setting 只留两个指针
-  { key: 'platform_storage_profile_id', name: '平台自身存储配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的文件存储（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
+  { key: 'platform_storage_profile_id', name: '平台主存储配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的文件存储（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN 分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '本地镜像目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
@@ -1069,7 +1069,7 @@ describe('配置向导步骤条', () => {
   })
 })
 
-describe('平台自身存储与档案模块的边界', () => {
+describe('平台主存储与档案模块的边界', () => {
   it('系统设置不再内嵌默认档案选择器，只留到档案模块的指路', async () => {
     const { w } = await setup()
     expect(w.text()).not.toContain('保存默认档案')
@@ -1088,12 +1088,12 @@ describe('平台自身存储与档案模块的边界', () => {
     expect(src).toContain('/platform/storage-profiles?tab=platform&focus=')
   })
 
-  it('分组名叫「平台自身存储」而不是「兜底」，并讲清连接信息已进档案', () => {
+  it('分组名叫「平台主存储」而不是「兜底」，并讲清连接信息已进档案', () => {
     const src = readFileSync('src/views/platform/Settings.vue', 'utf8')
-    expect(src).toContain("storage: '平台自身存储（启动配置）'")
+    expect(src).toContain("storage: '平台主存储（启动配置）'")
     expect(src).not.toContain("storage: '平台兜底存储")
     // 「兜底」让人误以为这是不需要管的备用配置；这里其实是平台主落点
-    expect(src).toContain('平台自身存储的部署期事实')
+    expect(src).toContain('平台主存储的部署期事实')
     expect(src).toContain('存储与分发 → 文件存储')
     expect(src).not.toContain('storage_driver')
   })

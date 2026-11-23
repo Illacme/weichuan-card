@@ -43,7 +43,7 @@ type Manager struct {
 	timeout time.Duration
 }
 
-// New 从「平台本地镜像」内置档案构造管理器。目录以档案的 local_dir 为唯一真值源：
+// New 从「本地备份盘」内置档案构造管理器。目录以档案的 local_dir 为唯一真值源：
 // 启动时 EnsureBuiltinMirror 已把它同步成 cfg.MirrorDir，两边不会分叉。
 func New(db *gorm.DB, res storage.Resolver, profile *model.StorageProfile) *Manager {
 	if profile == nil {
