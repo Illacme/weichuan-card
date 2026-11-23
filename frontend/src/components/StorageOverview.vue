@@ -128,7 +128,7 @@ const subline = computed(() =>
 )
 const actionText = computed(() => (isDefaultLocal.value ? '我要接入云平台' : '管理文件存储'))
 
-// 总览必须回答「除了默认那套，还有没有例外」：只看平台主存储会让人以为
+// 总览必须回答「除了默认那套，还有没有例外」：只看主存储会让人以为
 // 全站都在这一个桶里，实际可能有企业单独指定。globalBinding 此前是声明了没人用的死 prop。
 const usageLine = computed(() => {
   const n = props.companyBindingCount || 0
@@ -139,8 +139,8 @@ const usageLine = computed(() => {
       : '归属：全部企业都用全局默认那套，没有企业单独指定。'
   }
   return n
-    ? `归属：还没设置全局默认，未指定的企业用平台主存储；其中 ${n} 家企业单独指定了自己的文件存储。`
-    : '归属：还没设置全局默认，所有企业都用平台主存储。'
+    ? `归属：还没设置全局默认，未指定的企业用主存储；其中 ${n} 家企业单独指定了自己的文件存储。`
+    : '归属：还没设置全局默认，所有企业都用主存储。'
 })
 
 const storageVendors = Object.values(DRIVER_GUIDES).filter((g) => g.key !== 'local')

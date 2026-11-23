@@ -116,7 +116,7 @@ beforeEach(() => {
   vi.mocked(ElMessageBox.confirm).mockResolvedValue('confirm' as any)
 })
 
-describe('平台主存储配置面板', () => {
+describe('主存储配置面板', () => {
   it('默认只展示「文件存在哪」与三个常用项，技术键名和高级项全部收起', async () => {
     const w = mountPanel()
     await flush()
@@ -149,7 +149,7 @@ describe('平台主存储配置面板', () => {
     await flush()
     const text = w.text()
     expect(text).toContain('连接信息（驱动 / 桶 / 凭据 / 访问基址）')
-    expect(text).toContain('文件存储 → 平台主存储')
+    expect(text).toContain('文件存储 → 主存储')
     // CDN 凭据只在一处：CDN 分发的内置行，不再在本面板留第二份表单
     expect(text).toContain('CDN 分发 → 平台自身 CDN')
     expect(text).toContain('保存后都需要重启')

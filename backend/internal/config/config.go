@@ -23,7 +23,7 @@ type Config struct {
 	Port      string
 	JWTKey    string
 	UploadDir string // 本地上传目录（local 驱动用，小程序码缓存也落这里）
-	// MirrorDir 本地备份盘目录：上传成功后从云异步回拉的备份副本落这里。
+	// MirrorDir 备份存储目录：上传成功后从云异步回拉的备份副本落这里。
 	// **必须与 UploadDir 完全分离**，否则私有桶对象会被 /uploads 静态路由公开出去。
 	MirrorDir string // MIRROR_DIR，默认 ./storage/mirror
 	// BackupDir 备份产物目录（后台「备份与恢复」面板读它；与 scripts/backup.sh 的

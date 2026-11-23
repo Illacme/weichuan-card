@@ -147,7 +147,7 @@ function uploadsItem(over: Record<string, unknown> = {}) {
 function mirrorItem(over: Record<string, unknown> = {}) {
   return {
     kind: 'mirror',
-    label: '本地镜像（云对象备份）',
+    label: '备份存储（云对象副本）',
     file: 'mirror-20261102-030000.tar.gz',
     bytes: 2 * 1024 * 1024,
     mtime: '2026-11-02T03:00:00+08:00',
@@ -210,18 +210,18 @@ describe('Backup 备份与恢复面板', () => {
     expect(rows[2].text()).toContain('缺失')
   })
 
-  // 本地镜像是可选产物：没开启镜像的部署本来就不产出，硬占一行会让正常部署
+  // 备份存储是可选产物：没开启它的部署本来就不产出，硬占一行会让正常部署
   // 天天看到「缺失」。但真有归档时必须出现——那是「云桶被误删还能找回」的唯一凭据。
-  it('本地镜像行只在确有归档时出现，且排在密钥之前', async () => {
+  it('备份存储行只在确有归档时出现，且排在密钥之前', async () => {
     const without = await setup(status({ items: [dbItem(), uploadsItem(), secretsItem()] }))
-    expect(without.findAll('.el-table .row').map((r: any) => r.text()).join('|')).not.toContain('本地镜像')
+    expect(without.findAll('.el-table .row').map((r: any) => r.text()).join('|')).not.toContain('备份存储')
 
     const withMirror = await setup(
       status({ items: [dbItem(), uploadsItem(), mirrorItem(), secretsItem()] }),
     )
     const rows = withMirror.findAll('.el-table .row')
     expect(rows).toHaveLength(4)
-    expect(rows[2].text()).toContain('本地镜像')
+    expect(rows[2].text()).toContain('备份存储')
     expect(rows[2].text()).toContain('mirror-20261102-030000.tar.gz')
     expect(rows[3].text()).toContain('运行时密钥')
   })

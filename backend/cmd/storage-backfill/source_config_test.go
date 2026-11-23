@@ -81,7 +81,7 @@ func TestPlatformSourceConfigPrefersBuiltinProfile(t *testing.T) {
 	db := settingsDB(t)
 	require.NoError(t, db.AutoMigrate(&model.StorageProfile{}))
 	require.NoError(t, db.Create(&model.StorageProfile{
-		Name: "平台主存储", Driver: "s3", Endpoint: "profile.example.com",
+		Name: "主存储", Driver: "s3", Endpoint: "profile.example.com",
 		Bucket: "wc-profile", Region: "ap-shanghai", AccessKey: "AK-PROFILE",
 		SecretKey: "SK-PROFILE", UseSSL: true, Builtin: true,
 		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,

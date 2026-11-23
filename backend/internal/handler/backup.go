@@ -115,7 +115,7 @@ func backupKindOf(name string) string {
 var backupKindLabels = map[string]string{
 	"db":      "数据库",
 	"uploads": "上传文件（图片）",
-	"mirror":  "本地镜像（云对象备份）",
+	"mirror":  "备份存储（云对象副本）",
 	"secrets": "运行时密钥",
 }
 
@@ -149,7 +149,7 @@ func RegisterBackup(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 镜像目录在用却没有归档：说明备份脚本还是旧版（没纳入 mirror）或最近没跑。
 		// 不说这一句，运维会以为「云桶有本地备份」，实际备份包里一个镜像文件都没有。
 		if dirHasFiles(cfg.MirrorDir) && !hasKind(items, "mirror") {
-			notes = append(notes, "本地镜像目录里已有副本，但备份目录里没有 mirror-*.tar.gz：说明备份脚本未纳入镜像（请更新 scripts/backup.sh）或尚未执行。云桶被误删时这份副本就是唯一的找回来源。")
+			notes = append(notes, "备份存储目录里已有副本，但备份目录里没有 mirror-*.tar.gz：说明备份脚本没把它打进去（请更新 scripts/backup.sh）或尚未执行。云桶被误删时这份副本就是唯一的找回来源。")
 		}
 
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{

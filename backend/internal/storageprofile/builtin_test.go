@@ -35,7 +35,7 @@ func TestEnsureBuiltinLocal(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
-// 第二套不可删档案：本地备份盘。它与租户退路档案同属 builtin，但用途完全不同，
+// 第二套不可删档案：备份存储。它与租户退路档案同属 builtin，但用途完全不同，
 // 必须按 purpose 精确寻址——若查询只按 builtin=true，先创建的退路档案会被
 // 镜像 ensure 当成自己，导致镜像目录写进 uploads（私有对象被静态路由公开）。
 func TestEnsureBuiltinMirror(t *testing.T) {
@@ -146,7 +146,7 @@ func TestBuiltinLegacyNameKeptWhenNewNameTaken(t *testing.T) {
 	require.Equal(t, legacyBuiltinMirrorName, got.Name, "撞名时保留旧名，不能违反唯一索引")
 }
 
-// 平台主存储走同一个 helper，单独钉一次。
+// 主存储走同一个 helper，单独钉一次。
 func TestRenameBuiltinPlatformLegacyName(t *testing.T) {
 	db := testDB(t)
 	row := model.StorageProfile{
@@ -154,9 +154,23 @@ func TestRenameBuiltinPlatformLegacyName(t *testing.T) {
 		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
 	}
 	require.NoError(t, db.Create(&row).Error)
-	require.NoError(t, renameBuiltinIfLegacy(db, &row, legacyBuiltinPlatformName, builtinPlatformName))
+	require.NoError(t, renameBuiltinIfLegacy(db, &row, builtinPlatformLegacyNames, builtinPlatformName))
 
 	var got model.StorageProfile
 	require.NoError(t, db.First(&got, row.ID).Error)
 	require.Equal(t, builtinPlatformName, got.Name)
+}
+
+// 中间态那一代（平台主存储 / 本地应急盘 / 本地备份盘）同样要迁：它只陪跑了几十分钟，
+// 但只要有人起过那一版，库里就留着这些名字。
+func TestBuiltinIntermediateNameUpgraded(t *testing.T) {
+	db := testDB(t)
+	local, err := EnsureBuiltinLocal(db, "/data/uploads", "")
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.StorageProfile{}).Where("id = ?", local.ID).
+		Update("name", "本地应急盘").Error)
+
+	again, err := EnsureBuiltinLocal(db, "/data/uploads", "")
+	require.NoError(t, err)
+	require.Equal(t, builtinLocalName, again.Name, "中间态旧名必须继续升级")
 }

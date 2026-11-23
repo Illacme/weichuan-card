@@ -20,7 +20,7 @@ import (
 //
 // 三条不能退的约束：
 //
-//  1. **与生产上传侧同源**。平台主存储没有 company_id、没有 host_header 列，
+//  1. **与生产上传侧同源**。主存储没有 company_id、没有 host_header 列，
 //     所以不能用 NewS3Store（那是租户语义：company_id>0 + S3BucketLookup 按
 //     host_header 判路径风格）。这里复用 storage.NewMinioUploader 且**省略
 //     lookup 变参**，拿到与 cmd/server.newUploader 完全同一个客户端构造

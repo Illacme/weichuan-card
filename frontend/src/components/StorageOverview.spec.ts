@@ -117,7 +117,7 @@ describe('存储总览页', () => {
     await flush()
     await openHelp(w)
     const text = w.text()
-    for (const term of ['文件对象', '文件存储', 'CDN 分发', '绑定', '迁移任务', '本地备份', '自检']) {
+    for (const term of ['文件对象', '文件存储', 'CDN 分发', '绑定', '迁移任务', '备份存储', '自检']) {
       expect(text).toContain(term)
     }
     expect(text).toContain('s3.ap-northeast-1.amazonaws.com')
@@ -125,7 +125,7 @@ describe('存储总览页', () => {
   })
 
   it('总览必须回答「有没有企业单独指定」，不能把 globalBinding 当摆设', async () => {
-    // 只看平台主存储会让人以为全站都在一个桶里；例外情况必须写出来。
+    // 只看主存储会让人以为全站都在一个桶里；例外情况必须写出来。
     const noException = mountPage({
       platformProfile: cloudProfile, platformDelivery: cloudDelivery,
       globalBinding: { storageProfileId: 1 }, companyBindingCount: 0,
@@ -140,7 +140,7 @@ describe('存储总览页', () => {
     await flush()
     expect(withException.text()).toContain('另有 3 家企业单独指定')
 
-    // 没设全局默认时也不能沉默：要说清默认落点是平台主存储。
+    // 没设全局默认时也不能沉默：要说清默认落点是主存储。
     const noGlobal = mountPage({
       platformProfile: cloudProfile, platformDelivery: cloudDelivery,
       globalBinding: null, companyBindingCount: 2,

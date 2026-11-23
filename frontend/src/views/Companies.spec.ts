@@ -1013,7 +1013,7 @@ describe('企业管理 · 登录页白标码', () => {
     await btnIn(rowOf(w, 1), '编辑').trigger('click')
     await flush()
     const dlg = w.find('.el-dialog')
-    expect(dlg.text()).toContain('本地备份镜像')
+    expect(dlg.text()).toContain('备份存储（本企业）')
     const sw = dlg.find('.el-switch.mirror-switch')
     expect(sw.exists()).toBe(true)
     expect(sw.attributes('data-checked')).toBe('true')

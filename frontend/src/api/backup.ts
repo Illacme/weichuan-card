@@ -49,8 +49,8 @@ export const BACKUP_KINDS: { kind: string; label: string; hint: string; optional
   { kind: 'uploads', label: '上传文件', hint: '名片图片 / 案例图，丢了页面会成片空白' },
   {
     kind: 'mirror',
-    label: '本地镜像',
-    hint: '云桶对象的本地副本；只做备份、不参与出参，用于桶被误删时找回',
+    label: '备份存储',
+    hint: '云桶对象的副本；只做备份、不参与出参，用于桶被误删时找回',
     optional: true,
   },
   { kind: 'secrets', label: '运行时密钥', hint: 'PII_ENC_KEY 等：没有它，库里的姓名手机解不出来' },

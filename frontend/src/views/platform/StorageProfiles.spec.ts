@@ -83,7 +83,7 @@ function mountPage() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // 新「平台主存储」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
+  // 新「主存储」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
   // 这里显式给实现，避免 clearAllMocks 后拿不到返回值。
   vi.mocked(getSettings).mockResolvedValue({ code: 0, data: [] } as any)
   vi.mocked(api.listStorageProfiles).mockResolvedValue([storage(1, '主站 OSS'), storage(2, '备份桶')] as any)
@@ -189,16 +189,16 @@ describe('存储与分发模块', () => {
 
   it('内置本地档案标记为「内置」，编辑时驱动锁定并说明兜底用途', async () => {
     vi.mocked(api.listStorageProfiles).mockResolvedValue([
-      { ...storage(1, '本地应急盘'), builtin: true, driver: 'local' },
+      { ...storage(1, '应急存储'), builtin: true, driver: 'local' },
     ] as any)
     const w = mountPage()
     await flush()
-    expect(w.text()).toContain('本地应急盘')
+    expect(w.text()).toContain('应急存储')
     expect(w.text()).toContain('内置')
     // 说明移入标签悬停提示：列表保持清爽，但要钉死悬停会显示「系统自带、别删」
     const tip1 = w.findComponent({ name: 'ElTooltip' })
     expect(tip1.exists()).toBe(true)
-    expect(tip1.props('content')).toContain('系统自带的备用盘')
+    expect(tip1.props('content')).toContain('系统自带的应急存储')
     expect(tip1.props('content')).toContain('请勿删除')
     // 内置档案改不动目录/基址，必须给一条直达系统设置的链接，
     // 否则管理员只能在编辑弹窗里对着灰字段干瞪眼。
@@ -211,10 +211,12 @@ describe('存储与分发模块', () => {
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
     await flush()
-    // 编辑弹窗顶部要有「应急备用盘 vs 备份保险柜」的对照说明，管理员一眼看懂两者区别
+    // 编辑弹窗顶部要有「应急存储 vs 备份存储」的对照说明，管理员一眼看懂两者区别
     expect(w.text()).toContain('这是系统自带的文件存储，通常不用改动')
-    expect(w.text()).toContain('应急备用盘')
-    expect(w.text()).toContain('备份保险柜')
+    expect(w.text()).toContain('系统预留的应急存储')
+    // 弹窗顶部要把「应急存储 vs 备份存储」一次讲清：名字已直白，别再用「保险柜/备用盘」另行造词
+    expect(w.text()).toContain('备份存储')
+    expect(w.text()).toContain('只进不出')
     // 开发者术语不能出现在给管理员看的说明里
     expect(w.text()).not.toContain('静态文件服务也绑在同一目录')
     expect(w.text()).not.toContain('会导致图片 404')
@@ -232,15 +234,15 @@ describe('存储与分发模块', () => {
     // 之前用 danger link + disabled，禁用态仍是红字，管理员以为能点却点不动。
     expect(w.text()).toContain('系统自带 · 不可删')
     // 只看内置档案这一行：它不该有可点的删除按钮（别的企业档案仍有）
-    const builtinRow = w.findAll('.el-table-row').find((r) => r.text().includes('本地应急盘'))!
+    const builtinRow = w.findAll('.el-table-row').find((r) => r.text().includes('应急存储'))!
     expect(builtinRow.text()).toContain('系统自带 · 不可删')
     expect(builtinRow.findAll('button').filter((b) => b.text() === '删除')).toHaveLength(0)
   })
 
   it('两套内置档案用途可辨，镜像档案不参与绑定与迁移', async () => {
     vi.mocked(api.listStorageProfiles).mockResolvedValue([
-      { ...storage(1, '本地应急盘'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
-      { ...storage(2, '本地备份盘'), builtin: true, driver: 'local', purpose: 'platform_mirror', publicRead: false },
+      { ...storage(1, '应急存储'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
+      { ...storage(2, '备份存储'), builtin: true, driver: 'local', purpose: 'platform_mirror', publicRead: false },
     ] as any)
     const w = mountPage()
     await flush()
@@ -252,10 +254,10 @@ describe('存储与分发模块', () => {
       // 列表里还有「连通性」的自检时间提示，这里只挑档案用途说明那一批。
       .filter((t) => !String(t.props('content')).includes('自检'))
     expect(tips).toHaveLength(2)
-    expect(tips[0].props('content')).toContain('系统自带的备用盘')
-    expect(tips[1].props('content')).toContain('系统自带的备份盘')
+    expect(tips[0].props('content')).toContain('系统自带的应急存储')
+    expect(tips[1].props('content')).toContain('系统自带的备份存储')
     expect(tips[1].props('content')).toContain('自动运行')
-    expect(tips[1].props('content')).toContain('本地镜像目录')
+    expect(tips[1].props('content')).toContain('备份存储目录')
     // 悬停提示要点明目录真值源（配置项 key）与改后重启，否则管理员还来档案里找目录框
     expect(tips[0].props('content')).toContain('upload_dir')
     expect(tips[1].props('content')).toContain('mirror_dir')
@@ -270,7 +272,7 @@ describe('存储与分发模块', () => {
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
     await buttons[1].trigger('click')
     await flush()
-    expect(w.text()).toContain('本地镜像目录')
+    expect(w.text()).toContain('备份存储目录')
     expect(w.text()).toContain('不参与任何租户绑定')
     // 详情必写清目录继承自哪个配置项、改后要重启（不是「跟随系统设置」这种含糊说法）
     expect(w.text()).toContain('mirror_dir')
@@ -278,22 +280,22 @@ describe('存储与分发模块', () => {
     expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 本地上传目录」')
 
     // 下拉里不能出现镜像档案：绑上它等于把备份副本变成主写入目标。
-    expect(w.findAll('option').filter((o) => o.text() === '本地备份盘')).toHaveLength(0)
+    expect(w.findAll('option').filter((o) => o.text() === '备份存储')).toHaveLength(0)
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain("row.purpose === 'platform_mirror'")
   })
 
-  it('三套内置档案职责可辨，平台主存储可改连接信息但不参与绑定与迁移', async () => {
+  it('三套内置档案职责可辨，主存储可改连接信息但不参与绑定与迁移', async () => {
     vi.mocked(api.listStorageProfiles).mockResolvedValue([
-      { ...storage(1, '平台主存储'), builtin: true, driver: 'minio', purpose: 'platform_primary' },
-      { ...storage(2, '本地应急盘'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
-      { ...storage(3, '本地备份盘'), builtin: true, driver: 'local', purpose: 'platform_mirror' },
+      { ...storage(1, '主存储'), builtin: true, driver: 'minio', purpose: 'platform_primary' },
+      { ...storage(2, '应急存储'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
+      { ...storage(3, '备份存储'), builtin: true, driver: 'local', purpose: 'platform_mirror' },
     ] as any)
     const w = mountPage()
     await flush()
 
     // 三套 builtin 都要能在列表里一眼认出来，不能混成「两个本地盘 + 一个普通档案」
-    expect(w.text()).toContain('平台主存储')
+    expect(w.text()).toContain('主存储')
     // 角色徽标取代了原来「租户退路 / 平台镜像」两个和名字看不懂的标签
     expect(w.text()).toContain('应急')
     expect(w.text()).toContain('备份')
@@ -304,17 +306,17 @@ describe('存储与分发模块', () => {
     expect(tips[0].props('content')).toContain('不能绑定给企业')
     expect(tips[0].props('content')).toContain('不能参与迁移')
 
-    // 平台主存储 / 本地备份盘都不能进绑定与迁移下拉；
+    // 主存储 / 备份存储都不能进绑定与迁移下拉；
     // 租户退路（tenant_fallback）本质就是可被绑定的本地盘，必须仍然可选。
-    expect(w.findAll('option').filter((o) => o.text() === '本地应急盘').length).toBeGreaterThan(0)
-    for (const name of ['平台主存储', '本地备份盘']) {
+    expect(w.findAll('option').filter((o) => o.text() === '应急存储').length).toBeGreaterThan(0)
+    for (const name of ['主存储', '备份存储']) {
       expect(w.findAll('option').filter((o) => o.text() === name)).toHaveLength(0)
     }
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain("p.purpose !== 'platform_primary'")
     expect(src).toContain("p.purpose !== 'platform_mirror'")
 
-    // 平台主存储的编辑弹窗保留驱动可改与「重启 + 自检」提示，
+    // 主存储的编辑弹窗保留驱动可改与「重启 + 自检」提示，
     // 另外两套 builtin 仍锁 local；不能因为都是 builtin 就一刀切锁死。
     const edit = w.findAll('button').filter((b) => b.text() === '编辑')[0]
     await edit.trigger('click')
@@ -335,7 +337,7 @@ describe('存储与分发模块', () => {
 
     // 平台行的域名列不能是空白（会像「没配」），要说清它跟文件存储走
     expect(w.text()).toContain('平台自身 CDN')
-    expect(w.text()).toContain('见「文件存储 → 平台主存储」的访问基址')
+    expect(w.text()).toContain('见「文件存储 → 主存储」的访问基址')
     expect(w.text()).toContain('https://cdn.example.com')
 
     // 删除按钮对内置行禁用：后端也会拒，但界面上不该给人点
@@ -407,7 +409,7 @@ describe('存储与分发模块', () => {
     expect(startBtn.attributes('disabled')).toBeDefined()
   })
 
-  it('新增「平台主存储」标签，把系统设置的存储/上传项收进同一模块', () => {
+  it('新增「主存储」标签，把系统设置的存储/上传项收进同一模块', () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     expect(src).toContain('label="平台自身配置"')
     expect(src).not.toContain('label="平台兜底配置"')
@@ -778,9 +780,9 @@ describe('存储与分发模块', () => {
 
   it('角色徽标 + 一句职责 + 位置列：三套内置存储不用看说明也能分清', async () => {
     vi.mocked(api.listStorageProfiles).mockResolvedValue([
-      { ...storage(1, '平台主存储'), builtin: true, driver: 'local', purpose: 'platform_primary', localDir: '/data/upload' },
-      { ...storage(2, '本地应急盘'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
-      { ...storage(3, '本地备份盘'), builtin: true, driver: 'local', purpose: 'platform_mirror' },
+      { ...storage(1, '主存储'), builtin: true, driver: 'local', purpose: 'platform_primary', localDir: '/data/upload' },
+      { ...storage(2, '应急存储'), builtin: true, driver: 'local', purpose: 'tenant_fallback' },
+      { ...storage(3, '备份存储'), builtin: true, driver: 'local', purpose: 'platform_mirror' },
       { ...storage(4, '主站 OSS'), driver: 'oss', bucket: 'my-bucket' },
     ] as any)
     const w = mountPage()
@@ -789,11 +791,8 @@ describe('存储与分发模块', () => {
 
     // 业务存储排在内置机制前面：日常维护的是自己建的那几套。
     expect(vm.orderedStorages.map((r: any) => r.id)).toEqual([4, 1, 2, 3])
-    // 三个旧名互相看不出区别，靠徽标区分角色。
-    expect(vm.roleOf('platform_primary').badge).toBe('主存储')
-    expect(vm.roleOf('tenant_fallback').badge).toBe('应急')
-    expect(vm.roleOf('platform_mirror').badge).toBe('备份')
-    expect(vm.roleOf('')).toBeNull()
+    // 名字本身就是角色，不再额外挂徽标（原来「名字 + 徽标」把同一件事说了两遍）。
+    expect(vm.orderedStorages.map((r: any) => r.name)).toEqual(['主站 OSS', '主存储', '应急存储', '备份存储'])
 
     const text = w.text()
     // 每行都有一句「它替系统扛什么」，不用悬停也不用翻文档。
@@ -814,11 +813,22 @@ describe('存储与分发模块', () => {
   it('三个内置存储不再用旧默认名，避免「两个平台、两个本地」再次出现', () => {
     const files = [
       'src/views/platform/StorageProfiles.vue',
+      'src/views/platform/Settings.vue',
+      'src/views/Companies.vue',
       'src/components/StorageOverview.vue',
       'src/components/StorageSettingsPanel.vue',
       'src/utils/storageGuides.ts',
+      'src/api/backup.ts',
+      'src/api/audit.ts',
     ]
-    const legacy = ['平台自身存储', '平台本地存储', '平台本地镜像']
+    // 两代旧名都要盯：第一代是三个近义地名，第二代是我上一轮多加了一层概念的版本。
+    // 后两个是「设置项」的旧展示名：档案行已经叫「备份存储」，设置项却还叫「本地镜像目录」，
+    // 等于逼管理员自己做一次换算——同一个东西两套说法，正是这轮要消掉的东西。
+    const legacy = [
+      '平台自身存储', '平台本地存储', '平台本地镜像',
+      '平台主存储', '本地应急盘', '本地备份盘',
+      '本地镜像目录', '本地镜像总开关', '本地备份镜像',
+    ]
     // 只扫会渲染出去的代码，不扫注释：注释里解释「旧名叫什么」是必要的，
     // 朴素 Contains 会把这种解释判成违规（项目里踩过同样的坑）。
     const stripComments = (src: string) => src.split('\n')

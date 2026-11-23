@@ -14,7 +14,7 @@
           <span class="row-hint" tabindex="0" aria-label="填写说明">?</span>
         </el-tooltip>
         <!-- key 降级为次要灰字：界面面向运营用中文名，排查日志/环境变量时仍可对照。
-             紧凑模式（平台主存储面板）不展示 key / 类型 / 重启徽标：管理员只需要
+             紧凑模式（主存储面板）不展示 key / 类型 / 重启徽标：管理员只需要
              看懂「这一项是干什么的」，技术细节留给排障与开发。 -->
         <span v-if="item.name && !compact" class="label-key">{{ item.key }}</span>
         <el-tag v-if="!compact" size="small" effect="plain">{{ typeLabel(item.type) }}</el-tag>
@@ -276,7 +276,7 @@ function openPicker() {
 .row:last-child {
   border-bottom: none;
 }
-/* 紧凑模式：平台主存储面板只给管理员看「人话」，技术标签全部收起 */
+/* 紧凑模式：主存储面板只给管理员看「人话」，技术标签全部收起 */
 .row-compact {
   padding: 10px 0;
 }

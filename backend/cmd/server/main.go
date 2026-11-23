@@ -361,17 +361,17 @@ func main() {
 	if _, err := storageprofile.EnsureBuiltinLocal(db, cfg.UploadDir, cfg.UploadBaseURL); err != nil {
 		log.Printf("[STORAGE][WARN] 系统自带的本地文件存储不可用（不影响上传，但「存储与分发」缺少兜底）：%v", err)
 	}
-	// 第二套不可删档案：本地备份盘落点。只做备份副本，不参与绑定解析。
+	// 第二套不可删档案：备份存储落点。只做备份副本，不参与绑定解析。
 	mirrorProfile, mirrorErr := storageprofile.EnsureBuiltinMirror(db, cfg.MirrorDir)
 	if mirrorErr != nil {
-		log.Printf("[STORAGE][WARN] 本地备份盘文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
+		log.Printf("[STORAGE][WARN] 备份存储文件存储不可用（本地备份功能将不可用）：%v", mirrorErr)
 	}
-	// 平台主存储的连接信息放在第三套内置档案里（迁移 0059），sys_setting 只留
+	// 主存储的连接信息放在第三套内置档案里（迁移 0059），sys_setting 只留
 	// 一个指向它的 id。启动期读一次：档案首次生成时用历史 sys_setting / 环境变量
 	// 播种，之后管理员在档案页改的值才是真值源，重启只会被读取、不会被覆盖。
 	platformProfile, err := storageprofile.EnsureBuiltinPlatformPrimary(db, cfg)
 	if err != nil {
-		log.Fatalf("[STORAGE][FATAL] 平台主存储配置不可用：%v", err)
+		log.Fatalf("[STORAGE][FATAL] 主存储配置不可用：%v", err)
 	}
 	storageprofile.ApplyPlatformConfig(&cfg, platformProfile)
 	// 平台自身的 CDN 刷新凭据放在第四套内置档案里（迁移 0060）：与 0059 同构，
@@ -577,7 +577,7 @@ func platformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uplo
 	if err == nil {
 		return up, sp.Driver
 	}
-	log.Printf("[WARN] 平台主存储配置 %d 初始化失败：%v；已降级为本地磁盘存储。"+
-		"请到「存储与分发 → 文件存储 → 平台主存储」修正后重启服务。", sp.ID, err)
+	log.Printf("[WARN] 主存储配置 %d 初始化失败：%v；已降级为本地磁盘存储。"+
+		"请到「存储与分发 → 文件存储 → 主存储」修正后重启服务。", sp.ID, err)
 	return storageprofile.LocalPlatformFallback(cfg), "local"
 }

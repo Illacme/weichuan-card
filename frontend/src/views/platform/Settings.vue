@@ -49,7 +49,7 @@
       style="margin-bottom: 14px"
     />
 
-    <!-- 两模块边界：本页只留「平台主存储」的启动配置；多套文件存储 / 全局默认 /
+    <!-- 两模块边界：本页只留「主存储」的启动配置；多套文件存储 / 全局默认 /
          企业绑定 / 历史对象迁移全在独立模块。
          早先在本页内嵌过一个「默认存储」选择器，与文件存储模块的绑定页重复，
          且少了 force / 回滚，管理员容易在两处各选一套还以为会同步——已移除，
@@ -65,7 +65,7 @@
     >
       <template #default>
         <a href="/platform/storage-profiles?tab=overview" class="storage-module-link">先看总览 →</a>
-        <a href="/platform/storage-profiles?tab=platform" class="storage-module-secondary-link">平台主存储（启动配置）→</a>
+        <a href="/platform/storage-profiles?tab=platform" class="storage-module-secondary-link">主存储（启动配置）→</a>
       </template>
     </el-alert>
 
@@ -269,7 +269,7 @@
       <!-- 存储连接信息已进文件存储模块：在这里指路，避免首次部署的人继续找存储方式下拉 -->
       <div v-if="currentStep.key === 'brand'" class="wizard-preset">
         <span class="wizard-preset-label">存储连接信息：</span>
-        <span class="wizard-preset-note">驱动 / 桶 / 凭据 / 访问基址请到「存储与分发 → 文件存储」的「平台主存储」一行配置并自检；本向导只管部署目录与上传限制。</span>
+        <span class="wizard-preset-note">驱动 / 桶 / 凭据 / 访问基址请到「存储与分发 → 文件存储」的「主存储」一行配置并自检；本向导只管部署目录与上传限制。</span>
       </div>
       <div class="wizard-body">
         <template v-for="g in currentGroups" :key="g.label">
@@ -384,7 +384,7 @@ const GROUP_LABELS: Record<string, string> = {
   wechat: '微信',
   mpupload: '后台上传小程序代码',
   auth: '登录与令牌',
-  storage: '平台主存储（启动配置）',
+  storage: '主存储（启动配置）',
   security: '安全与基础设施（只读）',
   feature: '功能开关',
   stats: '数据统计',
@@ -395,7 +395,7 @@ const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'm
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '平台主存储的部署期事实：本地上传目录、本地镜像目录、镜像总闸与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定文件存储的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」里的「平台主存储」一行，可以在那里直接自检；这里改不了，改完文件存储也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边保存后下一个请求即生效。',
+    '主存储的部署期事实：本地上传目录、备份存储目录、备份存储开关与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定文件存储的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」里的「主存储」一行，可以在那里直接自检；这里改不了，改完文件存储也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边保存后下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」只在公开访问关掉时才涉及。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
@@ -447,11 +447,11 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
 const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   storage: [
     {
-      label: '平台主存储 · 指向与部署目录',
+      label: '主存储 · 指向与部署目录',
       keys: ['platform_storage_profile_id', 'platform_delivery_profile_id', 'upload_dir', 'mirror_dir'],
     },
     // 镜像与「平台存储」是两件事：主写入与出参不变，这里只决定备份副本落在哪。
-    { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
+    { label: '备份存储（可选）', keys: ['local_mirror_enabled'] },
   ],
   upload: [
     { label: '大小与类型', keys: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext'] },
@@ -506,7 +506,7 @@ const restartDismissed = ref(false)
 const groups = computed(() => {
   const map = new Map<string, SettingItem[]>()
   for (const it of items.value) {
-    // 存储 / 上传两组已集中到「存储与分发 → 平台主存储」，
+    // 存储 / 上传两组已集中到「存储与分发 → 主存储」，
     // 主列表不再重复展示。items.value 仍是全量：配置向导首装时照常要用这些项。
     if (it.group === 'storage' || it.group === 'upload') continue
     if (!map.has(it.group)) map.set(it.group, [])
@@ -691,7 +691,7 @@ function toggleReady() {
 // 定位到对应配置行（行上锚点 id="set-<key>"）。
 // 防御 scrollIntoView 缺失：jsdom 等环境没有该方法（真实浏览器均有），缺省时静默跳过。
 function jumpTo(key: string) {
-  // 存储 / 上传项已搬到「存储与分发 → 平台主存储」，本页不再有对应行。
+  // 存储 / 上传项已搬到「存储与分发 → 主存储」，本页不再有对应行。
   // 就绪清单里的「去配置」必须跟着走，否则点了没有任何反应（又一条死路）。
   const it = items.value.find((i) => i.key === key)
   if (it && (it.group === 'storage' || it.group === 'upload')) {
@@ -825,7 +825,7 @@ watch(displayGroups, () => nextTick(computeActive))
 // 误确认只是一次多余点击，漏确认可能就是一批文件打不开 + 工单。
 const DESTRUCTIVE: Record<string, string> = {
   upload_dir: '本地上传目录变更后，旧目录中的已有文件将不再可见',
-  mirror_dir: '本地镜像目录变更后，旧目录中的备份副本将不再被自动纳入',
+  mirror_dir: '备份存储目录变更后，旧目录中的副本将不再被自动纳入',
 }
 function destructiveWarnings(): string[] {
   const warns: string[] = []
@@ -891,11 +891,11 @@ const WIZARD_STEPS: WizardStep[] = [
     key: 'storage',
     title: '存储部署目录',
     short: '存储目录',
-    blurb: '这里定的是服务器上的本地目录与镜像备份。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」的「平台主存储」一行，可在那里直接自检；改完任一边都要重启服务。',
+    blurb: '这里定的是服务器上的本地目录与镜像备份。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」的「主存储」一行，可在那里直接自检；改完任一边都要重启服务。',
     keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir', 'local_mirror_enabled'],
     groups: [
       { label: '指向与部署目录', keys: ['platform_storage_profile_id', 'upload_dir', 'mirror_dir'] },
-      { label: '本地镜像备份（可选）', keys: ['local_mirror_enabled'] },
+      { label: '备份存储（可选）', keys: ['local_mirror_enabled'] },
     ],
   },
   {

@@ -176,13 +176,13 @@
             clearable
           />
         </el-form-item>
-        <el-form-item label="本地备份镜像">
+        <el-form-item label="备份存储（本企业）">
           <el-switch
             v-model="editForm.localMirrorEnabled"
             class="mirror-switch"
           />
           <span class="edit-tip">
-            开启后，该企业上传到云桶的图片 / 视频会在上传成功后异步回拉一份到本地备份盘目录。只做备份，不改变出参地址；关闭不影响已备份的副本。
+            开启后，该企业上传到云桶的图片 / 视频会在上传成功后异步回拉一份到备份存储目录。只做备份，不改变出参地址；关闭不影响已备份的副本。
           </span>
         </el-form-item>
         <div class="edit-tip">

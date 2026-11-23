@@ -19,7 +19,7 @@ export interface StorageProfile {
   lastProbeAt: string | null
   version: number
   builtin: boolean
-  /** 系统自带配置的用途：platform_primary=平台主存储，tenant_fallback=租户退路，platform_mirror=平台镜像；自己新建的为空。 */
+  /** 系统自带配置的用途：platform_primary=主存储，tenant_fallback=租户退路，platform_mirror=平台镜像；自己新建的为空。 */
   purpose?: '' | 'platform_primary' | 'tenant_fallback' | 'platform_mirror'
   accessKeyConfigured: boolean
   secretKeyConfigured: boolean

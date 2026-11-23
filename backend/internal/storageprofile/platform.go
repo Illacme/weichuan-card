@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// 平台主存储的内置档案（迁移 0059）。
+// 主存储的内置档案（迁移 0059）。
 //
 // 三件事必须分清：
 //   - 连接信息（驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读）在 storage_profiles，
@@ -26,7 +26,7 @@ import (
 // 平台实例仍是启动期构造、运行期不可变：改档案只改库、不换进程里的实例，
 // 避免一个请求写新桶、下一个请求又写旧桶。要确保生效必须重启。
 
-const builtinPlatformName = "平台主存储"
+const builtinPlatformName = "主存储"
 
 // legacyPlatformSettingKeys 是迁移 0059 之前承载平台连接信息的 sys_setting 项。
 //
@@ -39,7 +39,7 @@ var legacyPlatformSettingKeys = []string{
 	"storage_region", "storage_public", "upload_base_url",
 }
 
-// EnsureBuiltinPlatformPrimary 保证平台主存储档案存在，并把 sys_setting 指针
+// EnsureBuiltinPlatformPrimary 保证主存储档案存在，并把 sys_setting 指针
 // 指过去。首次生成时从 cfg（已叠加历史 sys_setting 值）播种连接信息；
 // 之后**绝不覆盖管理员在档案里改过的值**——否则每次重启都把配置改回去。
 func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.StorageProfile, error) {
@@ -50,7 +50,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 	res := db.Where("builtin = ? AND purpose = ?", true, model.ProfilePurposePlatformPrimary).
 		Limit(1).Find(&row)
 	if res.Error != nil {
-		return nil, fmt.Errorf("读取平台主存储配置失败：%w", res.Error)
+		return nil, fmt.Errorf("读取主存储配置失败：%w", res.Error)
 	}
 	if res.RowsAffected == 0 {
 		name, err := availableBuiltinName(db, builtinPlatformName)
@@ -78,7 +78,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 			row.UseSSL = true
 		}
 		if err := db.Create(&row).Error; err != nil {
-			return nil, fmt.Errorf("创建平台主存储配置失败：%w", err)
+			return nil, fmt.Errorf("创建主存储配置失败：%w", err)
 		}
 		log.Printf("[STORAGE] 已生成系统自带的文件存储「%s」(id=%d, driver=%s)，平台连接信息以它为准",
 			row.Name, row.ID, row.Driver)
@@ -86,7 +86,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 		// 旧默认名改成角色名（管理员自定义过的不动）：三个内置档案以前叫
 		// 「平台自身存储 / 平台本地存储 / 平台本地镜像」，两个带「平台」、两个带
 		// 「本地」，在列表里几乎无法区分。
-		if err := renameBuiltinIfLegacy(db, &row, legacyBuiltinPlatformName, builtinPlatformName); err != nil {
+		if err := renameBuiltinIfLegacy(db, &row, builtinPlatformLegacyNames, builtinPlatformName); err != nil {
 			return nil, err
 		}
 		// local_dir 是部署期事实：换 UPLOAD_DIR 后静态路由 / 本地实例都指向新目录，
@@ -96,7 +96,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 		if want != "" && strings.TrimSpace(row.LocalDir) != want {
 			if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).
 				Update("local_dir", want).Error; err != nil {
-				return nil, fmt.Errorf("同步平台主存储配置目录失败：%w", err)
+				return nil, fmt.Errorf("同步主存储配置目录失败：%w", err)
 			}
 			row.LocalDir = want
 		}
@@ -105,7 +105,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 	// 指针写入失败不影响启动：下面用的是刚查到的这一行，不依赖 sys_setting 回读。
 	// 但必须留痕，否则「设置里看不到指向」会让人以为平台在用别的档案。
 	if err := setting.Upsert(setting.KeyPlatformStorageProfileID, strconv.FormatInt(row.ID, 10)); err != nil {
-		log.Printf("[STORAGE][WARN] 写入平台主存储配置指针失败（不影响本次启动）：%v", err)
+		log.Printf("[STORAGE][WARN] 写入主存储配置指针失败（不影响本次启动）：%v", err)
 	}
 	cleanupLegacyPlatformSettings(db)
 	return &row, nil
@@ -150,7 +150,7 @@ func ApplyPlatformConfig(cfg *config.Config, sp *model.StorageProfile) {
 // buildUploader，自检与真正上传共用同一套构造口径。
 func BuildPlatformUploader(sp *model.StorageProfile, cfg config.Config) (storage.Uploader, error) {
 	if sp == nil {
-		return nil, fmt.Errorf("平台主存储配置不存在")
+		return nil, fmt.Errorf("主存储配置不存在")
 	}
 	if sp.Driver == nginxsnippet.DriverLocal {
 		base := strings.TrimSpace(sp.BaseURL)
