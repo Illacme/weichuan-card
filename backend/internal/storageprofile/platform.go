@@ -28,19 +28,8 @@ import (
 
 const builtinPlatformName = "主存储"
 
-// legacyPlatformSettingKeys 是迁移 0059 之前承载平台连接信息的 sys_setting 项。
-//
-// 它们**只在首次生成 builtin 档案时作为种子读取一次**（老部署在界面上填过的
-// 值不能凭空丢失），档案建好后立刻清掉。保留这段读取不是兼容层：运行期不再
-// 有第二处真值源，清理完成后这些 key 连库里都不存在了。
-var legacyPlatformSettingKeys = []string{
-	"storage_driver", "storage_endpoint", "storage_bucket",
-	"storage_access_key", "storage_secret_key", "storage_use_ssl",
-	"storage_region", "storage_public", "upload_base_url",
-}
-
 // EnsureBuiltinPlatformPrimary 保证主存储档案存在，并把 sys_setting 指针
-// 指过去。首次生成时从 cfg（已叠加历史 sys_setting 值）播种连接信息；
+// 指过去。首次生成时从 cfg（环境变量 + 部署配置）播种连接信息；
 // 之后**绝不覆盖管理员在档案里改过的值**——否则每次重启都把配置改回去。
 func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.StorageProfile, error) {
 	if db == nil {
@@ -83,12 +72,6 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 		log.Printf("[STORAGE] 已生成系统自带的文件存储「%s」(id=%d, driver=%s)，平台连接信息以它为准",
 			row.Name, row.ID, row.Driver)
 	} else {
-		// 旧默认名改成角色名（管理员自定义过的不动）：三个内置档案以前叫
-		// 「平台自身存储 / 平台本地存储 / 平台本地镜像」，两个带「平台」、两个带
-		// 「本地」，在列表里几乎无法区分。
-		if err := renameBuiltinIfLegacy(db, &row, builtinPlatformLegacyNames, builtinPlatformName); err != nil {
-			return nil, err
-		}
 		// local_dir 是部署期事实：换 UPLOAD_DIR 后静态路由 / 本地实例都指向新目录，
 		// 档案留着旧目录会造成「换目录不生效」的错觉。只在值不同时更新，避免
 		// 每次启动都写库、惊动档案版本。
@@ -107,22 +90,7 @@ func EnsureBuiltinPlatformPrimary(db *gorm.DB, cfg config.Config) (*model.Storag
 	if err := setting.Upsert(setting.KeyPlatformStorageProfileID, strconv.FormatInt(row.ID, 10)); err != nil {
 		log.Printf("[STORAGE][WARN] 写入主存储配置指针失败（不影响本次启动）：%v", err)
 	}
-	cleanupLegacyPlatformSettings(db)
 	return &row, nil
-}
-
-func cleanupLegacyPlatformSettings(db *gorm.DB) {
-	if !db.Migrator().HasTable(&setting.Setting{}) {
-		return
-	}
-	if err := db.Where(map[string]any{"key": legacyPlatformSettingKeys}).
-		Delete(&setting.Setting{}).Error; err != nil {
-		log.Printf("[STORAGE][WARN] 清理旧存储设置项失败（不影响运行，文件存储配置已是唯一真值源）：%v", err)
-		return
-	}
-	if err := setting.Reload(); err != nil {
-		log.Printf("[STORAGE][WARN] 重载系统设置缓存失败：%v", err)
-	}
 }
 
 // ApplyPlatformConfig 把档案里的连接信息同步到 cfg 快照。

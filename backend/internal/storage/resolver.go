@@ -12,9 +12,9 @@ var ErrNoUploader = errors.New("存储未初始化（没有可用的上传实例
 
 // Resolver 按租户给出该用哪个存储实例。
 //
-// 为什么要有这一层：平台自身的存储由 sys_setting 的全局单值（storage_driver /
-// bucket / 凭据）构造，全平台共用一份。客户说「文件存进我自己公司的桶」时，
-// 全局单值装不下第二个租户——Resolver 就是「档案绑定 → 实例」这一跳。
+// 为什么要有这一层：平台自身的存储由「主存储」那一行档案构造，全平台共用一份。
+// 客户说「文件存进我自己公司的桶」时，单份档案装不下第二个租户——
+// Resolver 就是「档案绑定 → 实例」这一跳。
 //
 // **生产实现只有一个**：`internal/storageprofile.Resolver`（第七十五轮起直接实现
 // 本接口）。历史上还有过 storage.StaticResolver / uploadroute.Resolver /

@@ -28,41 +28,13 @@ func str(key, def string) string {
 // 覆盖结果只影响本次进程：存储与 CDN 客户端在启动时构造，因此这些项标记为
 // 「需重启生效」（setting 的 Restart 元数据），界面会明确提示。
 func (c *Config) OverlayFromSettings() {
-	// 文件存储（MinIO / S3 兼容 与 阿里云 OSS 共用同一组界面字段，按驱动二选一）
-	c.StorageDriver = str("storage_driver", c.StorageDriver)
-	c.StoragePublic = setting.GetBool("storage_public", c.StoragePublic)
-	c.MinioEndpoint = str("storage_endpoint", c.MinioEndpoint)
-	c.MinioBucket = str("storage_bucket", c.MinioBucket)
-	c.MinioAccessKey = str("storage_access_key", c.MinioAccessKey)
-	c.MinioSecretKey = str("storage_secret_key", c.MinioSecretKey)
-	c.MinioUseSSL = setting.GetBool("storage_use_ssl", c.MinioUseSSL)
-	// storage_region 对 minio / s3 两个 S3 兼容驱动生效（oss 客户端没有区域参数）
-	c.StorageRegion = str("storage_region", c.StorageRegion)
-	c.OssEndpoint = str("storage_endpoint", c.OssEndpoint)
-	c.OssBucket = str("storage_bucket", c.OssBucket)
-	c.OssAccessKeyID = str("storage_access_key", c.OssAccessKeyID)
-	c.OssAccessKeySecret = str("storage_secret_key", c.OssAccessKeySecret)
-
+	// 文件存储只叠「目录」这一类部署期事实。驱动 / 端点 / 桶 / 凭据 / 基址 / 公开读
+	// 的唯一真值源是 storage_profiles：启动期由 ApplyPlatformConfig 回填 cfg，
+	// 这里再从 sys_setting 读一遍就等于给同一件事留第二处入口。
 	c.UploadDir = str("upload_dir", c.UploadDir)
-	c.UploadBaseURL = str("upload_base_url", c.UploadBaseURL)
 	// 本地镜像目录与 UploadDir 一样属于部署期事实：界面留空就沿用 MIRROR_DIR，
 	// 启动后由 ValidateMirrorDirs 统一校验两者不重叠。
 	c.MirrorDir = str("mirror_dir", c.MirrorDir)
-
-	// CDN 缓存刷新：厂商 + 通用凭据位 + 资源标识。
-	//
-	// 这组 key 已从 setting registry 移除（迁移 0060）：真值源是 delivery_profiles
-	// 里 purpose=platform_primary 的内置档案，启动期由 ApplyPlatformDeliveryConfig
-	// 回填 cfg。这里保留读取**只为首次生成那份档案时当种子**——老部署在界面上
-	// 填过的凭据不能凭空丢失。档案一旦存在，EnsureBuiltinPlatformDelivery 就会
-	// 清理这些行，之后这里是空转。
-	c.CDNEnabled = setting.GetBool("cdn_enabled", c.CDNEnabled)
-	c.CDNProvider = str("cdn_provider", c.CDNProvider)
-	c.CDNAccessKeyID = str("cdn_access_key_id", c.CDNAccessKeyID)
-	c.CDNAccessKeySecret = str("cdn_access_key_secret", c.CDNAccessKeySecret)
-	// 端点留空时由各厂商实现按 provider 取自己的默认域名（写死一个会串厂商）
-	c.CDNEndpoint = str("cdn_endpoint", c.CDNEndpoint)
-	c.CDNResourceID = str("cdn_resource_id", c.CDNResourceID)
 
 	// 微信：AppID / AppSecret 另有请求期解析（resolveWXAppID / resolveWXAppSecret，改完即时生效），
 	// 此处同步一份到 cfg，保证启动日志与其它读取点看到的值一致。

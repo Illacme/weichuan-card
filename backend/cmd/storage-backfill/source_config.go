@@ -7,7 +7,6 @@ import (
 	"weichuan/internal/config"
 	"weichuan/internal/model"
 	"weichuan/internal/refmigrate"
-	"weichuan/internal/setting"
 
 	"gorm.io/gorm"
 )
@@ -18,18 +17,11 @@ import (
 // （迁移 0059）——与生产上传侧同一份连接信息、同一处自检。回填命令只读配置，
 // 不能调 setting.Init（会 seedDefaults 写库），所以这里直接查表。
 //
-// 表不存在 / 档案还没生成时（离线演练、尚未跑过启动流程的库）才退回
-// env / CONFIG_FILE / 历史 sys_setting。后者只在 bootstrap 阶段有意义：
-// 正常启动会把那批 key 清掉，档案建成后不会再走这条分支。
+// 表不存在 / 档案还没生成时（离线演练、尚未跑过启动流程的库）退回
+// env / CONFIG_FILE。驱动 / 端点 / 桶 / 凭据不再从 sys_setting 读：那批 key
+// 早已从 registry 移除，留着这条分支等于给同一件事留第二处入口。
 //
 // 凭据不进命令行参数：命令行会留在 shell history / ps / 工单里。
-
-// legacyPlatformSettingKeys 与 storageprofile 包的播种清单同口径。
-var legacyPlatformSettingKeys = []string{
-	"storage_driver", "storage_endpoint", "storage_bucket",
-	"storage_access_key", "storage_secret_key", "storage_use_ssl",
-	"storage_region",
-}
 
 func platformSourceConfig(db *gorm.DB) (refmigrate.PlatformS3Config, error) {
 	cfg := config.Load()
@@ -45,30 +37,15 @@ func platformSourceConfig(db *gorm.DB) (refmigrate.PlatformS3Config, error) {
 		}
 	}
 
-	values, err := readPlatformSettings(db)
-	if err != nil {
-		return refmigrate.PlatformS3Config{}, err
-	}
-	// 与 config.overlay.str 一字不差：空串 / 纯空白视为「未设置」。
-	str := func(key, def string) string {
-		if v := strings.TrimSpace(values[key]); v != "" {
-			return v
-		}
-		return def
-	}
-	out := refmigrate.PlatformS3Config{
-		Driver:    str("storage_driver", cfg.StorageDriver),
-		Endpoint:  str("storage_endpoint", cfg.MinioEndpoint),
-		Bucket:    str("storage_bucket", cfg.MinioBucket),
-		Region:    str("storage_region", cfg.StorageRegion),
-		AccessKey: str("storage_access_key", cfg.MinioAccessKey),
-		SecretKey: str("storage_secret_key", cfg.MinioSecretKey),
+	return refmigrate.PlatformS3Config{
+		Driver:    cfg.StorageDriver,
+		Endpoint:  cfg.MinioEndpoint,
+		Bucket:    cfg.MinioBucket,
+		Region:    cfg.StorageRegion,
+		AccessKey: cfg.MinioAccessKey,
+		SecretKey: cfg.MinioSecretKey,
 		UseSSL:    cfg.MinioUseSSL,
-	}
-	if v := strings.TrimSpace(values["storage_use_ssl"]); v != "" {
-		out.UseSSL = setting.ParseBool(v, cfg.MinioUseSSL)
-	}
-	return out, nil
+	}, nil
 }
 
 // platformSourceFromProfile 档案里的 endpoint 是 host[:port]（与 nginx / 自检同口径），
@@ -100,21 +77,4 @@ func splitProfileEndpoint(endpoint string, useSSL bool) (string, bool) {
 		return ep[len("http://"):], false
 	}
 	return ep, useSSL
-}
-
-func readPlatformSettings(db *gorm.DB) (map[string]string, error) {
-	out := map[string]string{}
-	if db == nil || !db.Migrator().HasTable(&setting.Setting{}) {
-		return out, nil
-	}
-	var rows []setting.Setting
-	// key 是 MySQL 保留字：用 map 条件让 gorm 按方言加引号，
-	// 裸字符串 "key IN ?" 在 MySQL 会直接 1064。
-	if err := db.Where(map[string]any{"key": legacyPlatformSettingKeys}).Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("读取 sys_setting 里的平台存储配置失败：%w", err)
-	}
-	for _, r := range rows {
-		out[r.Key] = r.Value
-	}
-	return out, nil
 }

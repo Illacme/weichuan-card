@@ -48,34 +48,10 @@ func TestPlatformSourceConfigReadsEnv(t *testing.T) {
 	require.False(t, cfg.UseSSL)
 }
 
-// TestPlatformSourceConfigSettingsOverride 钉住与 config.OverlayFromSettings
-// 一字不差的语义：非空界面值覆盖 env，空串 / 纯空白视为「未设置」保留 env。
-// 尤其 storage_use_ssl 用 setting.ParseBool 同一真值表，"on" 必须算 true。
-func TestPlatformSourceConfigSettingsOverride(t *testing.T) {
-	envPlatformS3(t)
-	db := settingsDB(t)
-	rows := []setting.Setting{
-		{Key: "storage_bucket", Value: "wc-platform-ui"},
-		{Key: "storage_secret_key", Value: "SK-UI"},
-		{Key: "storage_use_ssl", Value: "on"},
-		{Key: "storage_endpoint", Value: "   "}, // 空白 = 未设置，应回落 env
-		{Key: "storage_region", Value: "ap-shanghai"},
-	}
-	require.NoError(t, db.Create(&rows).Error)
 
-	cfg, err := platformSourceConfig(db)
-	require.NoError(t, err)
-	require.Equal(t, "wc-platform-ui", cfg.Bucket)
-	require.Equal(t, "SK-UI", cfg.SecretKey)
-	require.True(t, cfg.UseSSL, "on/yes/1 必须按 setting.ParseBool 的真值表算 true")
-	require.Equal(t, "127.0.0.1:19000", cfg.Endpoint, "空白界面值不许把 env 覆盖成空")
-	require.Equal(t, "ap-shanghai", cfg.Region)
-	require.Equal(t, "AK-ENV", cfg.AccessKey, "界面没设的项保留 env")
-}
-
-// TestPlatformSourceConfigPrefersBuiltinProfile 钉住 0059 的真值源：档案存在时
-// 必须读档案，不能被环境变量或历史 sys_setting 行盖掉——否则回填工具会去
-// 一个早已不用的旧桶里找对象，报「源对象不存在」，而生产上传明明是好的。
+// TestPlatformSourceConfigPrefersBuiltinProfile 钉住真值源：档案存在时必须读档案，
+// 不能被环境变量盖掉——否则回填工具会去一个早已不用的旧桶里找对象，报
+// 「源对象不存在」，而生产上传明明是好的。
 func TestPlatformSourceConfigPrefersBuiltinProfile(t *testing.T) {
 	envPlatformS3(t)
 	db := settingsDB(t)
@@ -86,7 +62,6 @@ func TestPlatformSourceConfigPrefersBuiltinProfile(t *testing.T) {
 		SecretKey: "SK-PROFILE", UseSSL: true, Builtin: true,
 		Purpose: model.ProfilePurposePlatformPrimary, Version: 1,
 	}).Error)
-	require.NoError(t, db.Create(&setting.Setting{Key: "storage_bucket", Value: "wc-ui-legacy"}).Error)
 
 	cfg, err := platformSourceConfig(db)
 	require.NoError(t, err)
@@ -186,8 +161,7 @@ func TestSourceConfigIsReadOnlyAndSingleTruthTable(t *testing.T) {
 	require.NoError(t, err)
 	code := stripCLIComments(string(raw))
 	requires := []string{
-		"config.Load()", "setting.ParseBool(", "readPlatformSettings(",
-		"db.Migrator().HasTable(", "map[string]any{\"key\":",
+		"config.Load()", "db.Migrator().HasTable(",
 		"model.StorageProfile{}", "ProfilePurposePlatformPrimary",
 	}
 	found := 0
@@ -195,7 +169,11 @@ func TestSourceConfigIsReadOnlyAndSingleTruthTable(t *testing.T) {
 		require.Contains(t, code, a)
 		found++
 	}
-	require.GreaterOrEqual(t, found, 7, "抓到的锚点太少，守门可能已失效")
+	require.GreaterOrEqual(t, found, 4, "抓到的锚点太少，守门可能已失效")
+	// 配置来源只能两条：内置档案、env。再冒出第三条（历史 sys_setting / 另一份加载器）
+	// 就说明又长出了第二真值源。
+	require.NotContains(t, code, "readPlatformSettings(", "不许再从 sys_setting 读平台存储配置")
+	require.NotContains(t, code, "storage_bucket\"", "旧 sys_setting 键不许回流")
 	require.NotContains(t, code, "setting.Init(", "Init 会 seedDefaults 写库")
 	require.NotContains(t, code, "OverlayFromSettings(", "该函数依赖已初始化的全局 Store")
 	require.NotContains(t, code, "Upsert(", "回填命令不许写系统设置")

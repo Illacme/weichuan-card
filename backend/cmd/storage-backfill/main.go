@@ -121,10 +121,10 @@ apply / rollback（会改数据）:
   --force           仅允许「目标对象已存在但大小与源不一致」时用源覆盖；
                     绝不放宽库值的过期检测
 
-source-store=s3 的配置来源（优先级：系统设置 > 环境变量/CONFIG_FILE > 内置缺省）：
-  storage_driver / storage_endpoint / storage_bucket / storage_access_key /
-  storage_secret_key / storage_use_ssl / storage_region
-  从 sys_setting 只读加载，与生产上传侧是同一份配置；命令不会写这张表。
+source-store=s3 的配置来源（优先级：内置「主存储」那一行 > 环境变量/CONFIG_FILE > 内置缺省）：
+  驱动 / 端点 / 桶 / 区域 / 凭据 / HTTPS 全部取自 storage_profiles 里
+  purpose=platform_primary 的那一行，与生产上传侧是同一份配置；那一行还没生成时
+  才退回环境变量。命令只读，不会写任何表。
   凭据不接受命令行参数（会留在 history / ps / 工单里），也不出现在错误文本中。
   driver=local 或 oss 会显式拒绝，绝不拿一个空桶冒充源，也绝不回退本地盘。
   桶不存在 / 凭据错 / 网络不可达会在第一次 Stat 就报「平台源桶」，

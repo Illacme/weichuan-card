@@ -33,17 +33,6 @@ import (
 
 const builtinPlatformDeliveryName = "平台自身 CDN"
 
-// legacyCDNSettingKeys 是迁移 0060 之前承载平台 CDN 刷新配置的 sys_setting 项。
-//
-// 与 0059 的 legacyPlatformSettingKeys 同一纪律：只在首次生成内置档案时读一次
-// 作为种子（老部署在界面上填过的值不能凭空丢失），档案建好后立刻清掉。之后
-// 运行期不再有第二处真值源，这些 key 连库里都不存在。
-var legacyCDNSettingKeys = []string{
-	"cdn_enabled", "cdn_provider",
-	"cdn_access_key_id", "cdn_access_key_secret",
-	"cdn_resource_id", "cdn_endpoint",
-}
-
 // EnsureBuiltinPlatformDelivery 保证平台自身 CDN 档案存在，并把 sys_setting 指针
 // 指过去。首次生成时从 cfg（已叠加历史 sys_setting 值）播种厂商与凭据；
 // 之后**绝不覆盖管理员在档案里改过的值**——否则每次重启都把配置改回去。
@@ -82,7 +71,6 @@ func EnsureBuiltinPlatformDelivery(db *gorm.DB, cfg config.Config) (*model.Deliv
 	if err := setting.Upsert(setting.KeyPlatformDeliveryProfileID, strconv.FormatInt(row.ID, 10)); err != nil {
 		log.Printf("[CDN][WARN] 写入平台 CDN 分发配置指针失败（不影响本次启动）：%v", err)
 	}
-	cleanupLegacyCDNSettings(db)
 	return &row, nil
 }
 
@@ -117,20 +105,6 @@ func availableBuiltinDeliveryName(db *gorm.DB, base string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("无法为系统自带的 CDN 分发分配不冲突的名称")
-}
-
-func cleanupLegacyCDNSettings(db *gorm.DB) {
-	if !db.Migrator().HasTable(&setting.Setting{}) {
-		return
-	}
-	if err := db.Where(map[string]any{"key": legacyCDNSettingKeys}).
-		Delete(&setting.Setting{}).Error; err != nil {
-		log.Printf("[CDN][WARN] 清理旧 CDN 设置项失败（不影响运行，CDN 分发配置已是唯一真值源）：%v", err)
-		return
-	}
-	if err := setting.Reload(); err != nil {
-		log.Printf("[CDN][WARN] 重载系统设置缓存失败：%v", err)
-	}
 }
 
 // ApplyPlatformDeliveryConfig 把档案里的刷新配置同步到 cfg 快照。

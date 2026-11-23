@@ -76,23 +76,6 @@ func TestEnsureBuiltinPlatformDeliverySeedSemantics(t *testing.T) {
 	require.Equal(t, storage.CDNProviderAliyun, row2.Provider)
 }
 
-// 旧 sys_setting 的 cdn_* 只在首次播种时当种子，随后清掉：
-// 否则运行期又会出现第二处真值源，改档案不生效且两边都不报错。
-func TestEnsureBuiltinPlatformDeliveryCleansLegacySettings(t *testing.T) {
-	db := platformTestDB(t)
-	for _, key := range legacyCDNSettingKeys {
-		require.NoError(t, db.Create(&setting.Setting{Key: key, Value: "x"}).Error)
-	}
-	require.NoError(t, setting.Reload())
-
-	_, err := EnsureBuiltinPlatformDelivery(db, platformDeliveryTestConfig())
-	require.NoError(t, err)
-
-	var left int64
-	require.NoError(t, db.Model(&setting.Setting{}).
-		Where(map[string]any{"key": legacyCDNSettingKeys}).Count(&left).Error)
-	require.Zero(t, left, "旧 CDN 设置项必须清干净")
-}
 
 func TestBuildPlatformRefresher(t *testing.T) {
 	// 明确「不刷新」不是错误

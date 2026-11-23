@@ -22,68 +22,13 @@ import (
 //
 // 为什么不写进迁移 SQL：目录取决于部署时的 UPLOAD_DIR / MIRROR_DIR，基址取决于
 // UPLOAD_BASE_URL，都不是迁移能知道的。放到启动时 ensure，升级与首装同一套逻辑。
+//
+// 名字就写死在下面这两个常量里：产品尚未发布，没有「老库里的内置行还叫旧名」这种
+// 情况需要照顾，改名史留在 git 里即可，不必在启动路径上留一套改名逻辑。
 const (
 	builtinLocalName  = "应急存储"
 	builtinMirrorName = "备份存储"
 )
-
-// 旧默认名：改名分两步走，两代旧名都要迁。
-//
-//	第一代（2026-11-23 之前）：平台自身存储 / 平台本地存储 / 平台本地镜像
-//	第二代（同日中间态）：平台主存储 / 本地应急盘 / 本地备份盘
-//
-// 第一代的问题是两个带「平台」、两个带「本地」，看不出区别；第二代虽然按职责
-// 命名，但「存储 / 盘」混用、还和页面上的角色徽标重复说同一件事。最终收敛成
-// 三个同构的两字角色名：主存储 / 应急存储 / 备份存储。
-//
-// 改名放在启动 ensure 里而不是迁移 SQL：SQLite 与 devserver 走 AutoMigrate、
-// 根本不执行 migrations，只有在这里改才能让三种部署形态表现一致。
-const (
-	legacyBuiltinLocalName    = "平台本地存储"
-	legacyBuiltinMirrorName   = "平台本地镜像"
-	legacyBuiltinPlatformName = "平台自身存储"
-)
-
-var (
-	builtinLocalLegacyNames    = []string{legacyBuiltinLocalName, "本地应急盘"}
-	builtinMirrorLegacyNames   = []string{legacyBuiltinMirrorName, "本地备份盘"}
-	builtinPlatformLegacyNames = []string{legacyBuiltinPlatformName, "平台主存储"}
-)
-
-// renameBuiltinIfLegacy 把「还叫某一代旧默认名」的内置档案改成当前角色名。
-//
-// 两条边界：
-//  1. 管理员自己改过的名字不动——只认字符串完全等于某一代旧默认名的情况；
-//  2. 新名字已被别的档案占用时不改：name 有唯一索引，硬改会让整个进程起不来，
-//     宁可继续显示旧名，也不能为了好看挡住启动。
-func renameBuiltinIfLegacy(db *gorm.DB, row *model.StorageProfile, legacy []string, want string) error {
-	if row == nil {
-		return nil
-	}
-	matched := false
-	for _, name := range legacy {
-		if strings.TrimSpace(row.Name) == name {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return nil
-	}
-	var n int64
-	if err := db.Model(&model.StorageProfile{}).Where("name = ?", want).Count(&n).Error; err != nil {
-		return fmt.Errorf("检查内置存储改名冲突失败：%w", err)
-	}
-	if n > 0 {
-		return nil
-	}
-	if err := db.Model(&model.StorageProfile{}).Where("id = ?", row.ID).
-		Update("name", want).Error; err != nil {
-		return fmt.Errorf("更新系统自带文件存储的展示名失败：%w", err)
-	}
-	row.Name = want
-	return nil
-}
 
 // EnsureBuiltinLocal 保证「租户退路」内置档案存在并返回它。
 func EnsureBuiltinLocal(db *gorm.DB, dir, baseURL string) (*model.StorageProfile, error) {
@@ -109,13 +54,6 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 	if db == nil {
 		return nil, fmt.Errorf("数据库为空")
 	}
-	// 升级兼容（SQLite / devserver 的 AutoMigrate 不会执行迁移里的 UPDATE）：
-	// 0056 之前的内置行 purpose 为空，只能是租户退路档案——那时还没有第二种。
-	if err := db.Model(&model.StorageProfile{}).
-		Where("builtin = ? AND purpose = ?", true, "").
-		Update("purpose", model.ProfilePurposeTenantFallback).Error; err != nil {
-		return nil, fmt.Errorf("补齐系统自带文件存储的用途失败：%w", err)
-	}
 	var row model.StorageProfile
 	res := db.Where("builtin = ? AND purpose = ?", true, purpose).Limit(1).Find(&row)
 	if res.Error != nil {
@@ -123,14 +61,6 @@ func ensureBuiltin(db *gorm.DB, purpose, name, dir, baseURL string, publicRead b
 	}
 	want := strings.TrimSpace(dir)
 	if res.RowsAffected > 0 {
-		// 先按旧默认名改成角色名，再走下面那些「保内容」的更新。
-		legacy := builtinLocalLegacyNames
-		if purpose == model.ProfilePurposePlatformMirror {
-			legacy = builtinMirrorLegacyNames
-		}
-		if err := renameBuiltinIfLegacy(db, &row, legacy, name); err != nil {
-			return nil, err
-		}
 		// 已存在：展示名保留管理员改过的值；local_dir 必须跟随启动配置，
 		// 仅在值确实不同时更新，避免每次启动都无谓写库并惊动档案版本。
 		updates := map[string]any{}
