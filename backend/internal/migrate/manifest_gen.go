@@ -68,4 +68,5 @@ var expectedMigrations = []string{
 	"0059_platform_primary_storage.sql",
 	"0060_platform_delivery_profile.sql",
 	"0061_drop_delivery_path_prefix.sql",
+	"0062_builtin_storage_names.sql",
 }
