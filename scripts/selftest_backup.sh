@@ -117,6 +117,23 @@ else
   bad "错口令时写出了 runtime.env"
 fi
 
+head_ "5. 恢复与演练脚本本身没坏"
+# 这些脚本只在出事那天才跑：语法坏了平时全绿，没人会发现。
+# 只做静态检查（bash -n + --help），不在这里起容器跑 PITR——那属于演练，
+# 实跑记录见 docs/drill-records/2026-11-23-pitr.md。
+for s in backup_binlog.sh restore_drill.sh restore_pitr_drill.sh; do
+  if bash -n "$SCRIPTS/$s" >/dev/null 2>&1; then
+    ok "$s 语法检查通过"
+  else
+    bad "$s 语法坏了"
+  fi
+  if "$SCRIPTS/$s" --help >/dev/null 2>&1; then
+    ok "$s --help 可用"
+  else
+    bad "$s --help 失败（入口可能被改坏）"
+  fi
+done
+
 echo
 echo "════════ 自检结果：${PASS} 通过 / ${FAIL} 失败 ════════"
 [ "$FAIL" -eq 0 ] || exit 1

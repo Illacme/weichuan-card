@@ -121,7 +121,7 @@
 | 6 | 手工部署设 `PII_ENC_KEY` | 部署机环境变量 / `runtime.env` | **在写任何 PII 之前**设定并备份；业务 PII 无 re-key，换钥＝存量密文不可解 | ⬜ 需在每台手工部署机核对 |
 | 7 | 三把强随机密钥与后台凭据 | 部署环境 / 后台「系统设置」 | `JWT_KEY` / `ADMIN_PASS` 非缺省值；`WX_*`、对象存储、CDN 凭据配齐且真机能用 | ⬜ 需在服务器上核对（`preflight.sh` 的开发机 WARN/FAIL 多为假警报，判据见其注释） |
 | 8 | Cloudflare 面板两项手工配置（E3） | CF 控制台 | 缓存规则按状态码分流已同步到线上；`/uploads/` 404 实测 `cache-control: no-store` + `cf-cache-status: BYPASS` | ✅ 404 缓存雷 2026-11-07 线上复核已闭环；面板其余项按部署形态人工核对 |
-| 9 | binlog 回放 / PITR 演练 | 服务器 + `docs/drill-records/` | 真跑一次时间点恢复并把记录正文存档 | ⬜ 运维动作，需留档 |
+| 9 | binlog 回放 / PITR 演练 | 服务器 + `docs/drill-records/` | 真跑一次时间点恢复并把记录正文存档 | ⬜ 运维动作，需留档；回放链路已由 `scripts/restore_pitr_drill.sh` 在隔离容器验证（[记录](./drill-records/2026-11-23-pitr.md)），不替代在真实归档上跑这一次 |
 | 10 | 恢复演练季度节奏 | 服务器 + `scripts/restore_drill.sh` | 每季度至少一次，记录存进 `docs/drill-records/YYYY-MM-DD-<形态>.md` | ⬜ 周期性运维，非一次性可关 |
 | 11 | 私有部署续期演练 | 客户现场 `data/license.key` + 重启 | 到期前换过一次 key 并确认写操作恢复，别把首次换证留到到期当天 | ⬜ 需约客户时间 |
 | 12 | C4 水平扩展（Redis） | 架构演进 | 多副本共享限流/会话 | ⏸ **明确暂缓**：当前单实例部署不需要，不是缺陷 |

@@ -32,7 +32,8 @@
 #
 # 恢复怎么做（演练前先通读一遍 docs/deploy-runbook.md §9）：
 #   1. 起一个临时 MySQL，用最近一份全量备份恢复（scripts/restore.sh）；
-#   2. mysqlbinlog 回放从「备份时刻」到「误操作前一刻」的 binlog；
+#   2. mysqlbinlog 回放从「备份时刻」到「误操作前一刻」的 binlog
+#      （回放链路可用 scripts/restore_pitr_drill.sh 在一次性容器里实跑验证）；
 #   3. 核对数据后再切流。**没有演练过的恢复步骤等于没有**——请每季度用
 #      scripts/restore_drill.sh 真跑一遍。
 # ─────────────────────────────────────────────────────────────
