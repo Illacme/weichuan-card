@@ -207,7 +207,7 @@ describe('存储与分发模块', () => {
     const builtinLink = w.find('a.builtin-setting-link')
     expect(builtinLink.exists()).toBe(true)
     expect(builtinLink.attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=upload_dir')
-    expect(builtinLink.text()).toContain('跟随系统设置')
+    expect(builtinLink.text()).toContain('改上传目录')
     const edit = w.findAll('button').find((b) => b.text() === '编辑')!
     await edit.trigger('click')
     await flush()
@@ -230,12 +230,12 @@ describe('存储与分发模块', () => {
     const dirInput = w.find('input[placeholder="留空使用平台 uploads 目录"]')
     expect(dirInput.exists()).toBe(true)
     expect(dirInput.attributes('disabled')).toBeDefined()
-    // 内置档案不渲染可点的删除按钮，只显示灰色「系统自带 · 不可删」提示：
+    // 内置档案不渲染删除按钮：不可删的意思已经由名称列的「内置」徽标及其
+    // 悬停提示（上面已断言「请勿删除」）说清，操作列再重复一遍只是占地方。
     // 之前用 danger link + disabled，禁用态仍是红字，管理员以为能点却点不动。
-    expect(w.text()).toContain('系统自带 · 不可删')
     // 只看内置档案这一行：它不该有可点的删除按钮（别的企业档案仍有）
     const builtinRow = w.findAll('.el-table-row').find((r) => r.text().includes('应急存储'))!
-    expect(builtinRow.text()).toContain('系统自带 · 不可删')
+    expect(builtinRow.text()).not.toContain('系统自带 · 不可删')
     expect(builtinRow.findAll('button').filter((b) => b.text() === '删除')).toHaveLength(0)
   })
 
@@ -267,6 +267,8 @@ describe('存储与分发模块', () => {
     expect(links).toHaveLength(2)
     expect(links[0].attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=upload_dir')
     expect(links[1].attributes('href')).toBe('/platform/storage-profiles?tab=platform&focus=mirror_dir')
+    expect(links[0].text()).toContain('改上传目录')
+    expect(links[1].text()).toContain('改备份目录')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
     // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
@@ -274,7 +276,7 @@ describe('存储与分发模块', () => {
     await flush()
     expect(w.text()).toContain('备份存储目录')
     expect(w.text()).toContain('不参与任何租户绑定')
-    // 详情必写清目录继承自哪个配置项、改后要重启（不是「跟随系统设置」这种含糊说法）
+    // 详情必写清目录继承自哪个配置项、改后要重启（链接名也要点名具体设置项）
     expect(w.text()).toContain('mirror_dir')
     expect(w.text()).toContain('重启')
     expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 本地上传目录」')
@@ -305,6 +307,18 @@ describe('存储与分发模块', () => {
     expect(tips[0].props('content')).toContain('p/ 平台对象')
     expect(tips[0].props('content')).toContain('不能绑定给企业')
     expect(tips[0].props('content')).toContain('不能参与迁移')
+
+    // 云驱动的主存储连接信息就在本行「编辑」里，upload_dir 与它无关：
+    // 若也给它一条「改上传目录」，管理员照着改完会发现对象地址纹丝不动。
+    const primaryRow = w.findAll('.el-table-row').find((r) => r.text().includes('主存储'))!
+    expect(primaryRow.find('a.builtin-setting-link').exists()).toBe(false)
+    // 它同样是内置行，不能因为「没有链接」就掉进 v-else 渲染出删除按钮。
+    expect(primaryRow.findAll('button').filter((b) => b.text() === '删除')).toHaveLength(0)
+    // 另外两套本地盘仍各有直达链接，文案点名到底改哪个设置项。
+    const builtinLinks = w.findAll('a.builtin-setting-link')
+    expect(builtinLinks).toHaveLength(2)
+    expect(builtinLinks[0].text()).toContain('改上传目录')
+    expect(builtinLinks[1].text()).toContain('改备份目录')
 
     // 主存储 / 备份存储都不能进绑定与迁移下拉；
     // 租户退路（tenant_fallback）本质就是可被绑定的本地盘，必须仍然可选。
@@ -342,10 +356,16 @@ describe('存储与分发模块', () => {
     expect(w.text()).toContain('见「文件存储 → 主存储」的访问基址')
     expect(w.text()).toContain('https://cdn.example.com')
 
-    // 删除按钮对内置行禁用：后端也会拒，但界面上不该给人点
+    // 内置行根本不渲染删除按钮：禁用态红字仍会引诱点击，点不动只会让人困惑；
+    // 「不可删」由名称列的「内置」徽标及悬停提示说一次就够，操作列不再重复。
     const platformRow = w.findAll('.el-table-row').find((r) => r.text().includes('平台自身 CDN'))!
-    const del = platformRow.findAll('button').find((b) => b.text() === '删除')!
-    expect(del.attributes('disabled')).toBeDefined()
+    expect(platformRow.findAll('button').filter((b) => b.text() === '删除')).toHaveLength(0)
+    expect(platformRow.text()).not.toContain('系统自带 · 不可删')
+    expect(platformRow.find('.builtin-tag').exists()).toBe(true)
+    const tips = platformRow.findAllComponents({ name: 'ElTooltip' })
+      .filter((t: { props: (key: string) => unknown }) => String(t.props('content')).includes('平台自身 CDN'))
+    expect(tips).toHaveLength(1)
+    expect(tips[0].props('content')).toContain('不可删除')
 
     // 绑定下拉（全局 + 企业）都不能出现平台自身 CDN：
     // 它的 domain 为空，绑给企业会让企业自己的 CDN 域名失效

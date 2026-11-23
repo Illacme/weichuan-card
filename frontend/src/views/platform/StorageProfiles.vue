@@ -61,9 +61,10 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="openStorageDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkStorage(row)">自检</el-button>
-              <a v-if="row.builtin" :href="builtinSettingHref(row)" class="builtin-setting-link">跟随系统设置 →</a>
-              <span v-if="row.builtin" class="builtin-no-delete">系统自带 · 不可删</span>
-              <el-button v-else link type="danger" @click="removeStorage(row)">删除</el-button>
+              <a v-if="row.builtin && builtinSettingHref(row)" :href="builtinSettingHref(row)" class="builtin-setting-link">{{ builtinSettingLabel(row) }}</a>
+              <!-- 删除只看 builtin：云盘主存储没有配置链接，不能用 v-else 接在链接的 v-if 后面，
+                   否则它会落到 else 分支渲染出删除按钮，点下去才被后端拒。 -->
+              <el-button v-if="!row.builtin" link type="danger" @click="removeStorage(row)">删除</el-button>
             </template>
           </el-table-column>
           <template #empty>
@@ -111,8 +112,7 @@
             <template #default="{ row }">
               <el-button link type="primary" @click="openDeliveryDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkDelivery(row)">自检</el-button>
-              <el-button link type="danger" :disabled="row.builtin" @click="removeDelivery(row)">删除</el-button>
-              <span v-if="row.builtin" class="builtin-no-delete">系统自带 · 不可删</span>
+              <el-button v-if="!row.builtin" link type="danger" @click="removeDelivery(row)">删除</el-button>
             </template>
           </el-table-column>
           <template #empty>
@@ -740,12 +740,24 @@ function migrationStatus(s?: string) {
   // 后端加了新状态也不许留空标签：原样回显，至少让人知道有这回事。
   return MIGRATION_STATUS[key] || { text: key || '未知', type: 'info' as const }
 }
-// 系统自带文件存储的目录 / 基址在启动时由 cfg 单向同步，界面改不动。
+// 系统自带文件存储的目录在启动时由 cfg 单向同步，界面改不动。
 // 给一条直达链接，避免管理员在这里反复点「编辑」却改不了字段。
 // 配置已集中到本模块的「主存储」标签；focus 参数让面板加载后滚到对应行。
-function builtinSettingHref(row: { purpose?: string }) {
-  const key = row.purpose === 'platform_mirror' ? 'mirror_dir' : 'upload_dir'
-  return `/platform/storage-profiles?tab=platform&focus=${key}`
+function builtinSettingHref(row: { purpose?: string; driver?: string }) {
+  if (row.purpose === 'platform_mirror') return '/platform/storage-profiles?tab=platform&focus=mirror_dir'
+  // 没有 purpose 的老行（或夹具）按应急存储处理：它们用的就是 upload_dir。
+  if (row.purpose !== 'platform_primary') return '/platform/storage-profiles?tab=platform&focus=upload_dir'
+  // 主存储选云驱动时连接信息就在本行「编辑」里改，upload_dir 与它无关；
+  // 只有本地盘模式才继承那个目录，否则给链接等于把人指到无关设置。
+  if (row.purpose === 'platform_primary' && (row.driver || '').trim() === 'local') {
+    return '/platform/storage-profiles?tab=platform&focus=upload_dir'
+  }
+  return ''
+}
+// 链接名必须点出跳到哪个设置项：三行都叫「跟随系统设置」时，管理员没法
+// 从字面上看出备份存储走的是另一个目录，点进去才发现跳错地方。
+function builtinSettingLabel(row: { purpose?: string }) {
+  return row.purpose === 'platform_mirror' ? '改备份目录 →' : '改上传目录 →'
 }
 function profileName(id: number) {
   return storages.value.find((s) => s.id === id)?.name || `#${id}`
@@ -995,7 +1007,6 @@ function exportErrors() {
 .migration-actions .el-button { margin-left: auto; }
 .muted { color: #909399; font-size: 12px; }
 .field-note { display: block; color: #909399; font-size: 12px; line-height: 1.5; }
-.builtin-no-delete { color: #c0c4cc; font-size: 12px; cursor: default; }
 .builtin-setting-link { margin-right: 10px; font-size: 12px; color: #409eff; text-decoration: none; white-space: nowrap; }
 .builtin-setting-link:hover { text-decoration: underline; }
 /* 页签说明压成一行淡灰字：信息还在，但不再每页挂一条蓝色横幅 */

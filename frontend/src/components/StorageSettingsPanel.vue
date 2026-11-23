@@ -192,7 +192,7 @@ const draft = reactive<Record<string, string>>({})
 const cleared = reactive<Record<string, boolean>>({})
 const restartPending = ref<string[]>([])
 
-// 从系统自带文件存储行的「跟随系统设置 →」跳来时带 ?focus=<key>，加载完滚到对应行。
+// 从内置存储的「改上传目录 → / 改备份目录 →」跳来时带 ?focus=<key>，加载完滚到对应行。
 // 如果目标在高级区，自动展开，避免「点了链接却看不到字段」。
 const focusKey = (() => {
   if (typeof window === 'undefined') return ''
