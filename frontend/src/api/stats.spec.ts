@@ -10,6 +10,7 @@ vi.mock('axios', () => ({ default: { create: () => ({ get: mocks.rawGet }) } }))
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { adminStats, adminStatsDetail, exportStatsCsv, parseCsvFilename } from './stats'
+import { setCompanyScope } from '@/store/companyScope'
 
 describe('parseCsvFilename', () => {
   it('优先取 filename*（RFC 5987，中文名在这里）', () => {
@@ -194,6 +195,8 @@ describe('adminStatsDetail', () => {
 describe('exportStatsCsv', () => {
   beforeEach(() => {
     mocks.rawGet.mockReset()
+    // 作用域是模块级全局变量：不重置会让上一个用例的企业串到下一个用例
+    setCompanyScope(0, false)
     // jsdom 不实现 URL.createObjectURL，桩掉才能走下载分支
     ;(globalThis as any).URL.createObjectURL = vi.fn(() => 'blob:fake')
     ;(globalThis as any).URL.revokeObjectURL = vi.fn()
@@ -212,6 +215,32 @@ describe('exportStatsCsv', () => {
       params: { from: '2026-10-01' },
       responseType: 'blob',
     })
+  })
+
+  // 导出走的是绕过 request.ts 的独立 axios 实例，所以「当前企业」必须自己补：
+  // 漏了不报错，后端按「不按企业过滤」处理——超管在 B 企业页面导出，
+  // 文件里却是全平台数据，属于静默串号。
+  it('平台超管选中企业后导出必须带上 companyId', async () => {
+    setCompanyScope(7, true)
+    mocks.rawGet.mockResolvedValue({
+      headers: { 'content-type': 'text/csv; charset=utf-8' },
+      data: new Blob(['编号'], { type: 'text/csv' }),
+    })
+    await exportStatsCsv({ from: '2026-10-01', to: '2026-10-07' })
+    expect(mocks.rawGet).toHaveBeenCalledWith('/admin/stats/export', {
+      params: { from: '2026-10-01', to: '2026-10-07', companyId: '7' },
+      responseType: 'blob',
+    })
+  })
+
+  it('未选中企业（企业管理员 / 平台未选）时不加 companyId', async () => {
+    mocks.rawGet.mockResolvedValue({
+      headers: { 'content-type': 'text/csv; charset=utf-8' },
+      data: new Blob(['编号'], { type: 'text/csv' }),
+    })
+    await exportStatsCsv({ from: '2026-10-01' })
+    const params = mocks.rawGet.mock.calls[0][1].params
+    expect(params).not.toHaveProperty('companyId')
   })
 
   it('业务失败信封不当 CSV 下载，而是抛出口袋里的 msg', async () => {

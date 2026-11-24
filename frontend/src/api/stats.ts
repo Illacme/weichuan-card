@@ -1,5 +1,6 @@
 import axios, { type AxiosRequestConfig } from 'axios'
 import http from './request'
+import { getCompanyScope } from '@/store/companyScope'
 
 // 全局名片统计（超管）：汇总 + 按员工 + 按天趋势 + 内容浏览 TOP 榜。
 // 与员工端 /api/employee/me/stat（仅本人）互补，见 backend/internal/handler/apply.go。
@@ -162,8 +163,15 @@ const rawHttp = axios.create({
 
 /** 导出统计 CSV 并触发浏览器下载（文件名取自 Content-Disposition）。 */
 export async function exportStatsCsv(range: StatRange = {}): Promise<void> {
+  const params = cleanParams(range)
+  // 这里必须**自己**补 companyId：rawHttp 绕开了 request.ts，也就绕开了那里
+  // 「平台超管当前管理企业 → 自动加 ?companyId=」的请求拦截器。
+  // 缺了它，后端 tenantScope 判为「不按企业过滤」，超管在 B 企业页面上点导出，
+  // 拿到的却是**全部企业**的汇总（页面明明筛着 B，文件里却是全平台——静默串号）。
+  const { companyId, active } = getCompanyScope()
+  if (active) params.companyId = String(companyId)
   const resp = await rawHttp.get('/admin/stats/export', {
-    params: cleanParams(range),
+    params,
     responseType: 'blob',
   })
   // 后端业务失败（code:1 / 401 等）走的是 HTTP 200 + JSON 信封，
