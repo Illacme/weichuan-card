@@ -1,6 +1,6 @@
 # 第三方依赖许可清单（自动生成）
 
-> 生成日期：2026-11-03　·　随依赖版本变动会失效，交付前请重新生成一次。
+> 生成日期：2026-11-24　·　随依赖版本变动会失效，交付前请重新生成一次。
 >
 > 本软件（微传名片）为专有商业软件，许可见 [../LICENSE](../LICENSE)。
 > **本清单中的第三方组件不因该许可而改变**——它们各自仍受其原始许可约束。
@@ -68,14 +68,13 @@ BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Cl
 > 只含 `go list -deps ./...` 命中的模块，即真正链进 `cmd/server` / `cmd/devserver` 的那些；
 > 仅测试期使用的模块（如 `github.com/stretchr/testify`）不随产物分发，故不在表内。
 
-## 前端 npm 依赖（运行时 128 个，随 `npm run build` 产物分发）
+## 前端 npm 依赖（运行时 127 个，随 `npm run build` 产物分发）
 
 | 包                                  | 版本      | 许可           |
 |------------------------------------|---------|--------------|
 | @babel/helper-string-parser        | 7.29.7  | MIT          |
 | @babel/helper-validator-identifier | 7.29.7  | MIT          |
 | @babel/parser                      | 7.29.9  | MIT          |
-| @babel/runtime                     | 7.29.10 | MIT          |
 | @babel/types                       | 7.29.8  | MIT          |
 | @ctrl/tinycolor                    | 4.2.1   | MIT          |
 | @element-plus/icons-vue            | 2.3.2   | MIT          |
@@ -154,7 +153,7 @@ BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Cl
 | hasown                             | 2.0.4   | MIT          |
 | html-void-elements                 | 2.0.1   | MIT          |
 | https-proxy-agent                  | 5.0.1   | MIT          |
-| i18next                            | 20.6.1  | MIT          |
+| i18next                            | 26.7.2  | MIT          |
 | immer                              | 9.0.21  | MIT          |
 | is-hotkey                          | 0.2.0   | MIT          |
 | is-plain-object                    | 5.1.0   | MIT          |
