@@ -47,6 +47,16 @@ describe('审计动作中文名与后端埋点对齐', () => {
     expect(extra, `后端没有该动作：${extra.join('、')}`).toEqual([])
   })
 
+  // 键对齐只是承诺的一半。`'setting.update': 'setting.update'` 能让上面两条全绿，
+  // 但审计页会直接把英文动作名摆给运营看——"有中文名" 没兑现。
+  // 与 scripts/check_audit_labels.mjs 的校验同一判据（那边有 --selftest 证明会红）。
+  it('每个中文名都含汉字（不能拿英文键值兜底冒充）', () => {
+    const notChinese = Object.entries(ACTION_LABELS)
+      .filter(([, v]) => !/[\u4e00-\u9fff]/.test(v))
+      .map(([k, v]) => `${k} → ${JSON.stringify(v)}`)
+    expect(notChinese, `这些动作名不含汉字：${notChinese.join('、')}`).toEqual([])
+  })
+
   it('未知动作回落原始键而不是空白/崩溃', () => {
     expect(actionLabel('login.fail')).toBe('登录失败')
     expect(actionLabel('some.new.action')).toBe('some.new.action')

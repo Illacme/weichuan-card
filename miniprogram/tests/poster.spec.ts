@@ -6,7 +6,7 @@
 //
 // 做法：桩掉全局 Page 捕获页面选项，再手工造一个「页面实例」调用生命周期，
 // 与真机上的调用形态一致（onLoad → prepare → draw）。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // 静态守门（背景条 lazy-load）要直接读 wxml：这条属性删掉不报错、不报丑，只悄悄变慢
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'

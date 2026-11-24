@@ -19,7 +19,6 @@ func TestMigrationsDirResolves(t *testing.T) {
 	if !hasSQLFiles(dir) {
 		t.Fatalf("解析到的目录 %s 下没有 .sql 文件", dir)
 	}
-	// 必须能按序看到 0001 与最后一个迁移（0019）
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("ReadDir(%s): %v", dir, err)
@@ -30,15 +29,25 @@ func TestMigrationsDirResolves(t *testing.T) {
 			names = append(names, e.Name())
 		}
 	}
-	if len(names) < 19 {
-		t.Fatalf("迁移文件数 = %d，期望 ≥19", len(names))
+	if len(names) == 0 {
+		t.Fatalf("目录 %s 下没有 .sql", dir)
 	}
-	if names[0] != "0001_init.sql" {
-		t.Fatalf("第一个迁移 = %s，期望 0001_init.sql", names[0])
+	// 起点与终点都必须对得上清单。这里刻意**不写死具体文件名**：早先写的是
+	// 「必须有 0019_biz_service_icon.sql、文件数 ≥19」，随着迁移长到 0062 那行
+	// 断言就成了空转（删掉 0020 之后的全部迁移它照样绿），comment 里「最后一个
+	// 迁移（0019）」也早已不成立。拿清单本身当尺子，才是「按序看到起点与终点」这条承诺。
+	if len(expectedMigrations) == 0 {
+		t.Fatal("expectedMigrations 为空——清单生成物没被编进来？")
 	}
-	joined := strings.Join(names, ",")
-	if !strings.Contains(joined, "0019_biz_service_icon.sql") {
-		t.Fatalf("迁移清单缺 0019_biz_service_icon.sql: %s", joined)
+	if names[0] != expectedMigrations[0] {
+		t.Fatalf("第一个迁移 = %s，期望 %s（清单首项）", names[0], expectedMigrations[0])
+	}
+	last := expectedMigrations[len(expectedMigrations)-1]
+	if names[len(names)-1] != last {
+		t.Fatalf("最后一个迁移 = %s，期望 %s（清单末项）", names[len(names)-1], last)
+	}
+	if len(names) < len(expectedMigrations) {
+		t.Fatalf("目录里 %d 个迁移，清单有 %d 个", len(names), len(expectedMigrations))
 	}
 }
 

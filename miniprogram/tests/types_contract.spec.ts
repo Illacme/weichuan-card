@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '../..')
 const GO_MODELS = resolve(REPO, 'backend/internal/model/models.go')
+const GO_REPOSITORY = resolve(REPO, 'backend/internal/repository/repository.go')
 const TS_TYPES = resolve(REPO, 'miniprogram/utils/types.ts')
 
 /** 从 models.go 里取某个 struct 的 json 字段名（忽略 `json:"-"` 与 `,omitempty` 等后缀） */
@@ -27,6 +28,40 @@ function goJSONFields(structName: string): string[] {
     if (name && name !== '-') out.push(name)
   }
   return out.sort()
+}
+
+/** 某个列名在 struct 上对应的 json 名（用于把 SQL 列清单翻译成出参字段名） */
+function goColumnJSON(structName: string, column: string): string {
+  const src = readFileSync(GO_MODELS, 'utf-8')
+  const m = src.match(new RegExp('type ' + structName + ' struct \\{([\\s\\S]*?)\\n\\}'))
+  if (!m) throw new Error('models.go 里找不到 struct ' + structName)
+  for (const line of m[1].split('\n')) {
+    // gorm 标签的写法是 column:name（不带引号），不是 column:"name"
+    const col = line.match(/column:([^",;\s]+)/)
+    const js = line.match(/json:"([^",]*)/)
+    if (col && js && col[1].trim() === column) return js[1]
+  }
+  throw new Error(`struct ${structName} 上找不到列 ${column} 的 json 名`)
+}
+
+/**
+ * 读 repository.go 里某个 `xxxBriefCols = "a, b, c"` 常量，翻译成出参 json 字段名。
+ *
+ * 为什么非要读这个常量：投影类型（FeaturedProject / ServiceBrief）的实际出参
+ * 只由 Select(...) 这几列决定，跟模型有多少字段无关。只校验「TS 字段都在模型里」
+ * 是个恒真的子集判断——后端往投影里加一列，端上不声明它照样绿，那个字段就静默
+ * 用不上（反之端上多声明一个投影里没有的字段也绿，永远是 undefined）。
+ */
+function briefColsJSON(colsConst: string, structName: string): string[] {
+  const src = readFileSync(GO_REPOSITORY, 'utf-8')
+  const m = src.match(new RegExp(colsConst + '\\s*=\\s*"([^"]+)"'))
+  if (!m) throw new Error('repository.go 里找不到 ' + colsConst)
+  return m[1]
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .map((c) => goColumnJSON(structName, c))
+    .sort()
 }
 
 /** 从 types.ts 里取某个 interface / type 字面量的字段名 */
@@ -78,19 +113,20 @@ describe('小程序类型契约与 Go 模型对账', () => {
 
   // 下面两个是**裁剪后的投影**，不是模型全量：后端用 projectBriefCols /
   // serviceBriefCols 只选了几列，端上就不该声明正文类字段。
-  it('FeaturedProject 是 projectBriefCols 投影：字段都在 ProjectCase 里，且不含 detail / album', () => {
-    const model = goJSONFields('ProjectCase')
-    const ts = tsFields('FeaturedProject')
-    expect(ts.filter((f) => !model.includes(f))).toEqual([])
-    expect(ts).not.toContain('detail')
-    expect(ts).not.toContain('album')
+  //
+  // 断言必须与「投影列」严格相等，不能只查「字段都在模型里」：
+  // 后者是恒真的子集判断，后端往投影里加一列（或端上多写一个投影里没有的字段）
+  // 都不会红，那个字段就永远静默是 undefined。
+  it('FeaturedProject 与 projectBriefCols 逐列相等（不是「在模型里就算」）', () => {
+    expect(tsFields('FeaturedProject')).toEqual(briefColsJSON('projectBriefCols', 'ProjectCase'))
+    // 正文类字段必须在投影外，否则列表页会白拉富文本
+    expect(tsFields('FeaturedProject')).not.toContain('detail')
+    expect(tsFields('FeaturedProject')).not.toContain('album')
   })
 
-  it('ServiceBrief 是 serviceBriefCols 投影：字段都在 BizService 里，且不含 content', () => {
-    const model = goJSONFields('BizService')
-    const ts = tsFields('ServiceBrief')
-    expect(ts.filter((f) => !model.includes(f))).toEqual([])
-    expect(ts).not.toContain('content')
+  it('ServiceBrief 与 serviceBriefCols 逐列相等', () => {
+    expect(tsFields('ServiceBrief')).toEqual(briefColsJSON('serviceBriefCols', 'BizService'))
+    expect(tsFields('ServiceBrief')).not.toContain('content')
   })
 
   it('四个根级字段信封声明了根级字段（不在 data 里）', () => {

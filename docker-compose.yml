@@ -157,9 +157,9 @@ services:
       # 日志形态：text（默认，人读）/ json（每行一个 JSON 对象，供 Loki / ELK 采集）。
       # 集中日志部署填 json；本地开发保持 text（保留 [WARN] 等既有前缀，grep 好用）。
       LOG_FORMAT: ${LOG_FORMAT:-text}
-      # 审计日志保留天数（0=永不自动清理）。也可在后台「系统设置 → 安全」里改，
-      # 界面改完即时生效、无需重启；这里是未配置时的回落值。
-      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-0}
+      # 注意：审计/统计的「保留天数」只在后台「系统设置」里配，没有环境变量。
+      # 它们由 registry seed 默认值 0（永不自动清理），界面上改完即时生效——
+      # 早先这里的 AUDIT_RETENTION_DAYS 从未被读取（seed 默认值挡在前面），已删除。
       # 可选：WX_APPID / WX_APPSECRET / MINIO_* / OSS_* / CDN_*
     volumes:
       - uploads_data:/app/uploads

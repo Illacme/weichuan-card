@@ -48,23 +48,30 @@ function backendActions(goSrc) {
   return [...out].sort()
 }
 
-// 前端：只取 ACTION_LABELS 对象块内的键，避免误抓文件里其它 'x': 结构。
-// 键既可能是单引号串（'setting.update':）也可能是裸标识符（logout:）——两种都要抓。
-function frontendLabelKeys(tsSrc) {
+// 前端：只取 ACTION_LABELS 对象块内的键值，避免误抓文件里其它 'x': 结构。
+// 键既可能是单引号串（'setting.update':）也可能是裸标识符（logout:）——两种都要抓；
+// 值也一并抓出来，因为「键在不在」只是承诺的一半（见 check 里的中文校验）。
+function frontendLabels(tsSrc) {
   const block = tsSrc.match(/export const ACTION_LABELS[^{]*\{([\s\S]*?)\n\}/)
   const body = block ? block[1] : ''
-  const re = /^\s*(?:'([^']+)'|([A-Za-z_$][\w$]*))\s*:/gm
-  const out = new Set()
+  const re = /^\s*(?:'([^']+)'|([A-Za-z_$][\w$]*))\s*:\s*(['"])(.*?)\3/gm
+  const out = new Map()
   let m
-  while ((m = re.exec(body))) out.add(m[1] || m[2])
+  while ((m = re.exec(body))) out.set(m[1] || m[2], m[4])
   return out
 }
+
+// 是否含汉字。用来拦「键在、但值是英文兜底」这种假同步：
+// `'setting.update': 'setting.update'` 能让键集合完全对齐，界面上却会显示一串
+// 英文动作名——审计页是给人看的，"有中文名" 这条承诺不能被键存在冒充。
+const HAS_CJK = /[\u4e00-\u9fff]/
 
 // 唯一判据实现：selftest 与真检查共用，避免「自检测的是另一套逻辑」。
 function check(goSrc, tsSrc) {
   const problems = []
   const backend = backendActions(goSrc)
-  const labels = frontendLabelKeys(tsSrc)
+  const labelMap = frontendLabels(tsSrc)
+  const labels = new Set(labelMap.keys())
 
   if (backend.length < MIN_BACKEND_ACTIONS) {
     problems.push(`后端只抓到 ${backend.length} 个审计动作（下限 ${MIN_BACKEND_ACTIONS}）：正则可能失配，或常量写法被改（读到的源码 ${goSrc.length} 字节）`)
@@ -84,6 +91,14 @@ function check(goSrc, tsSrc) {
   }
   if (extra.length > 0) {
     problems.push(`前端有、后端不存在的动作（永远筛不到结果）：${extra.join('、')}\n            请删掉 frontend/src/api/audit.ts 里多余的中文名键，或在后端补埋点。`)
+  }
+
+  // 键对齐但值是英文/空串：界面上照样露英文动作名，"中文名" 这条承诺没兑现。
+  const notChinese = [...labelMap]
+    .filter(([, v]) => !HAS_CJK.test(v))
+    .map(([k, v]) => `${k} → ${JSON.stringify(v)}`)
+  if (notChinese.length > 0) {
+    problems.push(`前端这些动作的「中文名」不含汉字（审计页会直接显示英文/空白）：${notChinese.join('、')}\n            请在 frontend/src/api/audit.ts 的 ACTION_LABELS 改成真正的中文说明。`)
   }
   return problems
 }
@@ -119,6 +134,15 @@ function selftest() {
     ['两侧同步删掉锚点动作必须红', check(
       healthyGo.replace('  ActionEmployeeCreate = "employee.create"\n', ''),
       healthyTs.replace("  'employee.create': '新增员工',\n", ''),
+    ), true],
+    // 这条专测「键对但值是英文」：集合完全对齐，旧版 check 恒绿。
+    ['值退化成英文标识符必须红', check(
+      healthyGo,
+      healthyTs.replace("'employee.create': '新增员工'", "'employee.create': 'employee.create'"),
+    ), true],
+    ['值为空白必须红', check(
+      healthyGo,
+      healthyTs.replace("'employee.create': '新增员工'", "'employee.create': ''"),
     ), true],
   ]
 
