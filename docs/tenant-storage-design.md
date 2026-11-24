@@ -121,7 +121,7 @@
 
 | 落点 | 档案 | 目录 | 服务谁 |
 | --- | --- | --- | --- |
-| 租户退路 | `builtin` + `purpose=tenant_fallback` | `cfg.UploadDir`（系统设置「本地上传目录」） | 没有绑定档案的企业；也是「云配置坏了还能上传」的退路 |
+| 租户退路 | `builtin` + `purpose=tenant_fallback` | `cfg.UploadDir`（系统设置「服务器上传目录」） | 没有绑定档案的企业；也是「云配置坏了还能上传」的退路 |
 | 备份存储 | `builtin` + `purpose=platform_mirror` | `cfg.MirrorDir`（`MIRROR_DIR` / 系统设置「备份存储目录」） | 所有云对象的异步备份副本；**不参与任何读取与出参** |
 
 两套都 `builtin=1`：不可删除、驱动不可改、目录不可单独编辑（跟随各自的配置项，

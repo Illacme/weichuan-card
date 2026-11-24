@@ -1,10 +1,14 @@
 package license
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"weichuan/internal/dbopen"
 	"weichuan/internal/model"
+	"weichuan/internal/setting"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -197,4 +201,34 @@ func TestCollectExpiringSurvivesBrokenDB(t *testing.T) {
 		got := CollectExpiring(db, time.Now())
 		require.Empty(t, got)
 	})
+}
+
+// 真实链路端到端：到期日写进 sys_setting → Verify 平台模式解析 → 提醒里能看到。
+// 旧用例靠手工 SetCurrent 注入 Entitlement，即使 license_expires_at 根本没登记、
+// 永远读不到值也照样全绿——测的是代理，不是承诺。
+func TestVerifyReadsPlatformExpiryFromSettings(t *testing.T) {
+	db, _, err := dbopen.Open("sqlite://" + filepath.Join(t.TempDir(), "lic.db"))
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Company{}, &model.TenantLicense{}, &model.AuditLog{}))
+	require.NoError(t, setting.Init(db))
+
+	// 强制走平台模式，避开机器上可能存在的 license.key。
+	t.Setenv("DEPLOY_MODE", "platform")
+	t.Setenv("LICENSE_PATH", filepath.Join(t.TempDir(), "none.key"))
+
+	now := time.Date(2026, 11, 24, 9, 0, 0, 0, time.Local)
+	exp := now.AddDate(0, 0, 3)
+	// 必须走 Upsert：它按 registry 校验，键未登记时直接报「未知设置项」。
+	// 用 SQL 直接改库会绕过这道门，即使修复前（键没登记）测试也会假绿。
+	require.NoError(t, setting.Upsert("license_expires_at", exp.Format(time.RFC3339)))
+
+	t.Cleanup(func() { SetCurrent(nil) })
+	ent, err := Verify(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, exp, ent.ExpiresAt, "Verify 必须从设置里读到到期日，而不是拿到零值")
+
+	got := CollectExpiring(db, now)
+	require.Len(t, got, 1, "到期日写进设置后，平台授权提醒必须能看到")
+	require.Equal(t, "platform", got[0].Scope)
+	require.Equal(t, ExpiryLevelUrgent, got[0].Status.Level)
 }

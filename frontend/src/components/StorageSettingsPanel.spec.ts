@@ -63,7 +63,7 @@ const item = (key: string, name: string, group: string, value: string, extra: Re
 const ITEMS = [
   // 迁移 0059：连接信息已进文件存储，这里只有指针与部署期目录
   item('platform_storage_profile_id', '平台自身文件存储', 'storage', '1', { restart: true }),
-  item('upload_dir', '本地上传目录', 'storage', '/srv/uploads', { envVar: 'UPLOAD_DIR', restart: true }),
+  item('upload_dir', '服务器上传目录', 'storage', '/srv/uploads', { envVar: 'UPLOAD_DIR', restart: true }),
   item('cdn_enabled', '启用 CDN', 'storage', 'false', { type: 'bool', restart: true }),
   item('cdn_provider', 'CDN 厂商', 'storage', 'aliyun', { restart: true }),
   item('cdn_access_key_id', 'CDN AK', 'storage', '', { restart: true }),
@@ -208,7 +208,7 @@ describe('主存储配置面板', () => {
     const text = w.text()
     expect(text).toContain('配额与上传限制')
     expect(text).toContain('临时链接有效期')
-    expect(text).toContain('单张图片上限')
+    expect(text).toContain('单张图片大小上限')
     // CDN 组已随凭据一起移走：这里不该再出现第二个 CDN 配置入口
     expect(text).not.toContain('CDN 刷新（可选）')
   })
@@ -248,7 +248,7 @@ describe('主存储配置面板', () => {
     await w.findAll('button').find((b) => b.text() === '保存设置')!.trigger('click')
     await flush()
     expect(w.text()).toContain('刚保存的改动需要重启才生效')
-    expect(w.text()).toContain('本地上传目录')
+    expect(w.text()).toContain('服务器上传目录')
   })
 
   it('破坏性改动弹确认，取消则不提交且草稿保留', async () => {

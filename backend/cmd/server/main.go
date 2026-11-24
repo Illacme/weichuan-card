@@ -293,8 +293,12 @@ func main() {
 	// 保留天数取自系统设置（默认 0 = 不清理，理由见 audit/purge.go），所以传的是
 	// 取值函数——后台改完即时生效，不必重启。启动时先跑一次，把上次停机期间
 	// 超期的行补掉；清理动作本身会记一条 audit.purge 审计。
+	// 保留天数只从系统设置读：界面是唯一真值源。
+	// 此前这里拿 cfg.AuditRetentionDays 兜底，但 registry 已 seed 默认值 "0"，
+	// GetInt 永远读得到值，环境变量那条回落分支从来走不到——文档却承诺会回落。
+	// 产品未发布，不留这条死配置，直接以 0 兜底（0 = 不清理）。
 	auditKeepDays := func() int {
-		return setting.GetInt("audit_retention_days", cfg.AuditRetentionDays)
+		return setting.GetInt("audit_retention_days", 0)
 	}
 	audit.RunAuditPurgeOnce(db, auditKeepDays)
 	stopAuditPurge := audit.StartAuditLogPurge(db, cfg.AuditPurgeInterval, auditKeepDays)
@@ -303,7 +307,7 @@ func main() {
 	// 埋点原始表（stat_events）定期清理：只增不减，长期堆积拖慢统计聚合与 CSV 导出。
 	// 保留天数取自系统设置（默认 0 = 不清理，理由同上），传取值函数使后台改动即时生效。
 	statKeepDays := func() int {
-		return setting.GetInt("stat_retention_days", cfg.StatRetentionDays)
+		return setting.GetInt("stat_retention_days", 0)
 	}
 	handler.RunStatPurgeOnce(db, statKeepDays)
 	stopStatPurge := handler.StartStatEventsPurge(db, cfg.StatPurgeInterval, statKeepDays)

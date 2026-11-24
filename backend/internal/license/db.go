@@ -7,13 +7,13 @@ import (
 	"weichuan/internal/setting"
 )
 
-// DBResolver 从系统设置读取授权（集中 / 平台模式用）。
+// DBResolver 从系统设置读取**服务商自己**的平台授权，集中 / 平台模式用。
 //
-// Phase 1 用 setting 作为中央来源的占位：真正的多租户 license 表在 Phase 4 落地，
-// 那时把这里换成读 tenant_license 表即可，接口不变。
+// 它与 TenantDBResolver 不是同一份数据：后者按 companyId 读 tenant_license 表，
+// 管的是「客户企业的席位与到期」；这里管的是服务商自己的授权到期提醒。
+// 四个 license_* 键已正式登记进 setting.registry，界面可改、提醒也读得到。
 //
-// 未配置任何 license_* 设置时返回「宽松」授权（不过期、不限席位），
-// 等价于今天的行为——Phase 1 只铺地基，不做强制（强制在 Phase 2 的 Enforcement）。
+// 全留空时返回宽松授权（不过期、不限席位）：平台模式不强制，只做提醒。
 type DBResolver struct{}
 
 // Resolve 读取本次租户的授权设置。

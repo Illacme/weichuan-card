@@ -119,9 +119,10 @@ type Item struct {
 //	mpupload   后台上传小程序代码（Node / miniprogram-ci / 源码目录 / 超时）
 //	auth       登录与令牌（令牌有效期 / 登录与刷新限流）
 //	storage    主存储（部署期目录 / 镜像总闸 / 配额与上传限制；连接信息在档案里）
-//	security   安全与基础设施（只读：DB 连接串 / JWT 密钥 / Cookie）
+//	stats      数据统计（埋点/审计日志保留与清理；均为可写项，别放在 security 只读组里）
+//	security   安全与基础设施（只读：DB 连接串 / JWT 密钥 / Cookie / PII 密钥）
 //	feature    特性开关（Prometheus 指标 / 独立版企业锁定）
-//	license    授权（新租户试用天数 / 席位 / 是否自动试用）
+//	license    授权（服务商自己的平台授权 + 新租户试用天数 / 席位 / 是否自动试用）
 var registry = []def{
 	{Key: "brand_name", Group: "general", Type: "string", Value: "微传名片",
 		Name: "品牌名称",
@@ -161,13 +162,13 @@ var registry = []def{
 	// 签名有效期：直传 PUT 与私有桶 GET 的限时链接时长。太短前端还没传完就过期，
 	// 太长等于把对象存储写成公开读，故留界面可调，但代码内有下限兜底。
 	{Key: "presign_put_ttl_minutes", Group: "upload", Type: "int", Value: "15",
-		Name: "上传链接有效期",
+		Name: "直传链接有效期",
 		// 兜底语义写准：填 0 / 负数不是夹到 1 分钟，而是回落 registry 的缺省值
 		// （见 signTTL）。写「最短 1 分钟」会让人以为 0 会被当成 1，与实际不符。
 		Desc: "上传文件时生成的临时直传链接能用多久（分钟）。太短可能传到一半就过期；填 0 或负数会回到默认 15 分钟。"},
 	{Key: "sign_get_ttl_minutes", Group: "upload", Type: "int", Value: "30",
-		Name: "私有桶下载链接有效期",
-		Desc: "私有存储里的文件，生成的临时访问链接能用多久（分钟）。填 0 或负数会回到默认 30 分钟。"},
+		Name: "签名下载链接有效期",
+		Desc: "把对象地址换成限时下载链接的有效期（分钟）：小程序或第三方要临时地址时用到，与桶是否私有无关。填 0 或负数会回到默认 30 分钟。"},
 	{Key: "wxacode_env_version", Group: "wechat", Type: "string", Value: "release",
 		Name:     "小程序码环境版本",
 		Options:  []string{"release", "trial", "develop"},
@@ -180,7 +181,7 @@ var registry = []def{
 		Desc: "生成的码指向哪个版本的小程序：release=正式版（默认，要求小程序已发布，否则报 41030）、trial=体验版（**正式版未发布时选它**，仅体验成员可打开）、develop=开发版（开发者工具调试用）。"},
 	{Key: "wxacode_ttl_hours", Group: "wechat", Type: "int", Value: "720",
 		Name: "小程序码缓存时长",
-		Desc: "生成的小程序码图片缓存多久（小时），到期后会自动重新生成。未设置或填 0 会用部署环境的默认值（默认 720 小时，约 30 天）。"},
+		Desc: "生成的小程序码图片缓存多久（小时），到期后会自动重新生成。默认 720（约 30 天）；填 0 会回落到部署环境的 WXACODE_TTL_HOURS 或内置默认值，不会把缓存关掉。"},
 	{Key: "wxacode_sign_ttl_minutes", Group: "wechat", Type: "int", Value: "60",
 		Name: "小程序码签名链接有效期",
 		Desc: "私有存储里小程序码的临时访问链接能用多久（分钟）。填 0 或负数会回到默认 60 分钟。"},
@@ -289,7 +290,7 @@ var registry = []def{
 		Name: "主存储配置",
 		Desc: "平台自己的文件（p/ 平台对象与未单独指定存储的企业）使用哪一套文件存储。由系统自动指向内置的「主存储」那一条，不需要手工修改；要改驱动 / 桶 / 凭据请到「存储与分发 → 文件存储」编辑那一行，保存后重启服务。"},
 	{Key: "upload_dir", Group: "storage", Type: "string", Restart: true, EnvVar: "UPLOAD_DIR",
-		Name: "本地上传目录",
+		Name: "服务器上传目录",
 		Desc: "存储方式选 local 时，文件保存在服务器上的哪个目录（小程序码缓存也放这里）。换成其它存储方式后这一项不再起作用。改完要重启服务才生效。"},
 	{Key: "mirror_dir", Group: "storage", Type: "string", Restart: true, EnvVar: "MIRROR_DIR",
 		// 展示名跟「文件存储」列表里的「备份存储」那一行同构：管理员在这里看到的名字，
@@ -338,18 +339,15 @@ var registry = []def{
 		Name: "个人信息加密密钥",
 		Desc: "员工与开通申请里个人信息（姓名 / 手机号 / 邮箱等）的加密密钥，base64 编码的 32 字节（用 openssl rand -base64 32 生成）。这些字段在数据库里只存密文，数据库文件泄露也读不出明文——这把钥匙就是「读不出」的全部依仗。界面不能改：一是它绝不能存进数据库（否则库备份自带钥匙，加密形同虚设）；二是系统没有重加密能力，已用某把密钥写入的数据换钥后无法解密。如需设置或更换，请到部署环境改环境变量 PII_ENC_KEY 或配置文件（默认 data/runtime.env）后重启；该文件已包含在密钥备份包（secrets-*.tar.gz.enc）里，请随备份妥善保管、与库备份分开存放。未配置时系统用源码内置的开发密钥加密——形同明文，生产启动会被直接拒绝（仅本地联调可用 ALLOW_INSECURE=1 放行）；走安装向导的部署已在安装时自动生成并写入配置文件，一般无需手工设置。"},
 
-	// 审计日志保留期（C3）。默认 0 = 永不自动清理，这是刻意的：
-	// 删审计日志不可逆，而审计的价值恰恰在「出事之后能翻到很久以前」。升级当天
-	// 就把历史日志清掉＝把本来就有的证据变成再也拿不回来（与 B3 配额默认不限、
-	// B4 存量不补授权同一条「升级不得突变存量」纪律）。想清理必须由运维显式填天数。
-	// 清理动作本身会记一条 audit.purge 审计（操作者 = 系统），所以即便有人把保留期
-	// 改成 1 天，事后也能在审计页看到「什么时候、按多少天、清了多少条」。
-	{Key: "audit_retention_days", Group: "security", Type: "int", Value: "0",
+	// 保留期两项都归 stats：它们都是**可写的即时生效项**，而 security 组在界面上
+	// 明确标成「只读」，把可写项放进去等于让组导语（界面不能改）当场失真。
+	// 默认 0 = 永不自动清理是刻意的：删审计/埋点不可逆，升级当天清掉等于把本来就
+	// 有的证据变成再也拿不回来（与 B3 配额默认不限、B4 存量不补授权同一纪律）。
+	// 清理动作本身记一条 purge 审计（操作者 = 系统），改完下一次 tick 即生效。
+	{Key: "audit_retention_days", Group: "stats", Type: "int", Value: "0",
 		Name:     "审计日志保留天数",
 		Validate: intRange(0, 3650),
 		Desc:     "审计日志（后台操作留痕）保留多少天，超期的自动删除。0 = 永不自动清理（默认）。填了才会清理，建议按合规要求填 180 或 365；删除不可恢复，请在「审计日志」页按需先导出留底。清理动作本身也会记一条审计（操作人显示为「系统」）。"},
-
-	// 与审计保留同哲学：删统计原始数据不可逆，默认 0 = 不清理，必须由运维显式填天数。
 	{Key: "stat_retention_days", Group: "stats", Type: "int", Value: "0",
 		Name:     "统计数据保留天数",
 		Validate: intRange(0, 3650),
@@ -383,7 +381,26 @@ var registry = []def{
 		Name: "腾讯视频档",
 		Desc: "开启后「公司简介 → 视频来源」才可选「腾讯视频」档（视频托管在腾讯视频，小程序内原位播放、画面不带视频号角标，且能记播放统计）。前置条件在界面之外，需由部署方完成：① 小程序后台「设置 → 第三方服务 → 插件管理」添加腾讯视频插件并授权；② 小程序 app.json 已声明该插件（用 miniprogram/scripts/enable-tencent-video.mjs 打开）——缺任一项，小程序端该组件渲染不出来，会按兜底规则回落到封面图或兜底 MP4。留空则使用部署环境变量 MP_TENCENT_VIDEO 的值。即时生效，无需重启。"},
 
-	// 授权（升级后新增分组）：平台模式「新租户默认给试用额度」的三个口径。
+	// 授权分两块：服务商自己的平台授权（下面 4 项）+ 新租户默认试用（后面 3 项）。
+	//
+	// 平台授权这 4 项此前被 license/db.go 读取却没在 registry 登记：seed 不给默认值、
+	// PUT 被「未知设置项」拒绝，license_expires_at 永远是空，于是 CollectExpiring 里
+	// 平台全局那份授权到期永远不提醒——相关测试靠手工 SetCurrent 注入才全绿，正是
+	// 「测了代理没测承诺」。产品未发布，不留这段死路径，正式登记进设置。
+	{Key: "license_edition", Group: "license", Type: "string", Value: "platform",
+		Name: "平台授权版本",
+		Desc: "服务商自己的授权版本标识（例 platform）。只出现在授权提醒里便于辨认，平台模式不据此限制功能。"},
+	{Key: "license_seats", Group: "license", Type: "int", Value: "0",
+		Validate: intRange(0, 100000),
+		Name:     "平台授权席位",
+		Desc:     "服务商自己的授权席位上限，0 = 不限（默认）。平台模式不据此限制新建企业，仅供提醒时展示。"},
+	{Key: "license_features", Group: "license", Type: "string",
+		Name: "平台授权功能",
+		Desc: "逗号分隔的功能标识（例 basic,storage）。仅供提醒与展示，不参与鉴权。"},
+	{Key: "license_expires_at", Group: "license", Type: "string",
+		Name: "平台授权到期时间",
+		Desc: "RFC3339 格式（例 2027-11-24T23:59:59+08:00）。到期前会出现在授权提醒里；留空 = 不过期。格式写错会被静默忽略，请照例填写。"},
+	// ---- 新租户默认试用（开通企业那一刻落到 tenant_license 行）----
 	//
 	// 为什么这三项要能在界面改：试用期是天数、席位是销售政策，随客户分层经常调整，
 	// 不该让运营改一次代码重新发版。取值在**开通企业那一刻**落到 tenant_license 行，
@@ -403,7 +420,7 @@ var registry = []def{
 	// 存储配额：按租户累计上传字节数。默认 0 = 不限制——存量部署升级后行为不变，
 	// 想按量计费或做成本封顶时再填（单企业上限，可被 tenant 级 override 覆盖）。
 	{Key: "storage_quota_mb", Group: "storage", Type: "int", Value: "0",
-		Name:     "每租户存储配额",
+		Name:     "企业存储配额",
 		Validate: intRange(0, 1048576),
 		Desc:     "单个企业可用的上传空间上限（MB）。0 = 不限制（默认）。超出后该企业再上传会被拒绝，并提示已用 / 上限；用量与配额可在「企业管理」列表查看（统计自本功能启用后新上传的文件）。"},
 }

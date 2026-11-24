@@ -153,11 +153,11 @@ const FRIENDLY: Record<string, { name: string; desc: string }> = {
     desc: '每家企业最多能存多少 MB；0 表示不限制。',
   },
   upload_max_mb: {
-    name: '单张图片上限',
+    name: '单张图片大小上限',
     desc: '单位 MB。超过这个大小的图片会被拒绝上传。',
   },
   upload_video_max_mb: {
-    name: '单个视频上限',
+    name: '单个视频大小上限',
     desc: '单位 MB。视频通常比图片大，单独设置。',
   },
   upload_allow_ext: {
@@ -227,7 +227,12 @@ const changedKeys = computed(() => items.value
 const dirty = computed(() => changedKeys.value.length > 0)
 const changedCount = computed(() => changedKeys.value.length)
 
-const mirrorOn = computed(() => (draft.local_mirror_enabled || '') === 'true')
+// 与后端 setting.ParseBool 用同一张真值表：库里可能是 '1' / 'on' / 'yes'。
+// 只认 'true' 会出现「界面显示未开启、后端实际已开启」的静默分歧。
+const mirrorOn = computed(() => {
+  const v = (draft.local_mirror_enabled || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(v)
+})
 // CDN 状态来自CDN 分发，不再来自本面板的 draft：凭据只有一处真值源。
 const cdnProvider = computed(() => (props.platformDelivery?.provider || '').trim())
 const cdnOn = computed(() => cdnProvider.value !== '' && cdnProvider.value !== 'none')
@@ -258,7 +263,7 @@ const locationDesc = computed(() => {
 
 // 与 Settings.vue 的 DESTRUCTIVE 同源：改错会让已存文件失联。
 const DESTRUCTIVE: Record<string, string> = {
-  upload_dir: '本地上传目录变更后，旧目录中的已有文件将不再可见',
+  upload_dir: '服务器上传目录变更后，旧目录中的已有文件将不再可见',
   mirror_dir: '备份存储目录变更后，旧目录中的副本将不再被自动纳入',
 }
 

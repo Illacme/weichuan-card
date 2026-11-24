@@ -33,7 +33,7 @@
               <div class="name-cell">
                 <div class="name-line">
                   <span class="name-text">{{ row.name }}</span>
-                  <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未单独指定存储的企业用它。连接信息可以在这里改，保存即生效、无需重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份存储 · 目录继承自「主存储（启动配置）→ 备份存储目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的应急存储 · 目录继承自「主存储（启动配置）→ 本地上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
+                  <el-tooltip v-if="row.builtin" placement="top" :content="row.purpose === 'platform_primary' ? '平台自己那份文件的主落点：p/ 平台对象（素材采用 / 小程序码）与未单独指定存储的企业用它。连接信息可以在这里改，保存即生效、无需重启；不可删除、不能绑定给企业，也不能参与迁移' : row.purpose === 'platform_mirror' ? '系统自带的备份存储 · 目录继承自「主存储（启动配置）→ 备份存储目录」（mirror_dir），这里改不了、改那里后需重启才生效；自动运行，请勿删除' : '系统自带的应急存储 · 目录继承自「主存储（启动配置）→ 服务器上传目录」（upload_dir），这里改不了、改那里后需重启才生效；云端出问题时才用，请勿删除'">
                     <el-tag size="small" type="info" effect="plain">内置</el-tag>
                   </el-tooltip>
                   <el-tag v-if="usageLabel(row.id, 'storage')" size="small" type="success" effect="plain" class="usage-tag">{{ usageLabel(row.id, 'storage') }}</el-tag>
@@ -304,10 +304,10 @@
     <el-dialog v-model="storageDialog" :title="storageForm.id ? '编辑文件存储' : '新建文件存储'" width="640px">
       <el-alert v-if="storageForm.builtin && storageForm.purpose === 'platform_primary'" type="success" :closable="false" show-icon class="dialog-alert"
         title="这是平台自己那份存储：连接信息在这里改，保存即生效、无需重启"
-        description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未单独指定存储的企业用它。改完先点「自检」确认凭据与桶可达，保存后新文件立即写入新配置，无需重启。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「平台自身配置 → 本地上传目录」（upload_dir），目录改动仍需重启。" />
+        description="p/ 平台对象（素材采用 / 小程序码 / 访客头像）与尚未单独指定存储的企业用它。改完先点「自检」确认凭据与桶可达，保存后新文件立即写入新配置，无需重启。它不可删除、不能绑定给企业、也不能参与迁移。本地盘模式下的目录继承自「平台自身配置 → 服务器上传目录」（upload_dir），目录改动仍需重启。" />
       <el-alert v-else-if="storageForm.builtin" type="info" :closable="false" show-icon class="dialog-alert"
         title="这是系统自带的文件存储，通常不用改动"
-        description="「应急存储」平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「备份存储」图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「主存储（启动配置）→ 本地上传目录」（upload_dir），备份存储的目录继承自「主存储（启动配置）→ 备份存储目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
+        description="「应急存储」平时不用，只有云端存储出问题时才顶上，保证还能上传和显示图片。「备份存储」图片成功传到云端后，系统自动在这里留一份副本，只进不出。两者都由系统自动运行，不可删除、不能改驱动。目录也不在这里改：租户退路的目录继承自「主存储（启动配置）→ 服务器上传目录」（upload_dir），备份存储的目录继承自「主存储（启动配置）→ 备份存储目录」（mirror_dir）——两处改动都要到那里改并重启服务才生效。你一般只需要改下面的展示名，其他保持默认即可。" />
       <!-- 跟着当前驱动变的小抄：默认收起，已经知道去哪拿凭据的人不用看 -->
       <div v-if="currentDriverGuide" class="vendor-guide">
         <button type="button" class="vendor-guide-toggle" :aria-expanded="guideOpen ? 'true' : 'false'" @click="guideOpen = !guideOpen">
@@ -405,7 +405,7 @@
               它不参与任何租户绑定，也不能用于迁移——也就是说它只做备份、不会被当成正式的存取盘。要换位置请改系统设置后重启。
             </span>
             <span v-else-if="storageForm.builtin" class="field-note">
-              系统自带文件存储的目录继承自「主存储（启动配置）→ 本地上传目录」（upload_dir），网站的图片读取用的也是这个位置。
+              系统自带文件存储的目录继承自「主存储（启动配置）→ 服务器上传目录」（upload_dir），网站的图片读取用的也是这个位置。
               所以这里不用改、也不建议改；真要换位置请到那里改后重启服务，单独改这里会让图片找不到。
             </span>
             <span v-else class="field-note">迁移到另一套本地文件存储时，两边要填不同目录，否则源对象会被同名覆盖。</span>

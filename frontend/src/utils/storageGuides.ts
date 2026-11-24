@@ -170,7 +170,7 @@ export const DRIVER_GUIDES: Record<string, PlatformGuide> = {
     summary: '文件直接存在这台服务器的硬盘上。',
     when: '默认选项。刚安装、磁盘够用、只想先跑起来时用它。',
     links: [],
-    credential: '不需要任何账号或密钥。目录由「主存储」里的本地上传目录决定。',
+    credential: '不需要任何账号或密钥。目录由「主存储」里的服务器上传目录决定。',
   },
   minio: {
     key: 'minio',

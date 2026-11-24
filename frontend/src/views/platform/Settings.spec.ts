@@ -50,8 +50,8 @@ const items: SettingItem[] = [
   { key: 'upload_allow_ext', name: '允许上传的文件类型', group: 'upload', type: 'string_slice', value: 'png,jpg', description: '扩展名', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_max_mb', name: '单张图片大小上限', group: 'upload', type: 'int', value: '10', description: '上传上限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_video_max_mb', name: '单个视频大小上限', group: 'upload', type: 'int', value: '100', description: '视频上限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  { key: 'presign_put_ttl_minutes', name: '上传链接有效期', group: 'upload', type: 'int', value: '15', description: '预签名时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
-  { key: 'sign_get_ttl_minutes', name: '私有桶下载链接有效期', group: 'upload', type: 'int', value: '30', description: '签名下载时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'presign_put_ttl_minutes', name: '直传链接有效期', group: 'upload', type: 'int', value: '15', description: '预签名时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'sign_get_ttl_minutes', name: '签名下载链接有效期', group: 'upload', type: 'int', value: '30', description: '签名下载时效', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'wx_appid', name: '小程序 AppID', group: 'wechat', type: 'string', value: '', description: 'AppID', secret: false, restart: false, readOnly: false, envVar: 'WX_APPID', configured: false },
   { key: 'wx_appsecret', name: '小程序 AppSecret', group: 'wechat', type: 'string', value: '******', description: 'AppSecret（敏感）', secret: true, restart: false, readOnly: false, envVar: 'WX_APPSECRET', configured: true },
   { key: 'wxacode_ttl_hours', name: '小程序码缓存时长', group: 'wechat', type: 'int', value: '720', description: '小程序码 TTL', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
@@ -68,7 +68,7 @@ const items: SettingItem[] = [
   // 迁移 0059 / 0060：连接信息进文件存储、CDN 凭据进CDN 分发，sys_setting 只留两个指针
   { key: 'platform_storage_profile_id', name: '主存储配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的文件存储（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
   { key: 'platform_delivery_profile_id', name: '平台自身 CDN 配置', group: 'storage', type: 'string', value: '1', description: '指向系统自带的 CDN 分发（系统自动维护）', secret: false, restart: true, readOnly: false, envVar: '', configured: true },
-  { key: 'upload_dir', name: '本地上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
+  { key: 'upload_dir', name: '服务器上传目录', group: 'storage', type: 'string', value: '', description: '本地落盘目录', secret: false, restart: true, readOnly: false, envVar: 'UPLOAD_DIR', configured: false },
   { key: 'mirror_dir', name: '备份存储目录', group: 'storage', type: 'string', value: '', description: '云对象本地副本目录', secret: false, restart: true, readOnly: false, envVar: 'MIRROR_DIR', configured: false },
   { key: 'local_mirror_enabled', name: '备份存储开关', group: 'storage', type: 'bool', value: 'true', description: '备份存储总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'cookie_domain', name: '登录 Cookie 作用域', group: 'security', type: 'string', value: '', description: 'Cookie 作用域', secret: false, restart: true, readOnly: true, envVar: 'COOKIE_DOMAIN', configured: false },
@@ -79,6 +79,28 @@ const items: SettingItem[] = [
   { key: 'independent_lock', name: '独立版企业锁定', group: 'feature', type: 'bool', value: 'false', description: '独立版锁定', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'metrics_enabled', name: '开放监控指标', group: 'feature', type: 'bool', value: '', description: '指标开关', secret: false, restart: false, readOnly: false, envVar: 'METRICS_ENABLED', configured: false },
   { key: 'stat_retention_days', name: '统计数据保留天数', group: 'stats', type: 'int', value: '0', description: '埋点原始数据保留天数，超期自动清理。0=永不清理', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  // 以下 20 项补齐到与 registry 完全一致：契约测试从「夹具 ⊆ registry」收紧为相等，
+  // 少一项就说明有配置项从未进过视图测试——registry 改了 group/type 也不会有人发现。
+  { key: 'wx_upload_key', name: '小程序代码上传密钥', group: 'wechat', type: 'string', value: '******', description: '代码上传密钥', secret: true, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'wx_msg_token', name: '消息推送 Token', group: 'wechat', type: 'string', value: '', description: '回调验签 Token', secret: false, restart: false, readOnly: false, envVar: 'WX_MSG_TOKEN', configured: false },
+  { key: 'wx_msg_aeskey', name: '消息推送 EncodingAESKey', group: 'wechat', type: 'string', value: '******', description: '安全模式解密密钥', secret: true, restart: false, readOnly: false, envVar: 'WX_MSG_AESKEY', configured: true },
+  { key: 'wx_tmpl_audit', name: '审核结果通知模板 ID', group: 'wechat', type: 'string', value: '', description: '订阅消息模板', secret: false, restart: false, readOnly: false, envVar: '', configured: false },
+  { key: 'wx_tmpl_audit_fields', name: '审核结果通知模板字段', group: 'wechat', type: 'string', value: 'thing1,phrase2,thing3', description: '模板字段名', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'refresh_token_ttl_days', name: '免登录保持时长', group: 'auth', type: 'int', value: '30', description: '刷新凭证有效期', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'refresh_rate_limit_per_min', name: '凭证刷新频率限制', group: 'auth', type: 'int', value: '60', description: '刷新限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'upload_rate_limit_per_min', name: '匿名上传频率限制', group: 'auth', type: 'int', value: '20', description: '匿名上传限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'apply_open_rate_limit_per_min', name: '开通申请提交频率限制', group: 'auth', type: 'int', value: '10', description: '开通申请限流', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'audit_retention_days', name: '审计日志保留天数', group: 'stats', type: 'int', value: '0', description: '审计日志保留天数，0=不清理', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'content_sec_enabled', name: '内容安全检测', group: 'feature', type: 'bool', value: 'true', description: 'UGC 送检总闸', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'video_tencent_enabled', name: '腾讯视频档', group: 'feature', type: 'bool', value: '', description: '腾讯视频插件开关', secret: false, restart: false, readOnly: false, envVar: 'MP_TENCENT_VIDEO', configured: false },
+  { key: 'storage_quota_mb', name: '企业存储配额', group: 'storage', type: 'int', value: '0', description: '单企业存储上限，0=不限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'license_edition', name: '平台授权版本', group: 'license', type: 'string', value: 'platform', description: '平台授权标识', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'license_seats', name: '平台授权席位', group: 'license', type: 'int', value: '0', description: '平台授权席位，0=不限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'license_features', name: '平台授权功能', group: 'license', type: 'string', value: '', description: '平台授权功能标识', secret: false, restart: false, readOnly: false, envVar: '', configured: false },
+  { key: 'license_expires_at', name: '平台授权到期时间', group: 'license', type: 'string', value: '', description: '平台授权到期（RFC3339）', secret: false, restart: false, readOnly: false, envVar: '', configured: false },
+  { key: 'license_trial_enabled', name: '新租户自动试用', group: 'license', type: 'bool', value: 'true', description: '新企业默认给试用', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'license_trial_days', name: '试用天数', group: 'license', type: 'int', value: '14', description: '试用天数', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'license_trial_seats', name: '试用员工席位', group: 'license', type: 'int', value: '5', description: '试用席位数', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
 ]
 
 // 轻量 stub：仅渲染插槽 / 捕获 props，避免引入完整 Element Plus（jsdom 下过重易 OOM）。
@@ -282,7 +304,7 @@ describe('Settings 系统设置', () => {
     const { w } = await setup()
     // 新增的「数据统计」分组与其导语都应出现
     expect(w.text()).toContain('数据统计')
-    expect(w.text()).toContain('埋点原始数据的保留与自动清理')
+    expect(w.text()).toContain('审计与埋点数据的保留与自动清理')
     // 该项为 int 类型，应渲染成 el-input-number，而非文本框
     const num = numberInputOf(w, 'stat_retention_days')
     expect(num.exists()).toBe(true)
@@ -436,8 +458,8 @@ describe('Settings 系统设置', () => {
     expect(w.text()).toContain('产品的基础展示信息') // general
     expect(w.text()).toContain('存储相关配置都在「存储与分发」') // 指路已改到新模块
     expect(w.text()).toContain('首次部署必配') // miniprogram
-    // 8 个分组各一条导语（通用 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计）
-    expect(w.findAll('.group-blurb')).toHaveLength(8)
+    // 9 个分组各一条导语（通用 / 小程序 / 微信 / 后台上传代码 / 令牌 / 只读 / 开关 / 数据统计 / 授权）
+    expect(w.findAll('.group-blurb')).toHaveLength(9)
   })
 
   it('上线就绪清单默认收起为摘要条：点「查看详情」才展开，并记住选择', async () => {
@@ -567,6 +589,7 @@ describe('Settings 系统设置', () => {
       '安全与基础设施（只读）',
       '功能开关',
       '数据统计',
+      '授权与试用',
     ])
   })
 
@@ -578,8 +601,8 @@ describe('Settings 系统设置', () => {
         .find((c: any) => c.find('.group-title').text() === title)!
         .findAll('.group-sub')
         .map((s: any) => s.text())
-    // 微信组：凭据 / 小程序码（缓存时长 + 签名时效 + 生成限流）
-    expect(subs('微信')).toEqual(['小程序凭据', '小程序码'])
+    // 微信组：凭据 / 小程序码 / 消息推送 / 订阅消息。后两区此前因夹具缺项从未被测到。
+    expect(subs('微信')).toEqual(['小程序凭据', '小程序码', '消息推送（图片内容安全）', '订阅消息（审核结果通知）'])
     // 无分区元数据的组（通用 / 小程序 / 令牌 / 只读 / 开关）不画小标题
     expect(subs('通用')).toEqual([])
     expect(subs('小程序')).toEqual([])
@@ -856,6 +879,8 @@ describe('Settings 系统设置', () => {
     expect(dialogOf(w).findAll('.wizard-group-title').map((t: any) => t.text())).toEqual([
       '小程序凭据',
       '小程序码',
+      '消息推送（图片内容安全）',
+      '订阅消息（审核结果通知）',
     ])
     expect(dialogRow(w, 'wxacode_ttl_hours').exists()).toBe(true)
     expect(dialogRow(w, 'wxacode_sign_ttl_minutes').exists()).toBe(true)
@@ -948,7 +973,7 @@ describe('Settings 系统设置', () => {
     // 清空搜索恢复全量
     await search.setValue('')
     await nextTick()
-    expect(w.findAll('.group-card')).toHaveLength(8)
+    expect(w.findAll('.group-card')).toHaveLength(9)
     expect(rowExists(w, 'brand_name')).toBe(true)
   })
 

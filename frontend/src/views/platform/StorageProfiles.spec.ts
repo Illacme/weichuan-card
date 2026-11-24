@@ -202,7 +202,7 @@ describe('存储与分发模块', () => {
     expect(tip1.props('content')).toContain('请勿删除')
     // 内置档案改不动目录/基址，必须给一条直达系统设置的链接，
     // 否则管理员只能在编辑弹窗里对着灰字段干瞪眼。
-    expect(tip1.props('content')).toContain('本地上传目录')
+    expect(tip1.props('content')).toContain('服务器上传目录')
     expect(tip1.props('content')).toContain('这里改不了')
     const builtinLink = w.find('a.builtin-setting-link')
     expect(builtinLink.exists()).toBe(true)
@@ -270,7 +270,7 @@ describe('存储与分发模块', () => {
     expect(links[0].text()).toContain('改上传目录')
     expect(links[1].text()).toContain('改备份目录')
     // 编辑镜像档案时说明的是「独立目录 + 不参与绑定」，不能沿用租户退路的
-    // 「跟随本地上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
+    // 「跟随服务器上传目录」文案——两者目录真值源不同，文案串了会误导换目录的方式。
     const buttons = w.findAll('button').filter((b) => b.text() === '编辑')
     await buttons[1].trigger('click')
     await flush()
@@ -279,7 +279,7 @@ describe('存储与分发模块', () => {
     // 详情必写清目录继承自哪个配置项、改后要重启（链接名也要点名具体设置项）
     expect(w.text()).toContain('mirror_dir')
     expect(w.text()).toContain('重启')
-    expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 本地上传目录」')
+    expect(w.text()).not.toContain('内置档案的目录跟随「系统设置 → 服务器上传目录」')
 
     // 下拉里不能出现镜像档案：绑上它等于把备份副本变成主写入目标。
     expect(w.findAll('option').filter((o) => o.text() === '备份存储')).toHaveLength(0)

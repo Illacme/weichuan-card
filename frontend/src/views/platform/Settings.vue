@@ -388,16 +388,17 @@ const GROUP_LABELS: Record<string, string> = {
   security: '安全与基础设施（只读）',
   feature: '功能开关',
   stats: '数据统计',
+  license: '授权与试用',
 }
-const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'mpupload', 'auth', 'security', 'feature', 'stats']
+const GROUP_ORDER = ['general', 'storage', 'upload', 'miniprogram', 'wechat', 'mpupload', 'auth', 'security', 'feature', 'stats', 'license']
 
 // 分组导语：每组一句话「管什么、什么时候该动」，降低首配心智负担。
 const GROUP_BLURBS: Record<string, string> = {
   general: '产品的基础展示信息，随时可改、即时生效。',
   storage:
-    '主存储的部署期事实：本地上传目录、备份存储目录、备份存储开关与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定文件存储的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」里的「主存储」一行，可以在那里直接自检；这里改不了，改完文件存储也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边保存后下一个请求即生效。',
+    '主存储的部署期事实：服务器上传目录、备份存储目录、备份存储开关与 CDN 刷新。p/ 平台对象（素材采用 / 小程序码）与未绑定文件存储的企业始终走平台自身启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」里的「主存储」一行，可以在那里直接自检；这里改不了，改完文件存储也要重启服务才生效。想查看全部项可用顶部搜索。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边保存后下一个请求即生效。',
   upload:
-    '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「上传链接有效期」管直传预签名（对象存储下公私桶都会走），「私有桶下载链接有效期」用于私有桶取图和下载时的临时签名。',
+    '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「直传链接有效期」管直传预签名（对象存储下公私桶都会走），「签名下载链接有效期」用于把对象地址换成限时链接（小程序临时地址、第三方临时下载），与桶是否私有无关。',
   miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
   wechat:
     '微信凭据（小程序码与微信登录用）、小程序码的缓存时长，以及消息推送（图片内容安全靠它把结论推回来，不配则图片不送检）。',
@@ -405,7 +406,9 @@ const GROUP_BLURBS: Record<string, string> = {
   auth: '后台登录凭证能用多久、防爆破的尝试次数。',
   security: '数据库连接、签名密钥等关键项，界面不能改，只展示可辨认的预览（隐去口令与密钥中段），必须到部署环境改环境变量或配置文件（默认 data/runtime.env）后重启——改错会把自己锁在系统外。',
   feature: '运营期功能开关，按需开启。',
-  stats: '埋点原始数据的保留与自动清理：长期堆积会拖慢统计聚合与导出，按保留期清掉超期数据。',
+  stats: '审计与埋点数据的保留与自动清理：长期堆积会拖慢查询与统计聚合。两项都能改、下一次清理即生效；0 = 永不清理。',
+  license:
+    '授权分两块：服务商自己的平台授权（填了到期时间才会提醒），以及新企业开通时默认给的试用额度。试用期是销售政策，改完只影响以后新开的企业。',
 }
 
 // 组内顺序：呈现顺序由前端显式掌控，不随后端 registry 的声明顺序漂移
@@ -425,9 +428,12 @@ const GROUP_ITEM_ORDER: Record<string, string[]> = {
     'storage_quota_mb',
   ],
   upload: ['upload_max_mb', 'upload_video_max_mb', 'upload_allow_ext', 'presign_put_ttl_minutes', 'sign_get_ttl_minutes'],
+  license: ['license_edition', 'license_seats', 'license_features', 'license_expires_at', 'license_trial_enabled', 'license_trial_days', 'license_trial_seats'],
   wechat: [
     'wx_appid',
     'wx_appsecret',
+    'wx_upload_key',
+    'wxacode_env_version',
     'wxacode_ttl_hours',
     'wxacode_sign_ttl_minutes',
     'wxacode_rate_limit_per_min',
@@ -458,8 +464,8 @@ const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
     { label: '临时链接有效期', keys: ['presign_put_ttl_minutes', 'sign_get_ttl_minutes'] },
   ],
   wechat: [
-    { label: '小程序凭据', keys: ['wx_appid', 'wx_appsecret'] },
-    { label: '小程序码', keys: ['wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'] },
+    { label: '小程序凭据', keys: ['wx_appid', 'wx_appsecret', 'wx_upload_key'] },
+    { label: '小程序码', keys: ['wxacode_env_version', 'wxacode_ttl_hours', 'wxacode_sign_ttl_minutes', 'wxacode_rate_limit_per_min'] },
     // 消息推送只服务图片内容安全：图片检测是异步的，结论靠推送回来。
     // 单独一区，避免和「小程序码」混在一起被当成可选项跳过。
     { label: '消息推送（图片内容安全）', keys: ['wx_msg_token', 'wx_msg_aeskey'] },
@@ -469,6 +475,10 @@ const GROUP_SECTIONS: Record<string, { label: string; keys: string[] }[]> = {
   ],
   mpupload: [
     { label: '上传环境（仅后台直接传代码时需要）', keys: ['mp_node_bin', 'mp_ci_module_dir', 'mp_source_dir', 'mp_upload_timeout_sec'] },
+  ],
+  license: [
+    { label: '平台授权（服务商自己）', keys: ['license_edition', 'license_seats', 'license_features', 'license_expires_at'] },
+    { label: '新租户试用', keys: ['license_trial_enabled', 'license_trial_days', 'license_trial_seats'] },
   ],
 }
 
@@ -824,7 +834,7 @@ watch(displayGroups, () => nextTick(computeActive))
 // 可能并不存在的环境变量上。分组导语里的警告只配看，这里的确认逼一次清醒决策：
 // 误确认只是一次多余点击，漏确认可能就是一批文件打不开 + 工单。
 const DESTRUCTIVE: Record<string, string> = {
-  upload_dir: '本地上传目录变更后，旧目录中的已有文件将不再可见',
+  upload_dir: '服务器上传目录变更后，旧目录中的已有文件将不再可见',
   mirror_dir: '备份存储目录变更后，旧目录中的副本将不再被自动纳入',
 }
 function destructiveWarnings(): string[] {

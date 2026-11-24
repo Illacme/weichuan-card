@@ -83,6 +83,7 @@ function goPublicKeys(): string[] {
 
 interface RegistryDef {
   key: string
+  name: string
   group: string
   type: string
   envVar: string
@@ -128,6 +129,7 @@ function goRegistry(): RegistryDef[] {
     const opt = block.match(/Options:\s*\[\]string\{([^}]*)\}/)
     return {
       key: m[1],
+      name: grab('Name'),
       group: grab('Group'),
       type: grab('Type'),
       envVar,
@@ -265,9 +267,14 @@ describe('③ 视图测试夹具：Settings.spec.ts 的 items ↔ setting.regist
     expect(new Set(fixture.map((f) => f.group)).size).toBeGreaterThanOrEqual(8)
   })
 
-  it('夹具里每个 key 都在 registry 登记（否则测试在测一个后端压根不存在的项）', () => {
+  it('夹具与 registry 的 key 完全相等（少一项就说明有配置项从没进过视图测试）', () => {
+    const keys = new Set(fixture.map((f) => f.key))
     const unknown = fixture.map((f) => f.key).filter((k) => !byKey.has(k))
     expect(unknown, `夹具凭空造了：${unknown.join('、')}`).toEqual([])
+    const missing = registry.map((d) => d.key).filter((k) => !keys.has(k))
+    expect(missing, `视图夹具漏了：${missing.join('、')}`).toEqual([])
+    // 两侧长度也要对齐：万一解析出重复 key 让集合相等，这里还能挡住
+    expect(fixture.length).toBe(registry.length)
   })
 
   it('夹具的 group/type/envVar/secret/restart/readOnly/pathKind 与后端逐项一致', () => {
@@ -299,5 +306,31 @@ describe('③ 视图测试夹具：Settings.spec.ts 的 items ↔ setting.regist
     const backendEnums = registry.filter((d) => d.options.length > 0).map((d) => d.key)
     expect(backendEnums.length).toBeGreaterThan(0)
     expect(diffs, `枚举不同源：\n${diffs.join('\n')}`).toEqual([])
+  })
+})
+
+describe('④ 存储面板 FRIENDLY 名称 ↔ setting.registry 的 Name', () => {
+  it('同一个配置项不许有两个名字（面板改写只许改描述，不许改名字）', () => {
+    const src = readFileSync(resolve(REPO, 'frontend/src/components/StorageSettingsPanel.vue'), 'utf8')
+    const start = src.indexOf('const FRIENDLY: Record<string, { name: string; desc: string }> = {')
+    expect(start, '找不到 FRIENDLY 映射，守门量尺失灵').toBeGreaterThan(-1)
+    const end = src.indexOf('\n}', start)
+    expect(end).toBeGreaterThan(start)
+    const body = src.slice(start, end)
+    // 逐块抓，避免注释里出现 name: 之类把解析带偏
+    const blocks = [...body.matchAll(/^ {2}([a-z_0-9]+): \{([\s\S]*?)^ {2}\},/gm)]
+    expect(blocks.length, 'FRIENDLY 一条也没抓到，守门量尺失灵').toBeGreaterThanOrEqual(8)
+
+    const registry = goRegistry()
+    const byKey = new Map(registry.map((d) => [d.key, d]))
+    const diffs: string[] = []
+    for (const [, key, block] of blocks) {
+      const name = block.match(/name:\s*'([^']+)'/)?.[1]
+      const backend = byKey.get(key)?.name
+      if (!name || !backend || name !== backend) {
+        diffs.push(`${key}: 面板=${name || '未抓到'} 后端=${backend || 'registry 无此项'}`)
+      }
+    }
+    expect(diffs, `同一项两个名字：\n${diffs.join('\n')}`).toEqual([])
   })
 })
