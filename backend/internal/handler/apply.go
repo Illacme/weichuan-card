@@ -536,7 +536,16 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			return
 		}
 		var patch map[string]string
-		_ = json.Unmarshal([]byte(a.Snapshot), &patch)
+		if err := json.Unmarshal([]byte(a.Snapshot), &patch); err != nil {
+			// 快照坏了就不能审：下面按 patch[字段] 逐项取值，解析失败时 patch 为 nil，
+			// 一个字段都取不到 → updates 为空 map → gorm 的 Updates 对空 map 是
+			// **直接 return、不返回错误**（callbacks/update.go 里 len(set)==0 就 return），
+			// 于是这里会一路走到「状态改 approved + 回 code:0 ok」：
+			// 管理员看到「已通过」，员工资料却一个字没改，且没人能察觉。
+			log.Printf("[APPLY][ERROR] 名片修改申请 id=%d 的快照无法解析，拒绝审核 err=%v", a.ID, err)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "申请内容已损坏，无法审核，请让员工重新提交"})
+			return
+		}
 		updates := map[string]interface{}{}
 		// 非 PII：直接明文更新
 		if v, ok := patch["avatar"]; ok {
@@ -572,6 +581,15 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 					return
 				}
 			}
+		}
+		// updates 为空时绝不能往下走：空 map 的 Updates 是静默 no-op（见上面的注释），
+		// 而「状态改 approved」会照常成功 —— 等于把一张什么都没改的申请标成已生效。
+		// 出现空 updates 只有两种可能：快照是空对象，或所有字段都在归一阶段被跳过
+		// （例如头像非法）。两种都该让管理员知道，而不是假装通过。
+		if len(updates) == 0 {
+			log.Printf("[APPLY][WARN] 名片修改申请 id=%d 没有可执行的修改，拒绝审核", a.ID)
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "该申请没有可生效的修改（内容为空或字段不合法），请驳回后让员工重新提交"})
+			return
 		}
 		if err := db.Model(&e).Updates(updates).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "更新员工资料失败"})

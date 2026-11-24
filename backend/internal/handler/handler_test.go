@@ -2146,6 +2146,139 @@ func TestStorageEnhanceSuccess(t *testing.T) {
 	require.Equal(t, []string{"http://final/a.jpg"}, ref.urls)
 }
 
+// TestCreateAdminRejectsOverlongPassword 钉住三处 `hash, _ := auth.HashPassword(...)`。
+//
+// bcrypt 的 GenerateFromPassword 在口令超过 72 字节时返回 error（且哈希为空串）。
+// 旧实现把 error 丢掉，于是拿空串当哈希建账号，接口回「创建成功」——
+// 建出来的是一个**永远登不进**的账号，而且没有任何报错，管理员只会以为密码记错了。
+//
+// 三处入口全测：平台管理员、企业管理员（单独新增）、建企业时顺带建管理员。
+// 断言不只查 code，还要查库里确实没留下这个用户名——「回 code:1 但已经建了一半」
+// 同样是缺陷。
+func TestCreateAdminRejectsOverlongPassword(t *testing.T) {
+	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(uploadDir) })
+
+	db := newSeedDB(t)
+	cfg := config.Config{
+		UploadDir: uploadDir,
+		JWTKey:    "test-jwt-key",
+		AdminUser: "admin",
+		AdminPass: "admin123456",
+	}
+	r := buildEngine(t, db, cfg, fakeUploader{}, &fakeRefresher{})
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// 73 字节：刚好越过 bcrypt 的 72 字节上限
+	tooLong := strings.Repeat("a", 73)
+
+	adminCount := func(username string) int64 {
+		var n int64
+		require.NoError(t, db.Model(&model.Admin{}).Where("username = ?", username).Count(&n).Error)
+		return n
+	}
+
+	t.Run("平台管理员", func(t *testing.T) {
+		_, body := c.do("POST", "/api/admin/platform-admins", map[string]interface{}{
+			"username": "longpw_platform", "password": tooLong,
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		require.Contains(t, body["msg"], "72")
+		require.Zero(t, adminCount("longpw_platform"), "口令过长时不能留下半个账号")
+	})
+
+	t.Run("企业管理员", func(t *testing.T) {
+		_, body := c.do("POST", "/api/admin/companies/1/admins", map[string]interface{}{
+			"username": "longpw_company", "password": tooLong,
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		require.Contains(t, body["msg"], "72")
+		require.Zero(t, adminCount("longpw_company"))
+	})
+
+	t.Run("建企业时顺带建管理员", func(t *testing.T) {
+		_, body := c.do("POST", "/api/admin/companies", map[string]interface{}{
+			"name": "口令过长测试企业", "contact": "张三", "phone": "13900000444",
+			"adminUsername": "longpw_newco", "adminPassword": tooLong,
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		require.Contains(t, body["msg"], "72")
+		require.Zero(t, adminCount("longpw_newco"))
+	})
+}
+
+// TestCardModifyApproveRejectsUnusableSnapshot 钉住名片修改审批里的一条静默失败。
+//
+// 旧实现 `_ = json.Unmarshal([]byte(a.Snapshot), &patch)` 吞掉解析错误后：
+// patch 为 nil → 逐个 patch[字段] 全部取不到 → updates 是空 map → **gorm 对空 map 的
+// Updates 是「直接 return、不返回错误」**（callbacks/update.go:74 里 len(set)==0 就 return），
+// 于是一路走到「状态改 approved + 回 code:0 ok」：管理员看到「已通过」，
+// 员工资料却一个字没改，而且没有任何地方会报错。
+//
+// 两条路径都覆盖：① 快照密文损坏（换钥/写坏 → AfterFind 解密失败 → 空串 → 反序列化失败）；
+// ② 快照是合法 JSON 但没有字段（updates 为空）。
+//
+// 断言不止看返回值：员工资料与申请状态都必须保持原样——只看 code 的话，
+// 一个「回 code:1 但已经偷偷把状态改成 approved」的实现照样能过。
+func TestCardModifyApproveRejectsUnusableSnapshot(t *testing.T) {
+	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(uploadDir) })
+
+	db := newSeedDB(t)
+	cfg := config.Config{
+		UploadDir: uploadDir,
+		JWTKey:    "test-jwt-key",
+		AdminUser: "admin",
+		AdminPass: "admin123456",
+	}
+	r := buildEngine(t, db, cfg, fakeUploader{}, &fakeRefresher{})
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// 员工走真实接口创建，PII 按生产路径加密，Title 是审批后要写回的目标列
+	_, body := c.do("POST", "/api/admin/employees", map[string]interface{}{
+		"name": "王五", "phone": "13900000333", "title": "原职位",
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	staffID := int64(body["staffId"].(float64))
+
+	// ① 快照密文损坏：明文直插绕过 BeforeCreate，读回时 Decrypt 失败 → Snapshot 为空串
+	require.NoError(t, db.Exec(
+		"INSERT INTO card_modify_applies (company_id, staff_id, status, snapshot, created_at) VALUES (?, ?, ?, ?, ?)",
+		1, staffID, "pending", "v1:not-a-valid-ciphertext", time.Now(),
+	).Error)
+	var broken model.CardModifyApply
+	require.NoError(t, db.Last(&broken).Error)
+
+	// ② 合法 JSON 但一个字段都没有
+	empty := model.CardModifyApply{CompanyID: 1, StaffID: staffID, Status: "pending", Snapshot: "{}"}
+	require.NoError(t, db.Create(&empty).Error)
+
+	for _, tc := range []struct {
+		name string
+		id   int64
+	}{
+		{"快照密文损坏", broken.ID},
+		{"快照为空对象", empty.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, body := c.do("POST", fmt.Sprintf("/api/admin/apply/modify/%d/approve", tc.id), nil, adminToken)
+			require.EqualValues(t, 1, body["code"], "不可生效的申请不能回 code:0")
+
+			var e model.Employee
+			require.NoError(t, db.First(&e, "staff_id = ?", staffID).Error)
+			require.Equal(t, "原职位", e.Title, "审批被拒时员工资料不能被动过")
+
+			var a model.CardModifyApply
+			require.NoError(t, db.First(&a, "id = ?", tc.id).Error)
+			require.Equal(t, "pending", a.Status, "审批被拒时申请必须留在 pending，否则会被当成已生效")
+		})
+	}
+}
+
 // TestCDNRefreshOnOverwritePaths 覆盖写路径的 CDN 刷新守门：
 //  1. 素材采用（对象名 library/<素材ID>.<ext>）→ 刷新刚写入的 URL；
 //  2. 小程序码重生成（对象名 wxacode/<staffID>.jpg）→ 刷新公开 URL；

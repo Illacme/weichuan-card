@@ -346,7 +346,14 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			log.Printf("[COMPANY][WARN] 企业 %d 业绩分类模板复制失败（已跳过）：%v", comp.ID, catErr)
 		}
 		if req.AdminUsername != "" {
-			hash, _ := auth.HashPassword(req.AdminPassword)
+			hash, hashErr := auth.HashPassword(req.AdminPassword)
+			if hashErr != nil {
+				// 口令超 72 字节时 bcrypt 报错。此时企业已建成，但绝不能拿空哈希
+				// 建一个永远登不上的账号——按「管理员创建失败」如实回，运营用
+				// 「重置企业管理员密码」重设即可。
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业已创建，但管理员密码过长（最多 72 字节），请缩短后用「重置企业管理员密码」设置"})
+				return
+			}
 			if err := db.Create(&model.Admin{CompanyID: comp.ID, Username: req.AdminUsername, PasswordHash: hash}).Error; err != nil {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "企业已创建，但管理员创建失败，请重试或手动添加"})
 				return
@@ -493,7 +500,12 @@ func RegisterCompanies(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在"})
 			return
 		}
-		hash, _ := auth.HashPassword(req.Password)
+		hash, hashErr := auth.HashPassword(req.Password)
+		if hashErr != nil {
+			// 同 admins.go：空哈希会建出永远登不上的账号，必须显式失败。
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码过长（最多 72 字节），请缩短后重试"})
+			return
+		}
 		a := model.Admin{CompanyID: id, Username: req.Username, PasswordHash: hash}
 		if err := db.Create(&a).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})

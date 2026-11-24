@@ -65,7 +65,13 @@ func RegisterAdmins(r *gin.Engine, db *gorm.DB) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在"})
 			return
 		}
-		hash, _ := auth.HashPassword(req.Password)
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			// bcrypt 只在对口令超过 72 字节时失败。吞掉它会写入空哈希、
+			// 回「创建成功」，而该账号此后永远登不上且没人知道为什么。
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码过长（最多 72 字节），请缩短后重试"})
+			return
+		}
 		a := model.Admin{CompanyID: 0, Username: req.Username, PasswordHash: hash, CreatedAt: time.Now()}
 		if err := db.Create(&a).Error; err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "创建失败"})
