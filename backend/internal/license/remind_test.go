@@ -225,7 +225,8 @@ func TestVerifyReadsPlatformExpiryFromSettings(t *testing.T) {
 	t.Cleanup(func() { SetCurrent(nil) })
 	ent, err := Verify(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, exp, ent.ExpiresAt, "Verify 必须从设置里读到到期日，而不是拿到零值")
+	require.True(t, exp.Equal(ent.ExpiresAt),
+		"Verify 必须从设置里读到到期日：期望 %s，实际 %s", exp.Format(time.RFC3339), ent.ExpiresAt.Format(time.RFC3339))
 
 	got := CollectExpiring(db, now)
 	require.Len(t, got, 1, "到期日写进设置后，平台授权提醒必须能看到")
