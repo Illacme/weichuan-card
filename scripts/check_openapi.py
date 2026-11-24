@@ -19,6 +19,8 @@ docs/openapi.yaml 是三端联调的契约，但长期没有任何通用 CI 校�
      不依赖本机有 Go 工具链——CI 的 openapi job 只装了 PyYAML。
      只查「代码 ⊆ 文档」：文档里多出来的路径打印提示但不拦，避免扫描器盲区
      （条件注册、NoRoute 等）造成假红；代码里新加一条却忘写文档必须直接红。
+  8. 关键字段的**描述文字**没回贴旧口径（品牌色组合数 36→44、publicRead 只支持 true）。
+     结构对得上但契约在说谎时，三端按过期信息接入不会有任何报错，必须显式拦。
 
 运维探针与安装向导（/、/metrics、/setup）不是三端联调契约，不要求进文档，见 NON_CONTRACT_PATHS / PREFIXES。
 
@@ -303,6 +305,20 @@ for field in ("companyNameScale", "introFontScale"):
     for enum in enums:
         if enum != EXPECTED_SCALES:
             fail(f"{field} 的 enum={enum}，应为 {EXPECTED_SCALES}（四档展示契约漂移）")
+
+# 语义守门：结构对得上不代表描述没漂移。三端都拿契约描述当口径来源，
+# 旧数字 / 旧能力边界回贴会让人按过期信息接入（事情本身没坏，但契约在说谎）。
+# 只挡明确的旧话术，不锁整句措辞，允许后续正常改写。
+SEMANTIC_GUARDS = (
+    ("品牌色组合数", ("4 风格 × 9 色档", "36 组合全部合法"), "44 组合全部合法"),
+    ("私有桶 publicRead", ("第一阶段只支持 true",), "租户文件存储档案可为 false"),
+)
+for label, stale_phrases, positive in SEMANTIC_GUARDS:
+    for phrase in stale_phrases:
+        if phrase in raw_spec:
+            fail(f"契约里 {label} 的描述仍写「{phrase}」（{SPEC.name}）：应为 {positive}")
+    if positive not in raw_spec:
+        fail(f"契约里找不到 {label} 的当前口径「{positive}」：描述被删或改回了旧话术")
 
 doc = DOC.read_text(encoding="utf-8")
 match = BASELINE_RE.search(doc)

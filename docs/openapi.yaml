@@ -2933,7 +2933,7 @@ paths:
                         type: string
                         nullable: true
                         enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta, brand-royal, brand-scarlet]
-                        description: 两轴第二轴「品牌色系（纯颜色层）」；null = 用该风格默认色。P5 起 4 风格 × 9 色档 = 36 组合全部合法。
+                        description: 两轴第二轴「品牌色系（纯颜色层）」；null = 用该风格默认色。当前 4 风格 × (10 品牌色 + 默认色) = 44 组合全部合法（P5 首版为 9 色档 36 组合，2026-11-16 扩到 10 品牌色）。
                       templates:
                         type: array
                         description: 后台模板页的可选清单，随二进制内置（端上不硬编码）；按 `series` 分成两轴，后台自行叉乘出 44 个组合。
@@ -7030,7 +7030,7 @@ components:
         localDir: { type: string, description: driver=local 的独立根目录；留空用平台 uploads }
         accessKey: { type: string, description: 明文写入；省略保留，空串清空 }
         secretKey: { type: string, description: 明文写入，永不回传 }
-        publicRead: { type: boolean, description: 第一阶段只支持 true }
+        publicRead: { type: boolean, description: 租户文件存储档案可为 false（私有桶走后端限时签名跳转，出参 URL 不变）；平台自身存储与 local 驱动必须为 true }
     DeliveryProfileSave:
       type: object
       description: 所有字段均可省略；省略即保留原值

@@ -51,7 +51,7 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     opt.success({ data: { code: 0, styleId: 'default', brandColorId: 'brand-ocean' } })
     expect(mocks.applyTheme).toHaveBeenCalledWith('default', 'brand-ocean')
 
-    // P5：非 default 风格 + 色系是 36 组合里的合法一员，冷启动同样不能打回 default，
+    // P5：非 default 风格 + 色系是 44 组合里的合法一员，冷启动同样不能打回 default，
     // 否则「分享链接直接进二级页」的访客会一直看到标准均衡布局。
     mocks.applyTheme.mockClear()
     opt.success({

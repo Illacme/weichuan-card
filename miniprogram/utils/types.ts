@@ -185,6 +185,6 @@ export type HomeLayoutResp = Envelope & {
   styleId?: string
   /** 品牌色系（纯颜色层）id；null / 缺省 = 用风格默认色 */
   brandColorId?: string | null
-  /** 兼容派生列：旧端近似值（36 组合压不进 12 个扁平 id），两轴齐备时 resolveTheme 不读它 */
+  /** 兼容派生列：旧端近似值（44 组合压不进 12 个扁平 id），两轴齐备时 resolveTheme 不读它 */
   templateId?: string
 }

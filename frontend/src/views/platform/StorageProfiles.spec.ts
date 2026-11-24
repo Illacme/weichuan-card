@@ -465,6 +465,9 @@ describe('存储与分发模块', () => {
       'src/utils/storageGuides.ts',
       // 文档曾滞后于界面改名，守门必须一并覆盖，否则「界面改了、README 还指死链」
       '../README.md',
+      // 后端 README 曾是术语漂移的漏网之鱼：它不在原清单里，界面改了它仍指
+      // 「后台存储档案」这种不存在的菜单。守门必须覆盖后端文档。
+      '../backend/README.md',
       '../docs/storage-user-guide.md',
       '../docs/launch-checklist.md',
     ]

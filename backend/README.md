@@ -200,7 +200,7 @@ go build -o storage-backfill ./cmd/storage-backfill
   --source-dir /var/lib/weichuan/uploads --target-dir /tmp/tenant-root
 ./storage-backfill apply    --plan /tmp/plan.json --dsn "$DSN" --source-dir … --target-dir … --yes
 
-# 真桶：目标端按 company_id 查存储档案，对象真的写进客户自己的桶。
+# 真桶：目标端按 company_id 查文件存储配置，对象真的写进客户自己的桶。
 # 凭据直接来自档案（明文入库、无需密钥）；不许给 --target-dir。
 ./storage-backfill apply \
   --plan /tmp/plan.json --dsn "$DSN" --source-dir /var/lib/weichuan/uploads \
@@ -247,7 +247,7 @@ go build -o storage-backfill ./cmd/storage-backfill
 - 7 种归类的处置各不相同（`platform` 永不搬、`foreign-url` 原样保留、`foreign-tenant` /
   `invalid` 必须人工），理由写在 `internal/refmigrate/plan.go` 的 `Class` 注释里。
 - `--target-store` 决定目标端：`local`（默认，离线演练，需 `--target-dir`）/
-  `tenant`（按 `company_id` 查存储档案，用档案里的凭据走 S3
+  `tenant`（按 `company_id` 查文件存储配置，用档案里的凭据走 S3
   `StatObject`/`GetObject`/`PutObject`）。**两者不可混给**：tenant 模式下传
   `--target-dir` 会直接报错，避免运维以为两边都生效。
 - **tenant 模式绝不回退平台盘**：没有绑定 / 档案读失败 / `driver=local` / 凭据不全 /
@@ -327,7 +327,7 @@ export STORAGE_PUBLIC="true"
 # 又来不及发版时用它先顶上，再回来修判定。详见 docs/tenant-storage-url-boundaries.md §5.5。
 export STORAGE_REF_STRICT="1"
 # CDN 刷新（覆盖写后使边缘缓存失效）：CDN_ENABLED=1 + 厂商 + 该厂商要求的凭据。
-# 迁移 0060 起这些值只在**首次启动**时播种进「分发档案 → 平台自身 CDN」，
+# 迁移 0060 起这些值只在**首次启动**时播种进「存储与分发 → CDN 分发 → 平台自身 CDN」，
 # 之后真值源是那份档案（后台改，保存即生效、无需重启），环境变量不再覆盖它。
 export CDN_ENABLED="false"
 # 厂商：aliyun / tencent / qiniu / cloudflare / cloudfront（留空按 aliyun）
@@ -424,15 +424,15 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   两条链路都要认这个值：直传预签名由对象存储直接收文件、服务端看不到内容，只受前端预校验约束；而**直传失败回退成 multipart 时**由 `checkFile` 把关。
   早先只做了前半段，出现过后台填 100MB、界面写「≤100MB」、用户选完文件却被服务端按 10MB 拒掉的情况（提示「文件过大，上限 10 MB」），`storage_test.go` 的 `TestCheckFileVideoLimit` 从三个方向钉住它（mp4 不被图片上限拦 / 图片不被视频上限放开 / 超限时提示的是视频那个数）。
 - **小程序码**也走同一抽象（`SaveBytes`），写入当前驱动并带内存 TTL 缓存（按 `WXACODE_TTL_HOURS`），到期自动重新生成；不再依赖本地文件系统 ModTime。
-- 前置要求：bucket 需设为**公开读**（或经 CDN 回源公开），这样返回的 URL 才能被小程序/H5 直接访问。
+- 平台自身的 bucket 需设为**公开读**：`p/` 对象（素材 / 小程序码 / 下架占位图）没有逐租户签名链路。企业绑到自己的**租户文件存储**则可用私有桶（关掉「公开读桶」），访客地址不变、取图时由后端限时签名跳转，详见 `docs/storage-user-guide.md` §8。
 - 依赖：`github.com/minio/minio-go/v7`、`github.com/aliyun/aliyun-oss-go-sdk`。因 SDK 要求，**项目 Go 版本需 ≥ 1.26**（见 `go.mod` 与 `Dockerfile` 的 `golang:1.26-alpine`）。
 
-### 租户自有对象桶（迁移 0054，存储档案）
+### 租户自有对象桶（迁移 0054，文件存储配置）
 
 上面这些 `STORAGE_*` / `MINIO_*` / `OSS_*` 是**首次播种值**，全平台启动参数只可能有一套。
 它们已不再是运行期第二真值源：平台自己那份连接信息也在 `storage_profiles` 的
 `platform_primary` 档案里。客户说「文件存进我自己公司的桶」时，单份启动参数装不下第二个
-租户——所以有了**存储档案**。
+租户——所以有了**文件存储配置**。
 
 **只有一套模型**（第七十五轮删掉了历史上的 `tenant_storage_configs` 旧表与
 `TENANT_STORAGE_ROUTE` 开关，产品未商用，不留兼容层）：
@@ -447,11 +447,11 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
 
 | `purpose` | 作用 |
 | --- | --- |
-| `platform_primary` | 平台自身连接信息（`p/` 对象与未绑定企业）：可改驱动 / 桶 / 凭据 / 基址，可自检，改后重启；不可删、不可绑定、不可迁移 |
+| `platform_primary` | 平台自身连接信息（`p/` 对象与未绑定企业）：可改驱动 / 桶 / 凭据 / 基址，可自检，**保存即生效、无需重启**（仅服务器目录类 `upload_dir` / `mirror_dir` 仍重启）；不可删、不可绑定、不可迁移 |
 | `tenant_fallback` | `upload_dir` 的本地退路盘：驱动锁 local，目录跟随 `upload_dir`，不可删 |
 | `platform_mirror` | `mirror_dir` 的私有备份副本：驱动锁 local，目录跟随 `mirror_dir`，不可删、不可绑定、不可迁移 |
 
-配置入口：后台「**存储档案**」。三张表之间是多对多，同一套桶可以给多家企业用，
+配置入口：后台「**存储与分发 → 文件存储 / CDN 分发 / 绑定关系**」。三张表之间是多对多，同一套桶可以给多家企业用，
 换桶只改绑定，不用逐家改凭据。平台自身存储的连接信息就在 `platform_primary` 那一行，
 与租户档案共用编辑和自检界面；系统设置里只留目录与指针，见 `docs/tenant-storage-design.md` §0.3。
 
@@ -488,7 +488,7 @@ go run ./cmd/devserver          # 监听 :8080（PORT 可覆盖）
   「已按要求不回退平台存储」。客户以为文件在自己桶里、实际躺在平台盘上，是没有任何人
   会发现的静默失败，比上传失败严重得多。
 - 出参两个字段别搞混：`assetOriginActive` 是**这家企业**此刻是否真的在用客户域名，
-  `assetOriginNote` 是未生效的具体原因（未绑定 / 档案是 local / 分发档案没域名 /
+  `assetOriginNote` 是未生效的具体原因（未绑定 / 档案是 local / CDN 分发配置没域名 /
   域名不合法 / 桶未公开读）。判定与写入侧**同一个函数**（`Resolver.Diagnose`），
   不会出现「出参说生效、写入还在平台盘」。该接口无需登录，所以 reason 一律是
   固定分类文案；档案里的原始域名、底层错误与内部路径只进服务端日志。
@@ -570,7 +570,7 @@ curl -X PUT "$BASE/api/admin/storage-bindings/companies/5" -H "Authorization: Be
 - 小程序端：原生 `wx.uploadFile` 只能 multipart POST，不便做 raw PUT；小程序仍走普通 `/api/employee/upload` 服务端上传（能力已具备），直传预签名主要在 PC 后台生效。
 
 ### 2. CDN 刷新（五家厂商）
-- 启用：在「存储与分发 → 分发档案 → 平台自身 CDN」里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，**保存即生效、无需重启**（`DynamicCDN` 按该档案 version 现建平台刷新器）；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「分发档案」+ 绑定，逐请求生效、免重启。
+- 启用：在「存储与分发 → CDN 分发」页签里选厂商（aliyun / tencent / qiniu / cloudflare / cloudfront）并填全该厂商要求的凭据，**保存即生效、无需重启**（`DynamicCDN` 按该档案 version 现建平台刷新器）；首次部署也可用 `CDN_ENABLED` / `CDN_PROVIDER` / `CDN_*` 环境变量播种（迁移 0060 之前它们是真值源，现在只在档案不存在时读一次）。企业自有 CDN 走各自的「CDN 分发」配置 + 绑定关系，逐请求生效、免重启。私有桶对象的访客取图走后端签名跳转、不经过 CDN，贴它的地址进手动刷新会提示无需刷新。
 - 各家要填什么（界面按厂商联动只显示需要的字段）：
 
   | 厂商 | AccessKeyId 位 | AccessKeySecret 位 | 资源标识 | 默认端点 | 单次上限 |
@@ -1019,11 +1019,11 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 （产出 `frontend/public/theme-previews/<styleId>--<brandColorId 或 default>.png` 与同名的
 `.thumb.png` 缩略图：原图 750 宽只服务「查看大图」，460 宽缩略图给后台 230px 预览窗口，
 缺一档 `--check` / `theme.spec.ts` / `deploy_frontend.sh` 都会红；
-加一款色系多 4 组、加一款风格多 9 组），并随小程序**重新提审发版**；
+加一款色系多 4 组、加一款风格多 11 组），并随小程序**重新提审发版**；
 只有加「整体风格」款才需要再补 `MpTheme.vue` 的 `.layout-<id>` 兜底示意
 （品牌配色款不另给版式，加专属示意反而是造假，守门会拦）。
 `tests/theme.spec.ts` 逐项对账（id / 变量齐全 / 预览色 / 版式「要有差异」与
-「不许有差异」两套相反约束 / 对比度 / 36 组合 PNG 产物互不相同 / 画布比例 /
+「不许有差异」两套相反约束 / 对比度 / 44 组合 PNG 产物互不相同 / 画布比例 /
 预览 HTML 的**完整首页区块顺序**与 18 个 token 全被 `var()` 引用 / 后台接入代码），
 漏一处即变红。
 
@@ -1097,7 +1097,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 | GET  | /api/employee/upload/presign | 同上（员工鉴权） |
 | POST | /api/admin/storage/sign | 私有桶：提交已存 URL 列表，返回限时签名 URL（仅 minio/oss 私有桶） |
 | POST | /api/employee/storage/sign | 同上（员工鉴权） |
-| POST | /api/admin/cdn/refresh | 触发 CDN 缓存刷新（body: `{"urls":[...]}`）。`/uploads/p/` 的对象用「平台自身 CDN」档案的凭据，`/uploads/t/<cid>/` 用该企业绑定的分发档案；两者都没配就返回「未配置」 |
+| POST | /api/admin/cdn/refresh | 触发 CDN 缓存刷新（body: `{"urls":[...]}`）。`/uploads/p/` 的对象用「平台自身 CDN」档案的凭据，`/uploads/t/<cid>/` 用该企业绑定的 CDN 分发配置；两者都没配就返回「未配置」。私有桶对象走签名跳转、不经过 CDN，贴它的地址会提示无需刷新 |
 | POST | /api/admin/storage/object/delete | 删除单个对象并双清（云桶 + 本地镜像）：body `{"key":"t/5/x.png","confirm":"DELETE"}`；先清镜像再删主对象，镜像清不掉整体中止 |
 
 ### 企业管理（仅平台超级管理员，company_id=0）
@@ -1685,7 +1685,7 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
 旧 `storage_*` key 在播种后清理。三套 builtin 都不可删；只有 `platform_primary` 允许改连接信息，
 目录依旧全部锁死并跟随配置项。
 
-`internal/storageprofile` 是档案绑定的运行时解析层，也是 `storage.Resolver` 的**唯一实现**（`For` / `Platform` / `DriverFor`）：`Resolver.snapshot()` 用三张表的行数与 `MAX(version)` 作指纹（**一条 SQL**），变化即重载；指纹查询有 700ms 节流，稳态每进程每秒最多查一次库；`Snapshot.resolved` 缓存同一请求内的解析结果。有绑定走档案、没绑定走 `SetPlatform` 注入的平台实例。`DynamicCDN` 区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` / `SetProfileOriginDiag` 把分发档案的域名与诊断接进公开出参 origin。
+`internal/storageprofile` 是档案绑定的运行时解析层，也是 `storage.Resolver` 的**唯一实现**（`For` / `Platform` / `DriverFor`）：`Resolver.snapshot()` 用三张表的行数与 `MAX(version)` 作指纹（**一条 SQL**），变化即重载；指纹查询有 700ms 节流，稳态每进程每秒最多查一次库；`Snapshot.resolved` 缓存同一请求内的解析结果。有绑定走档案、没绑定走 `SetPlatform` 注入的平台实例。`DynamicCDN` 区分「没配 CDN」与「配了 provider=none（明确不刷新）」。`SetProfileOriginResolver` / `SetProfileOriginDiag` 把CDN 分发配置的域名与诊断接进公开出参 origin。
 
 一键迁移依赖 `storage.ObjectLister` / `ObjectCopier` / `ObjectStreamWriter` 三个能力接口，local / MinIO / OSS 各自实现；只复制不删除，视频流式搬运。异步任务统一走 `safego.Run`。
 

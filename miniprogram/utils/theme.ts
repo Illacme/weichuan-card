@@ -97,7 +97,7 @@ export function splitTheme(id?: string | null): ThemeSelection {
   return { styleId: v as StyleId, brandColorId: null }
 }
 
-/** 两轴 → P5 缓存串。绝不压扁成 12 个扁平 id（那会丢掉风格，36 → 12 塌缩）。 */
+/** 两轴 → P5 缓存串。绝不压扁成 12 个扁平 id（那会丢掉风格，44 → 12 塌缩）。 */
 export function encodeCachedTheme(styleId?: string | null, brandColorId?: string | null): string {
   const sel = normalizeSelection(styleId, brandColorId)
   return `${CACHE_PREFIX}${sel.styleId}|${sel.brandColorId || CACHE_NONE}`

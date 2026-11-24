@@ -723,6 +723,12 @@ func (d *DynamicCDN) refreshByBinding(urls []string) error {
 		if err != nil {
 			return fmt.Errorf("读取 CDN 分发配置失败，已拒绝静默回落到平台 CDN：%w", err)
 		}
+		// 私有桶对象的读侧是后端签名 302，CDN 根本不缓存这批 URL；拿租户 CDN
+		// 凭据去刷既无效果又浪费厂商配额。与 PrivateRead 同一口径：只认租户自己的
+		// 生效档案，local 驱动不算私有桶（它没有 Signer）。
+		if eff.Storage != nil && !eff.Storage.PublicRead && eff.Storage.Driver != nginxsnippet.DriverLocal {
+			return storage.ErrPrivateBucketCDN
+		}
 		if eff.Delivery != nil {
 			if eff.Delivery.Provider == storage.CDNProviderNone || eff.Delivery.Provider == "" {
 				return nil // 明确配了「不刷新」

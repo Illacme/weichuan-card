@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -161,6 +162,11 @@ func refreshCDN(db *gorm.DB, refresher storage.CDNRefresher, urls ...string) {
 		return
 	}
 	if err := refresher.Refresh(urls); err != nil {
+		// 私有桶对象是设计上的「不刷新」，不是故障：记 WARN + 失败审计会让
+		// 每个用私有桶的企业每次上传都制造一条告警，把真故障淹掉。
+		if errors.Is(err, storage.ErrPrivateBucketCDN) {
+			return
+		}
 		log.Printf("[WARN] cdn refresh failed: %v", err)
 		audit.Record(db, nil, audit.Entry{
 			Action:     audit.ActionCDNRefresh,

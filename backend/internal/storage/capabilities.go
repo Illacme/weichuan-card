@@ -90,6 +90,12 @@ type ObjectCopier interface {
 // ErrObjectTooLarge 读回对象超过 MaxObjectReadBytes。
 var ErrObjectTooLarge = errors.New("storage: 对象超过可读上限")
 
+// ErrPrivateBucketCDN 表示这批 URL 属于私有桶租户：私有桶对象的读侧走后端限时签名跳转，
+// 不经过客户 CDN，刷新没有意义。手动刷新端点把它回给管理员当明确指引；
+// 自动刷新（覆盖写后的 refreshCDN）识别后不记 WARN、不写审计噪音——
+// 「这是设计边界」不能伪装成「刷新故障」，否则配了私有桶的企业每次上传都刷一条告警。
+var ErrPrivateBucketCDN = errors.New("私有桶对象不走客户 CDN，无需刷新：读侧由后端限时签名跳转代替")
+
 // readLimited 读尽 rc，但最多读 MaxObjectReadBytes+1 字节：
 // 多读的那 1 字节专门用来区分「刚好等于上限」与「超了」，
 // 避免为了判大小先发一次 HEAD 请求（对象存储的 Stat 也是一次往返）。

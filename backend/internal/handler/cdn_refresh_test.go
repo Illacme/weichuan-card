@@ -6,6 +6,7 @@ import (
 
 	"weichuan/internal/audit"
 	"weichuan/internal/model"
+	"weichuan/internal/storage"
 
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,20 @@ func TestRefreshCDNRecordsAuditOnFailure(t *testing.T) {
 	require.Contains(t, rows[0].Detail, `"url_count":2`)
 	require.NotContains(t, rows[0].Detail, "cdn.example.com")
 	require.NotContains(t, rows[0].Detail, "500")
+}
+
+// TestRefreshCDNSkipsPrivateBucketAudit 私有桶对象是设计上的「不刷新」，不是故障。
+// 自动刷新（覆盖写后）拿到哨兵错误必须静默：记 WARN + 失败审计会让每个用私有桶的
+// 企业每次上传都造一条告警，把真故障淹掉。管理员确实需要知道时，走的是手动刷新
+// 端点——那里把 err.Error() 直接回显，不受这里静默影响。
+func TestRefreshCDNSkipsPrivateBucketAudit(t *testing.T) {
+	db := statPurgeDB(t)
+	ref := &fakeRefresher{err: storage.ErrPrivateBucketCDN}
+	refreshCDN(db, ref, "https://cdn.example.com/uploads/t/7/a.png")
+
+	var rows []model.AuditLog
+	db.Where("action = ?", audit.ActionCDNRefresh).Find(&rows)
+	require.Empty(t, rows, "私有桶不刷新是预期边界，不应写失败审计")
 }
 
 // TestRefreshCDNSkipsWhenRefresherNil refresher 为 nil 或 URL 为空时既不该刷也不该记审计。

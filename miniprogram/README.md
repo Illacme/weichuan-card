@@ -936,8 +936,9 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
   加**色系**：`.wc-brand-<id>` **只给 11 个颜色 token**）、`THEME_IDS` / `STYLE_IDS` /
   `BRAND_IDS`、重跑 `scripts/gen_theme_previews.py` 出
   `frontend/public/theme-previews/<styleId>--<brandColorId 或 default>.png`。
-  **P5 起是 4 风格 × 9 色档 = 36 张**：加一款色系多出 4 张（4 个风格各一张），
-  加一款风格多出 9 张（该风格 × 9 档颜色），`manifest.combos` / `comboTokens` /
+  **当前是 4 风格 × (10 品牌色 + 默认色) = 44 张**（P5 首版为 9 色档 36 张，2026-11-16 扩到 10 品牌色）：
+  加一款色系多出 4 张（4 个风格各一张），
+  加一款风格多出 11 张（该风格 × 11 档颜色），`manifest.combos` / `comboTokens` /
   `canvasByStyle` / `contentBottoms` 都要同步长项，漏了 `--check` 与 `theme.spec.ts` 会红。
   **P7 起每个组合产出两个文件**：`<id>.png`（750 宽原图，0.78~1.86MB，只在「查看大图」
   浮层里加载）与 `<id>.thumb.png`（460 宽等比、128 色，100~212KB，后台 230px 预览窗口用）。
@@ -990,8 +991,8 @@ go run ./cmd/devserver          # 监听 :8080（可用 PORT 环境变量覆盖�
   `placeholders` 快照，`--check` 与 `theme.spec.ts` 会抓「图停在旧版 / 布局漂移 /
   组合 token 被色系覆盖版式 / 按错风格尺寸 / 混入真实客户身份」。只查「PNG 都在」
   挡不住这种漂移。
-  `theme.spec.ts` 还断言 HTML 里不得手写任一主题主色、PNG 集合与 36 组合一一对应、
-  **36 张图的内容摘要互不相同**（并按「同风格 9 档」「同色档 4 风格」分组各查一遍）、
+  `theme.spec.ts` 还断言 HTML 里不得手写任一主题主色、PNG 集合与 44 组合一一对应、
+  **44 张图的内容摘要互不相同**（并按「同风格 11 档」「同色档 4 风格」分组各查一遍）、
   按所属风格逐张校验 PNG 高度、底部按钮「一键拨号」
   实心在左 /「存入通讯录」描边在右（曾写反），避免端上改了而后台悄悄变旧。
 - **它不是真机截图**：后台是普通网页，跑不了小程序组件树；模板随小程序版本提审，

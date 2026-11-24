@@ -282,7 +282,7 @@ var registry = []def{
 	//
 	// sys_setting 只留一个指针和部署期目录事实。指针由
 	// storageprofile.EnsureBuiltinPlatformPrimary 启动时自动写入，唯一合法目标是
-	// 那套内置档案；前端分组不展示它（改连接信息去「存储与分发 → 存储档案」），
+	// 那套内置档案；前端分组不展示它（改连接信息去「存储与分发 → 文件存储」），
 	// 留在 registry 是为了 Upsert 的类型契约，也让排障时能直接从设置接口看到指向。
 	// 这里刻意写字面量而不是常量：settings_contract 的守门按 `Key: "..."` 解析
 	// registry，常量引用会让它整条漏掉（夹具对账随之误报「夹具凭空造了」）。

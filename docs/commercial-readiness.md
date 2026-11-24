@@ -6151,3 +6151,34 @@ ResolveRef）本来就走动态快照，改基址后用户看到的 URL 早已�
 
 **验证**：新增后端 middleware / `PrivateRead` / 平台私有拒绝 / snippet 私有分支四组测试，
 前端私有桶文案守门；反向验证覆盖"判定关掉必须回落静态路径"与"私有 location 不得出现匿名回源配置"。
+
+## 第八十八轮：三端对齐收口（契约描述 / 测试装配 / 私有桶 CDN 边界）
+
+**用户诉求**：完成 A1 / A3 后问「三端还有哪些未对齐」。四条线只读调查（契约、类型常量、
+存储链路、文案功能覆盖）+ 逐处复核，确认核心路径与类型是齐的，漂移集中在三类。
+
+**修复**：
+- **契约描述**：`openapi.yaml` 的 `brandColorId` 描述写「9 色档 = 36 组合」，与同段 enum 的
+  10 项及下一行「44 组合」自相矛盾；`publicRead` 仍写「第一阶段只支持 true」。两处改为
+  现行口径，并把当前生效文档里的「36」残留（小程序 README、`theme.ts` / `types.ts` 注释、
+  `themeBootstrap.spec.ts`）同步为 44；历史轮次里的 36 保留（P5 当时的口径，已有 P5.1 订正）。
+  `scripts/check_openapi.py` 新增第 8 项**语义守门**：拦旧话术回贴、并要求正向锚点存在。
+- **测试装配点**：`handler_test.go` 的 `buildEngine` 未挂 `/api/setup/status` 与 `/setup`，
+  前端启动探测在集成测试里恒 404。`cmd/devserver/main_test.go` 的 parity 只比两个 main、
+  比不到测试引擎。补等价注册（不能 import setup：`install.go` 单向依赖 handler，反向成环），
+  加行为级测试；生产的真实注册仍由两个 main 调用 setup，parity 守门照旧。
+- **私有桶 CDN 边界**：`DynamicCDN.refreshByBinding` 原先不看 `PublicRead`，私有桶 URL 仍会被
+  拿租户 CDN 凭据去刷。新增 `storage.ErrPrivateBucketCDN` 哨兵，在凭据校验之前挡下；手动
+  刷新端点把文案回给管理员，自动刷新（覆盖写后）识别哨兵后不记 WARN / 失败审计，
+  避免私有桶企业每次上传都造告警。`docs/tenant-storage-design.md` 的「不新增合法域名」
+  补上私有桶例外，`storageGuides.ts` 的刷新页说明同步。
+- **后端文档**：`backend/README.md` 仍指路「后台存储档案」（已不存在的菜单）、platform_primary
+  写「改后重启」（A1 后保存即生效）、前置要求写「bucket 必须公开读」（A3 后租户可私有）；
+  `setting.go` 注释、`storage.go` 报错文案同样清理。把 backend/README 加进前端术语守门的
+  扫描清单——它原先不在清单里，这正是漂移能留下来的原因。
+
+**验证**：后端 gofmt / vet / build / `go test ./...` 全绿；前端 type-check / lint / 1942 tests
+（117 files）/ Vite build 全绿；OpenAPI 137 paths、136 路由全有契约、自检通过。
+**反向验证 4/4 必红后还原**：契约贴回「36 组合 / 只支持 true」→ 语义守门红；删 buildEngine
+注册 → 行为测试红；删私有桶判定 → 哨兵测试红；backend/README 贴回「存储档案」→ 术语守门红。
+历史文档（commercial-readiness 旧轮次、real-device-acceptance、theming-two-axis-design）零改动。

@@ -204,6 +204,18 @@ func buildEngine(t *testing.T, db *gorm.DB, cfg config.Config, up storage.Upload
 	// 集成测试里该路径只会拿到 gin 的 404 纯文本。补进来才能进 SQLite/MySQL parity。
 	RegisterClientError(r)
 
+	// setup 的两个端点与两个 cmd/main.go 的「已配置」分支等价：前端 main.ts 启动
+	// 必探 /api/setup/status，404 被当成「已配置」吞掉；测试引擎原先没挂，
+	// 于是这个探测在集成测试里永远走不到，和 buildEngine「与生产等价」的承诺冲突。
+	// 不能直接调 setup.RegisterStatus：setup 包 import 了 handler（install.go 的
+	// SeedAdmin），反向 import 会成环。这里按生产返回结构内联等价端点；生产的真实
+	// 实现由 cmd/*/main.go 调用 setup 注册，并由 TestDevRoutesMatchProduction 守护。
+	// 只挂状态与别名，不挂安装写接口——那属于未配置分支，两个 main 也不挂。
+	r.GET("/api/setup/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"configured": true}})
+	})
+	r.GET("/setup", func(c *gin.Context) { c.Redirect(http.StatusFound, "/") })
+
 	return r
 }
 
@@ -2646,6 +2658,27 @@ func newSeedDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(model.All()...))
 	require.NoError(t, db.Create(&model.Company{ID: 1, Name: "廊坊市朗汇机电设备有限公司", ShortName: "朗汇机电", Status: "enabled"}).Error)
 	return db
+}
+
+// TestBuildEngineRegistersSetupRoutes 守 buildEngine 与两个 cmd/main.go 的路由装配对齐。
+//
+// cmd/devserver/main_test.go 的 TestDevRoutesMatchProduction 只比 server 与 devserver
+// 两个入口，比不到这里——而 buildEngine 才是 SQLite/MySQL parity 与绝大多数集成测试
+// 实际跑的引擎。setup.RegisterStatus 漏挂时，前端启动探测 /api/setup/status 拿到 404，
+// 被当成「已配置」吞掉，测试全绿但线上那条探测分支从未被覆盖。行为级断言而非源码
+// 断言：删掉注册即 404，本测试必红。
+func TestBuildEngineRegistersSetupRoutes(t *testing.T) {
+	r := setupSQLiteEngine(t)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/setup/status", nil))
+	require.Equal(t, http.StatusOK, rec.Code, "buildEngine 必须挂 /api/setup/status")
+	require.Contains(t, rec.Body.String(), `"configured"`)
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	require.Equal(t, http.StatusFound, rec.Code, "buildEngine 必须挂安装向导的 /setup 别名")
+	require.Equal(t, "/", rec.Header().Get("Location"))
 }
 
 // TestHealthzRootOK 根路径是纯索引页：恒 200、列出子端点，不做健康判断。
