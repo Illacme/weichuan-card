@@ -674,7 +674,9 @@ CI 的「发版脚本自检」job 每次都跑；目前 50 条断言，含缺文
 > 归档不进全新部署包，同步命令用 `--exclude=history/`。两条路径的结构等价由 CI 真实 MySQL 对账。
 > 本节 `0035` / `35 个` 是当时事故的留档示例，保留可追溯，不再参与当前口径。
 > 遇已按 0001..0062 记过账的旧库，启动时**自动识别并切换到 `migrations/history/`** 走原 62 步
-> （顶层只有纯净基线、记账里的老版本都在 history 里时才切，日志打
+> （只要记账里的老版本在 history/ 里齐备就切；**顶层残留旧增量文件也照切**——2026-11-25
+> 线上事故正是把旧增量一起传上去后没切 history，导致 0054 的 `storage_profiles` 没建、
+> 启动即 `Table 'weichuan.storage_profiles' doesn't exist`；日志打
 > `[MIGRATE] … 自动切换到历史增量目录`）；显式设 `WEICHUAN_MIGRATIONS_DIR`
 > 仍最高优先，按运维指定的目录原样执行。
 

@@ -129,16 +129,20 @@ func sqlFilesIn(dir string) ([]string, error) {
 	return files, nil
 }
 
-// maybeLegacyHistoryDir 处理「老库升级」：记账表里有一批已应用版本不在顶层
-// 目录（顶层只有产品初始版的纯净 0001_init.sql），但 history/ 归档里都在。
-// 这种库是较早版本装的，记账到 0001..006N，升级到本版本后顶层换了纯净基线，
-// 若直接用顶层跑，守门 2 会把「记账里有、目录里没有」判成部署包不对而拒绝启动。
+// maybeLegacyHistoryDir 处理「老库升级」：库已按 0001..0062 记过账，而本版本顶层
+// 只有产品初始版的纯净 0001_init.sql。这种库必须用 history/ 的增量继续升级，
+// 否则 0054 之后的 storage_profiles 等新表永远建不出来（2026-11-25 线上事故：
+// 运维把旧增量一起传上去了，顶层残留 0002..0053，结果没切 history，启动即
+// `Table 'weichuan.storage_profiles' doesn't exist`）。
 //
-// 切换判据纯集合运算、不解释 SQL：
+// 切换判据（纯文件名集合运算，不解释 SQL）：
 //  1. 显式设了 WEICHUAN_MIGRATIONS_DIR —— 尊重运维/测试指定，不切换；
-//  2. 顶层目录已覆盖全部已记账版本（全新库 done 为空也属于这种）—— 不切换；
-//  3. 否则要求 history/ 里存在所有「顶层缺失的已记账版本」，缺一个就不切
-//     （说明库比我们认识的版本还超前，交给守门 2 fail-closed），齐了才切。
+//  2. 记账表为空（全新库）—— 用顶层纯净基线，不碰 history；
+//  3. 老库（有记账）且 history/ 里存在**全部**已记账版本 —— 一律切 history。
+//     不再要求「顶层缺这些版本」：增量部署时顶层常残留旧增量文件，若据此判定
+//     「不需要切换」就会漏跑 0054+，正是线上那次事故。
+//  4. history 补不齐已记账版本 —— 不猜，交给守门 2 fail-closed
+//     （说明库比我们认识的版本还超前，或部署包不完整）。
 //
 // 返回切换后的目录与文件列表，以及是否发生了切换（调用方据此跳过清单守门：
 // history/ 是老清单，与当前编译的 expectedMigrations 必然不符）。
@@ -146,9 +150,8 @@ func maybeLegacyHistoryDir(dir string, files []string, done map[string]bool) (st
 	if os.Getenv(envMigrationsDir) != "" {
 		return dir, files, false
 	}
-	missing := missingVersions(done, files)
-	if len(missing) == 0 {
-		return dir, files, false
+	if len(done) == 0 {
+		return dir, files, false // 全新库：顶层纯净基线是唯一真值源
 	}
 	histDir := filepath.Join(dir, "history")
 	histFiles, err := sqlFilesIn(histDir)
@@ -159,13 +162,13 @@ func maybeLegacyHistoryDir(dir string, files []string, done map[string]bool) (st
 	for _, f := range histFiles {
 		inHist[f] = true
 	}
-	for _, v := range missing {
+	for v := range done {
 		if !inHist[v] {
-			return dir, files, false // history 也补不齐，不猜
+			return dir, files, false // history 也补不齐，不猜，继续走守门 2
 		}
 	}
-	log.Printf("[MIGRATE] 记账表里 %d 个已应用版本不在顶层目录、但存在于 history/，"+
-		"判定为老库升级，自动切换到历史增量目录继续应用", len(missing))
+	log.Printf("[MIGRATE] 记账表里 %d 个已应用版本在 history/ 中齐备，"+
+		"判定为老库升级，自动切换到历史增量目录继续应用", len(done))
 	return histDir, histFiles, true
 }
 
@@ -231,6 +234,21 @@ func applyFromDir(db *gorm.DB, dir string) ([]string, error) {
 			log.Printf("[MIGRATE][WARN] migrations 目录里 %d 个文件不在本版本清单内：%s"+
 				"（二进制比目录旧？旧版本可能不认识这些迁移的内容）",
 				len(extra), strings.Join(extra, ", "))
+		}
+	}
+
+	// 新增守门（线上 2026-11-25 事故的第二道）：老库 + 顶层残留旧增量 + 未切 history。
+	// 这种形态下守门 1（extra 只告警）与守门 2（记账版本都在顶层）都会放行，
+	// 但 0054 之后的增量根本没跑，运行期才报 `Table 'storage_profiles' doesn't exist`。
+	// 只要顶层出现本版本清单外的迁移文件，就说明这是混了旧增量的升级部署：
+	// 必须带着 history/ 让 maybeLegacyHistoryDir 切过去，否则直接拒绝启动。
+	if os.Getenv(envMigrationsDir) == "" && !legacy && len(done) > 0 {
+		if extra := unknownInDir(files); len(extra) > 0 {
+			return nil, fmt.Errorf(
+				"migrations 目录（%s）里有 %d 个旧版本增量文件（%s 等），但 history/ 缺失或补不齐已记账版本，"+
+					"无法自动切换升级。请把本版本的 migrations/history/ 一起部署后重启"+
+					"（记账版本会跳过，只补跑 0054 之后的新增迁移）",
+				dir, len(extra), strings.Join(extra[:min(3, len(extra))], ", "))
 		}
 	}
 

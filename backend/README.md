@@ -660,7 +660,8 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 > 归档不进全新部署包，发版同步命令用 `--exclude=history/`。两者结构等价由 CI 真实 MySQL 对账。
 > 本节的 `0038` / `38` 是 2026-11-03 事故当时的排查记录，留档可追溯，不再参与当前口径。
 > 若遇已按 0001..0062 记过账的库，启动时**自动识别并切换到 `migrations/history/`**
-> 继续按原 62 步升级（顶层只有纯净基线、记账里的老版本都在 history 里时才切，
+> 继续按原 62 步升级（只要记账里的老版本在 history/ 里齐备就切，**顶层残留旧增量也照切**；
+> 2026-11-25 线上事故即旧增量残留却没切 history，漏跑 0054 的 `storage_profiles`）
 > 日志打 `[MIGRATE] … 自动切换到历史增量目录`）；显式设 `WEICHUAN_MIGRATIONS_DIR`
 > 仍最高优先，按运维指定的目录原样执行。
 

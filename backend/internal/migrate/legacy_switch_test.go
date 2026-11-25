@@ -8,6 +8,7 @@ package migrate
 // 让这种库自动切到 history/ 继续按增量升级，无需人工设环境变量。
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,6 +99,97 @@ func TestLegacyIncompleteHistoryFailsClosed(t *testing.T) {
 	_, err = applyFromDir(db, dir)
 	require.Error(t, err, "history 补不齐已记账版本时必须 fail-closed")
 	require.Contains(t, err.Error(), "部署包不完整")
+}
+
+// 线上 2026-11-25 事故形态：增量部署时旧增量文件没被删，顶层残留 0002..0053，
+// 同时又传了完整的 history/。此时「记账版本在顶层全都在」会让旧判据误判为
+// 「不需要切换」，结果 0054+ 的增量没跑（storage_profiles 表缺失，启动失败）。
+// 正确判据：老库（有记账）+ history 覆盖全部记账版本 → 一律用 history 升级。
+func TestLegacyDBWithStaleTopLevelFilesSwitchesToHistory(t *testing.T) {
+	t.Setenv(envMigrationsDir, "")
+	db := newTestDB(t)
+	dir := t.TempDir()
+
+	// 顶层：旧增量残留（0001 被本版本纯净基线同名覆盖，0002..0003 是旧文件）
+	writeDir(t, dir, map[string]string{
+		"0001_init.sql":  "CREATE TABLE top1 (id INTEGER PRIMARY KEY);",
+		"0002_apply.sql": "CREATE TABLE top2 (id INTEGER PRIMARY KEY);",
+		"0003_extra.sql": "CREATE TABLE top3 (id INTEGER PRIMARY KEY);",
+	})
+	// history：完整增量（0001..0004），含老库已记账的全部版本
+	writeDir(t, filepath.Join(dir, "history"), map[string]string{
+		"0001_init.sql":  "CREATE TABLE h1 (id INTEGER PRIMARY KEY);",
+		"0002_apply.sql": "CREATE TABLE h2 (id INTEGER PRIMARY KEY);",
+		"0003_extra.sql": "CREATE TABLE h3 (id INTEGER PRIMARY KEY);",
+		"0004_new.sql":   "CREATE TABLE h4 (id INTEGER PRIMARY KEY);",
+	})
+
+	_, err := appliedVersions(db)
+	require.NoError(t, err)
+	for _, v := range []string{"0001_init.sql", "0002_apply.sql", "0003_extra.sql"} {
+		require.NoError(t, recordVersion(db, v))
+	}
+
+	applied, err := applyFromDir(db, dir)
+	require.NoError(t, err)
+	require.Equal(t, []string{"0004_new.sql"}, applied,
+		"顶层残留旧增量不应阻止切换到 history，否则新表建不出来")
+	require.True(t, db.Migrator().HasTable("h4"))
+}
+
+// 最接近线上事故：记账到 0053，顶层混着纯净 0001 + 旧增量 0002..0053，
+// history 完整且含 0054 之后的新迁移。修复后应切 history 并补跑这些新迁移。
+func TestLegacyDBAt0053WithStaleTopLevelSwitchesToHistory(t *testing.T) {
+	t.Setenv(envMigrationsDir, "")
+	db := newTestDB(t)
+	dir := t.TempDir()
+
+	top := map[string]string{"0001_init.sql": "SELECT 1;"}
+	hist := map[string]string{"0001_init.sql": "SELECT 1;"}
+	for i := 2; i <= 53; i++ {
+		name := fmt.Sprintf("%04d_step.sql", i)
+		hist[name] = "SELECT 1;"
+		top[name] = "SELECT 1;" // 顶层残留旧增量
+	}
+	// 0054..0062 只在 history 里，其中 0054 建 storage_profiles
+	hist["0054_storage.sql"] = "CREATE TABLE storage_profiles (id INTEGER PRIMARY KEY);"
+	writeDir(t, dir, top)
+	writeDir(t, filepath.Join(dir, "history"), hist)
+
+	_, err := appliedVersions(db)
+	require.NoError(t, err)
+	for _, v := range []string{"0001_init.sql", "0053_step.sql"} {
+		require.NoError(t, recordVersion(db, v))
+	}
+
+	applied, err := applyFromDir(db, dir)
+	require.NoError(t, err)
+	require.Contains(t, applied, "0054_storage.sql")
+	require.True(t, db.Migrator().HasTable("storage_profiles"),
+		"history 里的 storage_profiles 必须建出来，否则启动仍 FATAL")
+}
+
+// 线上事故的另一种形态：顶层残留旧增量、history 没传。旧代码静默放行，
+// 结果 0054+ 没跑；新守门必须明确报错，而不是等运行期
+// `Table 'weichuan.storage_profiles' doesn't exist` 才发现。
+func TestLegacyDBStaleTopLevelWithoutHistoryFailsFast(t *testing.T) {
+	t.Setenv(envMigrationsDir, "")
+	db := newTestDB(t)
+	dir := t.TempDir()
+	writeDir(t, dir, map[string]string{
+		"0001_init.sql":  "SELECT 1;",
+		"0002_apply.sql": "SELECT 1;",
+		"0003_extra.sql": "SELECT 1;",
+	})
+	_, err := appliedVersions(db)
+	require.NoError(t, err)
+	for _, v := range []string{"0001_init.sql", "0002_apply.sql", "0003_extra.sql"} {
+		require.NoError(t, recordVersion(db, v))
+	}
+
+	_, err = applyFromDir(db, dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "migrations/history/ 一起部署")
 }
 
 // 纯函数判据：显式指定 env 时不切换（尊重运维/测试指定，不被自动逻辑覆盖）。
