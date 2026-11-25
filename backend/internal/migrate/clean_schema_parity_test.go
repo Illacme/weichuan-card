@@ -32,7 +32,7 @@ type columnInfo struct {
 	Name      string
 	Type      string
 	Nullable  string
-	Default   any
+	Default   *string
 	Extra     string
 	ColumnKey string
 }
@@ -56,7 +56,7 @@ func schemaOf(t *testing.T, db *gorm.DB) map[string]any {
 		var cols []columnInfo
 		require.NoError(t, db.Raw(
 			"SELECT column_name AS name, column_type AS type, is_nullable AS nullable, "+
-				"column_default AS `default`, extra AS extra, column_key AS column_key "+
+				"CAST(column_default AS CHAR) AS `default`, extra AS extra, column_key AS column_key "+
 				"FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? ORDER BY ordinal_position",
 			tbl,
 		).Scan(&cols).Error)
@@ -154,9 +154,18 @@ func TestCleanSchemaMatchesHistoryReplay(t *testing.T) {
 	applySQLFile(t, dbc, filepath.Join(migDir, "0001_init.sql"))
 
 	sh, sc := schemaOf(t, dbH), schemaOf(t, dbc)
-	require.Equal(t, sh, sc,
-		"纯净 0001_init.sql 的库结构与 history 重放结果不一致：\n"+
-			"history: %v\nclean: %v", sortedKeys(sh), sortedKeys(sc))
+
+	// 逐表比对：整张 map 的 require.Equal 输出难以定位差异（map 无序、
+	// 嵌套结构被折叠），逐表断言能一次打印出具体是哪张表不一致。
+	for _, tbl := range sortedKeys(sh) {
+		h, ok := sc[tbl]
+		require.True(t, ok, "纯净基线缺少表 %s（history 重放有）", tbl)
+		require.Equal(t, h, sh[tbl], "表 %s 结构不一致（history 重放 vs 纯净基线）", tbl)
+	}
+	for _, tbl := range sortedKeys(sc) {
+		_, ok := sh[tbl]
+		require.True(t, ok, "纯净基线多出表 %s（history 重放没有）", tbl)
+	}
 }
 
 func sortedKeys(m map[string]any) []string {
