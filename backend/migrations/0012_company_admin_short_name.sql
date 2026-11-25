@@ -4,5 +4,7 @@
 -- 与 devserver AutoMigrate 保持一致。
 
 ALTER TABLE company ADD COLUMN short_name VARCHAR(64) NOT NULL DEFAULT '';
--- 存量 1 号租户（朗汇）种子简称，与其公司信息一致
+-- 历史种子：当时的 1 号演示租户（朗汇）简称。全新安装的空库执行到这里时没有
+-- id=1 的行，UPDATE 命中 0 行；演示企业现在由安装向导 loadDemoData 显式装载，
+-- 不依赖这条语句。保留 SQL 是为了不改动已应用过的迁移，别把它当当前配置依赖。
 UPDATE company SET short_name = '朗汇机电' WHERE id = 1;

@@ -177,9 +177,13 @@
   不需要也不应该手工改。
 
 首次启动时 `EnsureBuiltinPlatformPrimary` 用当时的 `cfg`（环境变量 + 历史 `sys_setting`
-overlay）播种一条 `builtin=true, purpose=platform_primary` 的档案，随即清理那批历史
-`sys_setting` key。这不是长期兼容层：档案一旦存在，后续启动**只读不覆盖**管理员改过的
-连接信息；环境变量不再是第二真值源，只是老部署的一次性播种入口。
+overlay）播种一条 `builtin=true, purpose=platform_primary` 的档案。档案一旦存在，后续启动
+**只读不覆盖**管理员改过的连接信息；环境变量不再是第二真值源，只是老部署的一次性播种入口。
+
+注意：`storage_*` / `cdn_*` 这批旧 key 已从设置 registry 删除（`settings_test.go` 守门），
+但**没有写迁移去物理删除库里已存在的行**——它们只是不再被读取。0059 迁移注释里
+「档案一旦存在就由启动逻辑清理掉」是当时的计划，并未实现；不要据此以为库里已经没有
+这些行，也不要把它当第二真值源恢复。
 
 启动链固定为：migrate → `setting.Init` → `cfg.OverlayFromSettings` →
 `ValidateMirrorDirs` → `EnsureBuiltinLocal` / `EnsureBuiltinMirror` /

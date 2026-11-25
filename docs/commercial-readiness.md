@@ -5716,6 +5716,12 @@ code!=0 不影响上传、请求抛错不影响上传、无 key 跳过、multipa
   环境变量的界面映射、PII 密文凭据的可 re-key 通道（档案是明文）、以及回滚通道。
   **新功能一律只进档案，① 只维护不加功能。** 完整边界见 `docs/tenant-storage-design.md` §0.1。
 
+  > **第七十九轮订正**：上面「PII 密文凭据可 re-key 通道」与「回滚通道」两块在后续轮次
+  > 已不成立——`storage_*` / `cdn_*` 已从设置 registry 删除（`settings_test.go` 守门），
+  > 库里的旧行只是不再被读取，从未物理清理；**业务 PII 无任何 re-key 通道**（换
+  > `PII_ENC_KEY` 后存量密文解不开，见 `pii_rekey_docs.spec.ts` 守门）。本段保留原文
+  > 作为当时的决策记录，现行口径以 `docs/tenant-storage-design.md` 与 README 为准。
+
 ## 第七十六轮：体检后修掉的六个边角缺口（2026-11-20）
 
 一次四维度审查（后端安全 / 文档对账 / 测试守门 / 前端小程序）后，逐条核实并修复的问题。
@@ -6254,3 +6260,47 @@ ResolveRef）本来就走动态快照，改基址后用户看到的 URL 早已�
    本次改为按注册路由精确点名这类 GET（`licenseMutatingGetRoutes`），加行为测试与反向验证。
 
 **验证**：presign 守门反向验证必红后还原；后端 / 前端 / OpenAPI 全量通过。
+
+## 第九十一轮：未商用不是「删兼容」的通行证——旧版逻辑盘点
+
+**用户问题**：产品还没商用，设计或代码里还有兼容旧版的逻辑吗？
+
+**结论**：有，但**绝大多数必须保留**。关键事实：`0055_drop_tenant_storage_configs.sql`
+早已写明「产品尚未正式商用，故不做数据搬迁：旧行需在新模型里重新登记」——项目在存储
+模型上已经做过一次彻底的不兼容切换。当前剩下的是三类，性质完全不同：
+
+**A · 真实存量保护（不可删）**
+- 历史裸键读取（`storage/ref.go`）：第五十四轮前的 `/uploads/x.jpg` 扁平对象真实存在于
+  已发布版本；七牛 http 直链是 2026-11-19 的线上报障案例。删了老用户直接裂图。
+- 未绑定企业回落平台盘 / 全局默认（`storageprofile/resolver.go`、`private_object.go`）：
+  MIT 存量企业没有绑定行，回落是它们的运行方式。
+- 平台 env 首次播种（`platform.go` / `platform_delivery.go`）：私有部署首次带 `STORAGE_*`
+  启动、MIT 老部署升级保凭据，都靠它。删了会造成首次启动无存储。
+- 企业授权 `ResolveFor` 查不到行回退全局（第九十轮已定）：空表 fail-closed 会让存量
+  上线即事故。
+- 小程序扁平主题缓存 `splitTheme` / `templateId`（`miniprogram/utils/theme.ts`）：已发布
+  小程序用户手机上存着 `wc_theme_id=brand-*`，删了会重置他们的主题。
+- 安装向导幂等保护（`setup/install.go` 新鲜库守卫）：防的是重放安装页重置数据库，
+  是安全保护不是兼容包袱。
+
+**B · 纯认知负担（已清）**
+- `model/storage_owner.go` 注释仍称「旧表与档案两套并存」——0055 已删表，改为唯一真值源说明。
+- `0059` 迁移注释承诺「档案存在后清理历史 sys_setting key」从未实现——订正为「旧行
+  只是不再被读取」，避免后人以为库里已干净、或把它恢复成第二真值源。
+- `tenant-storage-design.md` 同处承诺、「随即清理」话术一并订正。
+- `commercial-readiness.md` 第七十五轮写「storage_* 保留用于 PII 密文凭据 re-key 通道」——
+  与事实双重冲突（key 已删、业务 PII 无 re-key），加紧邻订正保留历史原文。
+- `0012` 迁移里的 `UPDATE company SET short_name='朗汇机电' WHERE id=1`：全新空库命中
+  0 行，演示企业早由安装向导 loadDemoData 装载——加注释说明是历史种子、非当前依赖
+  （不改 SQL，保持已应用迁移不可变）。
+
+**C · 开发期预防（暂留，不因「没商用」删）**
+- `platform_runtime.go` 未注入回落 cfg、`platform_live.go` 未迁移旧库兜底：单测与
+  devserver 依赖它们，删了要重写整套测试装配，收益小于风险。
+- `STORAGE_REF_STRICT` 回滚窗口：默认开、可关，是「收敛不默认生效等于债没还」的
+  刻意设计；一个 env 的整体回退对尚未商用反而有用。
+- 前端/小程序的「旧后端不返回该字段」可选链兜底：多数已随字段稳定可清，但它们同时
+   protects 本地脏缓存（wizardDraft / entry.ts），逐条甄别的收益远小于误删风险。
+
+**守门**：`pii_rekey_docs.spec.ts` 新增盘点守门——死注释回贴必红；同时钉住「真存量
+保护不许被当成包袱删」（租户回退、splitTheme）。反向验证源码回退必红后还原。

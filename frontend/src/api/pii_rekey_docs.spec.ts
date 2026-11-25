@@ -134,6 +134,26 @@ describe('平台实例生效口径：现状描述不回退到「改完重启」'
     expect(companies).toContain('未配置授权 = 不受席位与到期限制')
   })
 
+  it('旧版兼容盘点：死注释不回贴，真实存量保护不误删', () => {
+    // 已发布过 MIT 版本，历史裸键 / 七牛直链 / 未绑定回落 / env 首次播种
+    // 都保护真实存量数据，删了会让老用户裂图或丢配置——这些必须留。
+    const owner = readFileSync(resolve(REPO, 'backend/internal/model/storage_owner.go'), 'utf8')
+    expect(owner, 'storage_owner 又写回「旧表并存」死注释').not.toContain('两套并存的数据源')
+    expect(owner).toContain('唯一真值源是 storage_profiles + storage_bindings')
+
+    const design = read(DOCS.design)
+    expect(design, '0059 未兑现的「清理旧 key」承诺又写回现状描述').not.toContain('随即清理那批历史')
+    expect(design).toContain('并未实现')
+
+    const tenantDB = readFileSync(resolve(REPO, 'backend/internal/license/tenant_db.go'), 'utf8')
+    expect(tenantDB).toContain('上线即事故') // fail-open 兼容仍在
+
+    // 小程序旧扁平主题缓存不能被「没商用」一刀切删掉：已发布小程序用户
+    // 手机上存着 wc_theme_id=brand-*，删掉 splitTheme 会重置他们的主题。
+    const theme = readFileSync(resolve(REPO, 'miniprogram/utils/theme.ts'), 'utf8')
+    expect(theme).toContain('export function splitTheme')
+  })
+
   it('设置项说明也只把重启留给目录类', () => {
     const setting = readFileSync(resolve(REPO, 'backend/internal/setting/setting.go'), 'utf8')
     const ptr = setting.match(/\{Key: "platform_storage_profile_id"[\s\S]*?\},/)?.[0] ?? ''
