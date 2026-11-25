@@ -127,7 +127,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 | 后台上传小程序代码 | `mp_upload_timeout_sec` | 单次上传超时（秒，默认 300；编译 + 传代码都算在内。改完下次上传生效，不用重启。反代 `proxy_read_timeout` 要设得比它大，否则传到一半先返回 504） |
 
 > **为什么分三档？** 判据是「改错能否自愈」，不是「是否敏感」：
-> - 云存储 / CDN 凭据填错最坏是上传失败，**改回来重启即可**，所以允许在界面维护；
+> - 云存储 / CDN 凭据填错最坏是上传失败，**改回来即刻生效**，所以允许在界面维护；
 > - `DB_DSN` / `JWT_KEY` 改错会把「改回来的入口」一起弄丢（连不上库 → 读不出配置；
 >   会话全失效 → 登不进后台），所以只展示不编辑；
 > - 敏感项（密钥 / 连接串）接口**只回传掩码**，真实值永不出现在响应里；界面输入框留空 = 不修改。
@@ -168,7 +168,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 ## 测试与 CI
 
-CI 见 `.github/workflows/ci.yml`，**12 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
+CI 见 `.github/workflows/ci.yml`，**14 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
 
 - **后端 (Go / SQLite)**：`go build` + `go vet` + `go test ./...`，**默认零外部依赖**，用 SQLite 跑完整接口流程、上传内容嗅探与 MinIO/OSS 驱动的 httptest 假服务测试。
 - **后端 (Go / MySQL parity)**：GitHub Actions 自带 `mysql:8.0` service 容器，连真 MySQL 跑「连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支」；DSN 写在 job 内，**无需**仓库变量。每步额外断言用例确实 `--- PASS`，防止 `t.Skip` 让 job 绿着跳过。

@@ -177,3 +177,65 @@ describe('平台实例生效口径：现状描述不回退到「改完重启」'
     expect(settingsVue).toContain('保存即生效、无需重启')
   })
 })
+
+// 第九十六轮：上线判据文档的事实漂移守门。
+// checklist / branch-protection 是运维当场照着做的东西，写错数字或过期动作
+// 会让运维做多余重启、少勾 required check、或漏同步迁移目录——三者都不报编译错。
+// commercial-readiness.md 的历史轮次原文按惯例保留，不进本守门。
+describe('上线判据文档：数字与生效口径不回退', () => {
+  const RUNTIME_DOCS = {
+    checklist: resolve(REPO, 'docs/launch-checklist.md'),
+    branchProtection: resolve(REPO, 'docs/branch-protection.md'),
+    readme: resolve(REPO, 'README.md'),
+    handover: resolve(REPO, '部署与联调.md'),
+  }
+
+  it('量尺有读数：四份文档都读到内容，且确实是运维判据文档', () => {
+    for (const [name, p] of Object.entries(RUNTIME_DOCS)) {
+      const src = read(p)
+      expect(src.length, `${name} 没读到内容，守门空转`).toBeGreaterThan(200)
+      expect(src).toContain('CI')
+    }
+  })
+
+  it('CI job 数对齐真实 workflow：四份文档都写 14，不许回退到 12', () => {
+    const ci = read(resolve(REPO, '.github/workflows/ci.yml'))
+    const jobCount = (ci.match(/^ {2}[a-z0-9-]+:\n {4}name:/gm) ?? []).length
+    expect(jobCount, 'CI job 数变了，守门数字需要重新核对').toBe(14)
+    for (const [name, p] of Object.entries(RUNTIME_DOCS)) {
+      const src = read(p)
+      expect(src, `${name} 仍写旧 job 数`).not.toMatch(/12 个 job|12 个.*job/)
+      expect(src, `${name} 未写当前 job 数`).toContain('14 个')
+    }
+  })
+
+  it('CDN 凭据生效口径：checklist 不许写「自检通过后重启」', () => {
+    const checklist = read(RUNTIME_DOCS.checklist)
+    const row = checklist.split('\n').find((l) => l.includes('CDN 刷新凭据')) ?? ''
+    expect(row, 'CDN 凭据行没找到，守门空转').toBeTruthy()
+    expect(row).toContain('保存即生效、无需重启')
+    expect(row).not.toContain('自检通过后重启')
+  })
+
+  it('迁移目录同步口径：checklist 不许再写「整个 migrations」', () => {
+    const checklist = read(RUNTIME_DOCS.checklist)
+    expect(checklist).not.toContain('同步**整个** `backend/migrations/`')
+    expect(checklist).toContain('--exclude=history/')
+    expect(checklist).toContain('自动切 `history/`')
+  })
+
+  it('三档判据的重启说法与「保存即生效」不冲突', () => {
+    const readme = read(RUNTIME_DOCS.readme)
+    expect(readme).not.toContain('改回来重启即可')
+    expect(readme).toContain('改回来即刻生效')
+  })
+
+  it('branch-protection 表格 job 数与 CI 对齐，且含两处新补的门禁', () => {
+    const doc = read(RUNTIME_DOCS.branchProtection)
+    const tableRows = (doc.match(/^\| `[^`]+` \|/gm) ?? []).length
+    expect(tableRows, '表格 job 行数与 CI 不一致').toBe(14)
+    expect(doc).toContain('`审计动作 ↔ 中文名对账`')
+    expect(doc).toContain('`OpenAPI 契约对账`')
+    expect(doc).toContain('51 条断言')
+  })
+})

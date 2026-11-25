@@ -40,7 +40,7 @@
 | 服务端时区 `TZ` | `docker-compose.yml` 默认 `Asia/Shanghai`；原生部署设 systemd `Environment=TZ=Asia/Shanghai` | 统计「今日」口径正确：`docker exec weichuan-backend date` 与北京时间一致。不设时 Go 读不到时区库会**静默按 UTC**——每天 00:00–08:00 的访问落到前一天，不报错、只是数字悄悄错位 | ❌ 需人工看一眼容器时间 |
 | 存储 / CDN 多套配置（迁移 0054；平台配置 0059） | 后台「存储与分发」 | 三套系统自带配置都在（主存储 / 租户退路 / 备份存储）且不可删；租户配置已自检通过、全局默认已选、需要搬迁的企业已跑过迁移任务并核对失败清单为空 | ⬜ 需平台超管确认 |
 | 私有桶租户（第八十七轮） | 文件存储的「公开读桶」开关 + 云控制台桶权限 | 开关与桶权限一致；切换后已重新 `render` + `reload` nginx snippet（`check` 不再报「未重新生成」）；小程序已把桶域名加入 `downloadFile` 合法域名；该企业对象不走客户 CDN，未开本地镜像时另有桶级备份 | ⬜ 需平台超管与运维确认 |
-| CDN 刷新凭据（迁移 0060） | 后台「存储与分发 → CDN 分发 → 平台自身 CDN」（首次部署也可用 `CDN_*` 环境变量播种） | 需刷新时那一行的厂商是五家之一（不是「不刷新」）、该厂商要求的凭据已填全；点「自检」通过后重启服务。改的是 CDN 分发配置，不是系统设置 | ❌ 需人工确认 |
+| CDN 刷新凭据（迁移 0060） | 后台「存储与分发 → CDN 分发 → 平台自身 CDN」（首次部署也可用 `CDN_*` 环境变量播种） | 需刷新时那一行的厂商是五家之一（不是「不刷新」）、该厂商要求的凭据已填全；点「自检」通过后**保存即生效、无需重启**（平台刷新器按档案 version 现建）。改的是 CDN 分发配置，不是系统设置 | ❌ 需人工确认 |
 | CDN 缓存刷新入口（第八十四轮） | 后台「存储与分发 → CDN 缓存刷新」；旧链接 `/platform/cdn-refresh` 会重定向到这里 | 页签能打开、当前厂商与凭据缺口提示正确；点「去设置」直接切到「CDN 分发」页签；侧栏不再有独立「CDN 刷新」菜单 | ⬜ 需平台超管核对 |
 | 存储模块用户引导（第八十二 / 八十三 / 八十四轮） | 后台「存储与分发 → 总览」（默认页签）；管理员手册 `docs/storage-user-guide.md` | 总览默认只有一句结论、三层小图和一个动作，与当前实际配置一致；点「展开帮助」后五步流程可一键跳转、七家对象存储与五家 CDN 的官方入口可见且新窗口打开；文件存储 / CDN 分发弹窗里的厂商小抄默认收起、点开才显示；每个配置项旁的「?」能展开说明。管理员照手册可独立完成接云与搬迁 | ⬜ 需平台超管核对 |
 | `MYSQL_ROOT_PASSWORD` | `docker-compose.yml` / 环境 | 仅 `--profile mysql` 形态必填；改强随机值（默认 SQLite 形态无所谓） | ✅ 查示例值 / 必填 |
@@ -103,7 +103,7 @@
 - **`/metrics` 加第二道门 `METRICS_ALLOW_CIDR`**：即使有人在界面上把 `metrics_enabled` 打开，白名单外的来源访问 `/metrics` 仍一律 404。CIDR 写错时**整体拒绝**（fail-closed），启动日志会点名哪条解析失败。
 - **PITR（时间点恢复）要单独开启**：全量备份的恢复点是备份时刻，想回到「误操作前一秒」必须开 binlog（compose 的 mysqld 已带 `--log-bin`）并按小时跑 `scripts/backup_binlog.sh` 归档。SQLite 形态没有 PITR。
 - **恢复演练要留档**：`scripts/restore_drill.sh` 结尾会直接打印可粘贴的记录正文，存进 `docs/drill-records/YYYY-MM-DD-<形态>.md`，每季度至少一次。「我们演练过」这句话在没记录时无法向客户/审计证明。
-- **CI 门禁**：`.github/workflows/ci.yml` 共 **12 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL parity**（service 容器自供给，2026-11-09 起）均为正式门禁。本地复跑 MySQL parity 见 `docs/deploy-runbook.md` §6。
+- **CI 门禁**：`.github/workflows/ci.yml` 共 **14 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL parity**（service 容器自供给，2026-11-09 起）均为正式门禁。本地复跑 MySQL parity 见 `docs/deploy-runbook.md` §6。
 
 ## 四、必须由本人在外部系统完成（仓库代码无法代劳，2026-11-09 汇总）
 
@@ -161,7 +161,7 @@
 | 1 | T−2 ~ T−1 | #4 三类服务器合法域名 👤 | mp.weixin.qq.com → 开发管理 → 开发设置 | `request` / `uploadFile` / `downloadFile` **三类**都含 `https://weichuan.ziyuanxingqiu.cn` | 域名改动有次数限制与生效延迟，必须早于阶段 2 的真机复核；逐项判据见 `docs/real-device-acceptance.md` §0.5 |
 | 1 | T−1 | #7 强随机密钥与后台凭据 🤖 | 部署环境 / 后台「系统设置」 | `JWT_KEY` / `ADMIN_PASS` 非内置缺省值；`WX_*`、对象存储、CDN 凭据配齐；`[SECURITY]` 告警清零 | **必须在该部署的服务器上**跑 `preflight.sh`，开发机裸跑的 FAIL 多是「本机无 .env」假警报；见 §三与脚本注释 |
 | 1 | T−1 | #8 Cloudflare 面板两项 👤 | CF 控制台 | ① Browser Cache TTL = **Respect Existing Headers**（否则 `/uploads/` immutable 被覆盖成 4h）；② HTML 边缘短缓存 60s 规则 | ② 的前置是「发版不清空 `assets/`」。配置后用下方探测块第 3/4 条实测，别只看面板开关 |
-| 1 | T−1 | 迁移目录同步 🤖 | 发版脚本 / 服务器 | 上线同步**整个** `backend/migrations/`；`deploy_frontend.sh --require-migrations` 不报缺文件；启动日志**无** `[MIGRATE][FATAL]` | 只换二进制不换迁移 → 运行期才 `Unknown column`；补齐后 `./server migrate`，**不必重启** |
+| 1 | T−1 | 迁移目录同步 🤖 | 发版脚本 / 服务器 | 上线同步顶层 `backend/migrations/*.sql` 与 `history/`（全新部署用 `--exclude=history/`，升级才带归档）；`deploy_frontend.sh --require-migrations` 不报缺文件；启动日志**无** `[MIGRATE][FATAL]` | 只换二进制不换迁移 → 运行期才 `Unknown column`；已按 0001..0062 记账的旧库启动时自动切 `history/`，无需手设环境变量；补齐后 `./server migrate`，**不必重启** |
 | 2 | **T 日** | 一键只读探测 🤖 | 服务器 | 下方探测块 8 条全部符合预期 | 全程 GET/HEAD，不写库、不重启、不清缓存 |
 | 2 | T 日 | 三类域名真机生效 👤 | 真机 + 体验版小程序 | 上传头像（uploadFile）、海报换背景 / 小程序码（downloadFile）、普通接口（request）都通 | **开发者工具勾了「不校验合法域名」时完全复现不出来**，必须真机 |
 | 2 | T 日 | #1 隐私指引复核 👤 | 真机 | 点「存入通讯录」不再 `errno 112` 死循环 | 2026-11-07 已审核通过；**换账号 / 换主体须重新提交**，审核 1~2 工作日又是串行阻塞 |

@@ -3,23 +3,27 @@
 本仓库为 monorepo（`backend/` + `frontend/` + `miniprogram/` + `docs/`），CI 见 `.github/workflows/ci.yml`。  
 本文给出推荐的 GitHub 分支保护配置，保证 `main` 始终处于「构建通过 + 测试通过 + 类型检查通过」的状态。
 
-## 1. CI 门禁（12 个 job，全部阻塞合并）
+## 1. CI 门禁（14 个 job，全部阻塞合并）
 
 > 2026-11-09 订正：CI 早已从 5 个 job 扩到 12 个；`vuln`（2026-11-03）、
-> `backend-mysql` 与 `e2e-smoke`（2026-11-09）陆续摘掉「可选 / 非阻塞」，
-> 现在**没有任何 job 可以绿着跳过**。下表 job 名取自 `.github/workflows/ci.yml`
-> 的 `name:`，必须与分支保护里勾选的 required checks 逐字一致。
+> `backend-mysql` 与 `e2e-smoke`（2026-11-09）陆续摘掉「可选 / 非阻塞」。
+> 2026-11-25 订正：`audit-labels`（审计动作 ↔ 中文名对账）与 `openapi-contract`
+> （OpenAPI 契约对账）两 job 补进下表，现为 14 个。**没有任何 job 可以绿着跳过**。
+> 下表 job 名取自 `.github/workflows/ci.yml` 的 `name:`，必须与分支保护里勾选的
+> required checks 逐字一致。
 
 | Job（`name:`） | 内容 | 是否阻塞合并 |
 | --- | --- | --- |
 | `后端 (Go / SQLite)` | `go build` + `go vet` + `go test ./...`（SQLite 全流程，零外部依赖） | ✅ 必跑 |
 | `后端 lint (golangci-lint)` | 固定版本 v2.15.0，只开 errcheck/govet/ineffassign/staticcheck/unused | ✅ 必跑 |
+| `审计动作 ↔ 中文名对账` | `scripts/check_audit_labels.mjs`：审计动作常量与中文显示名一一对应 | ✅ 必跑 |
+| `OpenAPI 契约对账` | `scripts/check_openapi.py`：路径 / `$ref` / 字段四档一致性 + 后端路由对账 | ✅ 必跑 |
 | `后端 (Go / MySQL parity)` | CI 自带 `mysql:8.0` service：连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支 | ✅ 必跑（2026-11-09 起，无需仓库变量） |
 | `前端 (Vue)` | `npm ci` + eslint + `npm run build` + Vitest（含小程序端纯逻辑测试） | ✅ 必跑 |
 | `前端类型检查 (vue-tsc)` | `vue-tsc --noEmit` 全量类型检查 | ✅ 必跑（历史 4 个 wangEditor 类型错已修复） |
 | `第三方许可清单（过期检查）` | `python3 scripts/gen_third_party_notices.py --check`：核对 `docs/third-party-licenses.md` 与当前依赖 | ✅ 必跑（清单是交付物） |
 | `备份链自检` | `scripts/selftest_backup.sh`：备份→恢复→逐字节一致，以及失败路径 | ✅ 必跑 |
-| `发版脚本自检` | `scripts/selftest_deploy_frontend.sh`：非交互口令 + 迁移清单完整性（50 条断言） | ✅ 必跑 |
+| `发版脚本自检` | `scripts/selftest_deploy_frontend.sh`：非交互口令 + 迁移清单完整性（51 条断言） | ✅ 必跑 |
 | `密钥扫描 (gitleaks)` | 固定版本 8.30.1 CLI，只扫本次变更提交范围，命中即红 | ✅ 必跑 |
 | `依赖漏洞扫描` | `govulncheck ./...` + `npm audit --omit=dev`（只看运行时依赖） | ✅ 必跑（2026-11-03 起） |
 | `镜像构建（backend / frontend）` | buildx 分别 build 两个 Dockerfile（`push: false`） | ✅ 必跑 |
@@ -35,7 +39,7 @@
    - 勾选 **Dismiss stale pull request approvals when new commits are pushed**
 3. 勾选 **Require status checks to pass before merging**：
    - 勾选 **Require branches to be up to date before merging**
-   - 在列表中添加上表 **12 个 job**（首次开启时若列表为空，先任意推送一次让 CI 跑出 job 名，再回来勾选；job 名以 CI 里的 `name:` 为准）
+   - 在列表中添加上表 **14 个 job**（首次开启时若列表为空，先任意推送一次让 CI 跑出 job 名，再回来勾选；job 名以 CI 里的 `name:` 为准）
 4. 勾选 **Require conversation resolution before merging**（评审意见必须处理完）
 5. 建议勾选 **Do not allow bypassing the above settings**（管理员也走流程；紧急修复可用 `gh` 临时豁免，事后补记录）
 6. 保存
@@ -59,7 +63,7 @@ gh pr create --fill
 
 - **不直接 push `main`**（分支保护会拒绝；本地也别 `--no-verify` 绕过）。
 - PR 尽量小且单一职责；描述里写清「改了什么 / 为什么 / 怎么验证的」。
-- 合并前确认 CI **12 个 job 全绿**；`后端 (Go / MySQL parity)` 已是必跑门禁（service 容器自供给，`go test` 被 Skip 也会因缺少 `--- PASS` 断言而判红），`端到端冒烟` 同样已摘掉 `continue-on-error`。
+- 合并前确认 CI **14 个 job 全绿**；`后端 (Go / MySQL parity)` 已是必跑门禁（service 容器自供给，`go test` 被 Skip 也会因缺少 `--- PASS` 断言而判红），`端到端冒烟` 同样已摘掉 `continue-on-error`。
 - 改动 `backend/go.mod`、`frontend/package.json` / `package-lock.json` 后，`第三方许可清单（过期检查）` 大概率会红——这不是误报：跑一次 `python3 scripts/gen_third_party_notices.py` 并提交新清单即可。
 - 安全类改动（鉴权 / 权限 / 数据脱敏）请在 PR 描述里显式标注 `security`，评审时按安全清单过一遍。
 

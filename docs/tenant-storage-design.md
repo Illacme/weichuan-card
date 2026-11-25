@@ -1259,7 +1259,10 @@ type Resolver interface {
 （需 `NODE_OPTIONS=--max-old-space-size=4096`）→ 全量 Vitest（`--pool=threads`）→
 `eslint .` → `vite build --outDir dist-check-*` → nginx-check → `git diff --check`，
 串行不并行（并行会 137）。新增接口必进 `runAPIFlow`；每个新守门都要做反向验证
-（注入坏改动必红、还原后零漂移）。上线必同步整个 `migrations/`。
+（注入坏改动必红、还原后零漂移）。上线必同步 `migrations/` 顶层全部 `*.sql`；
+2026-11-25 起顶层只留纯净基线 `0001_init.sql`，`history/` 是历史增量归档——
+全新部署用 `rsync --exclude=history/`，升级部署才带 `history/`；已按 0001..0062
+记账的旧库启动时自动切 `history/`，不必手设 `WEICHUAN_MIGRATIONS_DIR`。
 
 ---
 
