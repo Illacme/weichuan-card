@@ -31,7 +31,7 @@ const INDEX_WXML = read('miniprogram/pages/index/index.wxml')
 const INDEX_TS = read('miniprogram/pages/index/index.ts')
 const TYPES = read('miniprogram/utils/types.ts')
 const MODEL = read('backend/internal/model/models.go')
-const MIGRATION = read('backend/migrations/0050_home_show_names.sql')
+const MIGRATION = read('backend/migrations/history/0050_home_show_names.sql')
 
 /** 取某个标签的属性片段，用来判断 wx:if 的条件到底写了什么 */
 function tagWith(src: string, marker: string): string {

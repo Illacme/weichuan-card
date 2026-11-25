@@ -50,22 +50,8 @@ backend/
 │       ├── auth.go              # JWT 鉴权 + 角色守卫 + 平台超管守卫 + 会话黑名单校验
 │       ├── ratelimit.go         # 登录 IP 限流（固定窗口 + 过期桶惰性清理 + 跨副本计数接口）
 │       └── observability.go     # 可观测三件套：RequestID / AccessLog / Metrics（/metrics）
-├── migrations/0001_init.sql      # 建表 + 经典业绩 7 分类种子
-├── migrations/0002_apply.sql    # 审核流表 + employee.staff_id 自增
-├── migrations/0003_soft_delete.sql   # 软删除列
-├── migrations/0004_token_version.sql # token_version 安全戳（账号级吊销）
-├── migrations/0005_revoked_sessions.sql # 会话黑名单表（单设备精确吊销）
-├── migrations/0006_employee_landline.sql
-├── migrations/0007_updated_at.sql   # 员工座机列（名片「座机」行优先本人，为空回退公司总机）
-├── migrations/0008_open_apply_landline.sql  # 开通申请增加座机字段
-├── migrations/0009_company_short_name.sql   # 企业简称（小程序顶栏居中展示）
-├── migrations/0010_wechat_identity.sql     # 微信身份：openid + 昵称
-├── migrations/0011_company_tenant.sql      # 多租户第一期：company 租户表 + 各表 company_id + admin 两级
-├── migrations/0012_company_admin_short_name.sql  # 企业简称（company.short_name）：侧边栏品牌名 + 公司信息简称初始值
-├── migrations/0013_home_layout_background.sql  # 首页背景图（home_layout.bg_image / bg_mask）
-├── migrations/0025_mp_release.sql               # 小程序版本发布：mp_release 表（提审/发布状态机 + 审计字段）
-├── migrations/0026_company_wx_app_release_enabled.sql  # 租户「允许平台代发版本」开关 release_enabled
-├── migrations/0035_company_wx_app_subscribe.sql        # 租户小程序「审核结果通知」订阅模板（subscribe_tmpl_id / subscribe_tmpl_fields）
+├── migrations/0001_init.sql      # 单一基线：62 个历史增量按序拼接，建出最终 schema
+├── migrations/history/           # 62 个历史增量归档；执行器/清单只扫顶层，归档不进部署包
 ├── Dockerfile                   # 多阶段构建，单二进制镜像
 └── go.mod
 ```
@@ -665,6 +651,12 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 
 ### ⚠️ 升级必做：migrations/ 目录要跟着二进制一起换
 
+> **当前口径（2026-11-25）**：顶层只有 1 个 `0001_init.sql`（62 个历史增量已按序拼进它），
+> 原文件移入 `migrations/history/` 归档——执行器与清单只扫顶层，归档不进部署包。
+> 本节的 `0038` / `38` 是 2026-11-03 事故当时的排查记录，留档可追溯，不再参与当前口径。
+> 若真遇到已按 0001..0062 记过账的旧库，`WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/`
+> 即可走回原 62 步升级；新部署只需同步那一个基线文件。
+
 非 Docker（宝塔 / systemd）升级时**只替换二进制、留着旧 `migrations/` 目录，新列就加不上**。
 程序按「可执行文件同级 migrations/」找目录，看到的全是已记账的旧文件；清单守门会打
 
@@ -685,8 +677,8 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 自查（服务器上，路径按实际部署目录替换）：
 
 ```bash
-ls -1 <部署目录>/migrations/*.sql | wc -l    # 应为 38
-ls <部署目录>/migrations/0038*               # 应存在
+ls -1 <部署目录>/migrations/*.sql | wc -l    # 当前应为 1（事故当时为 38）
+ls <部署目录>/migrations/0001_init.sql       # 当前应存在（事故当时查 0038*）
 grep -E '\[MIGRATE\]|\[CONTENT\]\[ERROR\]' <后端日志> | tail -20
 mysql -uroot -p weichuan -e "SHOW COLUMNS FROM company_profiles LIKE 'video_backup_url';"
 ```
@@ -701,7 +693,7 @@ mysql -uroot -p weichuan -e "SHOW COLUMNS FROM company_profiles LIKE 'video_back
 
 ```bash
 # 推荐：把本版本 migrations/ 全量同步到二进制同级，再手工跑一次迁移子命令（不启服务、不监听端口）
-rsync -av backend/migrations/ root@<服务器>:<部署目录>/migrations/
+rsync -av --exclude=history/ backend/migrations/ root@<服务器>:<部署目录>/migrations/
 cd <部署目录> && ./server migrate     # DB_DSN 从现有 env / data/runtime.env 读，无需另填
 ```
 

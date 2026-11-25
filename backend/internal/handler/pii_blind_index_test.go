@@ -39,7 +39,7 @@ var wantPIIBlindIndexes = []struct {
 // TestPIIBlindIndexMigrationDeclaresAllIndexes 是零依赖的源码守门：
 // 迁移文件改名、漏写某列、列顺序写反、manifest 漏登记，本地 go test 即刻红。
 func TestPIIBlindIndexMigrationDeclaresAllIndexes(t *testing.T) {
-	path := filepath.Join("..", "..", "migrations", "0051_pii_blind_index.sql")
+	path := filepath.Join("..", "..", "migrations", "history", "0051_pii_blind_index.sql")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err, "读取 %s 失败；迁移文件改名会同时打断线上升级", path)
 

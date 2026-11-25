@@ -218,7 +218,7 @@ func TestMigrationsUseMySQL8DDL(t *testing.T) {
 	}
 
 	// 0043 必须真的删列：把文件改成 SELECT 1 或清空，只让启动日志变绿是假修复。
-	raw, err := os.ReadFile(filepath.Join(dir, "0043_drop_template_id.sql"))
+	raw, err := os.ReadFile(filepath.Join(dir, "history", "0043_drop_template_id.sql"))
 	if err != nil {
 		t.Fatalf("读取 0043 失败：%v", err)
 	}

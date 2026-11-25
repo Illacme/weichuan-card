@@ -89,7 +89,7 @@ func TestDefaultIDMatchesModelAndMigration(t *testing.T) {
 	require.True(t, ok, "HomeLayout 必须有 StyleID 列")
 	require.Contains(t, string(f.Tag.Get("gorm")), "default:"+DefaultID)
 
-	sql, err := os.ReadFile("../../migrations/0042_mp_theme_two_axis.sql")
+	sql, err := os.ReadFile("../../migrations/history/0042_mp_theme_two_axis.sql")
 	require.NoError(t, err)
 	require.Contains(t, string(sql), "DEFAULT '"+DefaultID+"'")
 }

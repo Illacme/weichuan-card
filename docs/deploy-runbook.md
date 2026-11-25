@@ -454,7 +454,7 @@ HTTPS 站点（宝塔 + 证书）**必须勾「Cookie 强制 HTTPS」**：向导
 - [ ] `docker compose ps` 里 backend 是 healthy（安装期间判据放宽为「进程活着」，装完恢复按 `db` 判）
 - [ ] 表结构齐全（MySQL 形态）：`docker exec -i weichuan-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" weichuan -e "show tables;"` —— 应包含 `revoked_sessions`（0005）等全部迁移产物（复数表名：`employees`/`admins`/`company_infos`…）；SQLite 形态可跳过此项（`AutoMigrate` 自动建表，库在 `data_data` 卷里）
 - [ ] `docker compose logs backend | grep MIGRATE`：期望是「已应用 N 个迁移」或「数据库已是最新」，**不能**出现 `[MIGRATE][FATAL]`（详见 §4）
-- [ ] 迁移记账表已建立（MySQL 形态）：`SELECT COUNT(*) FROM schema_migrations;` 与 `backend/migrations/*.sql` 数量一致
+- [ ] 迁移记账表已建立（MySQL 形态）：`SELECT COUNT(*) FROM schema_migrations;`，全新部署应为 **1**（对应顶层唯一的 `0001_init.sql`；`history/` 归档不参与）
 - [ ] **传输优化生效**（宝塔部署必查，Docker 部署的 `frontend/nginx.conf` 自带）：
   ```bash
   # 静态资源必须带长缓存 + gzip；拿任一 /assets/ 下的 js 实测
@@ -666,6 +666,12 @@ CI 的「发版脚本自检」job 每次都跑；目前 50 条断言，含缺文
 
 #### ⚠️ 二进制部署升级：`migrations/` 目录必须跟着换
 
+> **当前口径（2026-11-25）**：线上无存量、按全新部署交付，顶层只发 1 个 `0001_init.sql`；
+> 62 个历史增量已按序拼进它并移入 `migrations/history/` 归档（执行器与清单只扫顶层，
+> 归档不进部署包，同步命令用 `--exclude=history/`）。本节 `0035` / `35 个` 是当时事故的
+> 留档示例，保留可追溯，不再参与当前口径。遇到已按 0001..0062 记过账的旧库时，
+> `WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 走回原 62 步即可。
+
 非 Docker（宝塔 / systemd 直接跑二进制）的升级，**替换二进制时必须把本版本的
 `migrations/` 目录一起同步到二进制同级**。只换二进制、留着旧目录，是 2026-11-03
 线上事故的成因：
@@ -685,8 +691,9 @@ migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_ap
 ```
 
 看到它就是把目录补齐再跑一次迁移，不需要手工执行 SQL（也**不必重启服务**）。
-**升级检查清单加一条**：`ls <部署目录>/migrations/*.sql | wc -l` 应与本版本
-`backend/migrations/` 的文件数一致。这一条现在由 `scripts/deploy_frontend.sh`
+**升级检查清单加一条**：`ls <部署目录>/migrations/*.sql | wc -l` 当前应为 **1**
+（文件名 `0001_init.sql`；与本地 `backend/migrations/` 顶层文件数一致，归档不算）。
+这一条现在由 `scripts/deploy_frontend.sh`
 在每次发版前自动比对（见 §3.2 第 3 项），加 `--require-migrations` 可变成硬门禁；
 `docs/deploy-runbook.md` 的这一节仍然是排查手册。
 

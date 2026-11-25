@@ -420,11 +420,11 @@ LOCAL_MIGRATIONS_DIR="${SCRIPT_DIR}/../backend/migrations"
 
 migrations_fix_hint() {
     if [ -n "${DEPLOY_HOST}" ]; then
-        echo "    rsync -av backend/migrations/ ${DEPLOY_HOST}:${MIG_DIR}/"
+        echo "    rsync -av --exclude=history/ backend/migrations/ ${DEPLOY_HOST}:${MIG_DIR}/"
         echo "    ssh ${DEPLOY_HOST} 'cd $(dirname "${MIG_DIR}") && ./server migrate'"
     else
         echo "    mkdir -p ${MIG_DIR}/"
-        echo "    cp -a backend/migrations/. ${MIG_DIR}/"
+        echo "    mkdir -p ${MIG_DIR}/ && cp -a backend/migrations/*.sql ${MIG_DIR}/"
         echo "    (cd $(dirname "${MIG_DIR}") && ./server migrate)"
     fi
     echo "    不必重启服务；完整排查见 backend/README.md「升级必做」。"
@@ -471,7 +471,7 @@ fi") || MIG_RC=$?
                 MIG_DIR_EXISTS=0 ;;
             *)
                 # ssh 断了、路径没权限、命令被截断都会走到这里。此时**不能**
-                # 把 38 个文件全报成「缺失」——那是假警报，会逼人去修根本没坏的东西。
+                # 把整个清单全报成「缺失」——那是假警报，会逼人去修根本没坏的东西。
                 REMOTE_MIG_LIST=''
                 MIG_DIR_EXISTS=-1 ;;
         esac

@@ -389,7 +389,7 @@ if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG"; then
 else
     bad "缺文件没报出文件名或误阻断了（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
 fi
-if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av backend/migrations/' && has "$OUT" './server migrate'; then
+if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av --exclude=history/ backend/migrations/' && has "$OUT" './server migrate'; then
     ok "给出 0035/0038 事故说明与 rsync + 迁移修复命令"
 else
     bad "事故说明或修复命令不全"
@@ -397,7 +397,7 @@ fi
 if has "$OUT" '默认只警告、继续发版'; then ok "默认模式明确提示可加严格模式"; else bad "缺少严格模式引导"; fi
 # 盯住「探针回传真实目录」这一行：MIG_DIR 若被第一个 .sql 文件名污染，
 # 修复命令里的 rsync 目标就不再是目录，而 7.1 仍可能因为别的原因看起来正常。
-if has "$OUT" "rsync -av backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
+if has "$OUT" "rsync -av --exclude=history/ backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
     ok "修复命令用探针回传的真实目录（没被 .sql 文件名污染）"
 else
     bad "迁移目录回传契约漂移：修复命令里的路径不对"
@@ -476,7 +476,7 @@ reset_probe
 "${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "DEPLOY_MIGRATIONS_DIR=$ROOT/partial-migrations" \
     "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' && has "$OUT" 'cp -a backend/migrations/.'; then
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' && has "$OUT" 'cp -a backend/migrations/'; then
     ok "本地模式缺文件给出本地修复命令（先建目录，不写 ssh/rsync）"
 else
     bad "本地模式缺文件提示不对（rc=${RC}）"
