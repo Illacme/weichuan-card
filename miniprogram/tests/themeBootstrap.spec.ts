@@ -7,7 +7,7 @@ import { prefetchTheme } from '../utils/themeBootstrap'
 // 冷启动主题预热：验证「任意入口页都能拿到本租户模板」，以及
 // 不复用 request.ts（模块加载期 getApp() 的时序坑）这两条硬约束。
 const mocks = vi.hoisted(() => ({ applyTheme: vi.fn() }))
-// 只替掉广播出口，resolveTheme 用真实实现：两轴优先 / 旧后端拆 templateId
+// 只替掉广播出口，resolveTheme 用真实实现：只读两轴字段
 // 的兼容逻辑必须在这个用例里真的跑到，mock 掉等于没测。
 vi.mock('../utils/theme', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/theme')>()
@@ -37,14 +37,14 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     const opt = request.mock.calls[0][0]
     expect(opt.url).toBe('https://card.example/api/home-layout?companyId=7')
     expect(opt.method).toBe('GET')
-    opt.success({ data: { code: 0, templateId: 'teal' } })
+    opt.success({ data: { code: 0, styleId: 'teal', brandColorId: null } })
     expect(mocks.applyTheme).toHaveBeenCalledWith('teal', null)
   })
 
   it('两轴响应优先按 (styleId, brandColorId) 应用；P5 跨风格叠加色系不被收敛', () => {
     prefetchTheme('https://card.example', 7)
     const opt = request.mock.calls[0][0]
-    opt.success({ data: { code: 0, styleId: 'warm', brandColorId: null, templateId: 'brand-amber' } })
+    opt.success({ data: { code: 0, styleId: 'warm', brandColorId: null } })
     expect(mocks.applyTheme).toHaveBeenCalledWith('warm', null)
 
     mocks.applyTheme.mockClear()
@@ -55,7 +55,7 @@ describe('utils/themeBootstrap 冷启动预热', () => {
     // 否则「分享链接直接进二级页」的访客会一直看到标准均衡布局。
     mocks.applyTheme.mockClear()
     opt.success({
-      data: { code: 0, styleId: 'ink', brandColorId: 'brand-ocean', templateId: 'brand-ocean' },
+      data: { code: 0, styleId: 'ink', brandColorId: 'brand-ocean' },
     })
     expect(mocks.applyTheme).toHaveBeenCalledWith('ink', 'brand-ocean')
   })

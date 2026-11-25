@@ -6,9 +6,8 @@ package handler
 // 「这次写入是哪个租户」。这一层只做四件事：
 //  1. 读 cfg.UploadBaseURL（云驱动剥前缀要用）；
 //  2. 按 companyID 推 scope（0 = 平台自身）；
-//  3. 把「没归一」的两种情况记下来（外链 / 历史形态）——不记日志的话，半年后
-//     没人知道库里那些旧形态是哪来的；
-//  4. env 回滚开关。
+//  3. 把「没归一」的两种情况记下来（外链 / 非本站绝对 URL）——不记日志的话，
+//     半年后没人知道库里那些外链是哪来的。
 //
 // 为什么不把归一放进模型的 BeforeSave 钩子：
 //   - 钩子拿不到 scope/companyID（要靠 context 传，而 context 在 gorm 里是隐形状态）；
@@ -23,36 +22,19 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"os"
 	"strings"
 
 	"weichuan/internal/config"
 	"weichuan/internal/storage"
 )
 
-// storageRefStrictEnv 控制写入侧是否做落库前归一。
-//
 // 【基址热更新】本文件与同包其他辅助路径的 cfg.UploadBaseURL 一律通过
 // effectiveBaseURL(cfg) 读取：生产入口注入 profiles.PlatformBaseURL 后，
-// 改主存储访问基址保存即生效；未注入（单测 / 旧库）时回落 cfg 原值。
+// 改主存储访问基址保存即生效；未注入（单测）时回落 cfg 原值。
 //
-// 默认**开**（未设即生效）；设成 0 / false 退回第五十八轮的行为：收到什么写什么。
-//
-// 为什么「默认开 + 可关」而不是「默认关 + 可开」：收敛不默认生效等于代码写了但
-// 债没还，而回滚窗口只要「一个 env 能整体退回」就够了。关掉之后出参侧解析照常工作
-// （ResolveRef 本来就兼容三种历史形态），所以这次回滚是安全的、不是断崖。
-//
-// 每次调用读一次 env：handler 是请求级函数，这个开销可忽略；换成包级变量加 init
-// 会让测试间的 env 泄漏（t.Setenv 改了不生效，或改了一次污染后续用例）。
-const storageRefStrictEnv = "STORAGE_REF_STRICT"
-
-func storageRefStrict() bool {
-	v := strings.TrimSpace(os.Getenv(storageRefStrictEnv))
-	if v == "" {
-		return true
-	}
-	return v != "0" && !strings.EqualFold(v, "false")
-}
+// 落库前归一**无条件生效**：线上无存量、不存在需要退回旧行为的部署，
+// 回滚开关已删除（第九十二轮）。收什么写什么会让别的企业的键、伪协议、
+// 路径穿越直接进库，任何部署都不该再走那条路径。
 
 // scopeOf 由 companyID 推归属：0 是平台自身对象（素材库 / 小程序码 / 平台超管直传）。
 func scopeOf(companyID int64) storage.Scope {
@@ -71,9 +53,6 @@ func scopeOf(companyID int64) storage.Scope {
 // 「这个租户的合法资源」对不上（别的企业的键、伪协议、路径穿越），静默写进去
 // 比报错难查得多。
 func normalizeResourceRef(cfg config.Config, companyID int64, field, raw string) (string, error) {
-	if !storageRefStrict() {
-		return raw, nil // 回滚模式：第五十八轮及以前的旧行为
-	}
 	key, kind, err := storage.NormalizeOrKeep(raw, effectiveBaseURL(cfg), scopeOf(companyID), companyID)
 	if err != nil {
 		return "", err

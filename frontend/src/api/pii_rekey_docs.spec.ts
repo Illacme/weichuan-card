@@ -145,13 +145,23 @@ describe('平台实例生效口径：现状描述不回退到「改完重启」'
     expect(design, '0059 未兑现的「清理旧 key」承诺又写回现状描述').not.toContain('随即清理那批历史')
     expect(design).toContain('并未实现')
 
-    const tenantDB = readFileSync(resolve(REPO, 'backend/internal/license/tenant_db.go'), 'utf8')
-    expect(tenantDB).toContain('上线即事故') // fail-open 兼容仍在
+    // STORAGE_REF_STRICT 回滚开关已随「线上无存量」删除，代码和当前文档都不许再提。
+    const resourceref = readFileSync(resolve(REPO, 'backend/internal/handler/resourceref.go'), 'utf8')
+    expect(resourceref).not.toContain('STORAGE_REF_STRICT')
+    for (const p of [DOCS.design, resolve(REPO, 'backend/README.md'),
+      resolve(REPO, 'docs/tenant-storage-url-boundaries.md')]) {
+      expect(read(p), `${p} 又把回滚开关写回当前口径`).not.toContain('STORAGE_REF_STRICT=0')
+    }
 
-    // 小程序旧扁平主题缓存不能被「没商用」一刀切删掉：已发布小程序用户
-    // 手机上存着 wc_theme_id=brand-*，删掉 splitTheme 会重置他们的主题。
+    const tenantDB = readFileSync(resolve(REPO, 'backend/internal/license/tenant_db.go'), 'utf8')
+    expect(tenantDB).toContain('上线即事故') // fail-open 是新部署空表所需，不是旧版兼容
+
+    // 第九十二轮按「线上无存量」重新拍板：扁平 templateId / splitTheme 已删除，
+    // 后端 0043 也不再下发该列。不许以「老用户零迁移」为由把它贴回来。
     const theme = readFileSync(resolve(REPO, 'miniprogram/utils/theme.ts'), 'utf8')
-    expect(theme).toContain('export function splitTheme')
+    expect(theme).not.toContain('splitTheme')
+    expect(theme).not.toContain('templateId?:')
+    expect(theme).toContain('线上无存量')
   })
 
   it('设置项说明也只把重启留给目录类', () => {

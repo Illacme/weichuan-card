@@ -104,8 +104,7 @@
 import { computed, ref } from 'vue'
 
 // 一天一行：前三项是转化，后五项（带 targetId 的内容事件）是意向。
-// 意向项用可选字段——老副本（后端未跑迁移 0021 / 未升级）不回这几项时按 0 画，
-// 而不是画出 undefined 的 NaN 坐标。
+// 意向项用可选字段：图表缺项时按 0 画，避免 undefined 变成 NaN 坐标。
 export interface TrendPoint {
   date: string
   visit: number

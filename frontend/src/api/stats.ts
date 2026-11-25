@@ -68,39 +68,22 @@ export const SOURCE_LABELS: Record<string, string> = {
   other: '其他',
 }
 
-const zeroSummary = (): StatSummary => ({
-  visit: 0,
-  call: 0,
-  save: 0,
-  projectView: 0,
-  serviceView: 0,
-  videoPlay: 0,
-  share: 0,
-  posterSave: 0,
-})
-
 export function adminStats(range: StatRange = {}, config?: AxiosRequestConfig) {
   // 响应拦截器回传整包信封 {code,msg,data}，汇总/按员工/趋势/TOP 榜均在 data 下
   // config 只用来透传 signal（见 ./latest.ts 的竞态守门）：params 由本函数决定，
   // 放在展开之后，避免调用方误传 params 把日期口径改掉而不自知。
   return http.get('/admin/stats', { ...config, params: cleanParams(range) }).then((r: any) => {
-    const s = r.data?.summary ?? {}
-    // 逐项 Number 兜底：后端理论上八项都在，但老副本（未跑迁移 0021）会缺
-    // 后五项——缺项按 0 渲染，而不是把 undefined 显示成「undefined」
-    const summary = zeroSummary()
-    for (const k of Object.keys(summary) as (keyof StatSummary)[]) {
-      summary[k] = Number(s[k] ?? 0)
-    }
+    // 线上无存量、迁移 0021/0022 的字段一定存在：直接取后端值，
+    // 缺字段就是真 bug，不静默补 0 / 空数组把它藏起来。
+    const d = r.data
     return {
-      summary,
-      byStaff: (r.data?.byStaff ?? []) as any[],
-      trend: (r.data?.trend ?? []) as any[],
-      topProjects: (r.data?.topProjects ?? []) as StatTopItem[],
-      topServices: (r.data?.topServices ?? []) as StatTopItem[],
-      // 来源分布 / 裂变榜：迁移 0022 之前的旧副本缺这两个字段，兜底空数组。
-      // 老数据 source 全为 unknown，前端按英文类别翻译（SOURCE_LABELS）。
-      sourceDist: (r.data?.sourceDist ?? []) as StatSourceItem[],
-      fissionTop: (r.data?.fissionTop ?? []) as StatFissionItem[],
+      summary: d.summary as StatSummary,
+      byStaff: d.byStaff as any[],
+      trend: d.trend as any[],
+      topProjects: d.topProjects as StatTopItem[],
+      topServices: d.topServices as StatTopItem[],
+      sourceDist: d.sourceDist as StatSourceItem[],
+      fissionTop: d.fissionTop as StatFissionItem[],
     }
   })
 }

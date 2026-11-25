@@ -12,7 +12,7 @@ import 'element-plus/es/components/message-box/style/css'
 
 import App from './App.vue'
 import router from './router'
-import { getSetupStatus, type SetupStatus } from './api/setup'
+import { getSetupStatus } from './api/setup'
 import { reportClientError } from './api/clientError'
 
 // 首次部署引导 / 安装向导：后端在 DB_DSN 未提供时会进入「初始配置模式」（进程起来但不加载业务）。
@@ -20,17 +20,10 @@ import { reportClientError } from './api/clientError'
 // 所以这里在挂载前先问一次状态：未配置就直接渲染向导页，避免「打开是登录页、
 // 但接口全部报错、不知道差什么」。
 //
-// 两个组件都动态载入：正常登录后不该为「一辈子只用一次」的页面付首屏体积。
-//   - installable=true（新后端）→ 安装向导：填表 → 测试连接 → 一键安装 → 自重启 → 进登录页；
-//   - 否则（旧后端还没有安装接口）→ 只读引导页：只生成可复制的配置文本。
+// 安装向导动态载入：正常登录后不该为「一辈子只用一次」的页面付首屏体积。
+// 旧的只读引导页（SetupGuide）随「旧后端没有安装接口」分支一起删除——线上无存量，
+// 后端安装接口已稳定，未配置就走完整的填表 → 测试连接 → 一键安装。
 // 请求失败 / 接口不存在一律按「已配置」处理——不能因为一次网络抖动就挡住正常登录。
-async function loadSetupComponent(status: SetupStatus) {
-  if (status.installable) {
-    return (await import('./components/SetupInstaller.vue')).default
-  }
-  return (await import('./components/SetupGuide.vue')).default
-}
-
 async function bootstrap() {
   const status = await getSetupStatus()
   const unconfigured = !!status && !status.configured
@@ -40,7 +33,7 @@ async function bootstrap() {
   // 其样式已在本文件顶部手动引入。图标此前通过全局 barrel 注册；现改为各组件显式 import，
   // 因此此处不再注册全局图标，避免打入未使用的图标。
   const app = unconfigured
-    ? createApp(await loadSetupComponent(status as SetupStatus), { status })
+    ? createApp((await import('./components/SetupInstaller.vue')).default, { status })
     : createApp(App)
 
   // 全局错误边界：捕获渲染/生命周期中的异常并上报但不重抛，

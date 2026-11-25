@@ -320,12 +320,8 @@ export OSS_BUCKET="weichuan"
 # 注：MINIO/OSS 模式下 UPLOAD_BASE_URL 改为对象存储的公开访问基址（如 https://cdn.xxx 或 bucket 公网域名）
 # 存储可见性：true=公开桶（默认）；false=私有桶，需配合限时签名访问（STORAGE_PUBLIC=false）
 export STORAGE_PUBLIC="true"
-# 资源引用严格归一（默认开）：业务表单落库前把「/uploads/t/5/x.jpg」收敛成裸键「t/5/x.jpg」。
-# 设 0 / false 退回旧行为（原样落库）。**回滚是安全降级**——出参侧 ResolveRef 本来就兼容
-# 绝对 URL / /uploads/ / 裸键三种形态，关掉只会让库里形态退回历史形态，不会裂图。
-# 什么时候才需要关：写入侧归一在某个私有分支上误判（表现为保存报「地址不合法」），
-# 又来不及发版时用它先顶上，再回来修判定。详见 docs/tenant-storage-url-boundaries.md §5.5。
-export STORAGE_REF_STRICT="1"
+# 资源引用落库前无条件归一：把「/uploads/t/5/x.jpg」收敛成裸键「t/5/x.jpg」。
+# 旧的 STORAGE_REF_STRICT 回滚开关已删除（线上无存量、不需要退回旧行为）。
 # CDN 刷新（覆盖写后使边缘缓存失效）：CDN_ENABLED=1 + 厂商 + 该厂商要求的凭据。
 # 迁移 0060 起这些值只在**首次启动**时播种进「存储与分发 → CDN 分发 → 平台自身 CDN」，
 # 之后真值源是那份档案（后台改，保存即生效、无需重启），环境变量不再覆盖它。

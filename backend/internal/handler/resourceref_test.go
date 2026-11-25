@@ -181,34 +181,6 @@ func TestResourceRefRejectsUnsafeValue(t *testing.T) {
 		"被拒的请求不该落下任何数据")
 }
 
-// env 回滚：STORAGE_REF_STRICT=0 退回第五十八轮的行为（收到什么写什么）。
-//
-// 这条是「一个 env 能整体回滚」这个承诺的可执行版本。回滚之后：
-//   - 库里又变回 /uploads/... 形态；
-//   - 出参侧 ResolveRef 照样能解析（它本来就兼容三种形态），所以页面不会坏。
-//
-// 也就是说回滚是安全的降级，不是断崖——这正是选「默认开 + 可关」的理由。
-func TestResourceRefStrictOffRollsBack(t *testing.T) {
-	t.Setenv(storageRefStrictEnv, "0")
-	r, db := setupEngineWithDB(t)
-	c := newTestClient(r, t)
-	token := loginAdmin(t, c)
-
-	_, body := c.do("PUT", "/api/admin/company-info", map[string]interface{}{
-		"fullName": "测试企业", "logo": "/uploads/t/1/logo.png",
-	}, token)
-	require.EqualValues(t, 0, body["code"])
-
-	var ci model.CompanyInfo
-	require.NoError(t, db.First(&ci, "company_id = ?", defaultCompanyID).Error)
-	require.Equal(t, "/uploads/t/1/logo.png", ci.Logo,
-		"STRICT=0 时必须退回旧行为；否则这个开关就没起作用")
-
-	// 回滚模式下出参照样正确（ResolveRef 对已解析过的 URL 幂等）。
-	_, body = c.do("GET", "/api/admin/company-info", nil, token)
-	require.Equal(t, "/uploads/t/1/logo.png", body["data"].(map[string]interface{})["logo"])
-}
-
 // 上传 → 保存 → 读回：整条链路跑一遍，确认上传返回的 URL 能被归一接住。
 //
 // 平台超管登录时 companyID 为 0，上传落在 p/ 下（见 uploadCompanyID）；

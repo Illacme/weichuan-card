@@ -20,8 +20,7 @@ import (
 // 出参侧第五十三 / 五十七轮接入（9 条公开 GET + signHandler + 后台 R11–R15），
 // 写入侧第五十四轮接入带前缀键、第五十九轮接入落库前归一。接入点清单与源码级守门
 // 在 ref_p0a_guard_test.go 的 TestRefWiringGate；**集成不再需要删本文件回滚**——
-// 回滚写入侧归一用 STORAGE_REF_STRICT=0（见 handler/resourceref.go），
-// 回滚出参侧解析才是「改回不调 ResolveRefs」。
+// 落库前归一无条件生效（旧的 STORAGE_REF_STRICT 回滚开关已删除，线上无存量）。
 //
 // 这里只依赖标准库，不 import mediachk / handler / config，避免把纯函数拖进
 // 依赖环。与 mediachk.ObjectKey 同构的那段「从 URL 反推键」刻意保持同语义，

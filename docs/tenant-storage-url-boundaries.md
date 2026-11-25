@@ -83,7 +83,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 > 老对象（键不带前缀）**必须**原样保留，写入侧补前缀会让它们立刻 404。
 > 出参侧口径集中在 `backend/internal/model/refs.go`（`ResolveResourceRef` + 六个模型的 `ResolveRefs()`），
 > 经 `storage.ResolveRef(raw, "")` 走通；写入侧口径集中在 `storage.NormalizeOrKeep`
-> 与 `handler/resourceref.go`（含 `STORAGE_REF_STRICT` 回滚开关）。
+> 与 `handler/resourceref.go`（落库前无条件归一，无回滚开关）。
 
 ---
 
@@ -453,8 +453,8 @@ sanctioned 文件）。边界 token 更新 W1/W2 的标识符并新增 4 条 `st
 2. **本地驱动返回的 `/uploads/t/5/x.jpg` 剥完就是完整键**。再走一次 `ObjectKeyFor` 会撞
    「双重加前缀」报错，那会让本地存储下**所有**表单保存全部失败。
 
-**回滚**：`STORAGE_REF_STRICT=0` / `false` 退回第五十八轮行为（原样落库）。
-默认开——收敛不默认生效等于债没还。每次调用读 env，不用包级变量（会污染测试）。
+**无回滚开关**：`STORAGE_REF_STRICT` 已删除（第九十二轮，线上无存量、不存在需要退回
+第五十八轮行为的部署）。落库前归一无条件生效，旧 env 即使还在配置文件里也不再被读取。
 
 **新增测试**（`handler/resourceref_test.go` 9 条 + `storage/ref_keep_test.go` 8 条）：
 

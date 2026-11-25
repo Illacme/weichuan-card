@@ -18,7 +18,7 @@
 // **四个接口的字段都在响应根级，不在 data 里**：
 //   /api/card         → employee / company / profile
 //   /api/achievements → categories / featured
-//   /api/home-layout  → order / bgImage / bgMask / bgGradientStrength / styleId / brandColorId / templateId
+//   /api/home-layout  → order / bgImage / bgMask / bgGradientStrength / styleId / brandColorId
 // 误读成 `card.data.*` 会让名片页恒走 notFound——这个 bug 已经真实发生过一次。
 import type { ApiResult } from './request'
 
@@ -185,6 +185,4 @@ export type HomeLayoutResp = Envelope & {
   styleId?: string
   /** 品牌色系（纯颜色层）id；null / 缺省 = 用风格默认色 */
   brandColorId?: string | null
-  /** 兼容派生列：旧端近似值（44 组合压不进 12 个扁平 id），两轴齐备时 resolveTheme 不读它 */
-  templateId?: string
 }

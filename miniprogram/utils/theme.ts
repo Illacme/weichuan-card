@@ -14,11 +14,8 @@
 // 后定义者覆盖前者，所以「墨款布局 + 海蓝色」本来就能渲染；P4 的
 // normalizeSelection 把它打回 default 是唯一的阻碍，P5 已放开。
 //
-// 缓存（wc_theme_id）因此不能再存扁平 templateId：12 个扁平 id 装不下 44 个组合
-// （ink + brand-crimson 压扁后只剩 brand-crimson，旧端会看成「标准均衡 + 绛红」）。
-// P5 起写带前缀的两轴串 `wc2:<styleId>|<brandColorId 或 ->`；不带前缀的旧值
-// 仍按扁平 12 款解析，老用户升级零迁移。后端的 template_id 兼容列同理，只是
-// **旧端近似值、不是可逆编码**，两轴列才是真值。
+// 缓存（wc_theme_id）写带前缀的两轴串 `wc2:<styleId>|<brandColorId 或 ->`。
+// 扁平 templateId 与后端 template_id 兼容列均已删除（线上无存量，不做旧值零迁移）。
 //
 // id 集合的唯一真值在 backend/internal/mptemplate/mptemplate.go；
 // miniprogram/tests/theme.spec.ts 会读 Go 源码逐项对账，任一端加款忘了同步就变红。
@@ -31,23 +28,21 @@ export const BRAND_IDS = [
   'brand-ocean', 'brand-indigo', 'brand-violet', 'brand-magenta',
   'brand-royal', 'brand-scarlet',
 ] as const
-/** 扁平 12 个 id 仍是后端白名单 / 兼容派生列的取值集合；44 个组合由两轴表达，不在此集合内。 */
+/** 4 风格 + 10 色系的白名单取值集合；44 个组合由两轴表达，不在此集合内。 */
 export const THEME_IDS = [...STYLE_IDS, ...BRAND_IDS] as const
 
 export type StyleId = (typeof STYLE_IDS)[number]
 export type BrandColorId = (typeof BRAND_IDS)[number]
-export type ThemeId = (typeof THEME_IDS)[number]
 
 const STORAGE_KEY = 'wc_theme_id'
-/** P5 两轴缓存前缀：与旧扁平 id 区分，旧值原样走 splitTheme。 */
+/** 两轴缓存前缀。线上无存量，不保留旧扁平 id 的零迁移读取。 */
 const CACHE_PREFIX = 'wc2:'
 const CACHE_NONE = '-'
 
-/** /api/home-layout 信封里与主题相关的三个根级字段（旧后端只有 templateId）。 */
+/** /api/home-layout 信封里与主题相关的两个根级字段。 */
 export interface ThemePayload {
   styleId?: string | null
   brandColorId?: string | null
-  templateId?: string | null
 }
 
 export interface ThemeSelection {
@@ -56,11 +51,6 @@ export interface ThemeSelection {
 }
 
 /** 未知 id / 空值一律回缺省款：连旧后端（不下发主题字段）也能正常渲染。 */
-export function normalizeTheme(id?: string | null): ThemeId {
-  const v = String(id || '').trim()
-  return (THEME_IDS as readonly string[]).includes(v) ? (v as ThemeId) : THEME_DEFAULT
-}
-
 export function normalizeStyle(id?: string | null): StyleId {
   const v = String(id || '').trim()
   return (STYLE_IDS as readonly string[]).includes(v) ? (v as StyleId) : THEME_DEFAULT
@@ -84,19 +74,6 @@ function normalizeSelection(styleId?: string | null, brandColorId?: string | nul
   }
 }
 
-/**
- * 扁平 templateId → 两轴（旧缓存 / 旧后端 / 兼容派生列都走这里）。
- * 8 款 brand-* 反推成 (default, brand-*) 是**旧端近似语义**：扁平列根本没记风格，
- * 只能落到 default；这不表示 P5 的色系仍归属 default 风格。
- */
-export function splitTheme(id?: string | null): ThemeSelection {
-  const v = normalizeTheme(id)
-  if ((BRAND_IDS as readonly string[]).includes(v)) {
-    return { styleId: THEME_DEFAULT, brandColorId: v as BrandColorId }
-  }
-  return { styleId: v as StyleId, brandColorId: null }
-}
-
 /** 两轴 → P5 缓存串。绝不压扁成 12 个扁平 id（那会丢掉风格，44 → 12 塌缩）。 */
 export function encodeCachedTheme(styleId?: string | null, brandColorId?: string | null): string {
   const sel = normalizeSelection(styleId, brandColorId)
@@ -104,28 +81,24 @@ export function encodeCachedTheme(styleId?: string | null, brandColorId?: string
 }
 
 /**
- * 缓存串 → 两轴：新格式按前缀解，旧扁平值 / 空值 / 脏值都走 splitTheme 归一。
+ * 缓存串 → 两轴：带前缀的两轴格式按分隔符解；无前缀 / 空值 / 脏值归 default。
  * 未知风格、未知色系会各自回落，不会拼出白名单外的 class。
  */
 export function decodeCachedTheme(raw?: string | null): ThemeSelection {
   const v = String(raw || '').trim()
-  if (!v.startsWith(CACHE_PREFIX)) return splitTheme(v)
+  if (!v.startsWith(CACHE_PREFIX)) return normalizeSelection(null, null)
   const parts = v.slice(CACHE_PREFIX.length).split('|')
   const brand = parts[1] === CACHE_NONE ? null : parts[1]
   return normalizeSelection(parts[0], brand)
 }
 
 /**
- * 从 /api/home-layout 信封解析主题：优先两轴，旧后端只下发 templateId 时拆它。
+ * 从 /api/home-layout 信封解析主题：只读两轴字段。
  * 两个调用点（首页 loadAll、冷启动 prefetchTheme）必须都走这里，别各自猜字段，
  * 否则「后台显示与访客所见不一致」又是一次没人报错的静默失败。
  */
 export function resolveTheme(payload?: ThemePayload | null): ThemeSelection {
-  if (!payload) return splitTheme(null)
-  if (payload.styleId != null || payload.brandColorId != null) {
-    return normalizeSelection(payload.styleId, payload.brandColorId)
-  }
-  return splitTheme(payload.templateId)
+  return normalizeSelection(payload?.styleId, payload?.brandColorId)
 }
 
 /**

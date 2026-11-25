@@ -47,29 +47,9 @@ describe('adminStats', () => {
   })
 
   it('空范围不发 from/to（全部时间口径）', async () => {
-    mocks.httpGet.mockResolvedValue({ data: { summary: {}, byStaff: [], trend: [] } })
+    mocks.httpGet.mockResolvedValue({ data: { summary: { visit: 0, call: 0, save: 0, projectView: 0, serviceView: 0, videoPlay: 0, share: 0, posterSave: 0 }, byStaff: [], trend: [], topProjects: [], topServices: [], sourceDist: [], fissionTop: [] } })
     await adminStats({})
     expect(mocks.httpGet).toHaveBeenCalledWith('/admin/stats', { params: {} })
-  })
-
-  it('回包缺字段时回落空集合，不抛', async () => {
-    mocks.httpGet.mockResolvedValue({ data: {} })
-    const r = await adminStats()
-    // 八项全在：缺项补 0（后端未跑迁移 0021 时后五项就没有）
-    expect(r.summary).toEqual({
-      visit: 0,
-      call: 0,
-      save: 0,
-      projectView: 0,
-      serviceView: 0,
-      videoPlay: 0,
-      share: 0,
-      posterSave: 0,
-    })
-    expect(r.byStaff).toEqual([])
-    expect(r.trend).toEqual([])
-    expect(r.topProjects).toEqual([])
-    expect(r.topServices).toEqual([])
   })
 
   it('解包内容浏览：TOP 榜与意向计数原样透出，并解包来源分布与裂变榜', async () => {
@@ -103,20 +83,7 @@ describe('adminStats', () => {
     expect(r.fissionTop[0]).toEqual({ staffId: 1, name: '张三', count: 3 })
   })
 
-  it('来源分布 / 裂变榜缺字段时回落空数组（老副本未跑迁移 0022）', async () => {
-    mocks.httpGet.mockResolvedValue({ data: { summary: { visit: 1, call: 2, save: 3 } } })
-    const r = await adminStats()
-    expect(r.sourceDist).toEqual([])
-    expect(r.fissionTop).toEqual([])
-  })
 
-  it('老副本只回三项时，意向项按 0 渲染（不出现 undefined / NaN）', async () => {
-    mocks.httpGet.mockResolvedValue({ data: { summary: { visit: 1, call: 2, save: 3 } } })
-    const r = await adminStats()
-    expect(r.summary.projectView).toBe(0)
-    expect(r.summary.share).toBe(0)
-    expect(Number.isNaN(r.summary.videoPlay)).toBe(false)
-  })
 })
 
 describe('adminStatsDetail', () => {

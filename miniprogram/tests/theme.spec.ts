@@ -7,10 +7,8 @@ import {
   THEME_IDS,
   STYLE_IDS,
   THEME_DEFAULT,
-  normalizeTheme,
   normalizeStyle,
   normalizeBrand,
-  splitTheme,
   encodeCachedTheme,
   decodeCachedTheme,
   resolveTheme,
@@ -88,13 +86,7 @@ describe('小程序整体风格模板 utils/theme', () => {
     vi.unstubAllGlobals()
   })
 
-  it('未知 / 空 / 脏 id 一律回缺省款（连旧后端也能渲染）', () => {
-    expect(normalizeTheme('')).toBe(THEME_DEFAULT)
-    expect(normalizeTheme(null)).toBe(THEME_DEFAULT)
-    expect(normalizeTheme(undefined)).toBe(THEME_DEFAULT)
-    expect(normalizeTheme('neon')).toBe(THEME_DEFAULT)
-    expect(normalizeTheme('INK')).toBe(THEME_DEFAULT)
-    expect(normalizeTheme(' ink ')).toBe('ink')
+  it('未知 / 空 / 脏 id 一律回缺省款', () => {
     expect(normalizeStyle('neon')).toBe('default')
     expect(normalizeStyle('warm')).toBe('warm')
     expect(normalizeBrand('brand-neon')).toBeNull()
@@ -104,11 +96,10 @@ describe('小程序整体风格模板 utils/theme', () => {
     expect(themeClass('neon')).toBe('wc-style-default')
   })
 
-  it('splitTheme 只服务旧扁平 id：8 款 brand-* 反推 (default, brand-*)，不代表 P5 归属', () => {
-    expect(splitTheme('brand-ocean')).toEqual({ styleId: 'default', brandColorId: 'brand-ocean' })
-    expect(splitTheme('ink')).toEqual({ styleId: 'ink', brandColorId: null })
-    expect(splitTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
-    expect(splitTheme('neon')).toEqual({ styleId: 'default', brandColorId: null })
+  it('无前缀 / 脏缓存值归 default，不保留旧扁平 id 零迁移', () => {
+    expect(decodeCachedTheme('brand-ocean')).toEqual({ styleId: 'default', brandColorId: null })
+    expect(decodeCachedTheme('neon')).toEqual({ styleId: 'default', brandColorId: null })
+    expect(decodeCachedTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
   })
 
   it('P5 全叉乘：色系叠在非 default 风格上保留该风格布局，不再被打回 default', () => {
@@ -124,19 +115,14 @@ describe('小程序整体风格模板 utils/theme', () => {
       .toBe('wc-style-default wc-brand-ocean')
   })
 
-  it('resolveTheme 两轴优先，旧后端只有 templateId 时拆成两轴', () => {
-    expect(resolveTheme({ styleId: 'warm', brandColorId: null, templateId: 'brand-amber' }))
+  it('resolveTheme 只读两轴字段，未知值归一', () => {
+    expect(resolveTheme({ styleId: 'warm', brandColorId: null }))
       .toEqual({ styleId: 'warm', brandColorId: null })
     expect(resolveTheme({ styleId: 'default', brandColorId: 'brand-crimson' }))
       .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
-    // P5：非 default 风格 + 色系必须原样保留，兼容派生列也不能把它带偏
+    // 非 default 风格 + 色系必须原样保留
     expect(resolveTheme({ styleId: 'ink', brandColorId: 'brand-ocean' }))
       .toEqual({ styleId: 'ink', brandColorId: 'brand-ocean' })
-    expect(resolveTheme({ styleId: 'warm', brandColorId: 'brand-magenta', templateId: 'brand-magenta' }))
-      .toEqual({ styleId: 'warm', brandColorId: 'brand-magenta' })
-    expect(resolveTheme({ templateId: 'brand-crimson' }))
-      .toEqual({ styleId: 'default', brandColorId: 'brand-crimson' })
-    expect(resolveTheme({ templateId: 'teal' })).toEqual({ styleId: 'teal', brandColorId: null })
     expect(resolveTheme({})).toEqual({ styleId: 'default', brandColorId: null })
     expect(resolveTheme(null)).toEqual({ styleId: 'default', brandColorId: null })
   })
@@ -203,7 +189,7 @@ describe('小程序整体风格模板 utils/theme', () => {
     }
   })
 
-  it('首页从 /api/home-layout 根级拿两轴主题后应用并广播（旧后端仍走 templateId）', () => {
+  it('首页从 /api/home-layout 根级拿两轴主题后应用并广播', () => {
     const src = readFileSync(resolve(MP, 'pages/index/index.ts'), 'utf-8')
     expect(src).toContain('resolveTheme(layout)')
     expect(src).toContain('applyTheme(sel.styleId, sel.brandColorId)')
@@ -388,11 +374,11 @@ describe('小程序整体风格模板 utils/theme', () => {
     cached('wc2:default|-')
     expect(currentThemeClass()).toBe('wc-style-default')
 
-    // 旧缓存是扁平 12 款：原样按 splitTheme 拆，老用户升级零迁移
+    // 无前缀的脏缓存值归 default（不做旧扁平 id 零迁移）
     cached('ink')
-    expect(currentThemeClass()).toBe('wc-style-ink')
+    expect(currentThemeClass()).toBe('wc-style-default')
     cached('brand-ocean')
-    expect(currentThemeClass()).toBe('wc-style-default wc-brand-ocean')
+    expect(currentThemeClass()).toBe('wc-style-default')
     cached('')
     expect(currentThemeClass()).toBe('wc-style-default')
 
@@ -472,10 +458,10 @@ describe('P5 两轴全叉乘与两轴缓存', () => {
     for (let i = 0; i < COMBOS.length; i++) {
       expect(decodeCachedTheme(cache[i])).toEqual(COMBOS[i])
     }
-    // 旧扁平值不带前缀，仍按旧语义解析；12 个白名单 id 一个都不能失守
+    // 白名单 id 不带前缀，一律归 default（无旧扁平零迁移）
     for (const id of THEME_IDS) {
-      expect(decodeCachedTheme(id)).toEqual(splitTheme(id))
-      expect(id.startsWith('wc2:'), '扁平 id 不能和 P5 前缀撞车').toBe(false)
+      expect(decodeCachedTheme(id)).toEqual({ styleId: 'default', brandColorId: null })
+      expect(id.startsWith('wc2:'), '白名单 id 不能和 P5 前缀撞车').toBe(false)
     }
     expect(encodeCachedTheme('neon', 'brand-neon')).toBe('wc2:default|-')
     expect(decodeCachedTheme('wc2:ink|brand-nope')).toEqual({ styleId: 'ink', brandColorId: null })
@@ -544,7 +530,7 @@ describe('小程序风格模板 系列分组', () => {
     expect(vue, '不能退回按风格置灰色卡').not.toContain('disabled: styleId !== DEFAULT_STYLE')
     expect(vue, '不能退回树形提示').not.toContain('暂无可用品牌配色')
     // 后端直接下发两轴，前端 load 原样读取两轴；不再有「旧后端只发单列 id 按前缀拆」的分支
-    // （templateId 兼容列已在 0043 删除，端上旧缓存经小程序 splitTheme 零迁移读取，与前端无关）。
+    // （templateId 兼容列已在 0043 删除，端上不做旧缓存零迁移，与前端无关）。
     expect(vue).toContain('d?.styleId')
     expect(vue).toContain('d?.brandColorId')
   })

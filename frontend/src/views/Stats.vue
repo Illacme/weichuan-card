@@ -267,7 +267,7 @@ const intentOpen = ref(false)
 const staffOpen = ref(false)
 const sourceOpen = ref(false)
 // 八项汇总：visit/call/save 转化 + projectView/serviceView/videoPlay/share/posterSave 意向。
-// 初始值给全八项——缺项的卡片会渲染出「undefined」（后端未跑迁移 0021 时）。
+// 响应式初始值给全八项，避免首屏卡片渲染出「undefined」。
 const summary = ref<StatSummary>({
   visit: 0,
   call: 0,
@@ -281,7 +281,7 @@ const summary = ref<StatSummary>({
 const trend = ref<any[]>([])
 const topProjects = ref<StatTopItem[]>([])
 const topServices = ref<StatTopItem[]>([])
-// 流量来源分布 / 裂变榜（迁移 0022 起）：缺字段时给空数组，UI 显示空态而非报错。
+// 流量来源分布 / 裂变榜：首屏空数组先显示空态。
 const sourceDist = ref<StatSourceItem[]>([])
 const fissionTop = ref<StatFissionItem[]>([])
 // 来源分布条形占比：以访问总量为分母（未知/其他也计入分母，避免比例和超过 100%）。
@@ -398,9 +398,8 @@ async function load() {
     trend.value = r.trend
     topProjects.value = r.topProjects
     topServices.value = r.topServices
-    // 老副本（未跑迁移 0022）缺这两个字段，兜底空数组——UI 显示空态而非崩溃
-    sourceDist.value = r.sourceDist || []
-    fissionTop.value = r.fissionTop || []
+    sourceDist.value = r.sourceDist
+    fissionTop.value = r.fissionTop
   } catch (e) {
     if (isSuperseded(e)) return
     /* 拦截器已提示 */

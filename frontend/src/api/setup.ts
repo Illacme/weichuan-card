@@ -14,7 +14,7 @@ import http from './request'
 //     所以业务对象在 r.data，而不是 r.data.data。
 //
 // __silent 是必须的：安装向导自己要展示错误文案，不需要拦截器再弹一条红条；
-// 后端旧版本没有这些接口时会 404，若不静默，每次启动都会弹「网络异常」。
+// 正常部署未配置时这仍是个 200，但请求失败不该让启动页弹「网络异常」。
 export interface SetupMissing {
   env: string
   why: string
@@ -34,9 +34,8 @@ export interface SetupStatus {
   missing: SetupMissing[]
   envText: string
   hint: string
-  // 以下为安装向导字段。旧版本后端不返回这些字段（undefined），
-  // 此时 installable 判为 false，前端自动退回只读引导页而不是开一个装不了的向导。
-  installable?: boolean
+  // 安装向导字段（后端安装接口已稳定，均为必返回）。
+  installable: boolean
   engines?: string[]
   sqlitePath?: string
   configFile?: string

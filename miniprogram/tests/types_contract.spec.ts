@@ -135,7 +135,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     expect(tsFields('HomeLayoutResp')).toEqual([
       'bgGradientStrength', 'bgImage', 'bgMask', 'brandColorId', 'categoryLimit',
       'featuredCount', 'featuredEffect', 'logoAlign', 'logoSize', 'order',
-      'showCategoryName', 'showServiceName', 'styleId', 'templateId',
+      'showCategoryName', 'showServiceName', 'styleId',
     ])
     // HomeLayoutResp 是根级信封：主题两轴 (styleId / brandColorId) 必须真实存在于
     // Go 模型的 json tag 里，否则端上会读到后端根本不下发的字段，主题功能静默失效。
@@ -144,8 +144,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     // Go 模型 json tag 且由公开接口下发，否则后台改了小程序却收不到，静默失效。
     // 0050 两个名称开关同理：端上按 showName 决定渲不渲染标题，后端不下发就永远是
     // undefined → 开关看起来「没反应」，而图片与版式完全正常，最难查的一类。
-    // templateId 是端上兼容旧后端 / 旧缓存的可选字段（resolveTheme 仍按它拆两轴），
-    // 后端 0043 已删除该列、不再下发，故不进「后端必须 emit」的强约束。
+    // 旧 templateId 兼容列已随 0043 删除，端上不再保留可选字段。
     for (const key of [
       'styleId', 'brandColorId', 'bgGradientStrength',
       'categoryLimit', 'featuredCount', 'featuredEffect',
