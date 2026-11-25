@@ -3,10 +3,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  CONFIGURED_APP_NAME,
   FALLBACK_BRAND,
   applyBrandTitle,
   cachedBrandName,
   resolveBrandTitle,
+  startupBrandName,
 } from '../utils/brand'
 
 // 品牌名解析 + 「客户名不得写死在小程序源码里」的守门。
@@ -101,6 +103,38 @@ describe('brand', () => {
         getStorageSync: () => '',
       })
       expect(cachedBrandName()).toBe('')
+    })
+  })
+
+  describe('startupBrandName', () => {
+    it('配置文件名称优先于后台 brand_name（企业独立发布时显示自己的标题）', () => {
+      // 诱饵：后台下发的是平台品牌。启动首帧绝不能被它盖掉。
+      vi.stubGlobal('wx', {
+        setNavigationBarTitle: vi.fn(),
+        getStorageSync: () => JSON.stringify({ brand_name: '部署方品牌' }),
+      })
+      expect(startupBrandName()).toBe(CONFIGURED_APP_NAME)
+      expect(startupBrandName()).not.toBe('部署方品牌')
+    })
+
+    it('配置名与 app.json 的 navigationBarTitleText 逐字一致', () => {
+      const app = JSON.parse(readFileSync(join(MP_ROOT, 'app.json'), 'utf8'))
+      expect(CONFIGURED_APP_NAME).toBe(app.window.navigationBarTitleText)
+      // 产品名兜底与配置名同源：企业改标题时不需要维护第二个字面量。
+      expect(FALLBACK_BRAND).toBe(CONFIGURED_APP_NAME)
+    })
+
+    it('两页首帧都必须调用启动标题解析，不能退回读 brand_name', () => {
+      // 这是「配置名最高优先级」真正生效的接线守门：函数本身对没用，
+      // 页面若仍用 cachedBrandName() 首帧就还是平台名，且不会有任何报错。
+      for (const rel of ['pages/team/team.ts', 'pages/index/index.ts']) {
+        const src = readFileSync(join(MP_ROOT, rel), 'utf8')
+        expect(src).toContain('startupBrandName()')
+        expect(src).not.toMatch(/bootTitle:\s*cachedBrandName\(\)/)
+      }
+      // team 自绘导航首屏与遮罩同源，淡出时不闪第二帧标题。
+      const team = readFileSync(join(MP_ROOT, 'pages/team/team.ts'), 'utf8')
+      expect(team).toMatch(/navTitle:\s*startupBrandName\(\)/)
     })
   })
 

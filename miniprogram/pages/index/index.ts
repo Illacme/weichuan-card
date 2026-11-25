@@ -3,7 +3,7 @@ import { thumbnailURL, onImgFail } from '../../utils/thumb'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { clearEntryStaff } from '../../utils/entry'
 import { track, deriveSource } from '../../utils/track'
-import { FALLBACK_BRAND, cachedBrandName } from '../../utils/brand'
+import { FALLBACK_BRAND, startupBrandName } from '../../utils/brand'
 // 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
 // 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
@@ -78,8 +78,9 @@ Page({
     // 启动决策态：数据回来前保持遮罩不淡出；reLaunch 改道时也保持到目标页接手。
     booting: true,
     // 启动遮罩：样式在 app.wxss 的 .wc-boot，两页首帧逐字同源。
-    // 标题在模块求值阶段同步读缓存，不等 onLoad 再 setData；没配就留白。
-    bootTitle: cachedBrandName(),
+    // 标题在模块求值阶段同步解析，不等 onLoad 再 setData；
+    // 最高优先级是 app.json 的小程序名称，后台 brand_name 不能盖过它。
+    bootTitle: startupBrandName(),
     bootVisible: true,
     bootFade: false,
     error: false,
@@ -115,7 +116,7 @@ Page({
       const info = wx.getSystemInfoSync()
       if (info && info.statusBarHeight) sb = info.statusBarHeight
     } catch {}
-    const bootTitle = cachedBrandName()
+    const bootTitle = startupBrandName()
     const navPatch: Record<string, unknown> = { statusBarHeight: sb, navHeight: sb + 44 }
     // 首帧已经在 data 里；只在本次会话里缓存被后台刷新过时才补一次 setData。
     if (bootTitle !== this.data.bootTitle) navPatch.bootTitle = bootTitle

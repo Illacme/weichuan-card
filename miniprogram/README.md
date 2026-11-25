@@ -818,6 +818,22 @@ Wave2 必须等 Wave1 回来才知道图片地址，于是用户的实际等待 
 - 员工登录态与名片内容始终按员工归属企业走（token / staffId 维度），不受本模块影响。
 - 后端公开接口的 `companyId` 参数、企业停用拦截（`code=1`）与两级后台见 `backend/README.md`。
 
+### 启动标题的优先级（2026-11-25）
+
+企业单独发布一套小程序时，**启动首帧显示 `app.json` 里配置的名称**，而不是后台下发的
+`brand_name`（平台模式下那是平台品牌）。这样企业改自己的小程序标题后，冷启动第一眼
+就是它自己的名字，不会像「没改干净」。
+
+| 阶段 | 标题来源 | 说明 |
+| --- | --- | --- |
+| 启动遮罩（首帧） | `app.json → window.navigationBarTitleText` | `utils/brand.ts` 的 `startupBrandName()` 解析；team / index 两页的 `bootTitle` 与名片墙自绘导航首屏都用它 |
+| 数据加载后 | 企业简称 → 企业全称 → `brand_name` → 产品名 | `resolveBrandTitle()` 语义不变：海报是替企业做的物料，平台名不能顶掉企业名 |
+
+改独立版标题要**两处一起改**：`app.json` 的 `navigationBarTitleText` 和 `utils/brand.ts`
+的 `CONFIGURED_APP_NAME`。小程序运行时没有读取 `app.json` 的 API，后者是前者的镜像；
+只改一处会被 `tests/brand.spec.ts` 的逐字比对守门拦下。`FALLBACK_BRAND` 与它同源，
+海报/分享兜底会跟着一起变，不需要维护第三个字面量。
+
 ## 运行
 1. 微信开发者工具 → 导入项目 → 选择 `miniprogram/` 目录（appid 可用测试号）。
 2. **基址按运行环境自动切换**（见 `utils/config.ts` 的 `resolveBaseUrl()`）：微信开发者工具（`envVersion='develop'`）自动用 `DEV_BASE_URL`（默认 `http://127.0.0.1:8080`，需在开发者工具勾选「不校验合法域名」，`project.config.json` 已设 `urlCheck:false`）；体验版 / 正式版（`trial`/`release`）用 `DEFAULT_BASE_URL`（生产域名 `https://weichuan.ziyuanxingqiu.cn`）。**无需再手动改代码**；临时想让 develop 连别的地址，可在开发者工具 Console 执行 `wx.setStorageSync('mpBaseUrlOverride', 'https://xxx')`（删除该键或写空串即恢复自动）。生产基址也可由 PC 后台「系统设置 → 小程序 → `miniprogram_base_url`」下发覆盖（目标域名仍需是已配置的 request 合法域名）。

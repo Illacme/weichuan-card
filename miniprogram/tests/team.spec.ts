@@ -119,26 +119,29 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.list).toEqual([])
     expect(p.data.title).toBe('')
     expect(p.data.logo).toBe('')
-    expect(p.data.navTitle).toBe('') // 没配 brand_name 就留白，不回落产品名
+    // 自绘导航首屏与遮罩同源：取 app.json 的小程序名称，不读后台 brand_name
+    expect(p.data.navTitle).toBe('微传名片')
     // 自定义导航按设备状态栏避让（测试桩返回 44）
     expect(p.data.statusBarHeight).toBe(44)
     expect(p.data.navHeight).toBe(88)
   })
 
-  // 用户 2026-11-25 追问：首屏标题能否优先读小程序配置？
-  // 项目里现成的配置项是后台「系统设置 → 品牌名称」= brand_name。
-  it('首屏标题优先用已配置的 brand_name，墙态再换成企业简称', async () => {
+  // 用户 2026-11-25 要求：小程序配置文件里的名称是启动标题的最高优先级。
+  // 企业独立发布时改的是 app.json，后台 brand_name 是平台名，不能盖过它。
+  it('启动标题优先用 app.json 配置名（不被 brand_name 覆盖），墙态再换成企业简称', async () => {
     wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
     let resolveReq: any
     mocks.request.mockReturnValueOnce(new Promise((r) => { resolveReq = r }))
     const p = await page()
 
-    // 首帧同步读缓存，不额外请求
-    expect(p.data.navTitle).toBe('部署方品牌')
+    // 首帧同步解析，不额外请求；启动遮罩与自绘导航都必须是配置名。
+    expect(p.data.bootTitle).toBe('微传名片')
+    expect(p.data.navTitle).toBe('微传名片')
     expect(p.data.booting).toBe(true)
 
     resolveReq(teamResp())
     await flush()
+    // 数据回来后才轮到企业名——这是「加载后」语义，不参与启动首帧。
     expect(p.data.navTitle).toBe('朗汇机电')
     expect(p.data.booting).toBe(false)
   })
@@ -391,7 +394,8 @@ describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () =
 
   it('缓存还在有效期内：直接跳名片页，一次请求都不发', async () => {
     wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
-    // 首帧标题必须在模块求值阶段就拿到，不能等 onLoad 再 setData。
+    // 首帧标题必须在模块求值阶段就拿到，不能等 onLoad 再 setData；
+    // 后台 brand_name 是诱饵，配置名必须赢。
     wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
 
     const p = await page()
@@ -403,7 +407,7 @@ describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () =
     // 跳转中整页不渲染，否则会先闪一下名片墙（含那个漏过 redirecting 判断的搜索框）
     expect(p.data.redirecting).toBe(true)
     expect(p.data.booting).toBe(true)
-    expect(p.data.bootTitle).toBe('部署方品牌')
+    expect(p.data.bootTitle).toBe('微传名片')
     // 性能快路径：这一页注定要被 reLaunch 掉，量状态栏 / 绑主题都是白花钱；
     // 保留初值 20 / '' 就证明这两步确实被跳过了。
     expect(p.data.statusBarHeight).toBe(20)

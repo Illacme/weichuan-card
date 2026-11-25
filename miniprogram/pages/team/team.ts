@@ -21,7 +21,7 @@
 //   - 首屏只拉 60 而不是 300：大企业首屏不必等 300 条 JSON 解析完才出画面。
 import { request, assetUrl } from '../../utils/request'
 import { thumbnailURL, onThumbError, onImgFail } from '../../utils/thumb'
-import { FALLBACK_BRAND, applyBrandTitle, cachedBrandName } from '../../utils/brand'
+import { FALLBACK_BRAND, applyBrandTitle, startupBrandName } from '../../utils/brand'
 import { mapTeamList, teamParams, hasMoreOf } from '../../utils/team'
 import { readEntryStaff, writeEntryStaff, clearEntryStaff } from '../../utils/entry'
 import { getCompanyId } from '../../utils/tenant'
@@ -69,9 +69,10 @@ Page({
     logoFail: '',
     companyId: 0,
     loading: true,
-    // 启动遮罩：首帧标题在模块求值阶段同步读缓存，不等 onLoad 再 setData。
-    // 没配 brand_name 就留白，不回落产品名——中转页不该闪平台品牌。
-    bootTitle: cachedBrandName(),
+    // 启动遮罩：首帧标题在模块求值阶段同步解析，不等 onLoad 再 setData。
+    // 最高优先级是 app.json 里的小程序名称——企业单独发布时改的就是那里；
+    // 后台 brand_name 是平台品牌，不能盖过它（见 utils/brand.ts startupBrandName）。
+    bootTitle: startupBrandName(),
     bootVisible: true,
     bootFade: false,
     // 自定义导航（team.json navigationStyle=custom）：状态栏高度与整体高度。
@@ -79,10 +80,10 @@ Page({
     // 已经来不及——真机仍会闪一帧静态「团队成员」。改成自绘后，标题完全由页面控制。
     statusBarHeight: 20,
     navHeight: 64,
-    // 自绘导航标题：首屏取后台已配置的 brand_name（没配就空串），
+    // 自绘导航标题：与启动遮罩同源，首屏取 app.json 的小程序名称，
     // 确认留在名片墙后换成企业简称，错误态换成中性标题。
-    // 不在这里写死「团队成员」或产品名——首帧必须由配置决定。
-    navTitle: '',
+    // 保证遮罩淡出那一刻标题不会从空跳到有，中间不闪第二帧。
+    navTitle: startupBrandName(),
     // 首屏决策态：还不知道该停在名片墙还是改道去指定员工名片。
     // 初始必须为 true——裸启动第一帧不能露出任何企业内容（导航栏、搜索框、
     // LOGO、宫格都不行），否则弱网下会一段段冒出来，最后再整页跳走路。
@@ -125,8 +126,8 @@ Page({
     // query 显式带的 companyId 最权威（扫码 / 分享链），否则用本机粘滞值。
     ;(this as any)._entryKey = entryKey
 
-    // 首帧标题已在 data 里同步读好；只有本次会话里缓存被后台刷新过才补一次。
-    const bootTitle = cachedBrandName()
+    // 首帧标题已在 data 里同步解析好；只有运行时配置与模块求值那一刻不同才补一次。
+    const bootTitle = startupBrandName()
     if (bootTitle !== this.data.bootTitle) this.setData({ bootTitle })
 
     // 兼容旧基础库 / 调试器：自定义导航被忽略时先抹掉静态标题。
@@ -165,7 +166,7 @@ Page({
     this.setData({
       statusBarHeight: sb,
       navHeight: sb + 44,
-      // 没配 brand_name 就留白；墙态拿到企业名后会被 load() 覆盖。
+      // 启动标题取 app.json 配置名；墙态拿到企业名后会被 load() 覆盖。
       navTitle: bootTitle,
     })
     if (!this.guard) this.guard = latestGuard()

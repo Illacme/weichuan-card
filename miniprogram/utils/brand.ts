@@ -14,9 +14,18 @@
 
 import { cachedSettings } from './config'
 
-// 产品名兜底。**必须与 app.json 的 navigationBarTitleText 一致**
-// （tests/brand.spec.ts 有守卫用例比对这两处）。
-export const FALLBACK_BRAND = '微传名片'
+// 小程序配置文件里的名称（app.json → window.navigationBarTitleText）。
+//
+// 企业单独发布一套小程序时，会把 app.json 的标题改成自己的名字；启动首帧必须显示
+// **这个名字**，而不是后台下发的 brand_name（平台品牌）或编译期写死的产品名。
+//
+// 小程序运行时没有读取 app.json 的 API，只能在这里镜像一份。
+// tests/brand.spec.ts 逐字比对两处，改 app.json 却忘了改这里会直接变红。
+export const CONFIGURED_APP_NAME = '微传名片'
+
+// 产品名兜底。与配置文件名称同源：企业改了 app.json 标题时，海报/分享的兜底
+// 也跟着变成它的名字，不必再维护第二个字面量。
+export const FALLBACK_BRAND = CONFIGURED_APP_NAME
 
 // 可用的企业信息子集（/api/card 的 company 与后台企业列表同形）
 export interface BrandCompany {
@@ -55,6 +64,22 @@ export function cachedBrandName(): string {
   } catch {
     return ''
   }
+}
+
+// 启动首帧标题：**配置文件名称最高优先级**。
+//
+// 为什么不能直接用 cachedBrandName()：那是后台「系统设置 → 品牌名称」，
+// 平台模式下它是**平台**品牌。企业单独发布的小程序把 app.json 标题改成了自己的
+// 公司名，首帧却被后台下发的平台名盖掉，看起来就像没改干净（用户 2026-11-25 反馈）。
+//
+// 与 resolveBrandTitle 的分工：这里管「还没拿到任何企业数据时显示什么」，
+// 只认配置文件；后者管「数据加载后海报/导航栏显示什么」，企业名优先。
+// 两个语义不要合并——合并后要么平台名顶掉企业名，要么企业名提前闪出来。
+export function startupBrandName(): string {
+  const configured = String(CONFIGURED_APP_NAME || '').trim()
+  // 配置名为空只可能是改错了（守门会拦），此时才退回后台值；
+  // 即便如此也不回落产品名，避免首屏冒出一个谁都没配过的名字。
+  return configured || cachedBrandName()
 }
 
 // 设置当前页面导航栏标题。

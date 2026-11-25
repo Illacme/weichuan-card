@@ -17,7 +17,7 @@
 
 <!-- 自定义导航：team.json 用 navigationStyle=custom，不再让微信按静态 json
      先画一帧「团队成员」。标题由 navTitle 单点控制：
-     首屏取后台已配置的 brand_name（没配则留白，内容区给中性提示）；
+     首屏与启动遮罩同源，取 app.json 的小程序名称；
      确认是名片墙后换企业简称，错误态给中性标题；改道中始终留白。 -->
 <view class="team-custom-nav wc-theme {{themeClass}}" style="padding-top: {{statusBarHeight}}px;">
   <view class="team-nav-inner">

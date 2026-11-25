@@ -112,8 +112,9 @@ describe('index 首页', () => {
   // ---- 进入参数 ----
 
   // 用户 2026-11-25 反馈：配置「直接进指定员工」时，从名片墙 reLaunch 过来
-  // 顶部会再闪一句裸的「加载中…」。首帧改为中性启动态，标题优先读 brand_name。
-  it('首屏启动标题优先读已配置的 brand_name，没配则留白', async () => {
+  // 顶部会再闪一句裸的「加载中…」。首帧改为中性启动态；
+  // 用户随后要求启动标题以 app.json 的名称为最高优先级（企业独立发布显示自己的标题）。
+  it('启动标题优先用 app.json 配置名，后台 brand_name 不能盖过它', async () => {
     wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
     mocks.request.mockReturnValueOnce(new Promise(() => {}))
 
@@ -121,7 +122,7 @@ describe('index 首页', () => {
 
     expect(p.data.loading).toBe(true)
     expect(p.data.booting).toBe(true)
-    expect(p.data.bootTitle).toBe('部署方品牌')
+    expect(p.data.bootTitle).toBe('微传名片')
     expect(p.data.bootVisible).toBe(true)
     expect(p.data.bootFade).toBe(false)
     // 决策还没落定，伪造一个 transitionend 也不能把遮罩撤掉。
@@ -129,13 +130,13 @@ describe('index 首页', () => {
     expect(p.data.bootVisible).toBe(true)
   })
 
-  it('没配 brand_name：首屏标题留白，不回落产品名', async () => {
+  it('后台没配 brand_name：启动标题仍来自配置文件，与后台状态无关', async () => {
     mocks.request.mockReturnValueOnce(new Promise(() => {}))
 
     const p = await page({ staffId: '42' })
 
     expect(p.data.loading).toBe(true)
-    expect(p.data.bootTitle).toBe('')
+    expect(p.data.bootTitle).toBe('微传名片')
     expect(p.data.bootVisible).toBe(true)
     expect(p.data.bootFade).toBe(false)
   })
