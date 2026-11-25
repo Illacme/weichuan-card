@@ -124,7 +124,11 @@ describe('存储与分发模块', () => {
     await saveButton.trigger('click')
     await flush()
     expect(api.saveGlobalBinding).toHaveBeenCalledWith(2, 3, false)
-    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('即生效'))
+    expect(
+      vi.mocked(ElMessage.success).mock.calls.some((c) =>
+        String(typeof c[0] === 'string' ? c[0] : (c[0] as { message?: string })?.message).includes('即生效'),
+      ),
+    ).toBe(true)
   })
 
   it('强制切换勾选后把 force=true 传给后端，供目标缺对象时逃生', async () => {
@@ -413,6 +417,19 @@ describe('存储与分发模块', () => {
     expect(sw).toContain(':disabled=')
     expect(profiles).toContain(`storageForm.builtin && storageForm.purpose === 'platform_primary'`)
     expect(profiles).toContain('私有桶已开启：访客地址不变')
+    // 私有桶读侧会 302 到桶域名；小程序海报取图必须把域名加进 downloadFile 白名单，
+    // 只在手册里写不算数，配置现场看不到就会静默裂图。
+    const privateNote = profiles.match(/v-else-if="!storageForm\.publicRead"[\s\S]*?<\/span>/)?.[0] ?? ''
+    expect(privateNote, '私有桶 field-note 没找到，守门空转').toBeTruthy()
+    expect(privateNote).toContain('downloadFile 合法域名')
+    expect(privateNote).toContain('海报')
+    // 绑定成功提示必须区分「新上传即生效」与「读侧首次接云 / 换桶 / 切公开读需 reload」，
+    // 否则「下一个请求即生效」的笼统承诺会让管理员以为不用重载就能看图。
+    const saved = profiles.match(/ElMessage\.success\(\{[\s\S]*?\}\)/)?.[0] ?? ''
+    expect(saved, '全局默认成功提示没找到，守门空转').toBeTruthy()
+    expect(saved).toContain('新上传下一个请求即生效')
+    expect(saved).toContain('reload nginx 回源配置')
+    expect(saved).not.toContain('全局默认已切换，下一个请求即生效')
     expect(profiles).not.toContain('当前只支持公开读桶')
     expect(profiles).not.toContain('后端会拒绝 publicRead=false')
     // 迁移入口已下线：不许文案再把运维指向不存在的「转为文件存储」按钮。

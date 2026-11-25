@@ -1014,6 +1014,9 @@ describe('企业管理 · 登录页白标码', () => {
     await flush()
     const dlg = w.find('.el-dialog')
     expect(dlg.text()).toContain('备份存储（本企业）')
+    // 企业开关单独打开并不会备份：总闸没开时的静默失败要在控件旁边说清，
+    // 否则管理员以为已备份、真出事才发现没有副本。
+    expect(dlg.text()).toContain('总闸同时开启才会真正生效')
     const sw = dlg.find('.el-switch.mirror-switch')
     expect(sw.exists()).toBe(true)
     expect(sw.attributes('data-checked')).toBe('true')

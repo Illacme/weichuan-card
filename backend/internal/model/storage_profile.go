@@ -94,7 +94,7 @@ type DeliveryProfile struct {
 	ResourceID string `gorm:"column:resource_id;size:128" json:"resourceId"`
 	Status     string `gorm:"size:16;default:unknown" json:"status"`
 	// Builtin / Purpose 与 StorageProfile 同口径：内置行由启动逻辑 ensure 创建，
-	// 不可删、不可绑定，改完需重启（平台刷新器启动期构造、运行期不可变）。
+	// 不可删、不可绑定；平台自身那行的凭据按 version 现建刷新器，保存即生效。
 	Builtin     bool       `gorm:"default:false" json:"builtin"`
 	Purpose     string     `gorm:"column:purpose;size:24" json:"purpose"`
 	LastProbeAt *time.Time `gorm:"column:last_probe_at" json:"lastProbeAt,omitempty"`

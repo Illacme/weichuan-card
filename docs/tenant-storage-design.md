@@ -184,10 +184,11 @@ overlay）播种一条 `builtin=true, purpose=platform_primary` 的档案，随�
 启动链固定为：migrate → `setting.Init` → `cfg.OverlayFromSettings` →
 `ValidateMirrorDirs` → `EnsureBuiltinLocal` / `EnsureBuiltinMirror` /
 `EnsureBuiltinPlatformPrimary` → `ApplyPlatformConfig` → `BuildPlatformUploader` →
-`profiles.SetPlatform`。平台实例仍是**启动期构造、运行期不可变**：改档案只改库，
-必须重启才会换进程里的实例，避免一个请求写新桶、下一个请求又写旧桶。构造失败时降级
-本地盘（与 `cfg.UploadDir` 同源），并回报实际驱动 `local`，让能力探测如实反映落点；
-这是「填错还能进后台改回来」的底线，不是租户侧允许的静默回退。
+`profiles.SetPlatform`。平台实例在启动期作为兜底构造，运行期由 `storageprofile.Resolver`
+按 `platform_primary` 内置档案的 `version` **现建并整份原子替换**：改连接信息（驱动 /
+桶 / 凭据 / 基址 / 公开读）保存即生效，无需重启；构造失败时保留上一份完整实例（上传器
+与基址 / 公开读同份），避免「写在新桶、归一却用新基址」脱钩，同时避免每个请求都切实例。
+目录类 `upload_dir` / `mirror_dir` 仍绑在静态路由与备份目录上，改完必须重启。
 
 安全边界：`platform_primary` 不可删除、不可绑定给租户、不可作为迁移源或目标
 （`validateBindingTargets` / `builtinProfileInvolved` 双守门）；前端绑定与迁移下拉同步过滤
@@ -217,7 +218,7 @@ resource_id / endpoint 是**字段级重复**：同一家 CDN 的同一份凭据
 
 | 对象 | 刷新凭据来自 | 生效时机 |
 | --- | --- | --- |
-| `/uploads/p/`（平台对象：素材采用、小程序码重生成） | `delivery_profiles` 里 `builtin=1, purpose=platform_primary` 的内置行 | 启动期构造刷新器，**改完重启** |
+| `/uploads/p/`（平台对象：素材采用、小程序码重生成） | `delivery_profiles` 里 `builtin=1, purpose=platform_primary` 的内置行 | 按该档案 version 现建刷新器，**保存即生效** |
 | `/uploads/t/<cid>/`，该企业绑了分发档案 | 绑定的那套分发档案 | 逐请求解析，免重启 |
 | `/uploads/t/<cid>/`，该企业没绑 | 同上，落到平台内置行（`Resolve` 继承全局 / 无绑定即平台） | 同第一行 |
 

@@ -81,3 +81,40 @@ describe('换钥口径：当前有效运维文档的现状描述', () => {
     expect(read(DOCS.design)).toContain('现状订正')
   })
 })
+
+// A1（第八十六轮）把平台连接信息 / CDN 凭据改成保存即生效；第八十八轮三端对齐时
+// 又发现 design 文档的「启动链」段与 CDN 表格仍写「启动期构造、改完重启」，
+// 是当时漏改的现状描述（不是历史轮次）。这些句子一贴回去，管理员就会明明改了
+// 却不去生效、或者反过来每次改凭据都白重启一次。只拦这几句整句，历史轮次保留。
+describe('平台实例生效口径：现状描述不回退到「改完重启」', () => {
+  const STALE_NOW = [
+    '平台实例仍是**启动期构造、运行期不可变**',
+    '必须重启才会换进程里的实例',
+    '启动期构造刷新器，**改完重启**',
+  ]
+
+  it('量尺有读数：design 文档确实含现状锚点，否则下面两条会空转', () => {
+    const design = read(DOCS.design)
+    expect(design).toContain('按 `platform_primary` 内置档案的 `version`')
+    expect(design).toContain('按该档案 version 现建刷新器')
+  })
+
+  it('现状区的旧「改完重启」话术没有回贴', () => {
+    const design = read(DOCS.design)
+    const found = STALE_NOW.filter((s) => design.includes(s))
+    expect(found, `design 现状描述又写回了旧口径：${found.join('、')}`).toEqual([])
+  })
+
+  it('设置项说明也只把重启留给目录类', () => {
+    const setting = readFileSync(resolve(REPO, 'backend/internal/setting/setting.go'), 'utf8')
+    const ptr = setting.match(/\{Key: "platform_storage_profile_id"[\s\S]*?\},/)?.[0] ?? ''
+    expect(ptr, '指针设置项没找到，守门空转').toBeTruthy()
+    expect(ptr).toContain('保存即生效、无需重启')
+    expect(ptr).not.toContain('保存后重启服务')
+
+    const settingsVue = readFileSync(resolve(REPO, 'frontend/src/views/platform/Settings.vue'), 'utf8')
+    expect(settingsVue).not.toContain('改完文件存储也要重启服务才生效')
+    expect(settingsVue).not.toContain('改完任一边都要重启服务')
+    expect(settingsVue).toContain('保存即生效、无需重启')
+  })
+})

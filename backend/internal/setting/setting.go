@@ -288,7 +288,7 @@ var registry = []def{
 	// registry，常量引用会让它整条漏掉（夹具对账随之误报「夹具凭空造了」）。
 	{Key: "platform_storage_profile_id", Group: "storage", Type: "string", Restart: true,
 		Name: "主存储配置",
-		Desc: "平台自己的文件（p/ 平台对象与未单独指定存储的企业）使用哪一套文件存储。由系统自动指向内置的「主存储」那一条，不需要手工修改；要改驱动 / 桶 / 凭据请到「存储与分发 → 文件存储」编辑那一行，保存后重启服务。"},
+		Desc: "平台自己的文件（p/ 平台对象与未单独指定存储的企业）使用哪一套文件存储。由系统自动指向内置的「主存储」那一条，不需要手工修改；要改驱动 / 桶 / 凭据 / 访问基址请到「存储与分发 → 文件存储」编辑那一行，保存即生效、无需重启（只有 upload_dir / mirror_dir 这两个目录改动才需要重启）。"},
 	{Key: "upload_dir", Group: "storage", Type: "string", Restart: true, EnvVar: "UPLOAD_DIR",
 		Name: "服务器上传目录",
 		Desc: "存储方式选 local 时，文件保存在服务器上的哪个目录（小程序码缓存也放这里）。换成其它存储方式后这一项不再起作用。改完要重启服务才生效。"},

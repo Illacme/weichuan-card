@@ -383,7 +383,7 @@
               平台自身存放的是所有企业共用的素材与小程序码，必须允许匿名读取。
             </span>
             <span v-else-if="!storageForm.publicRead" class="field-note">
-              私有桶已开启：访客地址不变，取图时由后端临时签名跳转。切换后请重新生成并 reload nginx 回源配置。
+              私有桶已开启：访客地址不变，取图时由后端临时签名跳转。切换后请重新生成并 reload nginx 回源配置；小程序还要把桶域名加入 downloadFile 合法域名，否则海报取不到图。
             </span>
           </el-form-item>
           <el-form-item>
@@ -893,7 +893,10 @@ async function saveGlobal() {
     await saveGlobalBinding(globalStorageId.value, globalDeliveryId.value || 0, forceGlobal.value)
     // 强制切换是「一次性放行」，用完立刻复位：留着勾选会让下一次切换也静默跳过核对。
     forceGlobal.value = false
-    ElMessage.success('全局默认已切换，下一个请求即生效')
+    ElMessage.success({
+      message: '全局默认已切换：新上传下一个请求即生效、走新存储。若这家企业首次接云、换了桶或域名、或切换公开读，还需重新生成并 reload nginx 回源配置，否则访客取图仍走旧地址。',
+      duration: 6000,
+    })
     await load()
   } finally {
     saving.value = false

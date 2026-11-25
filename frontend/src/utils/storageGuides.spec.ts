@@ -93,6 +93,10 @@ describe('存储模块的产品化事实表', () => {
     expect(text).toContain('/uploads/')
     expect(text).toContain('现签后跳转')
     expect(text).toContain('reload nginx')
+    // 私有桶的读侧 302 会跳到桶域名：小程序海报取图要 downloadFile 白名单，
+    // 手册早就写了但用户配置现场看不到，漏配的表现只是海报空白。
+    expect(text).toContain('downloadFile 合法域名')
+    expect(text).toContain('海报')
     expect(text).not.toContain('系统不接受私有桶')
     expect(text).not.toContain('当前固定为开启')
     expect(STORAGE_FIELD_GUIDES.bucket.note).not.toContain('只支持公开读桶')
