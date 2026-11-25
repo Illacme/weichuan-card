@@ -70,8 +70,10 @@
 > 两条路径的结构等价由 `clean_schema_parity_test.go` 在 CI 的真实 MySQL 里对账（建两个库分别跑，
 > 逐表逐列逐索引比对），生成器推演错了立刻红，不靠人肉维护。
 > 上文「迁移清单现为 62 个」是 2026-11-22 当时事实，不再参与当前口径。
-> **万一遇到已按 0001..0062 记过账的库**：守门 2 会拒绝启动（fail-closed，不静默出错），
-> 把 `WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 即可按原 62 步继续升级。
+> **万一遇到已按 0001..0062 记过账的库**：启动时**自动识别并切换到 `migrations/history/`**
+> 按原 62 步继续升级（顶层只有纯净基线、记账里的老版本都在 history 里时才切，
+> 日志打 `[MIGRATE] … 自动切换到历史增量目录`）；history 补不齐已记账版本仍 fail-closed。
+> 显式设 `WEICHUAN_MIGRATIONS_DIR` 最高优先，按运维指定的目录原样执行。
 
 ## 结论摘要
 

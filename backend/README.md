@@ -101,7 +101,7 @@ backend/
     此时记账表与目录自洽（都是旧文件），任何「两边对比」都会得出「已是最新」（事故形态：
     缺 0035 的 `subscribe_tmpl_id`，运行期才 `Unknown column`，启动日志毫无异常）。
   - 目录有、清单没有 → `[MIGRATE][WARN]`（二进制比目录旧，不阻断）。
-  - `WEICHUAN_MIGRATIONS_DIR` 显式指定目录时跳过守门（目录内容由调用方负责）。
+  - `WEICHUAN_MIGRATIONS_DIR` 显式指定目录时跳过守门、并禁用老库自动切换（目录内容由调用方负责）。
   - **新增 / 改名迁移后必须重跑** `python3 scripts/gen_migrations_manifest.py`；
     CI 的 `TestManifestMatchesMigrationsDir` 双向比对，漏跑即红。
 - **长文本列用 `MEDIUMTEXT`（0036）**：`project_cases.detail` / `biz_services.content` 存的是
@@ -659,7 +659,10 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 > ② **升级安装**：62 个历史增量在 `migrations/history/`，按 `schema_migrations` 记账应用；
 > 归档不进全新部署包，发版同步命令用 `--exclude=history/`。两者结构等价由 CI 真实 MySQL 对账。
 > 本节的 `0038` / `38` 是 2026-11-03 事故当时的排查记录，留档可追溯，不再参与当前口径。
-> 若遇已按 0001..0062 记过账的库，`WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 走原 62 步。
+> 若遇已按 0001..0062 记过账的库，启动时**自动识别并切换到 `migrations/history/`**
+> 继续按原 62 步升级（顶层只有纯净基线、记账里的老版本都在 history 里时才切，
+> 日志打 `[MIGRATE] … 自动切换到历史增量目录`）；显式设 `WEICHUAN_MIGRATIONS_DIR`
+> 仍最高优先，按运维指定的目录原样执行。
 
 非 Docker（宝塔 / systemd）升级时**只替换二进制、留着旧 `migrations/` 目录，新列就加不上**。
 程序按「可执行文件同级 migrations/」找目录，看到的全是已记账的旧文件；清单守门会打

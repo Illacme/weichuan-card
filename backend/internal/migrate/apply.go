@@ -113,6 +113,62 @@ func hasSQLFiles(dir string) bool {
 	return false
 }
 
+// sqlFilesIn 返回目录里按文件名排序的 *.sql（顶层，不含子目录）。
+func sqlFilesIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// maybeLegacyHistoryDir 处理「老库升级」：记账表里有一批已应用版本不在顶层
+// 目录（顶层只有产品初始版的纯净 0001_init.sql），但 history/ 归档里都在。
+// 这种库是较早版本装的，记账到 0001..006N，升级到本版本后顶层换了纯净基线，
+// 若直接用顶层跑，守门 2 会把「记账里有、目录里没有」判成部署包不对而拒绝启动。
+//
+// 切换判据纯集合运算、不解释 SQL：
+//  1. 显式设了 WEICHUAN_MIGRATIONS_DIR —— 尊重运维/测试指定，不切换；
+//  2. 顶层目录已覆盖全部已记账版本（全新库 done 为空也属于这种）—— 不切换；
+//  3. 否则要求 history/ 里存在所有「顶层缺失的已记账版本」，缺一个就不切
+//     （说明库比我们认识的版本还超前，交给守门 2 fail-closed），齐了才切。
+//
+// 返回切换后的目录与文件列表，以及是否发生了切换（调用方据此跳过清单守门：
+// history/ 是老清单，与当前编译的 expectedMigrations 必然不符）。
+func maybeLegacyHistoryDir(dir string, files []string, done map[string]bool) (string, []string, bool) {
+	if os.Getenv(envMigrationsDir) != "" {
+		return dir, files, false
+	}
+	missing := missingVersions(done, files)
+	if len(missing) == 0 {
+		return dir, files, false
+	}
+	histDir := filepath.Join(dir, "history")
+	histFiles, err := sqlFilesIn(histDir)
+	if err != nil || len(histFiles) == 0 {
+		return dir, files, false // 没有 history，交给守门 2 报错
+	}
+	inHist := make(map[string]bool, len(histFiles))
+	for _, f := range histFiles {
+		inHist[f] = true
+	}
+	for _, v := range missing {
+		if !inHist[v] {
+			return dir, files, false // history 也补不齐，不猜
+		}
+	}
+	log.Printf("[MIGRATE] 记账表里 %d 个已应用版本不在顶层目录、但存在于 history/，"+
+		"判定为老库升级，自动切换到历史增量目录继续应用", len(missing))
+	return histDir, histFiles, true
+}
+
 // Apply 按文件名顺序执行 migrations 目录下尚未记录的 *.sql，并记录版本。
 func Apply(db *gorm.DB) error {
 	_, err := ApplyWithReport(db)
@@ -126,16 +182,16 @@ func ApplyWithReport(db *gorm.DB) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	return applyFromDir(db, dir)
+}
+
+// applyFromDir 是 ApplyWithReport 的主体，dir 由调用方给。拆出来是为了
+// 老库自动切换的集成测试能注入临时目录（含 history 子目录），不必操纵
+// 全局 CWD 或进程级 env。生产入口只有 ApplyWithReport 一个。
+func applyFromDir(db *gorm.DB, dir string) ([]string, error) {
+	files, err := sqlFilesIn(dir)
 	if err != nil {
 		return nil, fmt.Errorf("读取 migrations 目录失败：%v", err)
-	}
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".sql" {
-			continue
-		}
-		files = append(files, e.Name())
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("migrations 目录 %s 下没有 .sql 文件", dir)
@@ -147,6 +203,10 @@ func ApplyWithReport(db *gorm.DB) ([]string, error) {
 		return nil, err
 	}
 
+	// 老库升级：记账里有老版本、顶层只有纯净基线时，自动切到 history/ 增量目录。
+	legacy := false
+	dir, files, legacy = maybeLegacyHistoryDir(dir, files, done)
+
 	// 守门 1（2026-11-03 事故的正面防线）：本版本**应该**带的迁移文件是否都在目录里。
 	//
 	// 清单 expectedMigrations 由 scripts/gen_migrations_manifest.py 从 migrations/
@@ -157,7 +217,7 @@ func ApplyWithReport(db *gorm.DB) ([]string, error) {
 	//
 	// 跳过 WEICHUAN_MIGRATIONS_DIR 场景：那是运维/测试显式指定的目录，内容由调用方
 	// 负责（测试用 0001_a.sql 这类假文件跑记账逻辑，天然与清单不符）。
-	if os.Getenv(envMigrationsDir) == "" {
+	if os.Getenv(envMigrationsDir) == "" && !legacy {
 		if missing := missingFromManifest(files); len(missing) > 0 {
 			return nil, fmt.Errorf(
 				"部署包不完整：本版本应带 %d 个迁移文件，migrations 目录（%s）缺 %d 个：%s。"+

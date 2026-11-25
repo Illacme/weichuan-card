@@ -265,7 +265,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 当前版本**已知边界**（需基建/流程配合，尚未在本仓库落地）：
 - 小程序码 / access_token 等内存缓存在多实例下不共享，水平扩展需引入 Redis。
 - **最小告警已落地**：`scripts/alert_check.sh`（healthz 就绪探活 `GET /healthz/ready` / 5xx / 备份新鲜度 / **外部拨测**（含证书临期），零依赖，crontab 每分钟运行，详见《部署与联调》「最小告警配置」）；健康检查已按**存活**（`/healthz/live`，只确认进程、不碰依赖）/ **就绪**（`/healthz/ready`，`SELECT 1` 探 DB）分离，避免 DB 抖动被误判为进程死亡而触发重启风暴，根路径 `/healthz` 只做索引页（恒 200、不判健康）；待运维侧按需扩展的是完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）；PITR 的归档脚本与回放链路均已落地并实跑验证（`docs/drill-records/2026-11-23-pitr.md`），生产仍需按小时跑归档并在真实归档上做一次演练；生产需 HTTPS 与反向代理。
-- **产品初始版：全新安装 / 升级安装两条路径**：当前版本固化为产品初始版。全新安装走 `backend/migrations/0001_init.sql`——**纯净终态 schema**（28 张表 DDL，无历史 ALTER / 数据搬迁 UPDATE / DROP），只建表；数据由**安装向导**交互写入（初始超管口令 bcrypt、JWT / PII 密钥签发、sys_setting 缺省值），三条内置文件存储由应用 `ensure` 创建——**不提供静态数据初始化 SQL**（密钥与口令不能写死在脚本里）。升级安装走 `migrations/history/` 的 62 个增量，按 `schema_migrations` 记账；两者结构等价由 CI 的真实 MySQL 对账守门（建两个库分别跑、逐表逐列逐索引比对）。详见 `docs/deploy-runbook.md` §4。
+- **产品初始版：全新安装 / 升级安装两条路径**：当前版本固化为产品初始版。全新安装走 `backend/migrations/0001_init.sql`——**纯净终态 schema**（28 张表 DDL，无历史 ALTER / 数据搬迁 UPDATE / DROP），只建表；数据由**安装向导**交互写入（初始超管口令 bcrypt、JWT / PII 密钥签发、sys_setting 缺省值），三条内置文件存储由应用 `ensure` 创建——**不提供静态数据初始化 SQL**（密钥与口令不能写死在脚本里）。升级安装走 `migrations/history/` 的 62 个增量，按 `schema_migrations` 记账；两者结构等价由 CI 的真实 MySQL 对账守门（建两个库分别跑、逐表逐列逐索引比对）。已按 0001..0062 记过账的旧库启动时自动识别并切换到 `migrations/history/` 继续升级（日志打 `[MIGRATE] … 自动切换到历史增量目录`），无需手动设 `WEICHUAN_MIGRATIONS_DIR`；详见 `docs/deploy-runbook.md` §4。
 - **数据库迁移自动补齐**：MySQL 部署在启动时按 `schema_migrations` 记账表应用未执行的迁移（幂等、只做增量、多副本用 `GET_LOCK` 串行化）；也可 `AUTO_MIGRATE=0` + `server migrate` 拆成流水线里的一步，详见 `docs/deploy-runbook.md` §4。
 - 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；其余管理端列表已服务端分页（见上）。
 
