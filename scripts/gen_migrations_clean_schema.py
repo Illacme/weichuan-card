@@ -129,9 +129,19 @@ def apply_alter(items: list[str], stmt: str) -> None:
             nm = column_name(col)
             if nm is None or nm in names:
                 raise ValueError(f"ADD COLUMN 无法解析或重复：{act[:120]}")
-            # 去掉 AFTER <col>：终态 CREATE TABLE 按原始定义顺序输出，不需要位置修饰。
-            col = re.sub(r"\s+AFTER\s+`?[a-z_][a-z0-9_]*`?\s*$", "", col, flags=re.I).strip()
-            items.append(col)
+            # AFTER <col> 决定列插入位置，直接影响 information_schema 的
+            # ordinal_position——不能当噪音丢掉，否则纯净库的列顺序与
+            # history 重放不一致（0039 的 wx_openid AFTER token_version 就栽过）。
+            after = re.search(r"\s+AFTER\s+`?([a-z_][a-z0-9_]*)`?\s*$", col, re.I)
+            if after:
+                col = col[:after.start()].strip()
+                anchor = after.group(1)
+                idx = next((i for i, item in enumerate(items) if column_name(item) == anchor), None)
+                if idx is None:
+                    raise ValueError(f"AFTER 的锚点列不存在：{anchor}（{act[:120]}）")
+                items.insert(idx + 1, col)
+            else:
+                items.append(col)
             names.add(nm)
         elif up.startswith("MODIFY COLUMN") or up.startswith("MODIFY ") or up.startswith("CHANGE COLUMN") or up.startswith("CHANGE "):
             # MODIFY/CHANGE 替换列定义但保持原位置（CHANGE 可能改名，本项目 CHANGE 无实例）。

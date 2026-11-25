@@ -49,19 +49,19 @@ CREATE TABLE IF NOT EXISTS company_infos (
 CREATE TABLE IF NOT EXISTS company_profiles (
   id               BIGINT PRIMARY KEY AUTO_INCREMENT,
   intro_text       TEXT,
+  video_source       VARCHAR(16)   NOT NULL DEFAULT '',
   video_channel_id VARCHAR(64)  NOT NULL DEFAULT '',
+  video_feed_id      VARCHAR(128)  NOT NULL DEFAULT '',
+  video_feed_token VARCHAR(512) NOT NULL DEFAULT '',
+  video_vid          VARCHAR(64)   NOT NULL DEFAULT '',
+  video_url          VARCHAR(512)  NOT NULL DEFAULT '',
+  video_backup_url VARCHAR(512) NOT NULL DEFAULT '',
+  video_fallback_url TINYINT(1)    NOT NULL DEFAULT 0,
+  video_autoplay TINYINT(1) NOT NULL DEFAULT 0,
   backup_mp4_url   VARCHAR(512) NOT NULL DEFAULT '',
   cover            VARCHAR(512) NOT NULL DEFAULT '',
   company_id BIGINT NOT NULL DEFAULT 1,
   UNIQUE INDEX uk_company_profile_company (company_id),
-  video_source       VARCHAR(16)   NOT NULL DEFAULT '',
-  video_feed_id      VARCHAR(128)  NOT NULL DEFAULT '',
-  video_vid          VARCHAR(64)   NOT NULL DEFAULT '',
-  video_url          VARCHAR(512)  NOT NULL DEFAULT '',
-  video_fallback_url TINYINT(1)    NOT NULL DEFAULT 0,
-  video_feed_token VARCHAR(512) NOT NULL DEFAULT '',
-  video_autoplay TINYINT(1) NOT NULL DEFAULT 0,
-  video_backup_url VARCHAR(512) NOT NULL DEFAULT '',
   intro_font_scale VARCHAR(16) NOT NULL DEFAULT 'large' COMMENT '简介文字字号 large=28rpx/medium=26rpx/small=24rpx',
   video_channel_play_mode VARCHAR(16) NOT NULL DEFAULT 'embed' COMMENT '视频号播放方式 embed=内嵌/redirect=跳转打开'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -135,13 +135,13 @@ CREATE TABLE IF NOT EXISTS stat_events (
   id         BIGINT PRIMARY KEY AUTO_INCREMENT,
   staff_id   BIGINT NOT NULL DEFAULT 0,
   event_type VARCHAR(16) NOT NULL DEFAULT '',
+  target_id BIGINT NOT NULL DEFAULT 0,
+  source VARCHAR(16) NOT NULL DEFAULT '',
   stat_date  DATE NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_staff_date (staff_id, stat_date),
   KEY idx_event (event_type),
-  target_id BIGINT NOT NULL DEFAULT 0,
   INDEX idx_event_target (event_type, target_id),
-  source VARCHAR(16) NOT NULL DEFAULT '',
   INDEX idx_event_source (event_type, source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -152,9 +152,9 @@ CREATE TABLE IF NOT EXISTS admins (
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_username (username),
   token_version INT NOT NULL DEFAULT 0,
+  wx_openid VARCHAR(64) NOT NULL DEFAULT '' COMMENT '微信 openid（小程序管理员免密登录，空=未绑定）',
   company_id BIGINT NOT NULL DEFAULT 0,
   INDEX idx_admin_company (company_id),
-  wx_openid VARCHAR(64) NOT NULL DEFAULT '' COMMENT '微信 openid（小程序管理员免密登录，空=未绑定）',
   INDEX idx_admins_wx_openid (wx_openid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
