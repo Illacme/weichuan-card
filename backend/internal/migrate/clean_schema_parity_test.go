@@ -47,11 +47,14 @@ func schemaOf(t *testing.T, db *gorm.DB) map[string]any {
 	t.Helper()
 	var tables []string
 	require.NoError(t, db.Raw(
-		"SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_type='BASE TABLE'",
+		"SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_type='BASE TABLE' "+
+			"AND table_name <> 'schema_migrations'",
 	).Scan(&tables).Error)
 	sort.Strings(tables)
 
 	out := map[string]any{}
+	// schema_migrations 是 migrate 工具的记账表，history 重放会建它、纯净
+	// 基线不建——它不是业务 schema，排除出比对（否则永远不一致）。
 	for _, tbl := range tables {
 		var cols []columnInfo
 		require.NoError(t, db.Raw(
