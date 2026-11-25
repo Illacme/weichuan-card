@@ -32,6 +32,27 @@ func TestEnforceLicenseExpiredDegradesToReadOnly(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/foo", nil))
 	require.Equal(t, 200, w.Code)
 
+	// 导出类 GET 故意放行：客户有权带走自己的数据，只读 ≠ 不能看 / 不能拿。
+	// 这是产品决策，不是漏拦——谁把它改成拦截都会侵犯数据可携带权。
+	r.GET("/api/admin/employees/export", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/employees/export", nil))
+	require.Equal(t, 200, w.Code)
+	require.NotContains(t, w.Body.String(), "\"code\":2")
+
+	// 名读实写的 GET 必须拦：预签名直传端点返回的是上传 PUT URL，
+	// 拿到就能覆盖桶里的对象。只按 HTTP 方法判断会让「后台已只读」形同虚设。
+	r.GET("/api/admin/upload/presign", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/upload/presign", nil))
+	require.Contains(t, w.Body.String(), "\"code\":2")
+
+	// 员工侧预签名同样要拦（两条注册路由都要点名，漏一条就留了口子）。
+	r.GET("/api/employee/upload/presign", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/employee/upload/presign", nil))
+	require.Contains(t, w.Body.String(), "\"code\":2")
+
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/foo", nil))
 	require.Equal(t, 200, w.Code)

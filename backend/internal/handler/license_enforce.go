@@ -34,10 +34,25 @@ func licenseExpiryAllowed(path string) bool {
 	return false
 }
 
-func isMutating(method string) bool {
-	switch method {
+// isMutating 判断一次请求是否会「改内容」。默认按 HTTP 方法判断；
+// 但有一类 GET 名读实写——预签名直传端点发的虽是 GET，返回的却是**上传 PUT URL**，
+// 拿到它就能往桶里覆盖对象。只读降级若只按方法放行，授权到期后客户仍能换图，
+// 「后台已只读」的承诺当场作废。所以这里按注册路由精确点名这类 GET。
+//
+// 反过来，导出 / 下载类 GET（员工 CSV、统计 CSV、备份包、素材图）**故意放行**：
+// 客户带走自己的数据是数据可携带权，只读的语义是「不能改」而不是「不能拿走」。
+// 拦导出只有合规风险、没有商业收益——产品决策是保留，别当成 bug 修掉。
+var licenseMutatingGetRoutes = map[string]bool{
+	"/api/admin/upload/presign":    true,
+	"/api/employee/upload/presign": true,
+}
+
+func isMutating(c *gin.Context) bool {
+	switch c.Request.Method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
+	case http.MethodGet:
+		return licenseMutatingGetRoutes[c.FullPath()]
 	}
 	return false
 }
@@ -90,12 +105,12 @@ func EnforceLicense(db *gorm.DB) gin.HandlerFunc {
 		// 一行，ResolveFor 每次请求都查库，立刻恢复，重启纯属白折腾一次生产服务；
 		// 而私有部署恰恰相反，不换 license.key 并重启就永远只读。两种形态的恢复
 		// 路径完全不同，所以按模式分别拼（见 license.RenewHint）。
-		if ent != nil && ent.IsExpired() && isMutating(c.Request.Method) && !licenseExpiryAllowed(c.Request.URL.Path) {
+		if ent != nil && ent.IsExpired() && isMutating(c) && !licenseExpiryAllowed(c.Request.URL.Path) {
 			st := license.StatusOf(ent, time.Now())
 			log.Printf("[LICENSE] 授权已过期（%s），拒绝写操作（只读降级）：%s %s",
 				st.ExpiresAtDate(), c.Request.Method, c.Request.URL.Path)
 			c.AbortWithStatusJSON(http.StatusOK, gin.H{"code": 2, "msg": fmt.Sprintf(
-				"授权已于 %s 到期，系统已切换为只读模式（可登录查看，不能修改）。%s。",
+				"授权已于 %s 到期，系统已切换为只读模式（可登录查看、导出带走数据，不能修改内容或上传新文件）。%s。",
 				st.ExpiresAtDate(), license.RenewHint(license.PrivateMode()))})
 			return
 		}

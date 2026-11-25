@@ -105,6 +105,35 @@ describe('平台实例生效口径：现状描述不回退到「改完重启」'
     expect(found, `design 现状描述又写回了旧口径：${found.join('、')}`).toEqual([])
   })
 
+  it('产品决策：到期只读 = 不能改但能带走数据，且名读实写的预签名仍要拦', () => {
+    // 只读拦导出只有合规风险、没有商业收益；导出放行不是漏拦。
+    // GET 预签名直传返回上传 URL，拿到就能覆盖对象——不点名它会让「已只读」形同虚设。
+    const enforce = readFileSync(resolve(REPO, 'backend/internal/handler/license_enforce.go'), 'utf8')
+    expect(enforce).toContain('"/api/admin/upload/presign"')
+    expect(enforce).toContain('"/api/employee/upload/presign"')
+    expect(enforce).toContain('数据可携带权')
+
+    const consequence = readFileSync(resolve(REPO, 'backend/internal/license/expiry.go'), 'utf8')
+    expect(consequence).toContain('导出带走自己的数据')
+
+    for (const name of ['checklist', 'runbook'] as const) {
+      const src = read(DOCS[name])
+      expect(src, `${name} 丢了「导出放行」的产品决策`).toContain('导出')
+      expect(src, `${name} 没写明预签名是名读实写`).toContain('预签名')
+    }
+  })
+
+  it('授权回退：无行回退全局是有意兼容，不许改成 fail-closed', () => {
+    // 存量企业升级后没有 tenant_license 行；改成「查不到就拒绝」会让整批存量
+    // 客户上线即事故。前端企业列表也有「未配置授权 = 不受限制」提示。
+    const resolver = readFileSync(resolve(REPO, 'backend/internal/license/tenant_db.go'), 'utf8')
+    expect(resolver).toContain('上线即事故')
+    expect(resolver).toContain('return Current()')
+
+    const companies = readFileSync(resolve(REPO, 'frontend/src/views/Companies.vue'), 'utf8')
+    expect(companies).toContain('未配置授权 = 不受席位与到期限制')
+  })
+
   it('设置项说明也只把重启留给目录类', () => {
     const setting = readFileSync(resolve(REPO, 'backend/internal/setting/setting.go'), 'utf8')
     const ptr = setting.match(/\{Key: "platform_storage_profile_id"[\s\S]*?\},/)?.[0] ?? ''
