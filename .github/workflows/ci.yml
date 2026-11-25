@@ -104,6 +104,23 @@ jobs:
       - name: 真文件对账
         run: node scripts/check_audit_labels.mjs
 
+  # ───────── 小程序启动标题：app.json 唯一入口 ↔ 运行时镜像 ─────────
+  # 小程序运行时读不到 app.json，brand.ts 里必须镜像一份常量。若让企业维护两处，
+  # 第一件事就是忘同步——启动画面顶着平台名（2026-11-25 真实反馈）。
+  # 现在以 app.json 为唯一入口，脚本负责生成镜像；这里先 --selftest 证明守门会红，
+  # 再 --check 对真文件。脚本零依赖（只用 Python 标准库），与 pre-push 同款。
+  mp-app-name:
+    name: 小程序启动标题同步
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 守门自检（证明会红）
+        run: python3 scripts/sync_mp_app_name.py --selftest
+
+      - name: 真文件对账（app.json ↔ brand.ts）
+        run: python3 scripts/sync_mp_app_name.py --check
+
   # ───────── OpenAPI 契约守门（新增接口与文档必须同步） ─────────
   # 之前 openapi.yaml 没有任何通用校验，路径数从 106 涨到 108 也没人发现。
   # 用 venv 装 PyYAML：真解析而不是数正则，避免「文档坏成空文件也全绿」；

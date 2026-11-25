@@ -35,6 +35,12 @@ const mocks = vi.hoisted(() => ({
 // 不把信号对象的具体形状焊死在测试里。
 const SIGNAL = expect.objectContaining({ aborted: expect.any(Boolean) })
 
+// 启动标题以 app.json 为唯一真值源。测试不能硬编码「微传名片」——
+// 企业独立发布时改了 app.json，硬编码期望会假红，又变成「要改两处」。
+const CONFIGURED_APP_NAME: string = JSON.parse(
+  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../app.json'), 'utf8')
+).window.navigationBarTitleText
+
 vi.mock('../utils/request', () => ({
   request: mocks.request,
   assetUrl: (u: string) =>
@@ -120,7 +126,7 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.title).toBe('')
     expect(p.data.logo).toBe('')
     // 自绘导航首屏与遮罩同源：取 app.json 的小程序名称，不读后台 brand_name
-    expect(p.data.navTitle).toBe('微传名片')
+    expect(p.data.navTitle).toBe(CONFIGURED_APP_NAME)
     // 自定义导航按设备状态栏避让（测试桩返回 44）
     expect(p.data.statusBarHeight).toBe(44)
     expect(p.data.navHeight).toBe(88)
@@ -135,8 +141,8 @@ describe('名片墙 · 状态与数据', () => {
     const p = await page()
 
     // 首帧同步解析，不额外请求；启动遮罩与自绘导航都必须是配置名。
-    expect(p.data.bootTitle).toBe('微传名片')
-    expect(p.data.navTitle).toBe('微传名片')
+    expect(p.data.bootTitle).toBe(CONFIGURED_APP_NAME)
+    expect(p.data.navTitle).toBe(CONFIGURED_APP_NAME)
     expect(p.data.booting).toBe(true)
 
     resolveReq(teamResp())
@@ -152,7 +158,7 @@ describe('名片墙 · 状态与数据', () => {
     )
     const p = await page()
 
-    expect(p.data.title).toBe('微传名片')
+    expect(p.data.title).toBe(CONFIGURED_APP_NAME)
     expect(p.data.logo).toBe('')
   })
 
@@ -407,7 +413,7 @@ describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () =
     // 跳转中整页不渲染，否则会先闪一下名片墙（含那个漏过 redirecting 判断的搜索框）
     expect(p.data.redirecting).toBe(true)
     expect(p.data.booting).toBe(true)
-    expect(p.data.bootTitle).toBe('微传名片')
+    expect(p.data.bootTitle).toBe(CONFIGURED_APP_NAME)
     // 性能快路径：这一页注定要被 reLaunch 掉，量状态栏 / 绑主题都是白花钱；
     // 保留初值 20 / '' 就证明这两步确实被跳过了。
     expect(p.data.statusBarHeight).toBe(20)

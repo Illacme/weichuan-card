@@ -829,10 +829,22 @@ Wave2 必须等 Wave1 回来才知道图片地址，于是用户的实际等待 
 | 启动遮罩（首帧） | `app.json → window.navigationBarTitleText` | `utils/brand.ts` 的 `startupBrandName()` 解析；team / index 两页的 `bootTitle` 与名片墙自绘导航首屏都用它 |
 | 数据加载后 | 企业简称 → 企业全称 → `brand_name` → 产品名 | `resolveBrandTitle()` 语义不变：海报是替企业做的物料，平台名不能顶掉企业名 |
 
-改独立版标题要**两处一起改**：`app.json` 的 `navigationBarTitleText` 和 `utils/brand.ts`
-的 `CONFIGURED_APP_NAME`。小程序运行时没有读取 `app.json` 的 API，后者是前者的镜像；
-只改一处会被 `tests/brand.spec.ts` 的逐字比对守门拦下。`FALLBACK_BRAND` 与它同源，
-海报/分享兜底会跟着一起变，不需要维护第三个字面量。
+改独立版标题**只需改一处**：`app.json` 的 `navigationBarTitleText`，然后跑一次同步脚本：
+
+```bash
+# 从仓库根目录运行
+python3 scripts/sync_mp_app_name.py
+```
+
+小程序运行时没有读取 `app.json` 的 API，`utils/brand.ts` 的 `CONFIGURED_APP_NAME`
+是它的镜像，由脚本从 app.json 自动生成——**不要手改 brand.ts**。
+
+- 漏跑同步会被两层守门拦下：本地 `.githooks/pre-push` 与 CI 的
+  「小程序启动标题同步」job 都先跑 `--selftest`（喂坏样本证明守门会红）再跑 `--check`。
+  真不同步时提示你跑上面的同步脚本，改完 brand.ts 一起提交即可。
+- 测试也不硬编码产品名：启动标题期望值动态读 app.json，企业改标题不会让测试假红。
+- `FALLBACK_BRAND` 与 `CONFIGURED_APP_NAME` 同源，海报/分享兜底会跟着一起变，
+  不需要维护第三个字面量。
 
 ## 运行
 1. 微信开发者工具 → 导入项目 → 选择 `miniprogram/` 目录（appid 可用测试号）。

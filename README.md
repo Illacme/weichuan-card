@@ -168,13 +168,14 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 ## 测试与 CI
 
-CI 见 `.github/workflows/ci.yml`，**14 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
+CI 见 `.github/workflows/ci.yml`，**15 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
 
 - **后端 (Go / SQLite)**：`go build` + `go vet` + `go test ./...`，**默认零外部依赖**，用 SQLite 跑完整接口流程、上传内容嗅探与 MinIO/OSS 驱动的 httptest 假服务测试。
 - **后端 (Go / MySQL parity)**：GitHub Actions 自带 `mysql:8.0` service 容器，连真 MySQL 跑「连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支」；DSN 写在 job 内，**无需**仓库变量。每步额外断言用例确实 `--- PASS`，防止 `t.Skip` 让 job 绿着跳过。
 - **后端 lint (golangci-lint)**：固定 v2.15.0，只开五条「静默失败」类规则。
 - **前端 (Vue)**：`npm ci` + eslint + `npm run build` + `npm test`（Vitest；含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
 - **前端类型检查 (vue-tsc)**：`vue-tsc --noEmit`，历史 4 个 `@wangeditor/*` 类型错误已修复，**现为阻塞门禁**。
+- **小程序启动标题同步**：`python3 scripts/sync_mp_app_name.py --selftest` + `--check`。app.json 是启动标题的唯一入口，运行时常量由脚本生成；企业改标题只改 app.json 再跑一次同步脚本即可，漏同步直接红。
 - **第三方许可清单（过期检查）**：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md` 是否与当前依赖一致。清单是随专有许可一起交付的声明，依赖一变而清单没重生成，交付的就是与实际不符的声明——这种脱节没人会记得手工核对，交给 CI 挡住。改了依赖后跑一次生成脚本并提交即可（比对会忽略「生成日期」行，不会每天误报）。
 - **备份链自检 / 发版脚本自检**：两个平时不跑、坏了也没人察觉的脚本，由 CI 常驻验证（恢复逐字节一致、非交互口令、迁移清单完整性）。
 - **密钥扫描 (gitleaks) / 依赖漏洞扫描 / 镜像构建**：真实凭据增量扫描、运行时依赖审计（govulncheck + `npm audit --omit=dev`）、两个 Dockerfile 真 build。
@@ -190,8 +191,9 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 
 它按改动范围挑着跑，不做无谓的等待：涉及 `frontend/` 才跑类型检查，涉及依赖文件
 （`backend/go.mod` / `go.sum`、`frontend/package.json` / `package-lock.json`）才核对第三方许可清单，
-纯后端或文档提交直接放行；还没装依赖时会提示而不阻断。分别用 `SKIP_TYPECHECK=1` / `SKIP_NOTICES=1 git push`
-跳过，或对单次推送 `git push --no-verify`。
+涉及 `miniprogram/app.json` 或 `miniprogram/utils/brand.ts` 才核对启动标题同步，
+纯后端或文档提交直接放行；还没装依赖时会提示而不阻断。分别用 `SKIP_TYPECHECK=1` /
+`SKIP_NOTICES=1` / `SKIP_MP_NAME=1 git push` 跳过，或对单次推送 `git push --no-verify`。
 
 > 分支保护与协作规范见 `docs/branch-protection.md`；接口契约见 `docs/openapi.yaml`（OpenAPI 3.0.3）。
 

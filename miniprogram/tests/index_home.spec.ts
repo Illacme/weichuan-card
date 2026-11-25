@@ -24,6 +24,12 @@ const mocks = vi.hoisted(() => ({
   bindScene: vi.fn(),
 }))
 
+// 启动标题以 app.json 为唯一真值源；测试不硬编码「微传名片」，
+// 否则企业改了 app.json 标题，测试会假红，又退回「要改两处」。
+const CONFIGURED_APP_NAME: string = JSON.parse(
+  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../app.json'), 'utf8')
+).window.navigationBarTitleText
+
 vi.mock('../utils/request', () => ({
   request: mocks.request,
   assetUrl: (u: string) =>
@@ -122,7 +128,7 @@ describe('index 首页', () => {
 
     expect(p.data.loading).toBe(true)
     expect(p.data.booting).toBe(true)
-    expect(p.data.bootTitle).toBe('微传名片')
+    expect(p.data.bootTitle).toBe(CONFIGURED_APP_NAME)
     expect(p.data.bootVisible).toBe(true)
     expect(p.data.bootFade).toBe(false)
     // 决策还没落定，伪造一个 transitionend 也不能把遮罩撤掉。
@@ -136,7 +142,7 @@ describe('index 首页', () => {
     const p = await page({ staffId: '42' })
 
     expect(p.data.loading).toBe(true)
-    expect(p.data.bootTitle).toBe('微传名片')
+    expect(p.data.bootTitle).toBe(CONFIGURED_APP_NAME)
     expect(p.data.bootVisible).toBe(true)
     expect(p.data.bootFade).toBe(false)
   })
@@ -589,7 +595,7 @@ describe('index 首页', () => {
     const p = await page({ staffId: '42' })
 
     // 兜底必须是产品名：一套代码多租户，写死某个客户名对第二个客户就是错的
-    expect(p.onShareAppMessage().title).toBe('微传名片')
+    expect(p.onShareAppMessage().title).toBe(CONFIGURED_APP_NAME)
     expect(p.onShareAppMessage().path).toBe('/pages/index/index?staffId=42')
   })
 

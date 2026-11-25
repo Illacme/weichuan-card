@@ -20,7 +20,8 @@ import { cachedSettings } from './config'
 // **这个名字**，而不是后台下发的 brand_name（平台品牌）或编译期写死的产品名。
 //
 // 小程序运行时没有读取 app.json 的 API，只能在这里镜像一份。
-// tests/brand.spec.ts 逐字比对两处，改 app.json 却忘了改这里会直接变红。
+// 本行由 scripts/sync_mp_app_name.py 从 app.json 生成——改标题只改 app.json，
+// 然后跑同步脚本（pre-push 与 CI 都有守门）。不要手改这一行。
 export const CONFIGURED_APP_NAME = '微传名片'
 
 // 产品名兜底。与配置文件名称同源：企业改了 app.json 标题时，海报/分享的兜底

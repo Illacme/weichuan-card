@@ -16,6 +16,7 @@
 #     SKIP_TYPECHECK=1 git push        # 只跳过类型检查
 #     SKIP_NOTICES=1  git push         # 只跳过许可清单检查
 #     SKIP_AUDIT_LABELS=1 git push     # 只跳过审计动作中文名对账
+#     SKIP_MP_NAME=1   git push      # 只跳过小程序启动标题同步检查
 #     git push --no-verify             # 跳过全部钩子
 #
 # 设计取舍：
@@ -28,6 +29,9 @@
 #     几秒出结论，先于类型检查跑，让漏同步尽早暴露。
 #   · 还没装依赖（新克隆）时只提示不阻断，避免本地环境问题挡住推送；
 #     真正的门禁仍在 CI，钩子只是提前。
+#   · 小程序启动标题：app.json 是唯一入口，运行时常量由脚本生成。改了 app.json
+#     或 brand.ts 时先跑 --selftest（防守门空转）再跑 --check（防漏同步），
+#     只依赖 python3，几秒出结论，和 CI 的对应 job 用同一脚本。
 #   · 与 CI 用同一条命令（node 直调 vue-tsc，不经 npx），保证两边结论一致。
 #   · vue-tsc 显式给 4G 堆：本机默认堆跑全量类型检查会被系统 SIGKILL（exit 137，
 #     2026-11-15 推送时实际踩到，当时只能靠外部 NODE_OPTIONS 救场）。CI 的
@@ -39,9 +43,11 @@ ZERO=0000000000000000000000000000000000000000
 need_check=0
 need_notices=0
 need_audit=0
+need_mpname=0
 skip_typecheck="${SKIP_TYPECHECK:-0}"
 skip_notices="${SKIP_NOTICES:-0}"
 skip_audit="${SKIP_AUDIT_LABELS:-0}"
+skip_mpname="${SKIP_MP_NAME:-0}"
 
 # git 通过标准输入给出每个待推的 ref：<local ref> <local sha> <remote ref> <remote sha>
 while read -r _local_ref local_sha _remote_ref remote_sha; do
@@ -69,9 +75,12 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   case "$changed" in
     *backend/internal/audit/audit.go*|*frontend/src/api/audit.ts*) need_audit=1 ;;
   esac
+  case "$changed" in
+    *miniprogram/app.json*|*miniprogram/utils/brand.ts*) need_mpname=1 ;;
+  esac
 done
 
-[ "$need_check" = "0" ] && [ "$need_notices" = "0" ] && [ "$need_audit" = "0" ] && exit 0
+[ "$need_check" = "0" ] && [ "$need_notices" = "0" ] && [ "$need_audit" = "0" ] && [ "$need_mpname" = "0" ] && exit 0
 
 # ── 1. 后端审计动作 ↔ 前端中文名 跨端对账（快，先于类型检查） ───────────
 # 只在动到审计埋点（backend/internal/audit/audit.go）或前端中文名表
@@ -118,7 +127,49 @@ MSG
   fi
 fi
 
-# ── 2. 第三方许可清单（快，先跑） ──────────────────────────────────────
+# ── 2. 小程序启动标题：app.json ↔ brand.ts 镜像同步 ──────────────────
+# app.json 是唯一入口，运行时常量由脚本从它生成。改了标题却忘了同步，启动画面
+# 就会顶着平台名（用户 2026-11-25 反馈「改两处太麻烦」的真实事故）。
+# 先跑 --selftest 证明守门不是恒绿，再跑 --check 校验真文件，与 CI 同款。
+if [ "$need_mpname" = "1" ]; then
+  if [ "$skip_mpname" = "1" ]; then
+    echo "[pre-push] 已按 SKIP_MP_NAME=1 跳过小程序启动标题同步检查"
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "[pre-push] 本机没有 python3，跳过小程序启动标题同步检查（CI 仍会拦）。"
+  else
+    echo "[pre-push] 检测到小程序标题配置变更，正在核对镜像常量……"
+    if ! python3 scripts/sync_mp_app_name.py --selftest; then
+      cat <<'MSG'
+
+[pre-push] 小程序启动标题守门自检失败：坏样本没被判红，说明这道守门已空转。
+           请检查 scripts/sync_mp_app_name.py 的抓取规则，修好后再推送。
+
+MSG
+      exit 1
+    fi
+    if python3 scripts/sync_mp_app_name.py --check; then
+      echo "[pre-push] 小程序启动标题与运行时常量一致。"
+    else
+      cat <<'MSG'
+
+[pre-push] 小程序启动标题不同步，已阻止推送。
+
+  · app.json 的 window.navigationBarTitleText 与 utils/brand.ts 的
+    CONFIGURED_APP_NAME 不一致。企业只改 app.json 一处即可，镜像常量由脚本生成，
+    不要手改 brand.ts。修复（从仓库根目录运行）：
+        python3 scripts/sync_mp_app_name.py
+    然后把同步后的 brand.ts 一起提交。
+  · 确实是草稿分支要备份，可以跳过：
+        SKIP_MP_NAME=1 git push
+        git push --no-verify
+
+MSG
+      exit 1
+    fi
+  fi
+fi
+
+# ── 3. 第三方许可清单（快，先跑） ──────────────────────────────────────
 if [ "$need_notices" = "1" ]; then
   if [ "$skip_notices" = "1" ]; then
     echo "[pre-push] 已按 SKIP_NOTICES=1 跳过第三方许可清单检查"
@@ -151,7 +202,7 @@ MSG
   fi
 fi
 
-# ── 3. 前端类型检查 ───────────────────────────────────────────────────
+# ── 4. 前端类型检查 ───────────────────────────────────────────────────
 [ "$need_check" = "0" ] && exit 0
 
 if [ "$skip_typecheck" = "1" ]; then
