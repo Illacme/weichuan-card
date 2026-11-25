@@ -3,12 +3,35 @@
      各状态必须分开画，混在一起会让访客误以为系统坏了：
        redirecting（正按缓存的默认入口改道）/ loading / error（网络）/
        unavailable（企业不存在或停用）/ empty（公司还没人）/ 搜不到 -->
+<!-- 启动遮罩：与名片页共用 app.wxss 的 .wc-boot，reLaunch 时两帧像素一致。
+     booting 为决策态（还在判断去墙还是去名片页）；决策完成后 bootFade 让
+     opacity 淡出，transitionend 再撤掉节点，避免「加载文字直接消失」的硬切。 -->
+<view class="wc-boot wc-theme {{themeClass}} {{bootFade ? 'wc-boot-off' : ''}}" wx:if="{{bootVisible}}"
+  bindtransitionend="onBootFadeEnd" catchtouchmove="noop">
+  <view class="wc-boot-inner">
+    <view class="wc-boot-title" wx:if="{{bootTitle}}">{{bootTitle}}</view>
+    <view class="wc-boot-spinner"></view>
+    <view class="wc-boot-text">正在打开…</view>
+  </view>
+</view>
+
+<!-- 自定义导航：team.json 用 navigationStyle=custom，不再让微信按静态 json
+     先画一帧「团队成员」。标题由 navTitle 单点控制：
+     首屏取后台已配置的 brand_name（没配则留白，内容区给中性提示）；
+     确认是名片墙后换企业简称，错误态给中性标题；改道中始终留白。 -->
+<view class="team-custom-nav wc-theme {{themeClass}}" style="padding-top: {{statusBarHeight}}px;">
+  <view class="team-nav-inner">
+    <view class="team-nav-title" wx:if="{{!redirecting && navTitle}}">{{navTitle}}</view>
+  </view>
+</view>
+<view class="team-nav-spacer" style="height: {{navHeight}}px;"></view>
+
 <!-- 抬头：企业信息回来之前**整块不渲染**。
      原来这里不管有没有数据都画，而 title 的初始值是产品名「微传名片」——
      企业配了「默认进某位员工名片」时这一页只是中转站，弱网下要停 1~3 秒，
      访客看到的就是「微传名片 + 加载中」：自家小程序顶着平台名，像没配置好
      （2026-11-04 反馈）。title 为空时连 LOGO 也没有，整块收掉最干净。 -->
-<view class="team-hero wc-theme {{themeClass}}" wx:if="{{!redirecting && (title || logo)}}">
+<view class="team-hero wc-theme {{themeClass}}" wx:if="{{!booting && !redirecting && (title || logo)}}">
   <!-- 企业 LOGO 挂了 binderror：LOGO 丢了就整块收掉（留白），
        否则页头正中会挂一块裂图，比没有 LOGO 更难看 -->
   <image class="team-logo" src="{{logo}}" mode="aspectFit" wx:if="{{logo && logoFail !== logo}}"
@@ -24,7 +47,7 @@
      并不能帮上忙，反而诱使访客去点（2026-11-04）。
      输入不发请求，按「搜索」键才查——每敲一个字打一次接口既费流量，
      也会让宫格不停闪烁。 -->
-<view class="team-search wc-theme {{themeClass}}" wx:if="{{!unavailable && !loading}}">
+<view class="team-search wc-theme {{themeClass}}" wx:if="{{!booting && !redirecting && !unavailable && !loading}}">
   <input
     class="team-search-input"
     value="{{keyword}}"
@@ -37,7 +60,11 @@
   <view class="team-search-clear" wx:if="{{keyword}}" catchtap="onClearSearch">✕</view>
 </view>
 
-<view wx:if="{{!redirecting && loading}}" class="loading wc-theme {{themeClass}}">加载中…</view>
+<!-- 页内重载提示：首帧已由上面的全屏遮罩接管，这里只服务「搜索 / 下拉刷新」
+     这类页面已经在展示内容、但新一轮请求在途的场景。加 !booting 保证启动期
+     绝不会再冒出第二句「加载中…」；决策完成后同一帧 loading 已落 false，
+     所以正常进入也不会看到它闪一下。 -->
+<view wx:if="{{!booting && !redirecting && loading}}" class="loading wc-theme {{themeClass}}">加载中…</view>
 
 <view wx:elif="{{error}}" class="error-box wc-theme {{themeClass}}">
   <view class="error-text">网络异常，加载失败</view>

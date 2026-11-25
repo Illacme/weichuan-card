@@ -15,6 +15,9 @@
 //  4. 首屏只拉一页 60，hasMore 以后端为准（不是用 total - list.length 推）；
 //  5. 输入时不发请求，只有确认搜索才查；搜索态下不走「默认进某个员工」的改道。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   installPageCapture,
   capturedPage,
@@ -91,8 +94,53 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.list[0].avatar).toBe('https://cdn.test/uploads/a1.png')
     expect(p.data.logo).toBe('https://cdn.test/uploads/logo.png')
     expect(p.data.loading).toBe(false)
+    expect(p.data.booting).toBe(false)
+    // 数据齐了才开始淡出；节点等 transitionend 才撤，不能硬切。
+    expect(p.data.bootFade).toBe(true)
+    expect(p.data.bootVisible).toBe(true)
+    p.onBootFadeEnd()
+    expect(p.data.bootVisible).toBe(false)
+    // 自绘导航标题跟随企业简称
+    expect(p.data.navTitle).toBe('朗汇机电')
     // 导航栏标题跟随企业简称
     expect(wxStub.setNavigationBarTitle).toHaveBeenCalledWith({ title: '朗汇机电' })
+  })
+
+  // 2026-11-25 用户反馈：弱网下先看到导航栏「团队成员」，再逐段冒出搜索框、
+  // LOGO、宫格；配了「直接进指定员工」时最后还整页刷新成名片。
+  // 首帧必须先抹掉静态标题、并停在 neutral 启动态，等后端决定落点。
+  it('首屏决策中：导航栏先清空，企业内容一律不落 data', async () => {
+    mocks.request.mockReturnValueOnce(new Promise(() => {}))
+    const p = await page()
+
+    expect(wxStub.setNavigationBarTitle).toHaveBeenCalledWith({ title: '' })
+    expect(p.data.booting).toBe(true)
+    expect(p.data.loading).toBe(true)
+    expect(p.data.list).toEqual([])
+    expect(p.data.title).toBe('')
+    expect(p.data.logo).toBe('')
+    expect(p.data.navTitle).toBe('') // 没配 brand_name 就留白，不回落产品名
+    // 自定义导航按设备状态栏避让（测试桩返回 44）
+    expect(p.data.statusBarHeight).toBe(44)
+    expect(p.data.navHeight).toBe(88)
+  })
+
+  // 用户 2026-11-25 追问：首屏标题能否优先读小程序配置？
+  // 项目里现成的配置项是后台「系统设置 → 品牌名称」= brand_name。
+  it('首屏标题优先用已配置的 brand_name，墙态再换成企业简称', async () => {
+    wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
+    let resolveReq: any
+    mocks.request.mockReturnValueOnce(new Promise((r) => { resolveReq = r }))
+    const p = await page()
+
+    // 首帧同步读缓存，不额外请求
+    expect(p.data.navTitle).toBe('部署方品牌')
+    expect(p.data.booting).toBe(true)
+
+    resolveReq(teamResp())
+    await flush()
+    expect(p.data.navTitle).toBe('朗汇机电')
+    expect(p.data.booting).toBe(false)
   })
 
   it('企业信息还没填：标题回落品牌名，不显示空标题', async () => {
@@ -140,6 +188,8 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.unavailable).toBe(true)
     expect(p.data.error).toBe(false)
     expect(p.data.loading).toBe(false)
+    expect(p.data.booting).toBe(false)
+    expect(p.data.bootFade).toBe(true)
   })
 
   it('网络异常：走 error 且有重试入口', async () => {
@@ -149,6 +199,8 @@ describe('名片墙 · 状态与数据', () => {
     expect(p.data.error).toBe(true)
     expect(p.data.unavailable).toBe(false)
     expect(p.data.loading).toBe(false)
+    expect(p.data.booting).toBe(false) // 决策已落在错误态，不能被启动遮罩盖住
+    expect(p.data.bootFade).toBe(true)
     // 重试必须复用同一个 load（不是把失败态永久钉住）
     mocks.request.mockResolvedValueOnce(teamResp())
     await p.load()
@@ -306,6 +358,10 @@ describe('名片墙 · 企业配置的默认入口', () => {
     })
     // 关键：不能先把名片墙画出来再跳——那样访客会看到宫格闪一下
     expect(p.data.list).toEqual([])
+    // 决策态保持 true：启动提示一直盖到名片页接手，绝不放出墙的任一段
+    expect(p.data.booting).toBe(true)
+    expect(p.data.bootFade).toBe(false)
+    expect(p.data.bootVisible).toBe(true)
   })
 
   it('entry.mode=staff 但 staffId 为 0：按名片墙处理（后端已回落，端上再兜一层）', async () => {
@@ -335,6 +391,8 @@ describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () =
 
   it('缓存还在有效期内：直接跳名片页，一次请求都不发', async () => {
     wxStub.setStorageSync(cacheKey, JSON.stringify({ staffId: 11, at: Date.now() }))
+    // 首帧标题必须在模块求值阶段就拿到，不能等 onLoad 再 setData。
+    wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
 
     const p = await page()
 
@@ -342,8 +400,17 @@ describe('名片墙 · 默认入口的本地缓存（2026-11-04 提速）', () =
     expect(wxStub.reLaunch).toHaveBeenCalledWith({
       url: '/pages/index/index?staffId=11&fromEntryCache=1',
     })
-    // 跳转中整页不渲染，否则会先闪一下名片墙
+    // 跳转中整页不渲染，否则会先闪一下名片墙（含那个漏过 redirecting 判断的搜索框）
     expect(p.data.redirecting).toBe(true)
+    expect(p.data.booting).toBe(true)
+    expect(p.data.bootTitle).toBe('部署方品牌')
+    // 性能快路径：这一页注定要被 reLaunch 掉，量状态栏 / 绑主题都是白花钱；
+    // 保留初值 20 / '' 就证明这两步确实被跳过了。
+    expect(p.data.statusBarHeight).toBe(20)
+    expect(p.data.themeClass).toBe('')
+    // 转场期间遮罩保持不透明，由目标页的同款首帧接手。
+    expect(p.data.bootVisible).toBe(true)
+    expect(p.data.bootFade).toBe(false)
   })
 
   // fromEntryCache=1 是给名片页的自愈线索：那位员工要是已经停用了，
@@ -492,5 +559,39 @@ describe('名片墙 · 点人进名片', () => {
     const share = p.onShareAppMessage()
     expect(share.path).toBe('/pages/team/team')
     expect(share.title).toBe('朗汇机电')
+  })
+})
+
+describe('名片墙 · 首屏渲染守门', () => {
+  const PAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../pages/team')
+  const WXML = readFileSync(resolve(PAGE_DIR, 'team.wxml'), 'utf8')
+  const PAGE_JSON = JSON.parse(readFileSync(resolve(PAGE_DIR, 'team.json'), 'utf8'))
+
+  // 2026-11-25 真机反馈：只在 onLoad 调 setNavigationBarTitle('') 仍会闪一帧
+  // 系统标题「团队成员」——微信在页面脚本执行前就按 json 画了导航栏。
+  // 唯一可靠做法是不用系统导航栏。
+  it('team.json 使用自定义导航，不提供会被提前绘制的静态标题', () => {
+    expect(PAGE_JSON.navigationStyle).toBe('custom')
+    expect(PAGE_JSON.navigationBarTitleText).toBeUndefined()
+  })
+
+  it('自绘标题由 navTitle 单点控制，改道中留白', () => {
+    const nav = WXML.slice(0, WXML.indexOf('<!-- 抬头：'))
+    expect(nav).toContain('class="team-custom-nav')
+    expect(nav).toMatch(/class="team-nav-title" wx:if="\{\{!redirecting && navTitle\}\}"/)
+    expect(nav).toContain('<view class="team-nav-spacer"')
+  })
+
+  it('启动遮罩独立成帧，页内加载提示与企业内容全部受 booting / redirecting 约束', () => {
+    // 遮罩用的是 bootVisible，绝不能再和后面的 error / 内容分支串成同一条 elif 链。
+    expect(WXML).toMatch(/<view class="wc-boot[^"]*" wx:if="\{\{bootVisible\}\}"/)
+    expect(WXML).toContain('bindtransitionend="onBootFadeEnd"')
+    expect(WXML).not.toContain('wx:if="{{booting}}"')
+    expect(WXML).toContain('wx:if="{{!booting && !redirecting && loading}}"')
+
+    // 这两个是真实踩过的缺口：搜索框曾漏掉 redirecting，改道时会闪一下。
+    expect(WXML).toMatch(/class="team-hero[^"]*" wx:if="\{\{!booting && !redirecting/)
+    expect(WXML).toMatch(/class="team-search[^"]*" wx:if="\{\{!booting && !redirecting/)
+    expect(WXML).toMatch(/wx:elif="\{\{!redirecting\}\}"/)
   })
 })

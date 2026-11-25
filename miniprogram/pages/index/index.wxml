@@ -1,15 +1,23 @@
-<block wx:if="{{loading}}">
-  <view class="loading wc-theme {{themeClass}}">加载中…</view>
-</block>
+<!-- 启动遮罩：与名片墙共用 app.wxss 的 .wc-boot。两页首帧逐字相同，
+     reLaunch 清栈重建时视觉连续；数据回来后 bootFade 触发 opacity 淡出，
+     transitionend 再撤节点，不再有「加载文字直接消失」的硬切。 -->
+<view class="wc-boot wc-theme {{themeClass}} {{bootFade ? 'wc-boot-off' : ''}}" wx:if="{{bootVisible}}"
+  bindtransitionend="onBootFadeEnd" catchtouchmove="noop">
+  <view class="wc-boot-inner">
+    <view class="wc-boot-title" wx:if="{{bootTitle}}">{{bootTitle}}</view>
+    <view class="wc-boot-spinner"></view>
+    <view class="wc-boot-text">正在打开…</view>
+  </view>
+</view>
 
-<block wx:elif="{{error}}">
+<block wx:if="{{error}}">
   <view class="error-box wc-theme {{themeClass}}">
     <view class="error-text">网络异常，加载失败</view>
     <button class="retry-btn" bindtap="reload">重新加载</button>
   </view>
 </block>
 
-<block wx:else>
+<block wx:elif="{{!loading}}">
   <!-- 顶部主色浓度由后台滑杆控制：topAlpha=浓度/100，fadeAlpha=topAlpha×0.9（单调递减）。
        bgGradientAlpha 缺省 1（原色），兼容旧缓存/未下发字段的后端。 -->
   <view class="page {{bgImage && bgFail !== bgImage ? 'has-bg' : ''}} wc-theme {{themeClass}}" style="--top-alpha: {{bgGradientAlpha}}; --fade-alpha: {{bgGradientFadeAlpha}};">
@@ -41,7 +49,10 @@
              写死客户名等于给别的客户看别人家的公司名 -->
         <!-- 顶部深底时反白：滚动过 navHeight（白遮罩浮现）或浓度调低（底变浅）时都要切回深色，
              否则浅蓝底上的白字看不清（见 index.wxss） -->
-        <view class="nav-title {{navMask >= 0.5 || bgGradientStrength < 50 ? 'scrolled' : ''}}">{{company.shortName || company.fullName || ''}}</view>
+        <!-- 有背景图时顶栏透明、图铺满顶部，浓度只影响已被盖住的主题渐变，
+             不能再拿它把标题切成深色（玫瑰金这类浅图上的深字会看不清）。
+             是否切深色只看滚动后的白遮罩 navMask。 -->
+        <view class="nav-title {{navMask >= 0.5 || (!bgImage || bgFail === bgImage) && bgGradientStrength < 50 ? 'scrolled' : ''}}">{{company.shortName || company.fullName || ''}}</view>
       </view>
     </view>
     <view class="nav-spacer" style="height: {{navHeight}}px;" />

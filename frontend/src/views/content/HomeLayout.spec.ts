@@ -485,6 +485,22 @@ describe('content/HomeLayout', () => {
     expect(w.find('.mask-val').text()).toBe('40%')
   })
 
+  // 2026-11-25 用户反馈后台预览太简陋（一张图 + 一个白方块），看不出深浅是否合适。
+  // 改为按真机首页版式复刻：透明顶栏、名片卡、视频卡、按 order 排的板块网格、底部操作条。
+  it('效果预览按真机版式复刻，遮罩浓度即时反映在预览上', async () => {
+    const w = await mountPage({
+      order: ['service', 'achievement'], bgImage: '/uploads/bg.jpg', bgMask: 25,
+    })
+    const p = w.find('.bg-preview')
+    expect(p.find('.bp-nav').exists(), '缺透明顶栏，背景图铺不满顶部').toBe(true)
+    expect(p.find('.bp-person').exists(), '缺名片卡').toBe(true)
+    expect(p.find('.bp-video').exists(), '缺视频卡').toBe(true)
+    expect(p.find('.bp-actions').exists(), '缺底部操作条').toBe(true)
+    expect(p.findAll('.bp-grid i').length, '板块网格应有 8 个占位块').toBe(8)
+    expect(p.find('.bp-sec-title').text(), '板块顺序没跟着 order 走').toBe('业务服务')
+    expect(p.find('.bg-preview-mask').attributes('style')).toContain('0.25')
+  })
+
   it('选中的背景图随保存提交，遮罩浓度一起带上', async () => {
     const w = await mountPage()
 

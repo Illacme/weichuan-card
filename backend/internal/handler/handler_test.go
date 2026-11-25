@@ -234,6 +234,15 @@ func seedDefaultCompany(t *testing.T, db *gorm.DB) {
 // setupSQLiteEngine 创建临时 SQLite 库 + AutoMigrate + 本地存储，返回引擎。
 func setupSQLiteEngine(t *testing.T, mutate ...func(*config.Config)) *gin.Engine {
 	t.Helper()
+	r, _ := setupSQLiteEngineWithDB(t, mutate...)
+	return r
+}
+
+// setupSQLiteEngineWithDB 与 setupSQLiteEngine 等价，但把 db 一起交还调用方。
+// 资源引用回归用例要分别断言「出参已还原 /uploads/」与「库里仍是裸键」，
+// 只有同时拿到引擎和 db 才能钉死这条边界，避免哪天有人图省事把解析值写回库。
+func setupSQLiteEngineWithDB(t *testing.T, mutate ...func(*config.Config)) (*gin.Engine, *gorm.DB) {
+	t.Helper()
 
 	tmpDB, err := os.CreateTemp("", "weichuan-test-*.db")
 	require.NoError(t, err)
@@ -270,7 +279,7 @@ func setupSQLiteEngine(t *testing.T, mutate ...func(*config.Config)) *gin.Engine
 		AllowExt: storage.DefaultAllowExt,
 	}
 	var refresher storage.CDNRefresher
-	return buildEngine(t, db, cfg, up, refresher)
+	return buildEngine(t, db, cfg, up, refresher), db
 }
 
 // loginAdmin 用 seed 的超管登录并返回 access 令牌值。
@@ -1556,6 +1565,42 @@ func TestAPIFlow(t *testing.T) {
 	c := newTestClient(r, t)
 	adminToken := loginAdmin(t, c)
 	runAPIFlow(t, c, adminToken)
+}
+
+// TestAdminHomeLayoutBgImageRefRoundTrip 钉死首页背景图的「入库裸键 / 出参可访问 URL」边界。
+// 2026-11-25 用户反馈：上传后能显示，刷新后管理端变成 p/xxx 且裂图。
+// 根因是写入侧归一成裸键没错，但管理端 GET 漏了 ResolveResourceRef——
+// 公开接口一直有这一步，所以「小程序正常、后台裂图」特别容易被误判成上传失败。
+func TestAdminHomeLayoutBgImageRefRoundTrip(t *testing.T) {
+	r, db := setupSQLiteEngineWithDB(t)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+
+	// 本地上传接口回的就是这种 /uploads/ 相对地址；素材库采用也走同一形态。
+	const uploadedURL = "/uploads/p/15698bab1e3a84fe62d51c2ae0f2f654.jpeg"
+	const storedKey = "p/15698bab1e3a84fe62d51c2ae0f2f654.jpeg"
+
+	_, body := c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+		"bgImage": uploadedURL, "bgMask": 25,
+	}, adminToken)
+	require.EqualValues(t, 0, body["code"])
+
+	// 库里只能存裸键：出参解析过的值一旦写回库，upload_base_url 改动又会波及存量。
+	var hl model.HomeLayout
+	require.NoError(t, db.First(&hl, "company_id = ?", 1).Error)
+	require.Equal(t, storedKey, hl.BgImage, "库内应保留归一裸键，不应写回 /uploads/ 地址")
+
+	// 管理端刷新（GET）必须还原成同源可用的 /uploads/...，否则 <img src="p/...">
+	// 会按当前后台路由相对解析，浏览器直接 404。
+	_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, uploadedURL, body["data"].(map[string]interface{})["bgImage"],
+		"管理端 GET 必须还原资源引用，不能把裸键直接吐给前端")
+
+	// 访客侧同样要能取到可访问地址，且不能被管理端这次修复带偏。
+	_, body = c.do("GET", "/api/home-layout", nil, "")
+	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, uploadedURL, body["bgImage"])
 }
 
 // TestCompanyProfileVideoSource 钉死「视频多来源」的语义。

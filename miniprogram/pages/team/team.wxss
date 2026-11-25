@@ -3,6 +3,33 @@
    通用名（name / cell / title）会和其它页面/组件撞车，历史上已经因此出过
    样式泄漏（详见 app.wxss 里 ec- 前缀那段注释）。 */
 
+/* 自定义导航：替代 team.json 的系统标题。
+   必须 position:fixed——不固定时它和下面的 spacer 都进普通文档流，
+   两段白底叠起来就是真机看到「顶部一截白、其余浅灰」的根因。
+   固定后 spacer 只负责占一次位，且不能再刷白底，否则灰底被截断成三明治。 */
+.team-custom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 100;
+  background: #fff;
+}
+.team-nav-inner {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.team-nav-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1b2a3a;
+}
+.team-nav-spacer {
+  background: transparent;
+}
+
 /* 顶部企业抬头：LOGO + 企业名 + 一句人数 */
 .team-hero {
   background: #fff;

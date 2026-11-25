@@ -111,6 +111,35 @@ function mockApis(opt: { card?: any; ach?: any; svc?: any; layout?: any; fail?: 
 describe('index 首页', () => {
   // ---- 进入参数 ----
 
+  // 用户 2026-11-25 反馈：配置「直接进指定员工」时，从名片墙 reLaunch 过来
+  // 顶部会再闪一句裸的「加载中…」。首帧改为中性启动态，标题优先读 brand_name。
+  it('首屏启动标题优先读已配置的 brand_name，没配则留白', async () => {
+    wxStub.setStorageSync('publicSettingsCache', JSON.stringify({ brand_name: '部署方品牌' }))
+    mocks.request.mockReturnValueOnce(new Promise(() => {}))
+
+    const p = await page({ staffId: '42' })
+
+    expect(p.data.loading).toBe(true)
+    expect(p.data.booting).toBe(true)
+    expect(p.data.bootTitle).toBe('部署方品牌')
+    expect(p.data.bootVisible).toBe(true)
+    expect(p.data.bootFade).toBe(false)
+    // 决策还没落定，伪造一个 transitionend 也不能把遮罩撤掉。
+    p.onBootFadeEnd()
+    expect(p.data.bootVisible).toBe(true)
+  })
+
+  it('没配 brand_name：首屏标题留白，不回落产品名', async () => {
+    mocks.request.mockReturnValueOnce(new Promise(() => {}))
+
+    const p = await page({ staffId: '42' })
+
+    expect(p.data.loading).toBe(true)
+    expect(p.data.bootTitle).toBe('')
+    expect(p.data.bootVisible).toBe(true)
+    expect(p.data.bootFade).toBe(false)
+  })
+
   it('带 staffId：直接加载，不弹输入框', async () => {
     mockApis()
     const p = await page({ staffId: '42' })
@@ -118,6 +147,12 @@ describe('index 首页', () => {
     expect(p.data.staffId).toBe(42)
     expect(wxStub.showModal).not.toHaveBeenCalled()
     expect(p.data.employee.name).toBe('张伟')
+    // 内容已经和 loading:false 同一帧就位，遮罩才开始淡出；淡出结束才撤节点。
+    expect(p.data.booting).toBe(false)
+    expect(p.data.bootFade).toBe(true)
+    expect(p.data.bootVisible).toBe(true)
+    p.onBootFadeEnd()
+    expect(p.data.bootVisible).toBe(false)
   })
 
   // 扫小程序码进来，微信把参数塞进 scene（形如 staffId=12）
@@ -397,6 +432,8 @@ describe('index 首页', () => {
 
     expect(p.data.error).toBe(true)
     expect(p.data.loading).toBe(false)
+    expect(p.data.booting).toBe(false)
+    expect(p.data.bootFade).toBe(true)
   })
 
   // ---- 访问埋点 ----
@@ -717,6 +754,28 @@ describe('index 首页 · 默认入口缓存失效的自愈', () => {
 describe('精选案例循环效果的接线守门（源码级）', () => {
   const read = (p: string) =>
     readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', p), 'utf-8')
+
+  // 2026-11-25 真机反馈：从名片墙跳过来时顶部会再闪一句「加载中…」。
+  it('首屏是与名片墙同源的 .wc-boot 遮罩，不再是裸的“加载中…”', () => {
+    const wxml = read('pages/index/index.wxml')
+    const start = wxml.indexOf('<view class="wc-boot')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const end = wxml.indexOf('</view>', wxml.indexOf('正在打开…', start)) + '</view>'.length
+    const bootBlock = wxml.slice(start, end)
+
+    expect(bootBlock).toContain('wx:if="{{bootVisible}}"')
+    expect(bootBlock).toContain('bootFade ? \'wc-boot-off\'')
+    expect(bootBlock).toContain('bindtransitionend="onBootFadeEnd"')
+    expect(bootBlock).toContain('bootTitle')
+    expect(bootBlock).toContain('正在打开…')
+    expect(bootBlock).not.toContain('加载中…')
+    // 遮罩独立成帧；内容分支不能再挂在它的 elif 链上，否则淡出期间没有内容可露。
+    expect(wxml).toMatch(/<block wx:if="\{\{error\}\}">/)
+    expect(wxml).toMatch(/<block wx:elif="\{\{!loading\}\}">/)
+    // 顶层不能再有 <block wx:else> 挂到 boot 遮罩后面；内容区内部的
+    // disabled / notFound 三元分支是合法的，别把它一起禁掉。
+    expect(wxml).not.toMatch(/<\/view>\s*<block wx:else>\s*<!-- 顶部主色浓度/)
+  })
 
   // 2026-11-18 截图：业务服务卡下方空出一大块——WXML 末尾的 120rpx spacer
   // 与 .page 的 padding-bottom（已含底栏避让 + 呼吸 + 安全区）叠加，重复留白。

@@ -1,3 +1,6 @@
+/* 启动态样式统一放在 app.wxss 的 .wc-boot：两页逐字同源，
+   避免名片墙 48rpx / 名片页 56rpx 这种肉眼可见的转场漂移。 */
+
 /* 首页自定义顶栏（navigationStyle=custom）：按设计稿融入浅蓝渐变背景——
    无白色底、无边框线、无居中标题，仅左上角「我的」入口，固定常驻 */
 .custom-nav {
@@ -108,6 +111,17 @@
   background-color: #fff;
   background-image: linear-gradient(180deg, rgba(var(--wc-primary-rgb), var(--top-alpha, 1)) 0, rgba(var(--wc-primary-rgb), var(--fade-alpha, 0.9)) 12%, var(--wc-primary-soft) 48%, var(--wc-primary-tint));
 }
+/* 设了首页背景图时，.page 自身的渐变必须让位，否则背景图根本露不出来。
+   根因（2026-11-25 真机截图）：.page 是 position:relative 且 z-index:auto，
+   它作为「定位且 z-index:auto 的后代」在其祖先层叠上下文里按第 6 步绘制；
+   .page-bg/.page-bg-mask 是 z-index:-1 的子层，按第 2 步绘制——先画、被后画的
+   .page 背景整幅盖住。结果只剩 .has-bg .custom-nav 的白底浮在模板渐变上，
+   看起来就是「顶部多了一块白遮罩、四周还是模板底色」，背景图和遮罩浓度怎么调都没用。
+   把自身背景清掉后，fixed 的图与黑遮罩才能显示在卡片背后。 */
+.has-bg {
+  background-color: transparent;
+  background-image: none;
+}
 .page-bg { position: fixed; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; z-index: -1; }
 .page-bg-mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: #000; z-index: -1; }
 
@@ -138,8 +152,12 @@
 /* 简介区：视频封面下的公司名大标题（设计稿黑色加粗） */
 .company-name { font-size: 34rpx; font-weight: 700; color: #222; margin-top: 24rpx; }
 
-/* 有背景时的高端包装：卡片半透明浮起 + 圆角阴影，与深色背景形成层次 */
-.has-bg .custom-nav { background: rgba(255,255,255,.94); }
+/* 有背景时的高端包装：卡片半透明浮起 + 圆角阴影，与深色背景形成层次。
+   2026-11-25：用户要求背景图连顶部也完整铺满，顶栏不再铺白底——
+   .page-bg 是 fixed 全屏，顶栏透明后同一张图自然贯穿状态栏到页面底部。
+   顶栏文字在任意深浅图片上都要可读，用文字阴影而不是盖白板。 */
+.has-bg .custom-nav { background: transparent; }
+.has-bg .custom-nav .nav-title { text-shadow: 0 2rpx 8rpx rgba(0,0,0,.55); }
 .has-bg .section { background: rgba(255,255,255,.95); border-radius: var(--wc-r-card-bg); margin: 20rpx 24rpx; padding: 28rpx; box-shadow: var(--wc-card-shadow-bg); }
 .has-bg .nav-spacer + .section, .has-bg .section:first-of-type { margin-top: 20rpx; }
 

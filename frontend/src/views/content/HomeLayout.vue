@@ -29,19 +29,44 @@
           <el-slider v-model="bgMask" :min="0" :max="100" :step="5" :disabled="!bgImage" style="flex: 1" />
           <span class="mask-val">{{ bgMask }}%</span>
         </div>
-        <div class="bg-hint">背景图较花时调高遮罩压暗，保证白色卡片与文字清晰可读。</div>
+        <div class="bg-hint">
+          数值就是黑色遮罩的不透明度：0% 为原图、25% 为叠一层 25% 不透明的黑、100% 全黑。
+          背景图较花时调高可压暗，保证白色卡片与文字清晰可读。它不改变图片本身，只改变上面这层黑。
+        </div>
       </el-form-item>
 
       <!-- 顶部主色浓度滑杆已移到「风格模板」页签（与品牌配色同页，调色即看即时预览），
            保存也归「保存风格」。后端 PUT 是部分更新，本页不提交该字段就不会冲掉它。 -->
 
       <el-form-item v-if="bgImage" label="效果预览">
-        <!-- 点击整块预览可放大查看原图（遮罩/卡片只是叠加效果层，原图可能较花看不清细节） -->
+        <!-- 按真机首页版式复刻的示意：背景铺满含顶部，黑遮罩夹在背景与卡片之间。
+             只放中性占位内容，不含任何真实企业资料；不是真机截图，最终以真机为准。
+             点击整块可放大看原图（遮罩会压暗细节）。 -->
         <div class="bg-preview clickable" @click="bgViewer = true">
           <img class="bg-preview-img" :src="bgImage" alt="背景预览" />
           <div class="bg-preview-mask" :style="{ opacity: bgMask / 100 }" />
-          <div class="bg-preview-card">白色内容卡片</div>
+          <div class="bp-ui">
+            <div class="bp-nav">
+              <span class="bp-me"><i class="bp-me-icon" />我的</span>
+              <span class="bp-name">企业简称</span>
+            </div>
+            <div class="bp-card bp-person">
+              <i class="bp-avatar" />
+              <span class="bp-person-lines"><i /><i /><i /></span>
+            </div>
+            <div class="bp-video"><i class="bp-play" /></div>
+            <div class="bp-card bp-block">
+              <span class="bp-sec-title">{{ firstBlock === 'service' ? '业务服务' : '经典业绩' }}</span>
+              <span class="bp-grid"><i v-for="n in 4" :key="n" /></span>
+            </div>
+            <div class="bp-card bp-block">
+              <span class="bp-sec-title">{{ firstBlock === 'service' ? '经典业绩' : '业务服务' }}</span>
+              <span class="bp-grid"><i v-for="n in 4" :key="n" /></span>
+            </div>
+            <div class="bp-actions"><span>一键拨号</span><span>存入通讯录</span></div>
+          </div>
         </div>
+        <div class="bg-hint">按真机首页版式绘制的示意图（非真机截图）；背景含顶部整幅铺满，卡片浮在遮罩之上。拖动遮罩浓度可即时看深浅变化。</div>
       </el-form-item>
 
       <!-- 首页视频下方「公司名称 / 简介文字」的展示档位：四档 = 大 / 中 / 小 / 关闭。
@@ -590,14 +615,17 @@ defineExpose({ load, save, loading, saving, refreshStyle })
   width: 26px;
   height: 26px;
 }
-/* 效果预览：模拟小程序首页——背景铺底 + 遮罩 + 白色卡片浮起 */
+/* 效果预览：按真机首页版式复刻的中性占位示意图——
+   背景整幅铺底（含顶部）+ 黑遮罩 + 半透明白卡片 + 悬浮操作条。
+   以前只有一张图 + 一个白方块，客户看不出深浅是否合适（2026-11-25 用户反馈）。 */
 .bg-preview {
   position: relative;
-  width: 160px;
-  height: 284px;
+  width: 180px;
+  height: 320px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+  background: #f2f4f7;
 }
 .bg-preview.clickable {
   cursor: zoom-in;
@@ -614,17 +642,143 @@ defineExpose({ load, save, loading, saving, refreshStyle })
   inset: 0;
   background: #000;
 }
-.bg-preview-card {
+.bp-ui {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 14px;
-  padding: 10px 0;
-  text-align: center;
-  font-size: 12px;
+  inset: 0;
+}
+.bp-nav {
+  position: relative;
+  height: 34px;
+  padding: 8px 8px 0;
+}
+.bp-me {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 9px;
   color: #333;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 10px;
+}
+.bp-me-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #409eff;
+}
+.bp-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 9px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+}
+.bp-card {
+  margin: 5px 6px 0;
+  padding: 6px 7px;
   background: rgba(255, 255, 255, 0.95);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.bp-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  box-sizing: border-box;
+}
+.bp-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #d9e4f2;
+}
+.bp-person-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bp-person-lines i {
+  height: 4px;
+  border-radius: 2px;
+  background: #d7dce5;
+}
+.bp-person-lines i:nth-child(1) { width: 72%; }
+.bp-person-lines i:nth-child(2) { width: 46%; }
+.bp-person-lines i:nth-child(3) { width: 86%; }
+.bp-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 74px;
+  margin: 5px 6px 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.bp-play {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #409eff;
+  position: relative;
+}
+.bp-play::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 6px;
+  border-left: 7px solid #fff;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+.bp-sec-title {
+  display: block;
+  width: 44px;
+  height: 4px;
+  margin-bottom: 5px;
+  border-radius: 2px;
+  background: #9fb4cc;
+}
+.bp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.bp-grid i {
+  height: 20px;
+  border-radius: 4px;
+  background: #e6eef8;
+  border: 1px solid #dce7f4;
+}
+.bp-actions {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 7px;
+  display: flex;
+  gap: 6px;
+}
+.bp-actions span {
+  flex: 1;
+  padding: 5px 0;
+  text-align: center;
+  font-size: 9px;
+  border-radius: 12px;
+  background: #fff;
+  color: #606266;
+  border: 1px solid #dcdfe6;
+}
+.bp-actions span:first-child {
+  background: #409eff;
+  color: #fff;
+  border-color: #409eff;
 }
 </style>

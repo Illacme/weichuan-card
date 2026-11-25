@@ -1083,13 +1083,33 @@ describe('小程序整体风格模板 真实预览图', () => {
     const wxml = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxml'), 'utf-8')
     // 顶栏反白既要随滚动（navMask）切，也要随浓度低（浅底）切深色，否则浅蓝底白字看不清
     expect(wxml, '顶栏未随 navMask / 浓度切换反白').toContain(
-      "navMask >= 0.5 || bgGradientStrength < 50 ? 'scrolled' : ''"
+      "navMask >= 0.5 || (!bgImage || bgFail === bgImage) && bgGradientStrength < 50 ? 'scrolled' : ''"
     )
     // 浓度滑杆经 --top-alpha / --fade-alpha 注入渐变（fallback 保预览/旧端原色）
     expect(wxml, '浓度未注入渐变 CSS 变量').toContain('--top-alpha: {{bgGradientAlpha}}')
     expect(wxml, 'fade 浓度未注入渐变 CSS 变量').toContain('--fade-alpha: {{bgGradientFadeAlpha}}')
     expect(script, '预览图顶栏公司名未反白，与真机首屏不一致').toMatch(
       /\.nav-title\s*\{[^}]*color:\s*#fff/
+    )
+  })
+
+  // 2026-11-25 真机反馈：设了「首页背景图」后四周仍是风格模板底色，
+  // 只有顶栏浮出一块白遮罩——z-index:-1 的 .page-bg 被 .page 自身的不透明渐变盖住。
+  it('有背景图时 .page 自身背景让位，z-index:-1 的图才能露出来', () => {
+    const wxss = readFileSync(resolve(REPO, 'miniprogram/pages/index/index.wxss'), 'utf-8')
+    const hasBg = wxss.match(/\.has-bg\s*\{[^}]*\}/)?.[0] || ''
+    expect(hasBg, '取不到 .has-bg 规则').not.toBe('')
+    expect(hasBg, '渐变没让位，背景图会被 .page 背景整幅盖住').toContain('background-image: none')
+    expect(hasBg, '底色没让位，背景图会被 .page 背景整幅盖住').toContain('background-color: transparent')
+    // 图与遮罩仍必须在内容背后，不能反过来盖住白卡片
+    expect(wxss, '背景图不在内容层背后').toMatch(/\.page-bg\s*\{[^}]*z-index:\s*-1/)
+    expect(wxss, '遮罩不在内容层背后').toMatch(/\.page-bg-mask\s*\{[^}]*z-index:\s*-1/)
+    // 用户 2026-11-25 追加要求：背景图连顶部也完整铺满，顶栏不能再用白底盖住图
+    expect(wxss, '顶栏仍有白底，背景图铺不满顶部').toMatch(
+      /\.has-bg \.custom-nav\s*\{[^}]*background:\s*transparent/
+    )
+    expect(wxss, '浅色背景图上顶栏标题没做可读性兜底').toMatch(
+      /\.has-bg \.custom-nav \.nav-title\s*\{[^}]*text-shadow/
     )
   })
 

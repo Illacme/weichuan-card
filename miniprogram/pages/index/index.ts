@@ -3,7 +3,7 @@ import { thumbnailURL, onImgFail } from '../../utils/thumb'
 import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { clearEntryStaff } from '../../utils/entry'
 import { track, deriveSource } from '../../utils/track'
-import { FALLBACK_BRAND } from '../../utils/brand'
+import { FALLBACK_BRAND, cachedBrandName } from '../../utils/brand'
 // 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
 // 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
@@ -75,6 +75,13 @@ Page({
     disabled: false,
     notFound: false,
     loading: true,
+    // 启动决策态：数据回来前保持遮罩不淡出；reLaunch 改道时也保持到目标页接手。
+    booting: true,
+    // 启动遮罩：样式在 app.wxss 的 .wc-boot，两页首帧逐字同源。
+    // 标题在模块求值阶段同步读缓存，不等 onLoad 再 setData；没配就留白。
+    bootTitle: cachedBrandName(),
+    bootVisible: true,
+    bootFade: false,
     error: false,
     // 自定义顶栏（navigationStyle=custom）：状态栏高度与整体高度，用于避让刘海/状态栏
     statusBarHeight: 20,
@@ -108,7 +115,11 @@ Page({
       const info = wx.getSystemInfoSync()
       if (info && info.statusBarHeight) sb = info.statusBarHeight
     } catch {}
-    this.setData({ statusBarHeight: sb, navHeight: sb + 44 })
+    const bootTitle = cachedBrandName()
+    const navPatch: Record<string, unknown> = { statusBarHeight: sb, navHeight: sb + 44 }
+    // 首帧已经在 data 里；只在本次会话里缓存被后台刷新过时才补一次 setData。
+    if (bootTitle !== this.data.bootTitle) navPatch.bootTitle = bootTitle
+    this.setData(navPatch)
 
     // 租户绑定（平台模式）：扫企业小程序码 / 分享链接带 companyId 时粘滞本机，
     // 企业内容（业绩/服务/布局）随之落该企业。独立版在此调用内被忽略（锁定）。
@@ -152,10 +163,20 @@ Page({
       // 为什么是 reLaunch 而不是 redirectTo：index 有可能是页面栈里唯一一页
       // （直接打开），也可能是从名片墙 navigateTo 过来的（那种一定带 staffId，
       // 走不到这里）；reLaunch 一律清栈重建，不会留下一个「返回还是空名片页」的栈。
+      // 不淡出：目标页会显示同一帧遮罩，reLaunch 期间保持视觉连续。
       this.setData({ loading: false })
       wx.reLaunch({ url: '/pages/team/team' })
     }
   },
+  // 淡出结束才撤节点；transitionend 不触发时它只是透明空壳，不挡交互。
+  onBootFadeEnd() {
+    // 只有决策已落定且正在淡出才撤；跳转态不淡出，遮罩保持到目标页接手。
+    if (!this.data.booting && this.data.bootFade) {
+      this.setData({ bootVisible: false, bootFade: false })
+    }
+  },
+  // catchtouchmove 必须有对应处理函数，否则控制台报 noop is not a function。
+  noop() {},
   // 凭「默认入口缓存」跳进来时，用**后台此刻的配置**核对一遍。
   //
   // 缓存只负责「省掉名片墙那一次往返」，谁的名片该被打开始终由后台说了算。
@@ -269,7 +290,7 @@ Page({
       ])
       // 停用：后端返回 code=2（无 employee）
       if (card.code === 2) {
-        this.setData({ disabled: true, loading: false })
+        this.setData({ booting: false, bootFade: true, disabled: true, loading: false })
         this.reconcileEntry(card.company)
         return
       }
@@ -278,7 +299,7 @@ Page({
       // /api/achievements 的 categories/featured、/api/home-layout 的 order 同样在根级，
       // 切勿误读成 card.data.* / ach.data.* / layout.data.*（此前 bug：卡片页恒走 notFound）。
       if (card.code === 1 || !card.employee) {
-        this.setData({ notFound: true, loading: false })
+        this.setData({ booting: false, bootFade: true, notFound: true, loading: false })
         // 凭「默认入口缓存」跳进来的：静默纠正回名片墙，不弹「员工不存在」——
         // 访客根本没输过任何编号，跟他说编号有问题只会更困惑。
         if (this.reconcileEntry(card.company)) return
@@ -375,13 +396,16 @@ Page({
         showServiceName,
         disabled: false,
         notFound: false,
+        // 数据同一帧齐了才开始淡出：内容已在遮罩下面，不会出现「先空一帧」。
+        booting: false,
+        bootFade: true,
         loading: false,
       })
       this.trackVisit()
     } catch {
       // 断网 / 接口异常：loading 必须落下来。此前 reject 直接冒泡出 async 函数，
       // 页面永远停在「加载中…」——这是真实缺陷，不是体验问题。
-      this.setData({ loading: false, error: true })
+      this.setData({ booting: false, bootFade: true, loading: false, error: true })
     }
   },
   // 下拉刷新：静默重拉，无论成败都收掉顶部指示器（不收会一直挂着转）。

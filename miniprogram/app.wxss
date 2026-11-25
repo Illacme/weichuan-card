@@ -440,6 +440,58 @@ page {
 
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
+
+/* 启动遮罩：名片墙与名片页共用同一套首帧，reLaunch 时视觉连续。
+   刻意做成全局类而不是自定义组件：启动态不需要任何业务逻辑，
+   多一个组件实例就多一次创建/样式隔离开销，和「冷启动要快」的目标相反。
+   颜色用中性蓝灰、不读主题 token：缓存命中时会跳过 bindTheme，
+   若第一帧取主题缓存、第二帧取接口主题，转场瞬间会闪一下别家的颜色。
+   底色与 app.json 的 window.backgroundColor 逐字一致，避免页面边界露白。 */
+.wc-boot {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 9998;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity .24s ease-out;
+}
+.wc-boot-off {
+  opacity: 0;
+  pointer-events: none;
+}
+.wc-boot-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.wc-boot-title {
+  margin-bottom: 32rpx;
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #1b2a3a;
+}
+.wc-boot-spinner {
+  width: 56rpx;
+  height: 56rpx;
+  border: 4rpx solid #dde5ee;
+  border-top-color: #8ea6bd;
+  border-radius: 50%;
+  animation: wc-boot-spin .8s linear infinite;
+}
+.wc-boot-text {
+  margin-top: 24rpx;
+  font-size: 28rpx;
+  color: #8a97a8;
+}
+@keyframes wc-boot-spin {
+  to { transform: rotate(360deg); }
+}
+
 .disabled-tip { padding: 120rpx 40rpx; text-align: center; color: #999; font-size: 30rpx; }
 .section { background: #fff; margin: 16rpx 0; padding: 24rpx; }
 .sec-title { font-size: 32rpx; font-weight: 600; margin-bottom: 16rpx; }

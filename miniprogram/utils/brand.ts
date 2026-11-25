@@ -43,6 +43,20 @@ export function resolveBrandTitle(company?: BrandCompany | null): string {
   return FALLBACK_BRAND
 }
 
+// 只取后台已配置的品牌名，不做产品名兜底。
+//
+// 与 resolveBrandTitle 的区别很重要：后者在「什么都没配」时会回产品名，
+// 而启动首帧如果也这么干，未配置品牌的企业会先闪一下平台名。
+// 首屏要的是「配了就显示、没配就留白」，所以必须读原始 brand_name。
+export function cachedBrandName(): string {
+  try {
+    const s = cachedSettings()
+    return String((s && s.brand_name) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
 // 设置当前页面导航栏标题。
 // 标题只是装饰：`setNavigationBarTitle` 在页面尚未创建 / 部分调试环境会抛错，
 // 绝不能因为「标题没设上」把页面主流程带崩，故整段吞掉。

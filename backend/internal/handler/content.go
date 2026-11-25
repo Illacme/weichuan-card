@@ -707,8 +707,12 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 首页视频下方「公司名 / 简介」的文字展示档位：控件归本页签，故随本端点回显。
 		// 两列物理上仍在各自表，单独读并归一（新租户缺省 large）。
 		nameScale, introScale := homeTextScales(db, cid)
+		// 管理端同样要还原资源引用：写入侧把 /uploads/p/xxx 归一成库内裸键 p/xxx，
+		// 若这里直接把裸键吐给后台，<img src="p/xxx"> 会被浏览器按当前页面路径
+		// 相对解析而裂图——公开接口 /api/home-layout 一直有这一步，后台漏了。
+		// 后台固定走平台入口（PlatformOrigin），不依赖客户自有域名 / 回源规则。
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
-			"order": order, "bgImage": bgImage, "bgMask": bgMask,
+			"order": order, "bgImage": model.ResolveResourceRef(bgImage, model.PlatformOrigin()), "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
 			"categoryLimit":      categoryLimit, "featuredCount": featuredCount,
 			"featuredEffect":   featuredEffect,

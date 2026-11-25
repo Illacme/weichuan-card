@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FALLBACK_BRAND, applyBrandTitle, resolveBrandTitle } from '../utils/brand'
+import {
+  FALLBACK_BRAND,
+  applyBrandTitle,
+  cachedBrandName,
+  resolveBrandTitle,
+} from '../utils/brand'
 
 // 品牌名解析 + 「客户名不得写死在小程序源码里」的守门。
 //
@@ -72,6 +77,30 @@ describe('brand', () => {
         getStorageSync: () => JSON.stringify({ brand_name: '部署方品牌' }),
       })
       expect(resolveBrandTitle({ shortName: '甲公司' })).toBe('甲公司')
+    })
+  })
+
+  describe('cachedBrandName', () => {
+    it('只读后台已配置的 brand_name，不套产品名兜底', () => {
+      vi.stubGlobal('wx', {
+        setNavigationBarTitle: vi.fn(),
+        getStorageSync: () => JSON.stringify({ brand_name: '朗汇机电' }),
+      })
+      expect(cachedBrandName()).toBe('朗汇机电')
+    })
+
+    it('没配置 / 纯空白时返回空串，首屏才能留白给中性提示', () => {
+      vi.stubGlobal('wx', {
+        setNavigationBarTitle: vi.fn(),
+        getStorageSync: () => JSON.stringify({ brand_name: '   ' }),
+      })
+      expect(cachedBrandName()).toBe('')
+
+      vi.stubGlobal('wx', {
+        setNavigationBarTitle: vi.fn(),
+        getStorageSync: () => '',
+      })
+      expect(cachedBrandName()).toBe('')
     })
   })
 
