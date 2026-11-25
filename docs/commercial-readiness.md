@@ -57,15 +57,21 @@
 > 键不再被 `OverlayFromSettings` 读取、也不再需要启动期清理，回填工具同样只认
 > 「内置存储那一行 > 环境变量」两条来源。
 >
-> **2026-11-25 迁移目录收敛为单一基线（当前事实）**：用户明确线上无存量、商用按全新部署交付，
-> `backend/migrations/` 顶层只保留 **1 个** `0001_init.sql`——由原 62 个历史增量按文件名顺序、
-> 按语句逐条拼接生成，终态与逐个执行历史脚本逐字一致（含 0062 的内置存储改名数据修正），
-> `baseline_fidelity_test.go` 做语句级保真守门。原 62 个文件移入 `migrations/history/` 归档：
-> 执行器与编译期清单只扫顶层，归档不参与部署包，`deploy_frontend.sh` 的修复命令也显式排除它。
+> **2026-11-25 固化为产品初始版：全新安装 / 升级安装两条路径（当前事实）**：用户明确线上无存量，
+> 把当前版本作为产品初始版，数据库脚本按商业软件惯例分两条路径：
+> ① **全新初始化安装**：`backend/migrations/0001_init.sql` 是**纯净终态 schema**——
+> 只有 28 张表的 `CREATE TABLE IF NOT EXISTS`，不含任何历史 `ALTER` / 数据搬迁 `UPDATE` / `DROP`；
+> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源仍是那 62 个增量），
+> `baseline_fidelity_test.go` 静态守门纯净性。建表后由**安装向导**写 sys_setting / 初始超管 /
+> 签发 JWT·PII 密钥，内置文件存储由 `storageprofile/builtin.go` ensure——
+> **数据初始化不提供静态 SQL**：bcrypt 口令、密钥签发、凭据交互生成，静态 SQL 既不安全也不自洽。
+> ② **升级安装**：62 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
+> 执行器与编译期清单只扫顶层，归档不进全新部署包，`deploy_frontend.sh` 修复命令显式排除它。
+> 两条路径的结构等价由 `clean_schema_parity_test.go` 在 CI 的真实 MySQL 里对账（建两个库分别跑，
+> 逐表逐列逐索引比对），生成器推演错了立刻红，不靠人肉维护。
 > 上文「迁移清单现为 62 个」是 2026-11-22 当时事实，不再参与当前口径。
 > **万一遇到已按 0001..0062 记过账的库**：守门 2 会拒绝启动（fail-closed，不静默出错），
-> 把 `WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 即可按原 62 步继续升级——
-> 归档目录本身就是为此保留的逃生门，不需要为新部署保留旧兼容路径。
+> 把 `WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 即可按原 62 步继续升级。
 
 ## 结论摘要
 

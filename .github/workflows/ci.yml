@@ -181,6 +181,14 @@ jobs:
           grep -q '^--- PASS: TestMySQLMigrations' /tmp/mysql-mig.log \
             || { echo "::error::TestMySQLMigrations 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
 
+      - name: 测试（MySQL 纯净 schema 对账：基线 == history 重放）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/migrate -run TestCleanSchemaMatchesHistoryReplay -v 2>&1 | tee /tmp/mysql-clean.log
+          grep -q '^--- PASS: TestCleanSchemaMatchesHistoryReplay' /tmp/mysql-clean.log \
+            || { echo "::error::纯净 schema 与 history 重放不一致（被 Skip 或用例失败）"; exit 1; }
+
       - name: 测试（MySQL parity：与 SQLite 同一套断言）
         working-directory: backend
         run: |

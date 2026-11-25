@@ -1,71 +1,63 @@
 package migrate
 
-// 基线保真守门：单一基线 0001_init.sql 必须与 history/ 里归档的全部历史
-// 增量脚本按文件名顺序拼接后逐条语句一致。
+// 纯净基线守门：顶层 0001_init.sql 必须是「纯净终态 schema」——
+// 只有 CREATE TABLE，不含任何 ALTER / 数据 UPDATE / DROP / INSERT。
 //
-// 背景：商用按全新部署交付，顶层只留一个基线文件；62 个历史增量移入
-// history/ 归档（执行器与清单只扫顶层 *.sql，归档不参与部署）。
-// 拼接保真意味着「跑一条基线」与「从头逐个跑 62 条历史」终态逐字相同——
-// 不需要手工推导最终表结构，也不会漏掉 0062 这类纯数据修正迁移。
-//
-// 本测试盯住两件事：
-//   1. 有人改了基线却没同步 history（或反之）——语句序列一比对就红；
-//   2. history 目录或基线文件被整个删掉——保真关系无从验证，也算红。
-// 未来新增迁移写顶层增量文件（0063_xxx.sql），不要改基线，也不要动归档。
+// 背景：商用把当前版本固化为产品初始版，全新安装走纯净 DDL，升级安装走
+// history/ 的 62 个增量。基线与 history 的结构等价由真实 MySQL 对账测试
+// （clean_schema_parity_test.go，CI backend-mysql job）保证——那是最强验证。
+// 本测试是零依赖的静态防线，挡住「有人把历史拼接版、或夹带数据搬迁的 SQL
+// 重新写回基线」这类回退：拼接版能在空库跑通，但会让交付物重新背上历史包袱。
 
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// splitStatements 与 applyFile 同语义：按分号切分，丢空段与纯注释段。
-// 必须和 apply.go 保持一致，否则「保真」验证的就不是执行器真正看到的东西。
-func splitStatements(raw string) []string {
-	var out []string
-	for _, stmt := range strings.Split(raw, ";") {
-		s := strings.TrimSpace(stmt)
-		if s == "" || isCommentOnly(s) {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
-}
-
-func TestBaselineMatchesHistory(t *testing.T) {
+func TestBaselineIsCleanSchema(t *testing.T) {
 	dir, err := migrationsDir()
 	require.NoError(t, err)
 
-	historyDir := filepath.Join(dir, "history")
-	entries, err := os.ReadDir(historyDir)
-	require.NoError(t, err, "history 归档目录必须存在；基线是从它生成的")
-
-	var names []string
-	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
-			names = append(names, e.Name())
-		}
-	}
-	require.NotEmpty(t, names, "history 下没有归档的 .sql，保真关系无从验证")
-
-	sort.Strings(names)
-	var expected []string
-	for _, name := range names {
-		raw, err := os.ReadFile(filepath.Join(historyDir, name))
-		require.NoError(t, err)
-		expected = append(expected, splitStatements(string(raw))...)
-	}
-	require.NotEmpty(t, expected, "归档历史里没有可执行语句")
-
 	baseline, err := os.ReadFile(filepath.Join(dir, "0001_init.sql"))
 	require.NoError(t, err, "顶层基线文件 0001_init.sql 必须存在")
-	actual := splitStatements(string(baseline))
+	// 剥掉行注释再判：注释里出现 "setting.update" 之类字样说明不了脚本行为。
+	var codeLines []string
+	for _, ln := range strings.Split(string(baseline), "\n") {
+		s := strings.TrimSpace(ln)
+		if s != "" && !strings.HasPrefix(s, "--") {
+			codeLines = append(codeLines, s)
+		}
+	}
+	code := strings.ToUpper(strings.Join(codeLines, "\n"))
 
-	require.Equal(t, expected, actual,
-		"基线语句序列与 history 归档按序拼接不一致：改基线必须同步 history（或反过来）")
+	// 出现下列任一关键字就说明历史 DDL/DML 被混进了全新安装脚本。
+	for _, banned := range []string{
+		"ALTER TABLE", "DROP TABLE", "RENAME TABLE",
+		"INSERT INTO", "UPDATE ", "DELETE FROM", "REPLACE INTO",
+		"CREATE INDEX", "CREATE UNIQUE INDEX",
+	} {
+		require.NotContains(t, code, banned,
+			"纯净基线里不该出现 %q：全新安装只要最终态建表，历史演进归 history/", banned)
+	}
+
+	// 正向：必须是若干 CREATE TABLE IF NOT EXISTS，且数量与 history 推演一致。
+	createRe := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+[a-z_][a-z0-9_]*`)
+	tables := createRe.FindAllString(string(baseline), -1)
+	require.Len(t, tables, 28, "纯净基线应恰好 28 张表（history 建 29 张，0055 删 1 张）")
+
+	// 归档目录必须仍在：它既是升级路径的真值源，也是老库逃生门。
+	entries, err := os.ReadDir(filepath.Join(dir, "history"))
+	require.NoError(t, err, "history 归档目录必须存在（升级路径与老库逃生门依赖它）")
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+			n++
+		}
+	}
+	require.Equal(t, 62, n, "history 应保留全部 62 个历史增量")
 }

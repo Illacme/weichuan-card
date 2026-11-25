@@ -651,11 +651,15 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 
 ### ⚠️ 升级必做：migrations/ 目录要跟着二进制一起换
 
-> **当前口径（2026-11-25）**：顶层只有 1 个 `0001_init.sql`（62 个历史增量已按序拼进它），
-> 原文件移入 `migrations/history/` 归档——执行器与清单只扫顶层，归档不进部署包。
+> **当前口径（2026-11-25）**：当前版本已固化为产品初始版，两条安装路径——
+> ① **全新安装**：顶层只有 1 个 `0001_init.sql`，是**纯净终态 schema**（28 张表 DDL，
+> 无历史 ALTER / 数据 UPDATE / DROP），只建表不写数据；建表后数据由安装向导写入
+> （sys_setting / 初始超管 / JWT·PII 密钥签发），内置文件存储由 `storageprofile/builtin.go`
+> ensure。**不提供静态数据初始化 SQL**——口令与密钥必须交互生成。
+> ② **升级安装**：62 个历史增量在 `migrations/history/`，按 `schema_migrations` 记账应用；
+> 归档不进全新部署包，发版同步命令用 `--exclude=history/`。两者结构等价由 CI 真实 MySQL 对账。
 > 本节的 `0038` / `38` 是 2026-11-03 事故当时的排查记录，留档可追溯，不再参与当前口径。
-> 若真遇到已按 0001..0062 记过账的旧库，`WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/`
-> 即可走回原 62 步升级；新部署只需同步那一个基线文件。
+> 若遇已按 0001..0062 记过账的库，`WEICHUAN_MIGRATIONS_DIR` 指向 `migrations/history/` 走原 62 步。
 
 非 Docker（宝塔 / systemd）升级时**只替换二进制、留着旧 `migrations/` 目录，新列就加不上**。
 程序按「可执行文件同级 migrations/」找目录，看到的全是已记账的旧文件；清单守门会打
