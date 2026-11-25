@@ -4,7 +4,7 @@
 -- DO NOT EDIT：改 schema 请改 history/ 后重跑生成脚本。
 
 CREATE TABLE IF NOT EXISTS employees (
-  staff_id BIGINT NOT NULL AUTO_INCREMENT,
+  staff_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name     VARCHAR(512) NOT NULL DEFAULT '',
   title         VARCHAR(64)  NOT NULL DEFAULT '',
   avatar        VARCHAR(255) NOT NULL DEFAULT '',

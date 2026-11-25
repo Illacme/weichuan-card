@@ -141,6 +141,18 @@ def apply_alter(items: list[str], stmt: str) -> None:
                 raise ValueError(f"MODIFY COLUMN 无法解析：{act[:120]}")
             for i, item in enumerate(items):
                 if column_name(item) == nm:
+                    # 列级 key 属性（PRIMARY KEY / UNIQUE）在 MODIFY 的新定义里
+                    # 常被省略，但 MySQL 的 MODIFY 会保留它们。典型：0002 的
+                    # `MODIFY staff_id BIGINT NOT NULL AUTO_INCREMENT` 没写
+                    # PRIMARY KEY，可 0001 建表时它是主键——若照搬新定义，
+                    # AUTO_INCREMENT 就成了没有 key 的列，MySQL 直接 1075。
+                    # 因此把旧定义里的列级 key 合并进新定义。
+                    old_up = item.upper()
+                    new_up = col.upper()
+                    for key in ("PRIMARY KEY", "UNIQUE KEY", "UNIQUE"):
+                        if key in old_up and key not in new_up:
+                            col = col.rstrip() + " " + key
+                            new_up = col.upper()
                     items[i] = col
                     break
             else:
