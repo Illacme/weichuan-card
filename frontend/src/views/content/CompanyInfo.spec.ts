@@ -17,7 +17,10 @@ const mocks = vi.hoisted(() => ({
   saveCompanyInfo: vi.fn(async (_payload: any) => ({ code: 0 })),
 }))
 
+const tenantMock = vi.hoisted(() => ({ loadCompanyLogo: vi.fn(async () => {}) }))
+
 vi.mock('@/api/content', () => mocks)
+vi.mock('@/store/tenant', () => ({ useTenantStore: () => tenantMock }))
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }))
@@ -91,6 +94,7 @@ describe('content/CompanyInfo', () => {
   beforeEach(() => {
     mocks.getCompanyInfo.mockClear()
     mocks.saveCompanyInfo.mockClear()
+    tenantMock.loadCompanyLogo.mockClear()
     ;(ElMessage.success as any).mockClear()
   })
 
@@ -163,6 +167,27 @@ describe('content/CompanyInfo', () => {
     await flush()
 
     expect(ElMessage.success).toHaveBeenCalledWith('已保存')
+  })
+
+  it('保存后刷新顶栏 LOGO（存完不该还挂旧图）', async () => {
+    const w = await mountPage()
+
+    await w.find('.upload-field').trigger('click')
+    await flush()
+    await w.findAll('.el-button')[1].trigger('click')
+    await flush()
+
+    expect(tenantMock.loadCompanyLogo).toHaveBeenCalledTimes(1)
+  })
+
+  it('保存失败不刷新顶栏（旧图仍在，不算新值生效）', async () => {
+    mocks.saveCompanyInfo.mockRejectedValueOnce(new Error('500'))
+    const w = await mountPage()
+
+    await w.findAll('.el-button')[1].trigger('click')
+    await flush()
+
+    expect(tenantMock.loadCompanyLogo).not.toHaveBeenCalled()
   })
 
   // 失败时不能弹成功；saving 也必须复位，否则按钮永久转圈

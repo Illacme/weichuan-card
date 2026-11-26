@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { listCompanies, type CompanyItem } from '@/api/tenants'
+import { getCompanyInfo } from '@/api/content'
 import { setCompanyScope } from './companyScope'
 
 /**
@@ -19,6 +20,12 @@ const LS_KEY = 'admin_scope_company_id'
 
 /** 后端 maxPageSize = 100：一次尽量拉全，超出的靠关键字远程搜索。 */
 const PAGE_SIZE = 100
+
+/**
+ * 企业 logo 的请求序号。平台超管连续切企业时，先发的请求可能后回来；
+ * 不加序号，旧企业的 logo 会盖掉新企业的，顶栏显示的和页面里的数据不是一家。
+ */
+let logoFetchSeq = 0
 
 /**
  * 进行中的企业列表请求（非响应式，放模块级）。
@@ -55,6 +62,11 @@ export const useTenantStore = defineStore('tenant', {
     keyword: '',
     /** 当前管理的企业 id；0 = 未选择 */
     currentId: Number(localStorage.getItem(LS_KEY) || 0) || 0,
+    /**
+     * 顶栏显示的企业 logo（来自 company-info.logo，后端已解析成可访问 URL）。
+     * 不持久化：企业换 logo 后刷新即取新值，且不会把上一家企业的图带到下一会话。
+     */
+    companyLogo: '',
     /**
      * 本次会话的身份：平台超管才需要选企业。
      * 初值取 localStorage，是为了让「刷新页面后第一帧」就能算对 needPick ——
@@ -151,6 +163,30 @@ export const useTenantStore = defineStore('tenant', {
       }
     },
 
+    /**
+     * 顶栏企业 logo：取「当前管理的企业」在公司信息页配的 logo。
+     * 后端 company-info 出口已把裸键解析成可访问 URL，这里直接用，不再自行拼前缀。
+     */
+    async loadCompanyLogo() {
+      const seq = ++logoFetchSeq
+      // 平台超管没选企业时后端会兜到 defaultCompanyID(1)。不拦的话顶栏会显示
+      // 1 号企业的 logo，而页面里什么企业数据都没有——把别家标识挂在本会话上，
+      // 宁可不显示。
+      if (this.isPlatform && this.currentId <= 0) {
+        this.companyLogo = ''
+        return
+      }
+      try {
+        const info = await getCompanyInfo()
+        if (seq !== logoFetchSeq) return // 切企业了，旧响应作废
+        this.companyLogo = (info?.logo || '').trim()
+      } catch {
+        if (seq !== logoFetchSeq) return
+        // logo 只是品牌点缀，取不到就隐藏；不要弹错打断正常操作
+        this.companyLogo = ''
+      }
+    },
+
     /** 切换当前企业（0 = 取消选择） */
     setCurrent(id: number) {
       this.currentId = id > 0 ? id : 0
@@ -170,9 +206,11 @@ export const useTenantStore = defineStore('tenant', {
       inflight = null
       // 让上一个会话在飞的请求回来后直接被丢弃，不再写回已清空的 store
       fetchSeq++
+      logoFetchSeq++
       this.isPlatform = false
       this.ownCompanyId = 0
       this.currentId = 0
+      this.companyLogo = ''
       localStorage.removeItem(LS_KEY)
       setCompanyScope(0, false)
     },

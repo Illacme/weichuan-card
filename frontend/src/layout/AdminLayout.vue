@@ -35,8 +35,16 @@
         <el-button class="menu-toggle" text aria-label="菜单" @click="asideOpen = !asideOpen">
           <el-icon><Menu /></el-icon>
         </el-button>
-        <!-- 顶栏不再重复当前页名：页面标题只有内容区的 h3 一处，
-             这里留给品牌 / 企业身份 / 账号操作，手机端收起侧栏时内容区标题照样可见。 -->
+        <!-- 顶栏不再重复当前页名：页面标题只有内容区的 h3 一处。
+             左侧改成企业自己配的 LOGO（公司信息页里设），没设就整块不渲染——
+             不要拿兼容占位图顶上去，那会让人以为企业已经上传了。 -->
+        <img
+          v-if="tenant.companyLogo"
+          class="header-logo"
+          :src="tenant.companyLogo"
+          :alt="auth.companyName ? `${auth.companyName} LOGO` : '企业 LOGO'"
+          @error="onLogoError"
+        />
         <div class="header-right">
           <template v-if="!isPhone">
             <!-- 平台超管：切换当前管理的企业（企业管理员没有这个选择器） -->
@@ -205,6 +213,16 @@ const asideOpen = ref(false)
 const { isPhone } = useBreakpoint()
 const avatarText = computed(() => (auth.username || '管理员').charAt(0))
 
+// 顶栏 LOGO 跟「当前管理的企业」走：企业管理员是本企业，平台超管是当前选中的那家。
+// 加载放在 store（tenant.loadCompanyLogo），这里只负责触发与渲染失败兜底。
+function onLogoError() {
+  // 图挂了就收掉，别留一个破图图标占着顶栏；下次切企业/刷新会重新取
+  tenant.companyLogo = ''
+}
+function refreshCompanyLogo() {
+  void tenant.loadCompanyLogo()
+}
+
 // ── 授权到期横幅 ────────────────────────────────────────────────
 // 数据来自 GET /api/admin/license（登录即可访问，不限定平台超管）。
 // 与 /admin/me 分开取：授权信息需要能单独刷新（运营给客户续费后，客户刷新页面
@@ -244,6 +262,13 @@ async function loadLicense() {
 // 拿回的是「全部企业」或 1 号企业的数据（这正是本功能要消灭的静默串数据）。
 tenant.syncIdentity(auth.isPlatform, auth.companyId)
 
+// 平台超管切企业：CompanyPicker 写 tenant.currentId，顶栏 LOGO 必须跟着换。
+// 不 watch 的话会一直挂着上一家企业的图，而页面已是新企业的数据。
+watch(
+  () => tenant.currentId,
+  () => refreshCompanyLogo(),
+)
+
 // 页面刷新后恢复身份：令牌在 httpOnly Cookie 中，JS 读不到 claims，
 // 用 /api/admin/me 取回「平台超管 / 企业管理员」与当前企业（服务端为准，覆盖本地缓存）。
 onMounted(async () => {
@@ -266,6 +291,10 @@ onMounted(async () => {
       // 网络异常时保留本地缓存身份，不阻塞界面
     }
   }
+  // 身份定下来后再取 LOGO：hydration 可能把「本地超管」改成「服务端企业管理员」，
+  // 取早了会按错的租户拉图（后端对超管未选企业还会兜到 1 号企业）。
+  refreshCompanyLogo()
+
   // 平台超管：预取企业候选，顶栏选择器点开即有内容
   if (auth.isPlatform) {
     tenant
@@ -518,6 +547,15 @@ function onCommand(cmd: string) {
   justify-content: space-between;
   background: #fff;
   border-bottom: 1px solid #ebeef5;
+}
+/* 企业 LOGO 占据原标题位（左侧）：限高不撑破 60px 顶栏，限宽防止超长图把
+   身份区挤出屏幕；object-fit: contain 保留比例，圆角与侧栏品牌图一致。 */
+.header-logo {
+  height: 30px;
+  max-width: 132px;
+  object-fit: contain;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
 /* 顶栏只有一个可见子元素时，justify-content: space-between 会把整组推到左边。
    显式 auto 外边距：桌面端企业/身份/操作靠右，手机端菜单按钮仍在左、这组仍在右。 */

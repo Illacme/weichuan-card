@@ -6579,3 +6579,36 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 |---|---|
 | 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
 | 前端 `vitest run` | 118 文件 / 1979 例，本轮相关 1978 例全绿；1 例仍是工作区未提交的品牌名改动（`miniprogram/app.json` + `utils/brand.ts`）触发的守门，与本轮无关且不纳入提交 |
+| CI | 提交 `d741c8d`，run `45747402555`，15 job 全绿；右对齐补丁提交 `0ecca76`，run `45749421139`，15 job 全绿 |
+
+## 第一百零四轮：顶栏原标题位改为企业 LOGO（2026-11-26）
+
+用户要求：删掉重复页名后空出来的顶栏左侧，改为显示企业 LOGO；没设就不显示。
+
+### 产品判断
+
+- **占位图比空着更糟**。侧栏的固定 `/logo.png` 是产品品牌，不是这家企业的标识；拿它填进顶栏会让人以为企业已经上传过。没配就整块不渲染。
+- **LOGO 必须跟「当前管理的企业」走**：企业管理员是本企业，平台超管是选择器里当前选中的那家。平台超管未选企业时后端 `targetCompanyID` 会兜到 `defaultCompanyID`(1)，若照常请求就会把 1 号企业的 LOGO 挂在本会话上——和页面里的「请先选择企业」自相矛盾。store 里对这种情况直接拦掉，不请求。
+- **一次加载、多处刷新**：值归 `tenant.companyLogo`（不持久化），由 `loadCompanyLogo()` 从 `company-info.logo` 取（后端已 `ResolveRefs` 成可访问 URL，前端不自行拼前缀）。挂载后身份定下来再取；切企业（watch `currentId`）、公司信息页保存成功、刷新页面都会重取。取不到只是隐藏，不弹错——LOGO 是品牌点缀，不值得打断操作。
+- **竞态守卫**：平台超管连点切换企业时，先发的慢响应不能盖掉新企业的 LOGO（`logoFetchSeq` 序号，与 `fetchSeq` 同一模式）。图挂了走 `@error` 自收，不留破图图标。
+
+### 改动
+
+- `store/tenant.ts`：新增 `companyLogo` state + `loadCompanyLogo()` action，`clear()` 一并清空 LOGO 与递增序号。
+- `layout/AdminLayout.vue`：顶栏左侧渲染 `.header-logo`（限高 30px、限宽 132px、`object-fit: contain`），在身份定下来后与 `currentId` 变化时刷新。
+- `views/content/CompanyInfo.vue`：保存成功后调 `tenant.loadCompanyLogo()`（重新读接口而不是直接塞 `form.logo`，因为后端会归一裸键）。
+- `frontend/README.md`：写明归属、空态、刷新时机与失败处理。
+
+### 守门与反向验证
+
+- `AdminLayout.spec.ts`：渲染断言（没配不渲染、配了出图、图挂了自收、挂载与切企业都触发刷新）+ 源码断言（顶栏标题不许回贴、身份区保持 `margin-left:auto`、LOGO 必须出现在 `.header-right` 之前）。tenant mock 改 `reactive`，否则 `watch(currentId)` 与 `@error` 在测试里永不触发，守门会恒真空转。
+- `tenant.spec.ts`：6 例覆盖企业管理员/超管未选/超管选中/空值与失败/并发乱序/登出清空；`CompanyInfo.spec.ts` 补保存成功与失败两条刷新断言。
+- 反向验证：临时删掉顶栏 `<img>`，两条守门立刻红；临时禁用超管未选企业的守卫，`tenant.spec.ts` 对应用例立刻红；还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
+| 前端 `vitest run` | 118 文件 / 1989 例，本轮相关 1988 例全绿；1 例仍是工作区未提交的品牌名改动（`miniprogram/app.json` + `utils/brand.ts`）触发的守门，与本轮无关且不纳入提交 |
+| 后端 | 本轮未改后端：`company-info` 出口本就 `ResolveRefs` 成可访问 URL，无契约变更 |

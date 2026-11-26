@@ -4,9 +4,11 @@ import { setActivePinia, createPinia } from 'pinia'
 // 企业列表接口：默认返回两家企业，个别用例改写返回值
 const mocks = vi.hoisted(() => ({
   listCompanies: vi.fn(),
+  getCompanyInfo: vi.fn(async (): Promise<any> => ({ id: 1, logo: '/uploads/t/9/logo.png' })),
 }))
 
 vi.mock('@/api/tenants', () => ({ listCompanies: mocks.listCompanies }))
+vi.mock('@/api/content', () => ({ getCompanyInfo: mocks.getCompanyInfo }))
 
 import { useTenantStore } from '@/store/tenant'
 import { getCompanyScope, setCompanyScope } from '@/store/companyScope'
@@ -34,6 +36,8 @@ describe('useTenantStore 当前企业', () => {
     setCompanyScope(0, false)
     mocks.listCompanies.mockReset()
     mocks.listCompanies.mockResolvedValue(pagedOf(companiesFixture()))
+    mocks.getCompanyInfo.mockReset()
+    mocks.getCompanyInfo.mockResolvedValue({ id: 1, logo: '/uploads/t/9/logo.png' })
   })
 
   it('企业管理员：固定本企业，且不注入 companyId', () => {
@@ -221,5 +225,78 @@ describe('useTenantStore 当前企业', () => {
     expect(s.error).toBe(false)
     expect(s.loading).toBe(false)
     expect(s.companies.map((c) => c.id)).toEqual([2])
+  })
+
+  // 顶栏 LOGO 的归属必须与请求作用域同源，否则会挂上别家企业的图。
+  describe('loadCompanyLogo 顶栏企业标识', () => {
+    it('企业管理员：取本企业 LOGO（不带 companyId，由令牌收窄）', async () => {
+      const s = useTenantStore()
+      s.syncIdentity(false, 9)
+      await s.loadCompanyLogo()
+
+      expect(mocks.getCompanyInfo).toHaveBeenCalledTimes(1)
+      expect(s.companyLogo).toBe('/uploads/t/9/logo.png')
+    })
+
+    it('平台超管未选企业：不请求、不显示（后端会兜到 1 号企业）', async () => {
+      const s = useTenantStore()
+      s.syncIdentity(true, 0)
+      await s.loadCompanyLogo()
+
+      expect(mocks.getCompanyInfo).not.toHaveBeenCalled()
+      expect(s.companyLogo).toBe('')
+    })
+
+    it('平台超管选中企业后，按所选企业取 LOGO', async () => {
+      const s = useTenantStore()
+      s.syncIdentity(true, 0)
+      s.setCurrent(2)
+      await s.loadCompanyLogo()
+
+      expect(mocks.getCompanyInfo).toHaveBeenCalledTimes(1)
+      expect(s.companyLogo).toBe('/uploads/t/9/logo.png')
+    })
+
+    it('没配 LOGO / 接口失败：收掉不显示，不弹错', async () => {
+      const s = useTenantStore()
+      s.syncIdentity(false, 9)
+      mocks.getCompanyInfo.mockResolvedValueOnce({ id: 1, logo: '  ' })
+      await s.loadCompanyLogo()
+      expect(s.companyLogo).toBe('')
+
+      mocks.getCompanyInfo.mockRejectedValueOnce(new Error('network'))
+      await expect(s.loadCompanyLogo()).resolves.toBeUndefined()
+      expect(s.companyLogo).toBe('')
+    })
+
+    it('并发乱序：切企业后旧 LOGO 响应回来，不能盖掉新企业的', async () => {
+      let resolveOld!: (v: any) => void
+      const slow = new Promise<any>((r) => { resolveOld = r })
+      mocks.getCompanyInfo
+        .mockImplementationOnce(() => slow)
+        .mockResolvedValueOnce({ id: 2, logo: '/uploads/t/2/new.png' })
+
+      const s = useTenantStore()
+      s.syncIdentity(true, 0)
+      s.setCurrent(1)
+      const old = s.loadCompanyLogo()
+      s.setCurrent(2)
+      await s.loadCompanyLogo()
+
+      resolveOld({ id: 1, logo: '/uploads/t/1/old.png' })
+      await old
+
+      expect(s.companyLogo).toBe('/uploads/t/2/new.png')
+    })
+
+    it('登出：连 LOGO 一起清，换人不继承上一家的图', async () => {
+      const s = useTenantStore()
+      s.syncIdentity(false, 9)
+      await s.loadCompanyLogo()
+      expect(s.companyLogo).toBeTruthy()
+
+      s.clear()
+      expect(s.companyLogo).toBe('')
+    })
   })
 })

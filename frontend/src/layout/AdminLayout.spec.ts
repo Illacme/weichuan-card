@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, defineComponent, h, provide, inject } from 'vue'
+import { nextTick, defineComponent, h, provide, inject, reactive } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
 import { routes } from '@/router'
@@ -38,7 +38,9 @@ vi.mock('@/api/license', () => ({ getLicense: mocks.getLicense }))
 
 // tenant 也用普通对象：需要断言「同步身份」「登出清视角」这些副作用，
 // 真 store 还得额外挂 pinia，收益不成比例（store 自身的行为由 store/tenant.spec.ts 覆盖）。
-const tenant = {
+// reactive 包装：生产里是 Pinia store（响应式），watch(currentId) 与 @error 的
+// 赋值都依赖响应式；用普通对象会让这两条路径在测试里永远不动，守门等于没写。
+const tenant = reactive({
   currentId: 0,
   currentName: '',
   needPick: false,
@@ -47,11 +49,13 @@ const tenant = {
   loaded: false,
   error: false,
   syncIdentity: vi.fn(),
+  companyLogo: '',
+  loadCompanyLogo: vi.fn(async () => {}),
   ensureLoaded: vi.fn(async () => {}),
   setCurrent: vi.fn(),
   search: vi.fn(async () => {}),
   clear: vi.fn(),
-}
+})
 vi.mock('@/store/tenant', () => ({ useTenantStore: () => tenant }))
 vi.mock('@/composables/useBreakpoint', async () => {
   const { ref } = await import('vue')
@@ -312,6 +316,8 @@ describe('layout/AdminLayout', () => {
     sessionStorage.clear()
     tenant.currentId = 0
     tenant.currentName = ''
+    tenant.companyLogo = ''
+    tenant.loadCompanyLogo.mockClear()
     tenant.needPick = false
     tenant.companies = []
     tenant.loaded = false
@@ -407,14 +413,42 @@ describe('layout/AdminLayout', () => {
     expect(w.find('.header-title').exists()).toBe(false)
   })
 
-  it('源码守门：顶栏标题不许回贴，身份与操作区必须靠右', () => {
+  // 顶栏原标题位改成企业自己配的 LOGO：这是「哪家企业」的视觉标识，
+  // 和侧栏固定的产品 LOGO 不是一回事，不能混用。
+  it('顶栏显示当前企业 LOGO：没配就整块不渲染，配了才出图', async () => {
+    const w1 = (await mountLayout()).w
+    expect(w1.find('.header-logo').exists()).toBe(false)
+
+    tenant.companyLogo = '/uploads/t/7/logo.png'
+    const w2 = (await mountLayout()).w
+    const logo = w2.find('.header-logo')
+    expect(logo.exists()).toBe(true)
+    expect(logo.attributes('src')).toBe('/uploads/t/7/logo.png')
+    // 图挂了要自己收掉，不能留个破图占着顶栏
+    await logo.trigger('error')
+    expect(w2.find('.header-logo').exists()).toBe(false)
+  })
+
+  it('挂载与切企业都会刷新顶栏 LOGO', async () => {
+    auth.companyName = '朗汇机电'
+    await mountLayout()
+    expect(tenant.loadCompanyLogo).toHaveBeenCalled()
+
+    tenant.loadCompanyLogo.mockClear()
+    tenant.currentId = 42
+    await nextTick()
+    expect(tenant.loadCompanyLogo).toHaveBeenCalled()
+  })
+
+  it('源码守门：顶栏标题不许回贴，身份区靠右，LOGO 在身份区之前', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).not.toContain('header-title')
     expect(src).not.toContain('currentTitle')
-    // 删掉 header-title 后顶栏只剩一个可见子元素，space-between 会把整组推到左边；
-    // 没有这条 auto 外边距，企业名 / 用户 / 修改密码 / 退出就又贴回左侧。
     expect(src, '.header-right 缺 margin-left:auto，身份区会贴左')
       .toMatch(/\.header-right\s*\{[^}]*margin-left:\s*auto/s)
+    expect(src, '顶栏 LOGO 必须在身份区之前').toMatch(
+      /v-if="tenant\.companyLogo"[\s\S]{0,240}<div class="header-right">/,
+    )
   })
 
   it('所有页面的标题行都统一：h3 在左、工具按钮在右', () => {
@@ -566,6 +600,8 @@ describe('layout/AdminLayout 企业作用域', () => {
     sessionStorage.clear()
     tenant.currentId = 0
     tenant.currentName = ''
+    tenant.companyLogo = ''
+    tenant.loadCompanyLogo.mockClear()
     tenant.needPick = false
     tenant.companies = []
     tenant.loaded = false

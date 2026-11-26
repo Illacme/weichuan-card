@@ -36,7 +36,10 @@ import { ElMessage } from 'element-plus'
 import { reactive, ref, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getCompanyInfo, saveCompanyInfo } from '@/api/content'
+import { useTenantStore } from '@/store/tenant'
 import UploadField from '@/components/UploadField.vue'
+
+const tenant = useTenantStore()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -72,6 +75,9 @@ async function save() {
       tel: form.tel,
       logo: form.logo,
     })
+    // 顶栏 LOGO 与这一页同一份数据：保存后立刻刷新，别让用户存完还挂着旧图。
+    // 后端会归一裸键，所以重新读接口而不是直接把 form.logo 塞给顶栏。
+    void tenant.loadCompanyLogo()
     ElMessage.success('已保存')
   } catch {
     /* 拦截器已提示 */
