@@ -6612,3 +6612,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
 | 前端 `vitest run` | 118 文件 / 1989 例，本轮相关 1988 例全绿；1 例仍是工作区未提交的品牌名改动（`miniprogram/app.json` + `utils/brand.ts`）触发的守门，与本轮无关且不纳入提交 |
 | 后端 | 本轮未改后端：`company-info` 出口本就 `ResolveRefs` 成可访问 URL，无契约变更 |
+| CI | 提交 `3c211e7`，run `45760079368`，15 job 全绿 |
