@@ -6983,4 +6983,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
 | 审计标签 / 迁移产物 | 全绿 / 28 张表 387 列项 |
 | 迁移链 | `history/0066` + 纯净 schema 重生成 + manifest + 基线保真 66 一致 |
-| CI | 待提交后补记 |
+| CI | 提交 `ea71456`，run `45804853858`，15 job 全绿 |
