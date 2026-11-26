@@ -350,7 +350,7 @@ func main() {
 		log.Printf("[INFO] metrics enabled: GET /metrics")
 	}
 	handler.RegisterAuth(r, db, cfg)      // 员工/超管登录（JWT 签发）+ 刷新 + 登出
-	handler.RegisterApply(r, db, cfg)     // 开通申请 / 名片修改审核 / 员工管理 / 统计
+	handler.RegisterApply(r, db, cfg)     // 开通申请 / 修改审核 / 员工管理 / 统计
 	handler.RegisterSubscribe(r, db, cfg) // 订阅消息：GET /api/subscribe/config（审核结果通知的模板 ID）
 	handler.RegisterStatsExport(r, db)    // 统计 CSV 导出（与 /api/admin/stats 同口径，按租户隔离）
 	handler.RegisterStatsDetail(r, db)    // 埋点明细列表（聚合的下钻：逐条事件 + 筛选 + 分页）

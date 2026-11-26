@@ -30,7 +30,7 @@ export const routes = [
         path: 'apply/modify',
         name: 'apply-modify',
         component: () => import('@/views/ApplyModify.vue'),
-        meta: { title: '名片修改审核', group: '审核管理' },
+        meta: { title: '修改审核', group: '审核管理' },
       },
       {
         path: 'employees',
@@ -39,13 +39,13 @@ export const routes = [
         meta: { title: '员工管理', group: '审核管理' },
       },
       {
-        // 微信绑定管理（P1）：集中清单 + 代解绑两类管理员都要用，所以**故意不标
+        // 绑定管理（P1）：集中清单 + 代解绑两类管理员都要用，所以**故意不标
         // platformOnly**——企业管理员要能解绑本企业员工。只有「按 openid 反查」
         // 是平台超管专属，页面内按 auth.isPlatform 收窄那一块入口。
         path: 'wechat-bindings',
         name: 'wechat-bindings',
         component: () => import('@/views/WechatBindings.vue'),
-        meta: { title: '微信绑定管理', group: '审核管理' },
+        meta: { title: '绑定管理', group: '审核管理' },
       },
       {
         // 内容安全：图片违规的检测记录与处置（异步检测 → 消息推送回调 → 人工下架）。

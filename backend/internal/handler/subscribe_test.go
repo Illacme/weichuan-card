@@ -265,7 +265,7 @@ func TestAuditNotifyNotGrantedStillApproves(t *testing.T) {
 	require.EqualValues(t, 0, body["code"])
 }
 
-// 名片修改审核通过 → 通知员工本人（接收者 openid 在员工记录上，不在申请行上）。
+// 修改审核通过 → 通知员工本人（接收者 openid 在员工记录上，不在申请行上）。
 func TestModifyApproveSendsAuditNotification(t *testing.T) {
 	r := setupSQLiteEngine(t)
 	c := newTestClient(r, t)

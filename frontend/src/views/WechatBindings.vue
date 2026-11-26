@@ -1,7 +1,7 @@
 <template>
   <el-card>
     <div class="page-bar">
-      <h3>微信绑定管理</h3>
+      <h3>绑定管理</h3>
       <div class="bar-right">
         <span class="bar-tip">集中查看绑定关系，必要时解除免密入口</span>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>

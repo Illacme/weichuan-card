@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <div class="page-bar">
-        <h3>名片修改审核</h3>
+        <h3>修改审核</h3>
         <div class="bar-right">
           <el-input
             v-model="keyword"

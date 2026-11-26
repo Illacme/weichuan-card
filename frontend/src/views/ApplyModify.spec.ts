@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { mountOpts, flush, paged, rowOf, btnIn, dlgOf } from '@/test/elStubs'
 import ApplyModify from './ApplyModify.vue'
 
-// 名片修改审核页。
+// 修改审核页。
 //
 // 这个页面的失败模式跟「开通审核」不同：开通是建号（不可逆），这里是**把员工提交的新值
 // 覆盖到员工档案上**。所以真正危险的是三件事：
@@ -98,7 +98,7 @@ function resetAll() {
   vi.mocked(ElMessage.success).mockClear()
 }
 
-describe('名片修改审核 · 列表与变更摘要', () => {
+describe('修改审核 · 列表与变更摘要', () => {
   beforeEach(resetAll)
 
   it('首屏按服务端分页拉列表（page/size/keyword 一起下沉）', async () => {
@@ -175,7 +175,7 @@ describe('名片修改审核 · 列表与变更摘要', () => {
   })
 })
 
-describe('名片修改审核 · 变更明细（旧值 → 新值）', () => {
+describe('修改审核 · 变更明细（旧值 → 新值）', () => {
   beforeEach(resetAll)
 
   async function openDetail(w: any, id = 21) {
@@ -255,7 +255,7 @@ describe('名片修改审核 · 变更明细（旧值 → 新值）', () => {
   })
 })
 
-describe('名片修改审核 · 驳回（原因必填 + 防重入）', () => {
+describe('修改审核 · 驳回（原因必填 + 防重入）', () => {
   beforeEach(resetAll)
 
   async function openReject(w: any, id = 21) {

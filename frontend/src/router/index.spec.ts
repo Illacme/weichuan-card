@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
@@ -100,7 +102,7 @@ describe('路由守卫', () => {
     expect(r.currentRoute.value.query.tab).toBe('refresh')
   })
 
-  it('微信绑定管理两类管理员都放行（企业管理员要能解绑本企业员工）', async () => {
+  it('绑定管理两类管理员都放行（企业管理员要能解绑本企业员工）', async () => {
     // 反查是平台超管专属，但清单 / 解绑是两类管理员共用的；误标 platformOnly
     // 会把企业管理员整页挡在门外。页面内再按 auth.isPlatform 收窄反查入口。
     for (const s of [
@@ -214,6 +216,31 @@ describe('路由表 meta', () => {
     walk(routes as any[])
     const withPath = flat.filter((r) => typeof r.path === 'string' && r.path)
     expect(withPath.filter((r) => r.meta?.public).map((r) => r.path)).toEqual(['/login'])
+  })
+
+  it('审核管理组的两处菜单名用现行口径，旧名不许回贴', () => {
+    const flat: RouteRecordRaw[] = []
+    const walk = (list: any[]) => {
+      for (const r of list) {
+        flat.push(r)
+        if (r.children) walk(r.children)
+      }
+    }
+    walk(routes as any[])
+    const byPath = (p: string) => flat.find((r) => String(r.path).endsWith(p))
+    expect(byPath('apply/modify')?.meta?.title, '修改审核标题丢了').toBe('修改审核')
+    expect(byPath('wechat-bindings')?.meta?.title, '绑定管理标题丢了').toBe('绑定管理')
+
+    // 量尺有读数：读侧边栏源码（紧凑菜单不渲染 key 文本，静态读更稳）
+    const layout = readFileSync(
+      resolve(process.cwd(), 'src/layout/AdminLayout.vue'),
+      'utf8',
+    )
+    expect(layout.length).toBeGreaterThan(200)
+    expect(layout).toContain("path: '/apply/modify', title: '修改审核'")
+    expect(layout).toContain("path: '/wechat-bindings', title: '绑定管理'")
+    expect(layout).not.toContain('名片修改审核')
+    expect(layout).not.toContain('微信绑定管理')
   })
 
   it('每个业务页都有标题（侧边栏与面包屑靠它）', () => {

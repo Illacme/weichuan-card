@@ -1,6 +1,6 @@
 # 微传名片 PC 管理后台 · Vue3 前端
 
-Vue3 + Element Plus 的 PC 管理端（超管使用）。对接《三端联调与接口总表》中全部 `admin` 接口：登录 / 开通审核 / 名片修改审核 / 员工管理 / 企业内容 CRUD / 上传 / CDN 刷新 / 超管改密。
+Vue3 + Element Plus 的 PC 管理端（超管使用）。对接《三端联调与接口总表》中全部 `admin` 接口：登录 / 开通审核 / 修改审核 / 员工管理 / 企业内容 CRUD / 上传 / CDN 刷新 / 超管改密。
 
 > 小程序端（员工侧）在 `../miniprogram`，后端在 `../backend`。
 
@@ -26,13 +26,13 @@ frontend/
     ├── api/
     │   ├── request.ts        # axios 实例 + 统一响应拦截（code=401 跳登录 / 403 提示 / 非0 报错）
     │   ├── auth.ts           # 登录 / 改密
-    │   ├── apply.ts          # 开通审核 / 名片修改审核
+    │   ├── apply.ts          # 开通审核 / 修改审核
     │   ├── employees.ts      # 员工管理
     │   ├── content.ts        # 公司信息/简介/分类/项目/服务/首页布局
     │   ├── storage.ts        # CDN 刷新 / 私有桶签名
     │   ├── tenants.ts        # 企业管理 / 企业管理员 / 租户小程序凭据（含 releaseEnabled 代发开关）
     │   ├── mpRelease.ts      # 小程序版本发布：登记 / 提审 / 查审核状态 / 发布 / 撤回
-    │   ├── wechatBindings.ts # 微信绑定管理：清单 / 按 openid 反查 / 代解绑（绝无代绑函数）
+    │   ├── wechatBindings.ts # 绑定管理：清单 / 按 openid 反查 / 代解绑（绝无代绑函数）
     │   └── assets.ts         # 开源素材库：清单 / 采用 / 预览图 URL
     ├── store/auth.ts         # Pinia 登录态（持久化 localStorage）
     ├── router/index.ts       # 路由表 + 路由守卫
@@ -46,9 +46,9 @@ frontend/
     └── views/
         ├── Login.vue
         ├── ApplyOpen.vue     # 开通审核（通过弹初始密码 / 驳回）
-        ├── ApplyModify.vue   # 名片修改审核（snapshot 旧值→新值对比）
+        ├── ApplyModify.vue   # 修改审核（snapshot 旧值→新值对比）
         ├── Employees.vue     # 员工管理（新增/启用停用/重置密码）
-        ├── WechatBindings.vue # 微信绑定管理（集中清单 / 代解绑 / 平台超管反查）
+        ├── WechatBindings.vue # 绑定管理（集中清单 / 代解绑 / 平台超管反查）
         └── content/
             ├── CompanyInfo.vue
             ├── CompanyProfile.vue
@@ -165,7 +165,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 
 按数据规模分两套，**不要混用**：
 
-- **服务端分页 `src/composables/useServerTable.ts`**：开通审核 / 名片修改审核 / 员工管理 / 企业管理 / 平台账号。关键字防抖 300ms 后把 `page/size/keyword` 下沉到后端，回包信封为 `{list,total,page,size}`；默认每页 20 条（员工管理为 10 条），页码越界按回包 `page` 夹到末页。
+- **服务端分页 `src/composables/useServerTable.ts`**：开通审核 / 修改审核 / 员工管理 / 企业管理 / 平台账号。关键字防抖 300ms 后把 `page/size/keyword` 下沉到后端，回包信封为 `{list,total,page,size}`；默认每页 20 条（员工管理为 10 条），页码越界按回包 `page` 夹到末页。
 - **前端分页 `src/composables/useTable.ts`**：业绩分类 / 项目案例 / 业务服务 / 统计明细。对已在内存中的列表筛选、切片，适合条数固定的内容页。
 
 两个审核页的列表由后端按 `created_at desc` 返回，**「提交时间」固定为第一列**（手机端卡片同样放首行），便于先处理等得最久的申请；列顺序由 `ApplyOpen.spec.ts` / `ApplyModify.spec.ts` 的静态守门读模板钉住，误移回倒数第二列会直接红。
@@ -235,16 +235,16 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
   **图例点选（默认三线 / 勾选后纵轴重算 / 最后一项点不掉）**、tooltip、空态与 NaN 兜底。
 - `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等；微信绑定列只出状态 + 掩码。
 - `src/components/WechatBindingCell.spec.ts`（9 例）：绑定状态单元格的四种表现（已绑 / 未绑 / 掩码为空 / compact），外加**三页接入静态守门**（三个账号页都要有 `prop="wechatBound"` 列、传的是掩码字段、员工页不再铺开 `openid` 明文列）与**安全底线**（`model.Admin.WXOpenID` 仍是 `json:"-"`）。静态守门先剥注释，避免注释里的历史写法造成假红/假绿；另由 `Companies.spec.ts` / `Employees.spec.ts` 的真实 DOM 断言（`data-bound`）兜住「源码里有、实际没渲染」。
-- `src/views/WechatBindings.spec.ts`（18 例）：微信绑定管理页——清单两类账号 + 企业 + 掩码、服务端分页参数、类型筛选带 `kind`、空态给出「由本人到小程序绑定」的出路；**解绑二次确认的三个后果**（免密入口失效 / 令牌失效 / 后台不能代绑）、取消不发请求、`kind+id` 定位、`self=true` 时清登录态跳登录页；**反查平台超管专属**（企业管理员连入口都看不到）、空值不发请求、完整 openid 只进请求体且结果只显掩码/输入框清空、反查结果里解绑就地移除不重发 lookup；静态守门钉住「每列 `prop`」「api 层没有代绑函数」「页面不写 localStorage」「路由不误标 `platformOnly`」。
+- `src/views/WechatBindings.spec.ts`（18 例）：绑定管理页——清单两类账号 + 企业 + 掩码、服务端分页参数、类型筛选带 `kind`、空态给出「由本人到小程序绑定」的出路；**解绑二次确认的三个后果**（免密入口失效 / 令牌失效 / 后台不能代绑）、取消不发请求、`kind+id` 定位、`self=true` 时清登录态跳登录页；**反查平台超管专属**（企业管理员连入口都看不到）、空值不发请求、完整 openid 只进请求体且结果只显掩码/输入框清空、反查结果里解绑就地移除不重发 lookup；静态守门钉住「每列 `prop`」「api 层没有代绑函数」「页面不写 localStorage」「路由不误标 `platformOnly`」。
 - `src/views/ApplyOpen.spec.ts`（19 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功；**「提交时间必须是第一列」静态守门 3 例**（读模板钉住列顺序与 `prop="createdAt"`、时间列只出现一次、手机卡片首行也是提交时间）。
-- `src/views/ApplyModify.spec.ts`（20 例）：名片修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端只隐藏员工ID（提交时间是第一列，始终可见）；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功；**「提交时间必须是第一列」静态守门 2 例**（旧版该列没写 `prop`，「手机端隐藏两列」的断言恒为 0 是假绿，现已补上并改为始终可见）。
+- `src/views/ApplyModify.spec.ts`（20 例）：修改审核——变更摘要「字段→新值」（未知字段用键名兜底）、快照非法 JSON 显示「无」、**旧值按本页 `staffIds` 精确取且去重（不拉全量员工表）**、手机端只隐藏员工ID（提交时间是第一列，始终可见）；明细逐字段旧→新（取不到的显示「（空）」）、员工表取不到仍能审批、明细内直接通过；**连点两次「确定驳回」只发一次请求（`rejecting` 防重入）**、审批失败不关窗不报成功；**「提交时间必须是第一列」静态守门 2 例**（旧版该列没写 `prop`，「手机端隐藏两列」的断言恒为 0 是假绿，现已补上并改为始终可见）。
 - `src/components/AssetPicker.spec.ts`：素材选择器用例——清单渲染、`defaultCategory` 定位、单选即采用、多选批量、超限拦截、**翻页带新页码重新请求**、**搜索防抖后走服务端过滤**、**风格行只渲染 count>0 的档位**、**切换风格带 style 请求**、**单一调性分类隐藏风格行**、**已选调性无素材时自动回落全部**（11 例）。
 - `src/api/uploadFile.spec.ts`（19 例）：上传两条链路的**回退矩阵**——直传成功、预签名 `code!=0` / 接口 404 回退、PUT 5xx 回退、业务失败抛后端 `msg`、非 JSON 抛 `HTTP 502`、回包无 `urls` 抛错；另有 `size` 随预签名上报（配额计量的唯一来源）与「action 自带查询串时用 `&` 续接」。XHR 用最小假实现（不用 mock 库），六类失败全是静默降级，写错只表现为「偶尔有人说图传不上去」。**上传进度 5 例**：两条 XHR 都报 `phase`（`presign`/`direct`/`server`）+ 百分比、直传失败不能谎报 100%、回退时进度从 0 重新计、无订阅者不挂 `upload.onprogress`、`lengthComputable=false` 不产生 NaN。**字节发完后的等待态 4 例**：`upload.onload` 触发 `finishing(via=direct|server)` 且响应回来才补 100；故意让最后一个 progress 停在 96%，钉住「不能靠 `loaded===total` 判断发完」；小文件无 progress 事件也要进 finishing；PUT 失败回退时不能留下 `direct 100%` 的假成功。
 - `src/components/UploadField.spec.ts`（20 例）：上传组件用例——素材库入口与 `library-type` 透传、单选替换、多选追加、超限截断（直传/回退分支已下沉到 `api/uploadFile.spec.ts`）；**选文件时的大小预校验**与服务端 `checkFile` 对齐——正好等于上限放行、超 1 字节拦下、`maxMB` 被写成 0 时按「不限制」处理（不能反过来把所有文件都拒掉）；**进度条 5 例**：阶段文案与百分比、回退换警示色并说明原因、成功/失败都收掉进度条、`http-request` 不返回 Promise（el-upload 会二次触发 `onSuccess(undefined)` → 我们的 `onSuccess` 读 `res.code` 抛 TypeError）。**finishing 3 例**：99% 时切「已等待 Ns」+ 等待动画而不僵在 99%、中转路径保留警示色并说明「正在写入云存储（大文件可能要几十秒）」、假计时器验证每秒走动且上传完成后 `vi.getTimerCount()===0`（不残留 interval）。
 - `src/api/mpRelease.spec.ts`（10 例）：版本发布接口契约——路径拼装（租户维度列表 / 登记 vs 记录维度四个动作）、`undo-audit` 必须带 `confirm:true`、审核状态回包 `wxStatus/changed` 解包、`mpReleaseTagType` 六态映射（含未知值回落 info）、**上传与探活两条路径**（`/releases/upload` 带版本号+备注、`/releases/upload-readiness` 把 `data` 摊平且缺字段兜底）。
 - `src/components/MPReleaseDialog.spec.ts`（12 例）：版本弹窗——打开即按企业拉列表、**每个状态出哪些按钮**（draft 只有提交审核 / auditing 查状态+撤回 / audit_passed 发布 / released 终态无动作）、驳回原因渲染与「重新提审」、撤回与发布的二次确认（含用户取消时不调接口）、**上传链路**（打开即探活并逐条列出缺失项 / 就绪提示 / **环境不齐时点「开始上传」不发请求** / 就绪后提交并刷新列表）。`el-dialog` 桩认 `modelValue`，否则嵌套的登记弹窗会把「取消 / 登记」混进行内按钮断言；`el-button` 桩要把 `disabled` 声明成 prop，否则它以 attr 落到真 `<button>` 上，VTU 的 `trigger` 会直接跳过点击，那道 guard 就永远测不到。
 - `src/views/Companies.spec.ts`（凭据部分）：租户小程序凭据 + **平台代发开关** + **上传密钥**——缺省允许、关掉后随保存提交 `releaseEnabled:false`、回包 `releaseEnabled:false` 时显示关闭态；上传密钥填了随保存提交、**原本已配置却留空时确认文案同时点名 AppSecret 与上传密钥**（一次说清要清掉什么，不连弹两窗）；以及原先的列表标签 / 回填 / Secret 留空二次确认 / AppID 前缀校验。
-- `src/router/index.spec.ts`（17 例）：路由守卫门禁——未登录跳登录页、已登录访问登录页回后台、企业管理员访问平台级页面挡回审核页、平台超管放行、**微信绑定管理两类管理员都放行（防误标 `platformOnly`）**、未知路径落默认页、登出后门禁立即生效；另守路由表本身（平台管理分组必须都标 `platformOnly`、仅登录页 public、业务页都要有 title）。做法是真实 routes + 桩组件 + 内存 history，挂的是生产同一个 `registerGuards`。
+- `src/router/index.spec.ts`（17 例）：路由守卫门禁——未登录跳登录页、已登录访问登录页回后台、企业管理员访问平台级页面挡回审核页、平台超管放行、**绑定管理两类管理员都放行（防误标 `platformOnly`）**、未知路径落默认页、登出后门禁立即生效；另守路由表本身（平台管理分组必须都标 `platformOnly`、仅登录页 public、业务页都要有 title）。做法是真实 routes + 桩组件 + 内存 history，挂的是生产同一个 `registerGuards`。
 - `src/layout/AdminLayout.spec.ts`（16 例）：后台外壳——**企业管理员看不到「平台管理」组**、平台超管能看到全部入口、品牌名三级回落（企业简称 → 系统设置品牌 → 「· 管理后台」后缀）、顶部标题取路由 `meta.title`、当前菜单跟随路由；刷新后 `profileLoaded=false` 时用 `/api/admin/me` 取回身份（已恢复则不重复请求，失败保留本地身份）；登出（接口失败也要本地登出）、改密弹层、手机端收进头像下拉、路由切换收起窄屏抽屉。
 - `src/views/content/` 六个企业内容页全覆盖：
   - `Categories.spec.ts`（10 例）：列表与锁定态、关键字过滤、**首行上移 / 末行下移禁用条件**、下移后按新顺序批量持久化 sort、新增校验不通过不提交、编辑走 update、删除二次确认、列表失败不崩。
@@ -360,7 +360,7 @@ npm run test:watch  # 监听模式
 全部个人信息，保留完整 openid；`/api/employee/me` 回的是员工本人资料，同理。
 P1 若要统一收紧，需连同这两处一起审，别只改半边。
 
-## 微信绑定管理（P1：看得见 → 管得了）
+## 绑定管理（P1：看得见 → 管得了）
 
 `src/views/WechatBindings.vue` + `src/api/wechatBindings.ts`，入口挂在侧栏
 **「审核管理」组**（`/wechat-bindings`）。这个位置是刻意的：

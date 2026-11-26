@@ -60,7 +60,7 @@ func applyOpenLimiter(db *gorm.DB) *middleware.RateLimiter {
 		WithCounter(dbRateCounter{db: db})
 }
 
-// RegisterApply 注册写操作：开通申请 / 名片修改审核 / 员工管理 / 统计。
+// RegisterApply 注册写操作：开通申请 / 修改审核 / 员工管理 / 统计。
 // 多租户：所有 /api/admin 端点按 tenantScope 收窄（企业管理员只见本企业）；
 // 公开申请端点按请求体 companyId 归属租户（缺省 1 号租户朗汇）。
 func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {

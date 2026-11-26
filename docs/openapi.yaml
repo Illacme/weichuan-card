@@ -1820,7 +1820,7 @@ paths:
       summary: 员工列表（服务端分页）
       description: |
         按租户隔离（企业管理员只看本企业；平台超管可用 ?companyId= 收窄）。
-        staffIds 为按 id 精确取（上限 200 条），用于名片修改审核页回显员工原值。
+        staffIds 为按 id 精确取（上限 200 条），用于修改审核页回显员工原值。
       security:
         - cookieAuth: []
       parameters:
@@ -5332,7 +5332,7 @@ paths:
                   code: { $ref: "#/components/schemas/Code" }
                   msg: { type: string }
 
-  # ───────────────── 微信绑定管理（P1：清单 / 反查 / 解绑） ─────────────────
+  # ───────────────── 绑定管理（P1：清单 / 反查 / 解绑） ─────────────────
   # 三条端点都挂在 backend/internal/handler/admins.go 的 RegisterAdmins 内部，
   # 与「账号管理」同组。设计底线见 backend/internal/handler/wechat_admin.go 文件头：
   # 后台只能解绑、绝不代绑；openid 只进不出；解绑同时自增 token_version 踢掉已签发令牌。

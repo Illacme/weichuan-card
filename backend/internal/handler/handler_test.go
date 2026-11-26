@@ -1485,7 +1485,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Contains(t, fmt.Sprint(data["message"]), "地址可访问")
 	})
 
-	// 微信绑定管理（P1）：三条端点必须进 runAPIFlow，才会被 TestAPIFlowMySQL 的
+	// 绑定管理（P1）：三条端点必须进 runAPIFlow，才会被 TestAPIFlowMySQL 的
 	// parity 一并覆盖——漏在这里就是「SQLite 全绿、MySQL 上才炸」。只做冒烟，
 	// 不真的解绑任何账号，免得改动后面「移动端管理员登录与审核」依赖的状态。
 	t.Run("微信绑定清单与反查", func(t *testing.T) {
