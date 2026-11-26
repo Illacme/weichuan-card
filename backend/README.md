@@ -685,23 +685,24 @@ node miniprogram/scripts/enable-tencent-video.mjs on
 自查（服务器上，路径按实际部署目录替换）：
 
 ```bash
-ls -1 <部署目录>/migrations/*.sql | wc -l    # 当前应为 1（事故当时为 38）
-ls <部署目录>/migrations/0001_init.sql       # 当前应存在（事故当时查 0038*）
+ls -1 <部署目录>/migrations/*.sql | wc -l             # 顶层基线应为 1（事故当时为 38）
+ls -1 <部署目录>/migrations/history/*.sql | wc -l     # 升级发版应与本地 history/ 一致（只查顶层会漏 0066）
+ls <部署目录>/migrations/0001_init.sql                # 当前应存在（事故当时查 0038*）
 grep -E '\[MIGRATE\]|\[CONTENT\]\[ERROR\]' <后端日志> | tail -20
 mysql -uroot -p weichuan -e "SHOW COLUMNS FROM company_profiles LIKE 'video_backup_url';"
 ```
 
 > **不用每次人肉核对**：`scripts/deploy_frontend.sh` 发版前已自动比对本地
-> `backend/migrations/*.sql` 与远端 `migrations/` 的文件名清单，缺文件会直接列出名字
-> 并给出下面的修复命令；`--require-migrations` 把它变成硬门禁（默认只警告）。
-> 详见 `docs/deploy-runbook.md` §3.2 / §4。注意它只比文件名，不查 `schema_migrations`
-> ——清单齐了但列没加上，仍需跑 `./server migrate` 并看启动日志。
+> `backend/migrations/*.sql` 与 `history/*.sql` **两份**文件名清单，缺文件会直接列出名字
+> 并给出下面的修复命令；`--require-migrations` 把它变成硬门禁（默认只警告，全新安装
+> 可不带 `history/`）。详见 `docs/deploy-runbook.md` §3.2 / §4。注意它只比文件名，
+> 不查 `schema_migrations`——清单齐了但列没加上，仍需跑 `./server migrate` 并看启动日志。
 
 修复（前提：后端二进制已是本版本、清单里含 0038）。**不必重启服务**——列一加上，运行中的进程立刻能写成功：
 
 ```bash
 # 推荐：把本版本 migrations/ 全量同步到二进制同级，再手工跑一次迁移子命令（不启服务、不监听端口）
-rsync -av --exclude=history/ backend/migrations/ root@<服务器>:<部署目录>/migrations/
+rsync -av backend/migrations/ root@<服务器>:<部署目录>/migrations/   # 整目录，含 history/
 cd <部署目录> && ./server migrate     # DB_DSN 从现有 env / data/runtime.env 读，无需另填
 ```
 

@@ -14,7 +14,7 @@
 #   DEPLOY_PASSWORD='服务器口令' ./scripts/deploy_frontend.sh --build   # 推荐：非交互，口令不进命令行
 #   ./scripts/deploy_frontend.sh --password '服务器口令' --build        # 也能用，但口令会留在 shell history / ps
 #   ./scripts/deploy_frontend.sh -n                  # 只看要做什么（dry-run）
-#   ./scripts/deploy_frontend.sh --require-migrations  # 远端迁移清单不完整就拒绝发版（CI 用）
+#   ./scripts/deploy_frontend.sh --require-migrations  # 远端迁移清单不完整就拒绝发版（升级发版 / CI 用）
 #   DEPLOY_HOST=root@其它服务器 ./scripts/deploy_frontend.sh   # 覆盖到别的服务器
 #   DEPLOY_HOST= ./scripts/deploy_frontend.sh -n     # 显式置空 = 本地自测模式（不连服务器）
 #
@@ -28,6 +28,10 @@
 #                   远端 migrations/ 目录，默认取 DEPLOY_PATH 父目录下的 migrations/
 #                   （后端二进制与 migrations/ 同级）。路径不同就显式指定；
 #                   **显式置空 = 跳过迁移清单比对**，只在你确定不需要这项检查时用。
+#                   比对范围含顶层基线 *.sql 与 history/*.sql 两份清单。
+#   DEPLOY_LOCAL_MIGRATIONS_DIR
+#                   本地 backend/migrations/ 路径，默认 SCRIPT_DIR/../backend/migrations；
+#                   仅供自检脚本构造「本地清单残缺」场景，日常不要设。
 #   DEPLOY_REQUIRE_MIGRATIONS
 #                   设为 1 等同 --require-migrations，CI 里用环境变量更方便。
 #   DEPLOY_URL      发版后自检用的地址，默认 https://weichuan.ziyuanxingqiu.cn；留空跳过自检
@@ -44,8 +48,10 @@
 #   --password PWD  ssh 登录口令，也可写 --password=PWD；用于无人值守发版
 #   --no-verify     跳过发版后的自检
 #   --require-migrations
-#                   远端 migrations/ 清单必须与本版本 backend/migrations/ 一致，
-#                   缺文件或读不到就**拒绝发版**（默认只警告、继续发）。
+#                   远端 migrations/ 的顶层基线与 history/ 增量清单都必须与本版本
+#                   backend/migrations/ 一致，缺文件或读不到就**拒绝发版**（默认只警告）。
+#                   升级发版必须带 history/；全新安装可以只发顶层 0001_init.sql，
+#                   所以 history/ 缺失在默认模式下只告警、不阻断。
 #   --prune[=N]     清理 N 天前的旧 assets（默认 7）；只列出，需输入 yes 才真删
 #   -y, --yes       跳过 --prune 的确认（CI 用）
 #   -h, --help      显示本帮助
@@ -396,7 +402,13 @@ echo "  本地待发壳：${LOCAL_SHELL}"
 # 0035 / 0038 两次线上事故形态一样：升级只替换了产物，migrations/ 目录停在旧版本。
 # 后端启动的清单守门会打 [MIGRATE][FATAL] 部署包不完整，但**迁移失败刻意不终止启动**，
 # 故障于是藏到运行期：写库报 Unknown column，用户只看到一句「保存失败」。
-# 前端发版是升级链路的最后一棒，用一次远端命令把两份文件名清单比一次就够了。
+#
+# 2026-11-25 补：本版本把顶层做成纯净基线（只有 0001_init.sql），历史增量全在
+# history/。旧脚本只比顶层，于是日志会打「清单一致（1 个 .sql）」，而远端 history/
+# 哪怕整目录缺失也照样绿灯——0066_home_featured_ratio.sql 这类新列就是这么漏的。
+# 现在比**两份**清单：顶层基线 + history/ 增量，缺哪份都报出具体文件名。
+# 口径差异：全新安装只发顶层基线，history/ 缺失在默认模式下只告警；升级发版必须
+# 带 history/，用 --require-migrations 变成硬门禁。
 # 注意：这是**文件名**比对，不查 schema_migrations、不代替 ./server migrate；
 # 清单齐了但列没加上，还得看启动日志 / 手工跑迁移子命令。
 say "== 迁移清单完整性 =="
@@ -416,18 +428,35 @@ case "${DEPLOY_MIGRATIONS_DIR-__AUTO__}" in
     *)  MIG_DIR=${DEPLOY_MIGRATIONS_DIR}; MIG_CANDIDATES="${MIG_DIR}" ;;
 esac
 
-LOCAL_MIGRATIONS_DIR="${SCRIPT_DIR}/../backend/migrations"
+LOCAL_MIGRATIONS_DIR="${DEPLOY_LOCAL_MIGRATIONS_DIR:-${SCRIPT_DIR}/../backend/migrations}"
 
 migrations_fix_hint() {
+    # 修复命令必须同时带上 history/：老写法 --exclude=history/ 正是漏传 0066 的原因。
+    # 全新安装可以只发顶层，但那是 deploy-runbook 的场景说明，不是「补缺文件」的命令。
     if [ -n "${DEPLOY_HOST}" ]; then
-        echo "    rsync -av --exclude=history/ backend/migrations/ ${DEPLOY_HOST}:${MIG_DIR}/"
+        echo "    rsync -av backend/migrations/ ${DEPLOY_HOST}:${MIG_DIR}/"
         echo "    ssh ${DEPLOY_HOST} 'cd $(dirname "${MIG_DIR}") && ./server migrate'"
     else
         echo "    mkdir -p ${MIG_DIR}/"
-        echo "    mkdir -p ${MIG_DIR}/ && cp -a backend/migrations/*.sql ${MIG_DIR}/"
+        echo "    mkdir -p ${MIG_DIR}/ && cp -a backend/migrations/. ${MIG_DIR}/"
         echo "    (cd $(dirname "${MIG_DIR}") && ./server migrate)"
     fi
+    echo "    升级发版必须连 history/ 一起补；全新安装才只发顶层 0001_init.sql。"
     echo "    不必重启服务；完整排查见 backend/README.md「升级必做」。"
+}
+
+# 输出「本地清单里有、远端清单里没有」的文件名，每行一个。
+# 两份清单分别调用：history/ 的缺文件必须和顶层的一样能报出名字。
+missing_from_remote() {
+    local _local="$1" _remote="$2" _f
+    while IFS= read -r _f; do
+        [ -n "$_f" ] || continue
+        if ! printf '%s\n' "$_remote" | grep -Fqx -- "$_f"; then
+            printf '%s\n' "$_f"
+        fi
+    done <<EOF
+$_local
+EOF
 }
 
 if [ "${MIGRATIONS_SKIP}" = 1 ]; then
@@ -437,16 +466,23 @@ elif [ ! -d "${LOCAL_MIGRATIONS_DIR}" ]; then
     warn "      迁移由别的流水线部署时，可用 DEPLOY_MIGRATIONS_DIR= 显式跳过。"
     if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
 else
-    LOCAL_MIG_LIST=$(cd "${LOCAL_MIGRATIONS_DIR}" && ls -1 2>/dev/null | grep '[.]sql$' | sort) || LOCAL_MIG_LIST=''
-    LOCAL_MIG_COUNT=$(printf '%s\n' "${LOCAL_MIG_LIST}" | grep -c . || true)
-    if [ "${LOCAL_MIG_COUNT}" -eq 0 ]; then
-        warn "  ⚠️  ${LOCAL_MIGRATIONS_DIR} 里没有 .sql 文件，无法比对"
+    # 两份量尺都要非空：本地 history/ 被删空时，A==B 会变成「空集 == 空集」的假绿。
+    LOCAL_MIG_TOP=$(cd "${LOCAL_MIGRATIONS_DIR}" && ls -1 *.sql 2>/dev/null | sort) || LOCAL_MIG_TOP=''
+    LOCAL_MIG_HISTORY=$(cd "${LOCAL_MIGRATIONS_DIR}/history" 2>/dev/null && ls -1 *.sql 2>/dev/null | sort) || LOCAL_MIG_HISTORY=''
+    LOCAL_MIG_TOP_COUNT=$(printf '%s\n' "${LOCAL_MIG_TOP}" | grep -c . || true)
+    LOCAL_MIG_HISTORY_COUNT=$(printf '%s\n' "${LOCAL_MIG_HISTORY}" | grep -c . || true)
+    LOCAL_MIG_COUNT=$((LOCAL_MIG_TOP_COUNT + LOCAL_MIG_HISTORY_COUNT))
+    if [ "${LOCAL_MIG_TOP_COUNT}" -eq 0 ] || [ "${LOCAL_MIG_HISTORY_COUNT}" -eq 0 ]; then
+        # 量尺空了还比，等于没比：宁可明确说「无法校验」，也不能打「清单一致」。
+        warn "  ⚠️  ${LOCAL_MIGRATIONS_DIR} 清单不完整（顶层 ${LOCAL_MIG_TOP_COUNT} 个 + history ${LOCAL_MIG_HISTORY_COUNT} 个 .sql），无法比对"
         if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
     else
-        # 远端只回「状态行 + *.sql 文件名」，别把 ls 的报错、目录路径混进来。
+        # 远端探针回两段清单，各自用成对的 BEGIN/END 标记圈起来。
+        # 不这么做的话，顶层基线与 history 增量混成一坨，无法判断缺的是哪一份。
         # 首行注释是给离线自检用的探针标记，远端 sh 会当注释忽略。
         MIG_RC=0
-        # 探针在远端依次试候选目录，选第一个存在的；命中后回传「状态行 + 解析出的真实路径 + *.sql 清单」。
+        # 探针在远端依次试候选目录，选第一个存在的；命中后回传
+        # 「状态行 + 解析出的真实路径 + 顶层段 + history 段」。
         # 这样不论后端在 <site>/migrations 还是 <site>/backend/migrations，都不会因默认路径猜错而误报。
         MIG_INFO=$(remote "# __WC_MIG_PROBE__
 _WC_MIG=''
@@ -456,7 +492,12 @@ done
 if [ -n \"\$_WC_MIG\" ]; then
     echo MIG_DIR_OK
     echo \"\$_WC_MIG\"
+    echo __WC_MIG_TOP_BEGIN__
     (cd \"\$_WC_MIG\" && ls -1 *.sql 2>/dev/null) || true
+    echo __WC_MIG_TOP_END__
+    echo __WC_MIG_HISTORY_BEGIN__
+    (cd \"\$_WC_MIG/history\" && ls -1 *.sql 2>/dev/null) || true
+    echo __WC_MIG_HISTORY_END__
 else
     echo MIG_DIR_MISSING
 fi") || MIG_RC=$?
@@ -464,31 +505,34 @@ fi") || MIG_RC=$?
         case "${MIG_STATE}" in
             MIG_DIR_OK)
                 MIG_DIR=$(printf '%s\n' "${MIG_INFO}" | sed -n 2p)
-                REMOTE_MIG_LIST=$(printf '%s\n' "${MIG_INFO}" | sed -n '3,$p' | grep '[.]sql$' | sort) || REMOTE_MIG_LIST=''
+                REMOTE_MIG_TOP=$(printf '%s\n' "${MIG_INFO}" | awk '
+                    /^__WC_MIG_TOP_BEGIN__$/ { inside=1; next }
+                    /^__WC_MIG_TOP_END__$/   { inside=0; next }
+                    inside && /[.]sql$/ { print }
+                ')
+                REMOTE_MIG_HISTORY=$(printf '%s\n' "${MIG_INFO}" | awk '
+                    /^__WC_MIG_HISTORY_BEGIN__$/ { inside=1; next }
+                    /^__WC_MIG_HISTORY_END__$/   { inside=0; next }
+                    inside && /[.]sql$/ { print }
+                ')
                 MIG_DIR_EXISTS=1 ;;
             MIG_DIR_MISSING)
-                REMOTE_MIG_LIST=''
+                REMOTE_MIG_TOP=''
+                REMOTE_MIG_HISTORY=''
                 MIG_DIR_EXISTS=0 ;;
             *)
                 # ssh 断了、路径没权限、命令被截断都会走到这里。此时**不能**
                 # 把整个清单全报成「缺失」——那是假警报，会逼人去修根本没坏的东西。
-                REMOTE_MIG_LIST=''
+                REMOTE_MIG_TOP=''
+                REMOTE_MIG_HISTORY=''
                 MIG_DIR_EXISTS=-1 ;;
         esac
 
-        MISSING_MIG=''
-        while IFS= read -r _f; do
-            [ -n "${_f}" ] || continue
-            if ! printf '%s\n' "${REMOTE_MIG_LIST}" | grep -Fqx -- "${_f}"; then
-                # 换行只插在两项之间、末尾不留：命令替换会吞掉尾部换行，
-                # 写成 $(printf '%s%s\n' ...) 会把 N 个文件名粘成一整行。
-                if [ -n "${MISSING_MIG}" ]; then MISSING_MIG="${MISSING_MIG}
-"; fi
-                MISSING_MIG="${MISSING_MIG}${_f}"
-            fi
-        done <<EOF
-${LOCAL_MIG_LIST}
-EOF
+        MISSING_TOP=$(missing_from_remote "${LOCAL_MIG_TOP}" "${REMOTE_MIG_TOP}")
+        MISSING_HISTORY=$(missing_from_remote "${LOCAL_MIG_HISTORY}" "${REMOTE_MIG_HISTORY}")
+        MISSING_MIG=$(printf '%s\n%s\n' "${MISSING_TOP}" "${MISSING_HISTORY}" | grep . || true)
+        MISSING_TOP_COUNT=$(printf '%s\n' "${MISSING_TOP}" | grep -c . || true)
+        MISSING_HISTORY_COUNT=$(printf '%s\n' "${MISSING_HISTORY}" | grep -c . || true)
         MISSING_MIG_COUNT=$(printf '%s\n' "${MISSING_MIG}" | grep -c . || true)
 
         if [ "${MIG_DIR_EXISTS}" -lt 0 ]; then
@@ -496,20 +540,24 @@ EOF
             warn "      确认路径：DEPLOY_MIGRATIONS_DIR=<后端二进制同级>/migrations"
             if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：迁移清单无法校验，拒绝发版"; fi
         elif [ "${MISSING_MIG_COUNT}" -eq 0 ]; then
-            echo "  ✓ 远端 migrations 清单一致（${LOCAL_MIG_COUNT} 个 .sql）"
+            echo "  ✓ 远端 migrations 清单一致（顶层 ${LOCAL_MIG_TOP_COUNT} 个 + history ${LOCAL_MIG_HISTORY_COUNT} 个 .sql）"
         else
             if [ "${MIG_DIR_EXISTS}" = 0 ]; then
                 warn "  ✗ 远端 migrations 目录不存在（已探：${MIG_CANDIDATES}）"
             else
-                warn "  ✗ 远端 migrations 缺 ${MISSING_MIG_COUNT} 个文件（本地共 ${LOCAL_MIG_COUNT} 个）"
+                warn "  ✗ 远端 migrations 缺 ${MISSING_MIG_COUNT} 个文件（顶层缺 ${MISSING_TOP_COUNT} + history 缺 ${MISSING_HISTORY_COUNT}；本地共 ${LOCAL_MIG_COUNT} 个）"
             fi
             printf '%s\n' "${MISSING_MIG}" | sed 's/^/      - /'
             warn "  这是 0035 / 0038 两次线上事故的形态：[MIGRATE][FATAL] 部署包不完整，"
             warn "  但迁移失败不终止启动，运行期才报 Unknown column，用户只看到「保存失败」。"
+            if [ "${MISSING_TOP_COUNT}" -eq 0 ] && [ "${MISSING_HISTORY_COUNT}" -gt 0 ]; then
+                warn "  顶层基线齐、只缺 history/：全新安装可以只发顶层；升级发版必须补齐，"
+                warn "  否则已按历史版本记账的旧库启动切到 history/ 时找不到增量，新列不会加上。"
+            fi
             warn "  修复："
             migrations_fix_hint
             if [ "${REQUIRE_MIGRATIONS}" = 1 ]; then die "严格模式：远端迁移清单不完整，拒绝发版"; fi
-            warn "  ⚠️  默认只警告、继续发版。CI / 流水线请加 --require-migrations 变成硬门禁。"
+            warn "  ⚠️  默认只警告、继续发版。升级发版 / CI 请加 --require-migrations 变成硬门禁。"
         fi
     fi
 fi

@@ -12,8 +12,9 @@
 #      两者都没有时**明确报错**，不静默退化成交互提示；
 #   5. 不带口令时完全不碰 askpass（配了免密的用户不能被影响）；
 #   6. --password 缺值 / 把下一个选项吃成口令时能立刻拦下；
-#   7. 发版前比对远端 migrations/ 文件名清单：一致 / 缺文件 / 整目录缺失 /
-#      远端读不到（不许假报 38 个文件全缺）/ 严格模式拒绝发版 / 显式跳过 / 本地模式。
+#   7. 发版前比对远端 migrations/ 文件名清单：顶层基线 + history/ 增量两份都要比；
+#      一致 / 缺顶层 / 缺 history 里的 0066 / history 整目录缺失 / 整目录缺失 /
+#      远端读不到（不许假报全缺）/ 严格模式拒绝发版 / 显式跳过 / 本地模式。
 #
 # 用法：bash scripts/selftest_deploy_frontend.sh   （CI 里跑这个，退出码非 0 即失败）
 # ─────────────────────────────────────────────────────────────
@@ -38,18 +39,55 @@ FAKE_PW='selftest-plain-pw'
 FAKE_PW2='another-plain-pw'
 
 mkdir -p "$ROOT/bin" "$ROOT/bin-pass" "$ROOT/tmp" "$ROOT/dist/assets" \
-    "$ROOT/migrations" "$ROOT/partial-migrations" "$ROOT/target"
+    "$ROOT/migrations/history" "$ROOT/partial-migrations/history" \
+    "$ROOT/partial-history-only/history" "$ROOT/no-history-migrations" \
+    "$ROOT/local-no-history" "$ROOT/target"
 printf '<script src="/assets/index-abc.js"></script>\n' > "$ROOT/dist/index.html"
 printf 'JS' > "$ROOT/dist/assets/index-abc.js"
 
 # 迁移清单：用仓库里真实的 backend/migrations 当「远端应有的清单」，
-# partial 版故意少一个文件，用来模拟 0035 / 0038 那种漏同步。
+# 顶层是纯净基线，history/ 是增量归档。两个版本故意各少一份：
+#   partial-migrations        → 顶层少一个 + history 少 0066
+#   partial-history-only      → 顶层齐、只缺 history 里的 0066（本次发版事故形态）
+#   no-history-migrations     → history 整目录没有（老脚本会误报「清单一致」的形态）
+#   local-no-history          → 本地清单残缺，用来证明守门不会空集比空集假绿
 MIG_SRC=$(cd "$SCRIPTS/../backend/migrations" && pwd)
+HIST_SRC="$MIG_SRC/history"
 MIG_COUNT=$(ls -1 "$MIG_SRC"/*.sql | wc -l | tr -d ' ')
+HIST_COUNT=$(ls -1 "$HIST_SRC"/*.sql | wc -l | tr -d ' ')
 HIDE_MIG=$(cd "$MIG_SRC" && ls -1 *.sql | tail -1)
+# 钉死本次事故的具体文件：精选案例封面裁切比例依赖它加 home_layouts.featured_ratio。
+HIDE_HIST_MIG='0066_home_featured_ratio.sql'
+
+# 量尺自检：源清单空了 / 0066 不在了，后面所有断言都可能变成假绿，必须先证非空。
+if [ "$MIG_COUNT" -lt 1 ] || [ "$HIST_COUNT" -lt 1 ]; then
+    echo "FATAL: 迁移源清单为空（顶层 ${MIG_COUNT} / history ${HIST_COUNT}），自检无效"; exit 1
+fi
+if [ ! -f "$HIST_SRC/$HIDE_HIST_MIG" ]; then
+    echo "FATAL: 找不到 ${HIST_SRC}/${HIDE_HIST_MIG}，0066 缺文件用例无效"; exit 1
+fi
+
 cp "$MIG_SRC"/*.sql "$ROOT/migrations/"
+cp "$HIST_SRC"/*.sql "$ROOT/migrations/history/"
 cp "$MIG_SRC"/*.sql "$ROOT/partial-migrations/"
+cp "$HIST_SRC"/*.sql "$ROOT/partial-migrations/history/"
+cp "$MIG_SRC"/*.sql "$ROOT/partial-history-only/"
+cp "$HIST_SRC"/*.sql "$ROOT/partial-history-only/history/"
+cp "$MIG_SRC"/*.sql "$ROOT/no-history-migrations/"
+cp "$MIG_SRC"/*.sql "$ROOT/local-no-history/"
 rm -f "$ROOT/partial-migrations/$HIDE_MIG"
+rm -f "$ROOT/partial-migrations/history/$HIDE_HIST_MIG"
+rm -f "$ROOT/partial-history-only/history/$HIDE_HIST_MIG"
+
+# 反向确认装置真的按设想搭好了，否则下面的 CASE 测的是空气。
+if [ "$(ls -1 "$ROOT/migrations/history"/*.sql | wc -l | tr -d ' ')" != "$HIST_COUNT" ] \
+   || [ -f "$ROOT/partial-migrations/history/$HIDE_HIST_MIG" ] \
+   || [ -f "$ROOT/partial-history-only/history/$HIDE_HIST_MIG" ] \
+   || [ ! -f "$ROOT/partial-history-only/$HIDE_MIG" ] \
+   || [ -d "$ROOT/no-history-migrations/history" ] \
+   || [ -d "$ROOT/local-no-history/history" ]; then
+    echo "FATAL: fake 远端装置没搭对，缺文件用例无效"; exit 1
+fi
 
 FAKE_SSH_LOG="$ROOT/ssh.log"
 FAKE_PASS_LOG="$ROOT/sshpass.log"
@@ -103,11 +141,11 @@ case "$*" in
             echo MIG_DIR_MISSING; exit 0
         fi
         echo MIG_DIR_OK
-        # 探针回传契约是「状态行 + 命中的真实目录 + *.sql 清单」三行起。
-        # 少回这一行，deploy 会把第一个 .sql 文件名当成 MIG_DIR，并从第 3 行
-        # 开始读清单 → 清单恒少一个文件 → 明明一致也误报「部署包不完整」。
-        # 这里必须用装置认可的目录回一行，7.2 另有断言盯住它。
+        # 探针回传契约是「状态行 + 命中的真实目录 + 顶层段 + history 段」。
+        # 目录行不能省：deploy 会把第一个 .sql 文件名当成 MIG_DIR，修复命令就指错地方。
+        # 两段 BEGIN/END 标记也不能省：省了就分不清缺的是基线还是增量。
         echo "${FAKE_MIGRATIONS_DIR:-/site/backend/migrations}"
+        echo __WC_MIG_TOP_BEGIN__
         if [ -n "${FAKE_MIGRATIONS_DIR-}" ] && [ -d "$FAKE_MIGRATIONS_DIR" ]; then
             (cd "$FAKE_MIGRATIONS_DIR" && ls -1 *.sql 2>/dev/null) | while IFS= read -r f; do
                 [ -n "$f" ] || continue
@@ -117,6 +155,18 @@ case "$*" in
                 esac
             done
         fi
+        echo __WC_MIG_TOP_END__
+        echo __WC_MIG_HISTORY_BEGIN__
+        if [ -n "${FAKE_MIGRATIONS_DIR-}" ] && [ -d "$FAKE_MIGRATIONS_DIR/history" ]; then
+            (cd "$FAKE_MIGRATIONS_DIR/history" && ls -1 *.sql 2>/dev/null) | while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                case " ${FAKE_MIGRATIONS_HIDE-} " in
+                    *" $f "*) ;;
+                    *) printf '%s\n' "$f" ;;
+                esac
+            done
+        fi
+        echo __WC_MIG_HISTORY_END__
         exit 0 ;;
     *'if [ -d'*) printf 'DIR_OK\n3\nindex-old.js\n'; exit 0 ;;
 esac
@@ -363,44 +413,95 @@ if has "$OUT" "$FAKE_PW"; then bad "报错信息里泄漏了口令"; else ok "�
 
 # ─────────────────────────────────────────────────────────────
 head_ "7. 发版前迁移清单完整性自检"
-if has "$ROOT/help.txt" '--require-migrations' && has "$ROOT/help.txt" 'DEPLOY_MIGRATIONS_DIR'; then
-    ok "-h 里有严格模式与远端迁移目录说明"
+if has "$ROOT/help.txt" '--require-migrations' && has "$ROOT/help.txt" 'DEPLOY_MIGRATIONS_DIR' \
+   && has "$ROOT/help.txt" 'DEPLOY_LOCAL_MIGRATIONS_DIR'; then
+    ok "-h 里有严格模式与两份迁移目录说明"
 else
     bad "-h 缺少迁移清单相关说明"
 fi
 
-# 7.1 默认路径：清单一致，别误报事故
+# 7.1 默认路径：两份清单都一致，别误报事故
 reset_probe
 "${COMMON[@]}" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "migrations 清单一致（${MIG_COUNT} 个 .sql）"; then
-    ok "清单一致：退出 0 且打印真实文件数 ${MIG_COUNT}"
+if [ "$RC" -eq 0 ] && has "$OUT" "migrations 清单一致（顶层 ${MIG_COUNT} 个 + history ${HIST_COUNT} 个 .sql）"; then
+    ok "两份清单一致：退出 0 且打印真实文件数 顶层 ${MIG_COUNT} + history ${HIST_COUNT}"
 else
     bad "清单一致路径不对（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
 fi
 if has "$OUT" '部署包不完整'; then bad "清单一致却误报事故"; else ok "清单一致不误报事故"; fi
 
-# 7.2 远端缺 1 个文件：列出名字 + 事故说明 + 修复命令，默认只警告不阻断
+# 7.2 远端缺 1 个顶层文件：列出名字 + 事故说明 + 修复命令，默认只警告不阻断
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
 if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG"; then
-    ok "缺文件：列出具体文件名，默认不阻断发版"
+    ok "缺顶层文件：列出具体文件名，默认不阻断发版"
 else
-    bad "缺文件没报出文件名或误阻断了（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
+    bad "缺顶层文件没报出文件名或误阻断了（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
 fi
-if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av --exclude=history/ backend/migrations/' && has "$OUT" './server migrate'; then
-    ok "给出 0035/0038 事故说明与 rsync + 迁移修复命令"
+if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av backend/migrations/' && has "$OUT" './server migrate'; then
+    ok "给出 0035/0038 事故说明与 rsync（含 history）+ 迁移修复命令"
 else
     bad "事故说明或修复命令不全"
+fi
+if has "$OUT" '--exclude=history/'; then
+    bad "修复命令仍在用 --exclude=history/ 老写法（会漏传 0066 等增量）"
+else
+    ok "修复命令不再排除 history/"
 fi
 if has "$OUT" '默认只警告、继续发版'; then ok "默认模式明确提示可加严格模式"; else bad "缺少严格模式引导"; fi
 # 盯住「探针回传真实目录」这一行：MIG_DIR 若被第一个 .sql 文件名污染，
 # 修复命令里的 rsync 目标就不再是目录，而 7.1 仍可能因为别的原因看起来正常。
-if has "$OUT" "rsync -av --exclude=history/ backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
+if has "$OUT" "rsync -av backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
     ok "修复命令用探针回传的真实目录（没被 .sql 文件名污染）"
 else
     bad "迁移目录回传契约漂移：修复命令里的路径不对"
+fi
+
+# 7.2b 真事故形态：顶层齐、history 缺 0066。老脚本只比顶层，这里必红。
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" "顶层基线齐、只缺 history/"; then
+    ok "history 缺 ${HIDE_HIST_MIG}：报出文件名并说明升级发版必须补齐"
+else
+    bad "history 缺 0066 没被识别（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
+fi
+if has "$OUT" 'migrations 清单一致'; then
+    bad "缺 0066 却仍打印「清单一致」——正是发版日志里的假绿"
+else
+    ok "缺 0066 时不再打印「清单一致」"
+fi
+if has "$OUT" 'history 缺 1'; then ok "分账打印 history 缺几个，不与顶层混算"; else bad "没按两份清单分别计数"; fi
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" "$HIDE_HIST_MIG" && has "$OUT" '严格模式：远端迁移清单不完整，拒绝发版'; then
+    ok "严格模式下 history 缺 0066 直接拒绝发版"
+else
+    bad "严格模式放过了 history 缺文件（rc=${RC}）"
+fi
+
+# 7.2c history 整目录缺失：老脚本会打「1 个 .sql 一致」，这里必须拦下。
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/no-history-migrations" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" "history 缺 ${HIST_COUNT}"; then
+    ok "history 整目录缺失：报出 ${HIST_COUNT} 个缺文件，默认只警告"
+else
+    bad "history 整目录缺失没报全（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
+fi
+if has "$OUT" 'migrations 清单一致'; then bad "history 整目录缺失仍报「清单一致」"; else ok "history 整目录缺失不再假绿"; fi
+
+# 7.2d 本地量尺残缺：空集比空集不能假绿。
+reset_probe
+"${COMMON[@]}" "DEPLOY_LOCAL_MIGRATIONS_DIR=$ROOT/local-no-history" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" '清单不完整' && has "$OUT" '迁移清单无法校验，拒绝发版'; then
+    ok "本地 history 残缺：严格模式拒绝，不拿空清单假比对"
+else
+    bad "本地量尺残缺被放过（rc=${RC}）"
 fi
 
 # 7.3 严格模式：上传前就死
@@ -434,7 +535,7 @@ else
     bad "整目录缺失处理不对（rc=${RC}）"
 fi
 
-# 7.5 远端命令失败：绝不能把 38 个文件全报成「缺失」（假警报比不报更糟）
+# 7.5 远端命令失败：绝不能把整批文件全报成「缺失」（假警报比不报更糟）
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_UNKNOWN=1" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
@@ -476,10 +577,11 @@ reset_probe
 "${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "DEPLOY_MIGRATIONS_DIR=$ROOT/partial-migrations" \
     "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' && has "$OUT" 'cp -a backend/migrations/'; then
-    ok "本地模式缺文件给出本地修复命令（先建目录，不写 ssh/rsync）"
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' \
+   && has "$OUT" 'cp -a backend/migrations/.' && ! has "$OUT" '--exclude=history/'; then
+    ok "本地模式缺文件给出本地修复命令（先建目录，cp -a 整目录含 history）"
 else
-    bad "本地模式缺文件提示不对（rc=${RC}）"
+    bad "本地模式缺文件提示不对（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
 fi
 
 # ─────────────────────────────────────────────────────────────
