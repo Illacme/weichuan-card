@@ -486,6 +486,10 @@ type HomeLayout struct {
 	//
 	// 拆成两列而不是一个总开关：业绩分类与业务服务往往不是同一批素材风格，
 	// 常见情况是「分类图换了素图、服务卡仍是带字卡」，共用一列会逼客户二选一。
+	// ShowFeaturedName 精选案例封面图下方是否显示名称（0065），与 0050 的分类/服务开关同构。
+	// 设计稿把名称画进封面图，默认不重复渲染；换成素图后打开即可补回。
+	// 单独一列而非复用 show_category_name——三块素材的更换节奏彼此独立。
+	ShowFeaturedName bool `gorm:"column:show_featured_name;default:false" json:"showFeaturedName"`
 	ShowCategoryName bool `gorm:"column:show_category_name;default:false" json:"showCategoryName"`
 	ShowServiceName  bool `gorm:"column:show_service_name;default:false" json:"showServiceName"`
 	// ProjectTimeMode / ServiceTimeMode 项目案例与业务服务详情页的「更新于」档位。

@@ -670,7 +670,7 @@ CI 的「发版脚本自检」job 每次都跑；目前 50 条断言，含缺文
 > **全新安装**只发顶层 1 个 `0001_init.sql`（纯净终态 schema，28 张表 DDL，无历史 ALTER /
 > 数据 UPDATE），只建表；数据由安装向导交互写入（超管口令 bcrypt、JWT/PII 密钥签发、
 > sys_setting 缺省、内置档案 ensure），**不提供静态数据初始化 SQL**。
-> **升级安装**用 `migrations/history/` 的 64 个增量按 `schema_migrations` 记账应用；
+> **升级安装**用 `migrations/history/` 的 65 个增量按 `schema_migrations` 记账应用；
 > 归档不进全新部署包，同步命令用 `--exclude=history/`。两条路径的结构等价由 CI 真实 MySQL 对账。
 > 本节 `0035` / `35 个` 是当时事故的留档示例，保留可追溯，不再参与当前口径。
 > 遇已按 0001..0062 记过账的旧库，启动时**自动识别并切换到 `migrations/history/`** 走原 62 步

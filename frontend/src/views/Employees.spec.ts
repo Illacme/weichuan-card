@@ -607,3 +607,25 @@ describe('Employees · 功能授权弹窗源码守门', () => {
     expect(form).not.toContain('el-switch')
   })
 })
+
+describe('Employees · 操作列宽度与授权弹窗提示文案', () => {
+  const src = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), './Employees.vue'),
+    'utf-8',
+  )
+
+  it('操作列收窄到 280px（从 320px 收 40px，避免压住创建时间列）', () => {
+    expect(src).toMatch(/<el-table-column label="操作" width="280" fixed="right"/)
+    expect(src).not.toMatch(/<el-table-column label="操作" width="320"/)
+  })
+
+  it('授权弹窗四项开关都带功能提示（生成海报 / 数据统计也要有）', () => {
+    const dialog = src.slice(src.indexOf('<!-- 功能授权'), src.indexOf('<!-- 名片预览'))
+    for (const label of ['生成海报', '团队成员', '数据统计', '管理员登录']) {
+      const at = dialog.indexOf(`label="${label}"`)
+      expect(at, `缺少开关：${label}`).toBeGreaterThan(-1)
+      const next = dialog.indexOf('</el-form-item>', at)
+      expect(dialog.slice(at, next), `${label} 缺少功能提示`).toContain('class="field-tip"')
+    }
+  })
+})

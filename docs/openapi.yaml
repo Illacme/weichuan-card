@@ -550,8 +550,8 @@ paths:
         不需要再为详情页时间档位、展示数量或整体风格多打一次请求。
         0049 起还下发 `categoryLimit` / `featuredCount` / `featuredEffect`，
         小程序端据此截取业绩分类与精选案例，并用随包内置的动画播放循环效果。
-        0050 起下发 `showCategoryName` / `showServiceName`：封面图下方是否再渲染名称，
-        两者缺省 false——设计稿把名称画进了封面图，再渲染就是重复。
+        0050 起下发 `showCategoryName` / `showServiceName`，0065 起加 `showFeaturedName`：
+        封面图下方是否再渲染名称，三者缺省 false——设计稿把名称画进了封面图，再渲染就是重复。
         0053 起下发 `logoSize` / `logoAlign`：名片卡右上角企业 LOGO 的尺寸与位置档位，
         缺省 `medium` / `center` = 加配置前写死的 150×44rpx + aspectFit 居中，零视觉突变。
 
@@ -621,6 +621,13 @@ paths:
                       设计稿把名称画进了封面图（「居住住宅」这类带字方图），再渲染就是重复；
                       客户换成不带字的素图后打开此开关，端上在图下补回名称。
                       没有封面图时**始终**显示名称（占位块里没有名称信息，不显示就彻底丢了）。
+                  showFeaturedName:
+                    type: boolean
+                    default: false
+                    description: >-
+                      精选案例封面图**下方**是否再渲染一行名称，缺省 false（0065）。
+                      与 showCategoryName 同理：案例名称画在图内，换成素图后打开补回。
+                      没有封面图时**始终**显示名称。
                   showServiceName:
                     type: boolean
                     default: false
@@ -2962,6 +2969,12 @@ paths:
                         description: >-
                           业绩分类封面图下方是否再显示名称（0050）。缺省 false——设计稿把名称画进了
                           封面图，再渲染就重复；客户换成不带字的素图后打开此开关补回。无封面图时始终显示。
+                      showFeaturedName:
+                        type: boolean
+                        default: false
+                        description: >-
+                          精选案例封面图下方是否再显示名称（0065）。缺省 false（名称烧在图内）。
+                          与 showCategoryName 分开控制，三块素材更换节奏彼此独立。
                       showServiceName:
                         type: boolean
                         default: false
@@ -3108,6 +3121,9 @@ paths:
                   description: >-
                     业绩分类封面图下方是否再显示名称（0050）。指针语义：不传保持原值，
                     传 false 才是显式关闭——否则只改分类数量的那次保存会把刚打开的开关关掉。
+                showFeaturedName:
+                  type: boolean
+                  description: 精选案例封面图下方是否再显示名称（0065）；指针语义同上。
                 showServiceName:
                   type: boolean
                   description: 业务服务封面图下方是否再显示标题（0050）；指针语义同上。

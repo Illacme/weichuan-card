@@ -226,6 +226,11 @@ export interface HomeLayoutData {
    * 设计稿把名称画进了封面图（带字方图），再渲染就重复；换成素图后打开此开关补回。
    */
   showCategoryName: boolean
+  /**
+   * 精选案例封面图**下方**是否再显示名称，默认 false。
+   * 与业绩分类同理（0065）：案例名称烧在图内时重复渲染，换成素图后打开补回。
+   */
+  showFeaturedName: boolean
   /** 业务服务封面图**下方**是否再显示标题，默认 false（竖版卡标题烧在图内） */
   showServiceName: boolean
   /** 项目案例详情页：不显示 / 只到日 / 到分 */

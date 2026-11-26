@@ -50,8 +50,8 @@ backend/
 │       ├── auth.go              # JWT 鉴权 + 角色守卫 + 平台超管守卫 + 会话黑名单校验
 │       ├── ratelimit.go         # 登录 IP 限流（固定窗口 + 过期桶惰性清理 + 跨副本计数接口）
 │       └── observability.go     # 可观测三件套：RequestID / AccessLog / Metrics（/metrics）
-├── migrations/0001_init.sql      # 单一基线：64 个历史增量按序拼接，建出最终 schema
-├── migrations/history/           # 64 个历史增量归档；执行器/清单只扫顶层，归档不进部署包
+├── migrations/0001_init.sql      # 单一基线：65 个历史增量按序拼接，建出最终 schema
+├── migrations/history/           # 65 个历史增量归档；执行器/清单只扫顶层，归档不进部署包
 ├── Dockerfile                   # 多阶段构建，单二进制镜像
 └── go.mod
 ```

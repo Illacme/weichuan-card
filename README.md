@@ -12,7 +12,7 @@
 | `backend/` | Go + Gin + GORM 后端服务（API / 鉴权 / 存储 / 小程序码 / 审核流） |
 | `frontend/` | Vue 3 + Element Plus 的 PC 管理后台（超管使用） |
 | `miniprogram/` | 原生微信小程序前端（员工 / 访客侧） |
-| `backend/migrations/` | MySQL 建表脚本：`0001_init.sql` 是纯净终态 schema（全新安装）；`history/` 是 64 个历史增量（升级安装） |
+| `backend/migrations/` | MySQL 建表脚本：`0001_init.sql` 是纯净终态 schema（全新安装）；`history/` 是 65 个历史增量（升级安装） |
 | `docs/` | OpenAPI 3 接口规范（`openapi.yaml`）· 分支保护协作规范（`branch-protection.md`）· 生产上线 Runbook（`deploy-runbook.md`） |
 | `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复；`restore_drill.sh`：恢复演练；`selftest_backup.sh`：备份链自检（CI 里跑，不需 docker）；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
 | `*.md`（根目录） | 需求 / 架构 / 接口字段映射等中文文档 |
@@ -229,7 +229,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - **上线前自检已落地**：`scripts/preflight.sh`（零依赖静态检查：JWT 密钥 / 初始口令 / 小程序引导基址 / 存储凭据 / 上传基址 / Cookie / 数据库口令 / 服务探活 / **微信凭据** / **对外 HTTPS 网关**（外部可达性 + 证书有效期），输出 PASS·WARN·FAIL·SKIP，有 FAIL 退出码 1；`PREFLIGHT_STRICT=1` 时 WARN 也算失败，便于接发布流水线）。与后端启动门槛是同一套判据的两道闸——门槛负责「跑不起来」，本脚本负责「跑起来之前先告诉你差哪几项」。
 - **前端发版脚本带迁移清单闸门**：`scripts/deploy_frontend.sh` 上传前会把本版本
   `backend/migrations/*.sql` 的文件名清单与远端 `migrations/` 比一次（2026-11-25 起顶层仅 1 个
-  纯净终态 `0001_init.sql`，64 个历史增量在 `migrations/history/` 供升级用，归档不同步）——
+  纯净终态 `0001_init.sql`，65 个历史增量在 `migrations/history/` 供升级用，归档不同步）——
   0035 / 0038 两次线上事故
   都是「只换产物、漏同步迁移目录」，后端启动虽打 `[MIGRATE][FATAL] 部署包不完整` 却刻意不终止，
   故障藏到运行期变成一句「保存失败」。缺文件会列出具体名字与 `rsync` / `./server migrate` 修复命令；
@@ -273,7 +273,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 当前版本**已知边界**（需基建/流程配合，尚未在本仓库落地）：
 - 小程序码 / access_token 等内存缓存在多实例下不共享，水平扩展需引入 Redis。
 - **最小告警已落地**：`scripts/alert_check.sh`（healthz 就绪探活 `GET /healthz/ready` / 5xx / 备份新鲜度 / **外部拨测**（含证书临期），零依赖，crontab 每分钟运行，详见《部署与联调》「最小告警配置」）；健康检查已按**存活**（`/healthz/live`，只确认进程、不碰依赖）/ **就绪**（`/healthz/ready`，`SELECT 1` 探 DB）分离，避免 DB 抖动被误判为进程死亡而触发重启风暴，根路径 `/healthz` 只做索引页（恒 200、不判健康）；待运维侧按需扩展的是完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）；PITR 的归档脚本与回放链路均已落地并实跑验证（`docs/drill-records/2026-11-23-pitr.md`），生产仍需按小时跑归档并在真实归档上做一次演练；生产需 HTTPS 与反向代理。
-- **产品初始版：全新安装 / 升级安装两条路径**：当前版本固化为产品初始版。全新安装走 `backend/migrations/0001_init.sql`——**纯净终态 schema**（28 张表 DDL，无历史 ALTER / 数据搬迁 UPDATE / DROP），只建表；数据由**安装向导**交互写入（初始超管口令 bcrypt、JWT / PII 密钥签发、sys_setting 缺省值），三条内置文件存储由应用 `ensure` 创建——**不提供静态数据初始化 SQL**（密钥与口令不能写死在脚本里）。升级安装走 `migrations/history/` 的 64 个增量，按 `schema_migrations` 记账；两者结构等价由 CI 的真实 MySQL 对账守门（建两个库分别跑、逐表逐列逐索引比对）。已按 0001..0062 记过账的旧库启动时自动识别并切换到 `migrations/history/` 继续升级（日志打 `[MIGRATE] … 自动切换到历史增量目录`），无需手动设 `WEICHUAN_MIGRATIONS_DIR`；详见 `docs/deploy-runbook.md` §4。
+- **产品初始版：全新安装 / 升级安装两条路径**：当前版本固化为产品初始版。全新安装走 `backend/migrations/0001_init.sql`——**纯净终态 schema**（28 张表 DDL，无历史 ALTER / 数据搬迁 UPDATE / DROP），只建表；数据由**安装向导**交互写入（初始超管口令 bcrypt、JWT / PII 密钥签发、sys_setting 缺省值），三条内置文件存储由应用 `ensure` 创建——**不提供静态数据初始化 SQL**（密钥与口令不能写死在脚本里）。升级安装走 `migrations/history/` 的 65 个增量，按 `schema_migrations` 记账；两者结构等价由 CI 的真实 MySQL 对账守门（建两个库分别跑、逐表逐列逐索引比对）。已按 0001..0062 记过账的旧库启动时自动识别并切换到 `migrations/history/` 继续升级（日志打 `[MIGRATE] … 自动切换到历史增量目录`），无需手动设 `WEICHUAN_MIGRATIONS_DIR`；详见 `docs/deploy-runbook.md` §4。
 - **数据库迁移自动补齐**：MySQL 部署在启动时按 `schema_migrations` 记账表应用未执行的迁移（幂等、只做增量、多副本用 `GET_LOCK` 串行化）；也可 `AUTO_MIGRATE=0` + `server migrate` 拆成流水线里的一步，详见 `docs/deploy-runbook.md` §4。
 - 分类 / 业绩项目 / 业务服务列表未分页（数量有界且需整表拖拽排序）；其余管理端列表已服务端分页（见上）。
 

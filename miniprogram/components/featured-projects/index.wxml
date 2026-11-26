@@ -18,6 +18,10 @@
       <image class="feat-cover" src="{{p.coverThumb}}" mode="widthFix" style="height:auto" lazy-load wx:if="{{p.cover}}"
         binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
       <view class="feat-cover" wx:else></view>
+      <!-- 名称：有图时默认不显示（名称已烧在图内），后台打开「精选案例名称」后补回；
+           无图时始终显示（占位块里没有名称信息，不显示就彻底丢了）。
+           与 wx:for 分标签，避免同一标签上的条件/循环冲突。 -->
+      <view class="feat-name" wx:if="{{showName || !p.cover}}">{{p.name}}</view>
     </view>
   </view>
 

@@ -887,6 +887,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 0050 两个名称开关缺省 false：封面图里已经画了名称，再渲染一行就是重复。
 		// 这条必须钉住——若默认变成 true，所有存量租户的首页会立刻多出一行重复文字。
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"])
+		require.EqualValues(t, false, body["data"].(map[string]interface{})["showFeaturedName"])
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showServiceName"])
 		// 0053 LOGO 两档缺省 medium / center = 加配置前写死的 150×44 + aspectFit 居中。
 		// 若这里变成 small / left，所有存量租户的名片 LOGO 会在升级当天莫名变小变位。
@@ -898,7 +899,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgImage": bgURL, "bgMask": 40,
 			"bgGradientStrength": 75, "categoryLimit": 5, "featuredCount": 2, "featuredEffect": "flip",
-			"showCategoryName": true, "showServiceName": true,
+			"showCategoryName": true, "showFeaturedName": true, "showServiceName": true,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
@@ -911,6 +912,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 2, hl["featuredCount"])
 		require.Equal(t, "flip", hl["featuredEffect"])
 		require.EqualValues(t, true, hl["showCategoryName"])
+		require.EqualValues(t, true, hl["showFeaturedName"])
 		require.EqualValues(t, true, hl["showServiceName"])
 
 		// 公开接口根级下发（小程序按 order/bgImage/bgMask/bgGradientStrength 读取）
@@ -923,6 +925,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 2, body["featuredCount"], "小程序按公开接口的配置截取精选")
 		require.Equal(t, "flip", body["featuredEffect"], "小程序按公开接口的效果播放动画")
 		require.EqualValues(t, true, body["showCategoryName"], "小程序按公开接口决定是否在图下写分类名")
+		require.EqualValues(t, true, body["showFeaturedName"], "小程序按公开接口决定是否在图下写精选案例名")
 		require.EqualValues(t, true, body["showServiceName"], "小程序按公开接口决定是否在图下写服务名")
 		require.EqualValues(t, []interface{}{"service", "achievement"}, body["order"])
 
@@ -953,6 +956,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		// 只提交 order 时两个名称开关必须保持 true——否则「改一下板块顺序」
 		// 就会把客户刚打开的「显示名称」悄悄关掉，而界面上看不出来。
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showCategoryName"], "未提供不应被关掉")
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["showFeaturedName"], "未提供不应被关掉")
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showServiceName"], "未提供不应被关掉")
 		// LOGO 两档同理：上面刚写成 large / right，这里只提交 order 不能把它们冲回缺省。
 		// 断言「等于刚写的值」而不是「等于缺省」——后者无法区分「保留」与「被重置成缺省」。
@@ -977,6 +981,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"], "显式 false 应能关掉")
+		require.EqualValues(t, true, body["data"].(map[string]interface{})["showFeaturedName"], "只关分类不应连带关掉精选")
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showServiceName"], "只关分类不应连带关掉服务")
 		_, body = c.do("GET", "/api/home-layout", nil, "")
 		require.EqualValues(t, false, body["showCategoryName"], "公开接口同步反映关闭状态")

@@ -39,3 +39,17 @@
   transition: width .3s ease, background .3s ease;
 }
 .feat-dot.on { width: 28rpx; background: var(--wc-primary); }
+
+/* 封面图下方的案例名称（0065）：后台「精选案例名称」打开后才渲染；
+   无封面图时始终显示，否则占位块里没有任何可识别信息。
+   与 .cat-name / .svc-title 同一视觉语言：居中、单号、次要色、单行省略。 */
+.feat-name {
+  margin-top: 10rpx;
+  text-align: center;
+  font-size: 24rpx;
+  line-height: 1.4;
+  color: #606266;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

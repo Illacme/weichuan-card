@@ -86,7 +86,7 @@ describe('封面图下方名称显示开关（0050）', () => {
     expect(INDEX_TS).toMatch(/layout\.showCategoryName\s*===\s*true/)
     expect(INDEX_TS).toMatch(/layout\.showServiceName\s*===\s*true/)
     // setData 里也要带上，否则组件拿到的永远是初始值
-    expect(INDEX_TS).toMatch(/showCategoryName,\s*\n\s*showServiceName,/)
+    expect(INDEX_TS).toMatch(/showCategoryName,\s*\n\s*showFeaturedName,\s*\n\s*showServiceName,/)
   })
 
   it('类型契约带这两个可选字段', () => {
@@ -101,5 +101,45 @@ describe('封面图下方名称显示开关（0050）', () => {
     expect(MIGRATION).toContain('show_service_name')
     expect(MIGRATION, '迁移默认值必须是 0').toMatch(/show_category_name[^,]*DEFAULT 0/)
     expect(MIGRATION).toMatch(/show_service_name[^,]*DEFAULT 0/)
+  })
+})
+
+
+describe('精选案例封面图下方名称显示（0065）', () => {
+  const FEAT_WXML = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../components/featured-projects/index.wxml'),
+    'utf-8',
+  )
+  const FEAT_TS = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../components/featured-projects/index.ts'),
+    'utf-8',
+  )
+
+  it('精选案例：有图时按开关渲染名称，无图时始终渲染，且不与 wx:for 同标签', () => {
+    const line = tagWith(FEAT_WXML, 'class="feat-name"')
+    expect(line, '缺 feat-name 行').toBeTruthy()
+    expect(line, '无图时必须仍显示名称').toContain('!p.cover')
+    expect(line, '有图时必须受 showName 控制').toContain('showName')
+    expect(line, '名称为空时不该渲染空行').toContain('p.name')
+    // WXML 硬约束：条件与循环不能同标签（小程序取不到 for-index）
+    expect(line).not.toContain('wx:for')
+  })
+
+  it('组件 showName 缺省 false（否则存量租户立刻多一行重复文字）', () => {
+    expect(FEAT_TS).toMatch(/showName\s*:\s*\{\s*type:\s*Boolean/)
+    expect(FEAT_TS).toMatch(/showName\s*:\s*\{\s*type:\s*Boolean\s*,\s*value:\s*false\s*\}/)
+  })
+
+  it('首页透传 showFeaturedName 给精选案例组件；index.ts 用 === true 解析', () => {
+    expect(tagWith(INDEX_WXML, '<featured-projects')).toContain('showName="{{showFeaturedName}}"')
+    expect(INDEX_TS).toMatch(/showFeaturedName:\s*false/)
+    expect(INDEX_TS).toMatch(/layout\.showFeaturedName\s*===\s*true/)
+  })
+
+  it('迁移与模型：show_featured_name 缺省 0 / false', () => {
+    const migration = read('backend/migrations/history/0065_home_show_featured_name.sql')
+    expect(MODEL).toMatch(/ShowFeaturedName\s+bool\s+`gorm:"column:show_featured_name;default:false"/)
+    expect(migration).toContain('show_featured_name')
+    expect(migration).toMatch(/show_featured_name[^;]*DEFAULT 0/)
   })
 })

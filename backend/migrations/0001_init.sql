@@ -136,7 +136,9 @@ CREATE TABLE IF NOT EXISTS home_layouts (
   show_category_name TINYINT(1) NOT NULL DEFAULT 0 COMMENT '业绩分类封面图下方是否显示名称，默认0=图内已有名称不重复',
   show_service_name TINYINT(1) NOT NULL DEFAULT 0 COMMENT '业务服务封面图下方是否显示名称，默认0=图内已有名称不重复',
   logo_size VARCHAR(16) NOT NULL DEFAULT 'medium' COMMENT '名片卡 LOGO 尺寸档 small/medium/large',
-  logo_align VARCHAR(16) NOT NULL DEFAULT 'center' COMMENT '名片卡 LOGO 水平对齐 left/center/right'
+  logo_align VARCHAR(16) NOT NULL DEFAULT 'center' COMMENT '名片卡 LOGO 水平对齐 left/center/right',
+  show_featured_name TINYINT(1) NOT NULL DEFAULT 0
+  COMMENT '精选案例封面图下方是否显示名称，默认0=图内已有名称不重复'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stat_events (

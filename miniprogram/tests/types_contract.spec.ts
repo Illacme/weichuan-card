@@ -135,7 +135,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     expect(tsFields('HomeLayoutResp')).toEqual([
       'bgGradientStrength', 'bgImage', 'bgMask', 'brandColorId', 'categoryLimit',
       'featuredCount', 'featuredEffect', 'logoAlign', 'logoSize', 'order',
-      'showCategoryName', 'showServiceName', 'styleId',
+      'showCategoryName', 'showFeaturedName', 'showServiceName', 'styleId',
     ])
     // HomeLayoutResp 是根级信封：主题两轴 (styleId / brandColorId) 必须真实存在于
     // Go 模型的 json tag 里，否则端上会读到后端根本不下发的字段，主题功能静默失效。
@@ -148,7 +148,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     for (const key of [
       'styleId', 'brandColorId', 'bgGradientStrength',
       'categoryLimit', 'featuredCount', 'featuredEffect',
-      'showCategoryName', 'showServiceName',
+      'showCategoryName', 'showFeaturedName', 'showServiceName',
       // 0053 两个 LOGO 档位：后端模型必须真的有这两列，否则后台保存成功而端上
       // 永远读到 undefined → 位置档三档看起来完全一样，且没有任何报错。
       'logoSize', 'logoAlign',

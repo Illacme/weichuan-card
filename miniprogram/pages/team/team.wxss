@@ -43,11 +43,6 @@
   border-left: 4rpx solid #1b2a3a;
   border-bottom: 4rpx solid #1b2a3a;
   transform: rotate(45deg);
-  margin-right: 8rpx;
-}
-.team-nav-back-text {
-  font-size: 30rpx;
-  color: #1b2a3a;
 }
 .team-nav-title {
   font-size: 32rpx;

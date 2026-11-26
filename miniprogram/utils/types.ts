@@ -173,6 +173,11 @@ export type HomeLayoutResp = Envelope & {
    * 客户换成不带字的素图后打开此开关，端上补回名称。
    */
   showCategoryName?: boolean
+  /**
+   * 精选案例封面图**下方**是否再显示一行名称，缺省 false。
+   * 与业绩分类同理（0065）：案例名称烧在图内，换成素图后打开此开关补回。
+   */
+  showFeaturedName?: boolean
   /** 业务服务封面图**下方**是否再显示一行名称，缺省 false（理由同上，竖版卡标题烧在图内） */
   showServiceName?: boolean
   /**

@@ -404,7 +404,7 @@ func New(db *gorm.DB) *gin.Engine {
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
 		featuredEffect := model.DefaultFeaturedEffect
 		// 封面图下方是否再显示名称：缺省 false（名称已画进封面图）。
-		showCategoryName, showServiceName := false, false
+		showCategoryName, showServiceName, showFeaturedName := false, false, false
 		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
 		// 名片卡右上角 LOGO 的尺寸 / 位置档位（0053）。缺省 medium / center =
 		// 加配置前写死的 150×44 + aspectFit 居中。
@@ -418,7 +418,7 @@ func New(db *gorm.DB) *gin.Engine {
 			categoryLimit = clampInt(l.CategoryLimit, 0, 20)
 			featuredCount = clampInt(l.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(l.FeaturedEffect)
-			showCategoryName, showServiceName = l.ShowCategoryName, l.ShowServiceName
+			showCategoryName, showServiceName, showFeaturedName = l.ShowCategoryName, l.ShowServiceName, l.ShowFeaturedName
 			logoSize = model.NormalizeLogoSize(l.LogoSize)
 			logoAlign = model.NormalizeLogoAlign(l.LogoAlign)
 			// 两轴：优先读 style_id / brand_color_id（0043 已删 template_id 兼容列）。
@@ -437,6 +437,7 @@ func New(db *gorm.DB) *gin.Engine {
 			"featuredEffect":     featuredEffect,
 			"showCategoryName":   showCategoryName,
 			"showServiceName":    showServiceName,
+			"showFeaturedName":   showFeaturedName,
 			"logoSize":           logoSize,
 			"logoAlign":          logoAlign,
 			"styleId":            styleID, "brandColorId": brandColorID,

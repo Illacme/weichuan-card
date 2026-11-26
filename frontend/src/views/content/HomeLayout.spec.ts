@@ -396,6 +396,7 @@ describe('content/HomeLayout', () => {
       featuredCount: 3,
       featuredEffect: 'static',
       showCategoryName: false,
+      showFeaturedName: false,
       showServiceName: false,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',
@@ -439,21 +440,24 @@ describe('content/HomeLayout', () => {
     const w = await mountPage()
 
     const catSwitch = () => formItemByLabel(w, '业绩分类名称').find('.el-switch')
+    const featSwitch = () => formItemByLabel(w, '精选案例名称').find('.el-switch')
     const svcSwitch = () => formItemByLabel(w, '业务服务名称').find('.el-switch')
 
     // 缺省 false —— 若这里变成 true，所有存量租户的首页会立刻多出一行重复文字
     expect(catSwitch().attributes('data-on')).toBe('false')
+    expect(featSwitch().attributes('data-on')).toBe('false')
     expect(svcSwitch().attributes('data-on')).toBe('false')
 
-    // 只打开业绩分类：服务必须保持关闭（两列独立，不是同一个总开关）
+    // 只打开业绩分类：案例与服务必须保持关闭（三列独立，不是同一个总开关）
     await catSwitch().trigger('click')
     expect(catSwitch().attributes('data-on')).toBe('true')
+    expect(featSwitch().attributes('data-on')).toBe('false')
     expect(svcSwitch().attributes('data-on')).toBe('false')
 
     await saveButton(w).trigger('click')
     await flush()
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
-      expect.objectContaining({ showCategoryName: true, showServiceName: false })
+      expect.objectContaining({ showCategoryName: true, showFeaturedName: false, showServiceName: false })
     )
   })
 
@@ -461,10 +465,12 @@ describe('content/HomeLayout', () => {
     const w = await mountPage({
       order: ['achievement', 'service'],
       showCategoryName: false,
+      showFeaturedName: true,
       showServiceName: true,
     })
 
     expect(formItemByLabel(w, '业绩分类名称').find('.el-switch').attributes('data-on')).toBe('false')
+    expect(formItemByLabel(w, '精选案例名称').find('.el-switch').attributes('data-on')).toBe('true')
     expect(formItemByLabel(w, '业务服务名称').find('.el-switch').attributes('data-on')).toBe('true')
   })
 
@@ -519,6 +525,7 @@ describe('content/HomeLayout', () => {
       featuredCount: 3,
       featuredEffect: 'static',
       showCategoryName: false,
+      showFeaturedName: false,
       showServiceName: false,
       projectTimeMode: 'date',
       serviceTimeMode: 'date',

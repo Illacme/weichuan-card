@@ -669,4 +669,18 @@ describe('名片墙 · 返回按钮（按页面栈决定有无）', () => {
     expect(wxss).toMatch(/\.team-nav-back\s*\{[^}]*position:\s*absolute[^}]*left:/s)
     expect(wxss).toMatch(/\.team-nav-inner\s*\{[^}]*position:\s*relative/s)
   })
+
+  it('返回键只画箭头、不带「返回」文字（与其他子页面一致）', () => {
+    const dir = dirname(fileURLToPath(import.meta.url))
+    const wxml = readFileSync(resolve(dir, '../pages/team/team.wxml'), 'utf-8')
+    const wxss = readFileSync(resolve(dir, '../pages/team/team.wxss'), 'utf-8')
+
+    const backNode = wxml.slice(wxml.indexOf('class="team-nav-back"'), wxml.indexOf('team-nav-title'))
+    expect(backNode).toContain('team-nav-back-arrow')
+    expect(backNode).not.toContain('team-nav-back-text')
+    expect(backNode).not.toContain('返回</text>')
+    // 保留无障碍标签：文字视觉上不显示，读屏仍能念出「返回」
+    expect(backNode).toContain('aria-label="返回"')
+    expect(wxss).not.toContain('.team-nav-back-text')
+  })
 })

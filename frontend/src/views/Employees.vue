@@ -24,8 +24,9 @@
         改动列宽时请按同一口径重算，宁紧勿松。操作列现为 260px（预览/编辑/启用
         或停用/重置密码/导出 五个 link 按钮，超窄会折行或挤占创建时间列）。
         微信绑定列由原 openid 全文列（210px）改为状态 + 掩码（150px），再省 60px。
-        新增「功能授权」按钮后操作列扩到 320px（六项 link 按钮，按每项约 52px 算），
-        其余列合计不变，总宽仍约 1176px——贴着内容区宽度，窄屏走卡片布局不展示表格。
+        新增「功能授权」按钮后操作列 280px（六项 link 按钮按两行排，实测够用）：
+        从最初 320px 收窄 40px，避免它压住「创建时间」列；其余列合计不变，
+        总宽约 1136px，窄屏走卡片布局不展示表格。
       -->
       <el-table v-if="!isPhone" :data="rows" v-loading="loading" border stripe>
         <el-table-column prop="staffId" label="编号" width="62" align="center" />
@@ -78,7 +79,7 @@
         <el-table-column label="创建时间" width="180" v-if="!isPhone" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right" align="center">
+        <el-table-column label="操作" width="280" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="preview(row)">预览</el-button>
             <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
@@ -234,6 +235,7 @@
       <el-form label-width="120px">
         <el-form-item label="生成海报">
           <el-switch v-model="entriesForm.showPosterEntry" active-text="显示" inactive-text="不显示" />
+          <p class="field-tip">开启后该员工在「我的」页能看到「生成海报」入口，可用本人名片合成海报并保存到相册</p>
         </el-form-item>
         <el-form-item label="团队成员">
           <el-switch v-model="entriesForm.showTeamEntry" active-text="显示" inactive-text="不显示" />
@@ -241,6 +243,7 @@
         </el-form-item>
         <el-form-item label="数据统计">
           <el-switch v-model="entriesForm.showStatEntry" active-text="显示" inactive-text="不显示" />
+          <p class="field-tip">开启后该员工在「我的」页能看到「数据统计」入口，可查看自己名片的访客与转化数据</p>
         </el-form-item>
         <el-form-item label="管理员登录">
           <el-switch v-model="entriesForm.showAdminEntry" active-text="显示" inactive-text="不显示" />

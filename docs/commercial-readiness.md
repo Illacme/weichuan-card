@@ -61,11 +61,11 @@
 > 把当前版本作为产品初始版，数据库脚本按商业软件惯例分两条路径：
 > ① **全新初始化安装**：`backend/migrations/0001_init.sql` 是**纯净终态 schema**——
 > 只有 28 张表的 `CREATE TABLE IF NOT EXISTS`，不含任何历史 `ALTER` / 数据搬迁 `UPDATE` / `DROP`；
-> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源是 history 全部增量，截至 0064 为 64 个），
+> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源是 history 全部增量，截至 0065 为 65 个），
 > `baseline_fidelity_test.go` 静态守门纯净性。建表后由**安装向导**写 sys_setting / 初始超管 /
 > 签发 JWT·PII 密钥，内置文件存储由 `storageprofile/builtin.go` ensure——
 > **数据初始化不提供静态 SQL**：bcrypt 口令、密钥签发、凭据交互生成，静态 SQL 既不安全也不自洽。
-> ② **升级安装**：64 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
+> ② **升级安装**：65 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
 > 执行器与编译期清单只扫顶层，归档不进全新部署包，`deploy_frontend.sh` 修复命令显式排除它。
 > 两条路径的结构等价由 `clean_schema_parity_test.go` 在 CI 的真实 MySQL 里对账（建两个库分别跑，
 > 逐表逐列逐索引比对），生成器推演错了立刻红，不靠人肉维护。
@@ -6883,3 +6883,48 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
 | 迁移链 | `history/0064` + 纯净 schema 重生成 + manifest + 基线保真 64 一致 |
 | CI | 提交 `e4ff7ea`，run `45788577412`，15 job 全绿 |
+
+## 第一百一十一轮：授权弹窗微调 + 精选案例名称开关 + 名片墙返回键收敛（2026-11-26）
+
+三个小需求一起收口。
+
+### 一、员工列表操作栏收窄 + 授权弹窗补提示
+
+- 操作列从 320px 收窄到 280px（六项 link 按钮按两行排够用），总宽约 1136px，不再压住
+  「创建时间」列；列宽核算注释同步。桌面表格与手机卡片两处按钮都保留。
+- 功能授权弹窗里「生成海报」「数据统计」原本只有开关没有说明，现补齐功能提示：
+  海报说明「合成海报并保存到相册」，统计说明「查看自己名片的访客与转化数据」。
+  四项开关现在都有 `field-tip`，管理员不必猜每一项控制什么。
+- 守门：源码级锁住操作列宽度（280，不得回退 320）与四项开关都带 `field-tip`。
+
+### 二、精选案例「封面图下方是否显示名称」（home_layouts 0065）
+
+沿用 0050 业绩分类 / 业务服务名称开关的成熟模式，新增第三列 `show_featured_name`：
+
+- **默认 false**：设计稿把案例名称烧在封面图里，端上再渲染一行就是重复；
+  客户换成素图后在后台「名片页面样式 → 封面图名称 → 精选案例名称」打开补回。
+- **单列而非复用**：三块素材（分类方图 / 精选案例图 / 服务竖版卡）更换节奏彼此独立，
+  共用一列会逼客户二选一。
+- 链路：0065 迁移 + 模型 → 管理 GET/PUT 与公开 GET 三处下发（PUT 用 `*bool` 指针，
+  只改数量的保存不冲掉开关）→ `HomeLayout.vue` 开关（放在业绩分类名称下方）
+  → `index.ts` 解析 + `index.wxml` 透传 → `featured-projects` 组件新增 `showName` 属性，
+  在图片下方渲染 `.feat-name`。无封面图时始终显示名称（占位块里没有名称信息）。
+- 精选案例是分页轮播组件：名称节点放在 `feat-item` 内部、与 `wx:for` 分标签，
+  避开「wx:if 与 wx:for 同标签」的小程序硬约束；切页动画只改 transform/opacity，
+  不碰图片 src（iOS 换 src 会让 widthFix 高度塌陷、页面滚回顶部）。
+
+### 三、名片墙返回键只留箭头
+
+从「我的 → 团队成员」进入名片墙时，左上角原本是「‹ 返回」，现去掉文字只保留箭头，
+与其他子页面的呈现一致。条件显示（`canBack = 页面栈 > 1`）、失败兜底 `reLaunch` 都不变；
+去掉文字后补 `aria-label="返回"`，读屏用户仍能识别。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `gofmt -l .` / `go vet ./...` / `go test -count=1 ./...` | 无输出 / 无输出 / 全绿 |
+| 前端 `vue-tsc --noEmit` / `vitest run` / `eslint .` / `vite build` | 全绿 |
+| OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
+| 迁移链 | `history/0065` + 纯净 schema 重生成 + manifest + 基线保真 65 一致 |
+| CI | 待提交后补记 |
