@@ -44,6 +44,10 @@
    无封面图时始终显示，否则占位块里没有任何可识别信息。
    与 .cat-name / .svc-title 同一视觉语言：居中、单号、次要色、单行省略。 */
 .feat-name {
+  /* z-index 保底：裁切样式若因设备差异没生效，.feat-cover-fill 的绝对定位会相对
+     .featured-paged 铺满整块盖住名称；让名称浮到填充图之上，保证「开了显示名称就一定看得到」。 */
+  position: relative;
+  z-index: 1;
   margin-top: 10rpx;
   text-align: center;
   font-size: 24rpx;
@@ -55,22 +59,23 @@
 }
 
 /* ---- 封面裁切比例（0066）----
-   默认 none 走上面原图渲染，下面只作用于四档固定比例。
-   slot 复用 .feat-cover：圆角 / 阴影 / 背景色全部继承四套风格层，不必改 app.wxss。
-   用 4 类选择器压过风格层 3 类的固定 height，把高度来源换成 aspect-ratio；
-   容器 overflow:hidden，aspectFill 图片等比放大到短边贴合容器、长边溢出居中裁掉。*/
-.wc-theme .featured .feat-cover.feat-ratio-16-9,
-.wc-theme .featured .feat-cover.feat-ratio-4-3,
-.wc-theme .featured .feat-cover.feat-ratio-2-1,
-.wc-theme .featured .feat-cover.feat-ratio-1-1 {
+   裁切样式必须能在组件内命中：主题类挂在**页面**节点（index.wxml），组件内选择器
+   带它就匹配不到（曾导致裁切全失效、绝对定位填充图铺满整块盖住 .feat-name）。
+   这里用组件内自包含的 4 类选择器（.featured .feat-item .feat-cover.feat-ratio-XX，
+   全部是组件节点），与 app.wxss 的全局规则双写保底：无论样式隔离如何表现，
+   总有一处命中。4 类压过全局风格层 3 类固定 height，把高度来源换成 aspect-ratio。 */
+.featured .feat-item .feat-cover.feat-ratio-16-9,
+.featured .feat-item .feat-cover.feat-ratio-4-3,
+.featured .feat-item .feat-cover.feat-ratio-2-1,
+.featured .feat-item .feat-cover.feat-ratio-1-1 {
   position: relative;
   overflow: hidden;
   height: auto;
 }
-.wc-theme .featured .feat-ratio-16-9 { aspect-ratio: 16 / 9; }
-.wc-theme .featured .feat-ratio-4-3  { aspect-ratio: 4 / 3; }
-.wc-theme .featured .feat-ratio-2-1  { aspect-ratio: 2 / 1; }
-.wc-theme .featured .feat-ratio-1-1  { aspect-ratio: 1 / 1; }
+.featured .feat-cover.feat-ratio-16-9 { aspect-ratio: 16 / 9; }
+.featured .feat-cover.feat-ratio-4-3  { aspect-ratio: 4 / 3; }
+.featured .feat-cover.feat-ratio-2-1  { aspect-ratio: 2 / 1; }
+.featured .feat-cover.feat-ratio-1-1  { aspect-ratio: 1 / 1; }
 
 .feat-cover-fill {
   position: absolute;

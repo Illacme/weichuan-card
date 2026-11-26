@@ -438,6 +438,26 @@ page {
 .wc-style-teal .mp-services .svc-icon-ph { border-radius: 16rpx; box-shadow: var(--wc-card-shadow-soft); }
 .wc-style-teal .mp-services .svc-title { margin-top: 18rpx; }
 
+/* ===== 精选案例封面裁切比例（0066）=====
+   规则必须放在全局层：.wc-theme 挂在**页面**根节点（index.wxml .page），
+   组件内 WXSS 的选择器在样式隔离下匹配不到页面节点的类，放组件里会全部失效
+   （曾导致裁切样式不生效、绝对定位填充图盖住 .feat-name，名称不显示）。
+   featured-projects 组件设了 addGlobalClass:true，全局规则可穿透进组件节点。
+   4 类选择器压过上面风格层 3 类的固定 height，把高度来源换成 aspect-ratio；
+   容器 overflow:hidden，aspectFill 图片等比放大到短边贴合、长边两端居中裁掉。 */
+.wc-theme .mp-achievements .feat-cover.feat-ratio-16-9,
+.wc-theme .mp-achievements .feat-cover.feat-ratio-4-3,
+.wc-theme .mp-achievements .feat-cover.feat-ratio-2-1,
+.wc-theme .mp-achievements .feat-cover.feat-ratio-1-1 {
+  position: relative;
+  overflow: hidden;
+  height: auto;
+}
+.wc-theme .mp-achievements .feat-ratio-16-9 { aspect-ratio: 16 / 9; }
+.wc-theme .mp-achievements .feat-ratio-4-3  { aspect-ratio: 4 / 3; }
+.wc-theme .mp-achievements .feat-ratio-2-1  { aspect-ratio: 2 / 1; }
+.wc-theme .mp-achievements .feat-ratio-1-1  { aspect-ratio: 1 / 1; }
+
 page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .loading { padding: 80rpx; text-align: center; color: #999; }
 
@@ -793,7 +813,7 @@ page { background: #f5f5f5; font-size: 28rpx; color: #333; }
 .featured { display: flex; flex-wrap: wrap; margin-top: 16rpx; }
 .feat-item { width: 50%; padding: 8rpx; box-sizing: border-box; }
 .feat-cover { width: 100%; height: 175rpx; border-radius: 12rpx; background: #eee; }
-.feat-name { font-size: 26rpx; color: #333; margin-top: 10rpx; }
+.feat-name { font-size: 26rpx; color: #333; margin-top: 10rpx; position: relative; z-index: 1; }
 
 /* 服务网格（设计图：2 列，蓝色圆角方块图标 + 标题） */
 /* 业务服务：一行四个（竖版卡片图，标题绘制在图内；无图时回退占位块+文字标题） */

@@ -879,8 +879,9 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
   // 裁切档用固定比例容器 + aspectFill，取短边贴合、长边居中裁掉。
   it('精选案例裁切比例：none / 四档双分支 + 固定比例容器 + aspectFill 居中裁切', () => {
     const wxml = read('components/featured-projects/index.wxml')
-    const wxss = read('components/featured-projects/index.wxss')
     const ts = read('components/featured-projects/index.ts')
+    // 裁切样式必须在全局 app.wxss：.wc-theme 挂在页面节点，组件内样式隔离匹配不到。
+    const appwxss = read('app.wxss')
 
     // 组件必须暴露 ratio 属性，缺省 none
     expect(ts).toMatch(/ratio:\s*\{\s*type:\s*String,\s*value:\s*'none'\s*\}/)
@@ -888,22 +889,40 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(wxml).toContain('wx:if="{{ratio !== \'none\'}}"')
     expect(wxml).toContain('mode="aspectFill"')
     // 类名必须用 ratioClass（已把冒号换连字符），不能直接拼原始 ratio。
-    // 后端枚举是 16:9，直接拼会得到 feat-ratio-16:9，与 WXSS 的 .feat-ratio-16-9
+    // 后端枚举是 16:9，直接拼会得到 feat-ratio-16:9，与 CSS 的 .feat-ratio-16-9
     // 对不上——裁切样式全失效，绝对定位填充图铺满精选区盖住名称（真实 bug）。
     expect(wxml).toMatch(/class="feat-cover feat-ratio-\{\{ratioClass\}\}"/)
     expect(wxml).not.toMatch(/class="feat-cover feat-ratio-\{\{ratio\}\}"/)
-    // 容器裁掉长边溢出：overflow hidden + 四档 aspect-ratio
-    expect(wxss).toMatch(/\.feat-cover\.feat-ratio-16-9[\s\S]*?overflow:\s*hidden/)
+    // 容器裁掉长边溢出：overflow hidden + 四档 aspect-ratio，都在全局层
+    expect(appwxss).toMatch(/\.feat-cover\.feat-ratio-16-9[\s\S]*?overflow:\s*hidden/)
     for (const [sel, ratio] of [
       ['feat-ratio-16-9', '16 \/ 9'], ['feat-ratio-4-3', '4 \/ 3'],
       ['feat-ratio-2-1', '2 \/ 1'], ['feat-ratio-1-1', '1 \/ 1'],
     ]) {
-      expect(wxss, `缺 ${sel} 比例容器`).toMatch(new RegExp(`\\.${sel}\\s*\\{[^}]*aspect-ratio:\\s*${ratio}`))
+      expect(appwxss, `全局缺 ${sel} 比例容器`).toMatch(new RegExp(`\\.${sel}\\s*\\{[^}]*aspect-ratio:\\s*${ratio}`))
     }
-    // 填充图铺满容器，不撑破比例
-    expect(wxss).toMatch(/\.feat-cover-fill\s*\{[^}]*position:\s*absolute[^}]*width:\s*100%[^}]*height:\s*100%/)
+    // 填充图铺满容器（组件内、无前缀，作用于自身节点），不撑破比例
+    expect(read('components/featured-projects/index.wxss')).toMatch(/\.feat-cover-fill\s*\{[^}]*position:\s*absolute[^}]*width:\s*100%[^}]*height:\s*100%/)
     // 端上必须有「冒号 → 连字符」的映射，否则上面两处对不上。
     expect(ts).toMatch(/replace\(\/:\/g,\s*'-'\)/)
+  })
+
+  // 回归守门：裁切样式绝不能只写在组件 WXSS 里带主题前缀的选择器上。
+  // 主题类挂在页面根节点（index.wxml），组件样式隔离下匹配不到，样式会全部失效：
+  // 填充图相对最外层绝对定位铺满、盖住 .feat-name（真实 bug：名称不显示）。
+  // 必须是「组件内自包含规则」或「全局 app.wxss 规则」，二者至少有一处且不依赖主题类。
+  it('裁切样式不得依赖组件内的主题类选择器（样式隔离回归）', () => {
+    const compWxss = read('components/featured-projects/index.wxss')
+    // 组件内不得出现带主题类的选择器——它在组件样式隔离下命中不了页面节点
+    expect(compWxss, '组件内不得用主题类前缀（匹配不到页面节点）').not.toMatch(/\.wc-theme\s/)
+    // 组件内若写裁切规则，必须是自包含的（.featured/.feat-item 前缀），不能裸写
+    expect(compWxss).toMatch(/\.featured \.feat-item \.feat-cover\.feat-ratio-16-9/)
+    // 全局层也必须有一份（双写保底）：带 .mp-achievements（组件所在的页面父容器）
+    const appwxss = read('app.wxss')
+    expect(appwxss).toMatch(/\.wc-theme \.mp-achievements \.feat-cover\.feat-ratio-16-9/)
+    // 名称必须有 z-index 保底：裁切样式万一没生效，也要浮在绝对定位填充图之上显示
+    expect(compWxss, '组件内 .feat-name 缺 z-index 保底').toMatch(/\.feat-name\s*\{[^}]*z-index:\s*1/)
+    expect(appwxss, '全局 .feat-name 缺 z-index 保底').toMatch(/\.feat-name\s*\{[^}]*z-index:\s*1/)
   })
 
   // 回归守门：ratio=16:9 必须产出类名 feat-ratio-16-9（连字符），
