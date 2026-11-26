@@ -260,6 +260,25 @@ describe('layout/AdminLayout', () => {
     expect(settings).not.toContain('文件存储与分发')
   })
 
+  it('18 个侧栏入口全量都有悬停说明，不许只做一半', async () => {
+    const { MENU_GUIDES } = await import('@/utils/storageGuides')
+    const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
+    const block = src.slice(src.indexOf('const allMenuGroups'), src.indexOf('// 侧栏只放得下短名'))
+    const paths = Array.from(block.matchAll(/path: '(\/[^']+)'/g), (m) => m[1])
+
+    // 量尺有读数：确实抓到 18 项，否则下面的断言会空转
+    expect(paths.length, '菜单项没抓到，守门空转').toBe(18)
+    for (const p of paths) {
+      const g = (MENU_GUIDES as Record<string, { desc: string; detail: string }>)[p]
+      expect(g, `${p} 缺悬停说明`).toBeTruthy()
+      // desc 显示在原生 title 里，必须是一句人话且不是标题的重复
+      expect(g!.desc.length, `${p} 的说明为空`).toBeGreaterThan(5)
+      expect(g!.detail.length, `${p} 的详情为空`).toBeGreaterThan(5)
+    }
+    // 多出来的说明（页面已删但 guide 还在）也要拦，避免文档与菜单漂移
+    expect(Object.keys(MENU_GUIDES).filter((k) => !paths.includes(k))).toEqual([])
+  })
+
   it('存储与分发相关菜单带一句话说明，鼠标停上去就知道这个入口管什么', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).toContain(':title="menuHint(m.path, m.title)"')
