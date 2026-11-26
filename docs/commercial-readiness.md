@@ -6702,4 +6702,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 |---|---|
 | 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
 | 前端 `vitest run` | 118 文件 / 1999 例，本轮相关 1998 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
-| CI | 见提交后记录 |
+| CI | 提交 `7764330`，run `45773649055`，15 job 全绿 |
