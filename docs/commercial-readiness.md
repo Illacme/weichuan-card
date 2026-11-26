@@ -7043,3 +7043,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | OpenAPI `check_openapi.py` | 139 paths / 138 路由全部对齐 |
 | 迁移链 | `history/0067` + 纯净 schema 重生成 + manifest + 基线保真 67 一致 |
 | 发版自检 `selftest_deploy_frontend.sh` | PASS=59 FAIL=0 |
+| CI | 提交 `8d683c1`，run `45837516478`，15 job 全绿 |
