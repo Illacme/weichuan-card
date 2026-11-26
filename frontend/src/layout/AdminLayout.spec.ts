@@ -407,10 +407,14 @@ describe('layout/AdminLayout', () => {
     expect(w.find('.header-title').exists()).toBe(false)
   })
 
-  it('源码守门：顶栏标题与 currentTitle 不许回贴', () => {
+  it('源码守门：顶栏标题不许回贴，身份与操作区必须靠右', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).not.toContain('header-title')
     expect(src).not.toContain('currentTitle')
+    // 删掉 header-title 后顶栏只剩一个可见子元素，space-between 会把整组推到左边；
+    // 没有这条 auto 外边距，企业名 / 用户 / 修改密码 / 退出就又贴回左侧。
+    expect(src, '.header-right 缺 margin-left:auto，身份区会贴左')
+      .toMatch(/\.header-right\s*\{[^}]*margin-left:\s*auto/s)
   })
 
   it('所有页面的标题行都统一：h3 在左、工具按钮在右', () => {

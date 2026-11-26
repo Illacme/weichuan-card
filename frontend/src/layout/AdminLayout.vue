@@ -519,10 +519,13 @@ function onCommand(cmd: string) {
   background: #fff;
   border-bottom: 1px solid #ebeef5;
 }
+/* 顶栏只有一个可见子元素时，justify-content: space-between 会把整组推到左边。
+   显式 auto 外边距：桌面端企业/身份/操作靠右，手机端菜单按钮仍在左、这组仍在右。 */
 .header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 .header-user {
   display: flex;

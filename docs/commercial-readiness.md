@@ -6561,6 +6561,10 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 - **不统一「重新加载」的措辞**：`CompanyInfo` / `CompanyProfile` / `HomeLayout` /
   `MpEntry` / `MpSettings` 的「重新加载」与页级「刷新」是同一动作，但前者是页签内
   与「保存」共用的一组操作，已有专门断言；本轮只统一位置，不为字面一致制造回归。
+- **补丁：顶栏身份区右对齐**。删掉 `header-title` 后顶栏只剩一个可见子元素，
+  `justify-content: space-between` 失去参照，企业名 / 用户 / 修改密码 / 退出整组贴到左边
+  （用户截图当场指出）。给 `.header-right` 加 `margin-left: auto`：桌面端靠右，
+  窄屏端菜单按钮仍在左、身份区仍在右；源码守门同步钉住这条 CSS。
 
 ### 守门与反向验证
 
