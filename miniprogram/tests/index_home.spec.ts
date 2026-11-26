@@ -532,6 +532,19 @@ describe('index 首页', () => {
     expect(wxStub.showToast).not.toHaveBeenCalled()
   })
 
+  // 后台配了「默认进某位员工」时，裸启动会从名片墙直接改道到这张名片。
+  // 没有回墙入口，访客就永远看不到「这家公司还有谁」（2026-11-26 反馈）。
+  it('点顶栏「团队」回名片墙，并带 skipEntryCache 防止被默认入口再次弹走', async () => {
+    mockApis()
+    const p = await page({ staffId: '42' })
+    wxStub.reLaunch.mockClear()
+
+    p.goTeam()
+
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/team/team?skipEntryCache=1' })
+    expect(wxStub.navigateTo).not.toHaveBeenCalled()
+  })
+
   // ---- 「查看案例」 ----
 
   it('没有分类：提示暂无案例，不跳转', async () => {
@@ -752,6 +765,29 @@ describe('index 首页 · 默认入口缓存失效的自愈', () => {
 
     expect(wxStub.reLaunch).not.toHaveBeenCalled()
     expect(p.data.employee.name).toBe('张伟')
+  })
+})
+
+// 名片墙入口的两端接线守门（2026-11-26）：
+// 后台配了默认员工后，名片页是访客唯一能主动回到名片墙的地方。少任何一端——
+// 按钮没渲染、跳转没带标记、墙上没接自愈分支——入口都是假的（点了又被弹回来）。
+describe('名片页回名片墙的入口（源码级）', () => {
+  const read = (p: string) =>
+    readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', p), 'utf-8')
+
+  it('顶栏有可见的「团队」按钮，绑定 goTeam，并靠 margin-left:auto 靠右', () => {
+    const wxml = read('pages/index/index.wxml')
+    const wxss = read('pages/index/index.wxss')
+    expect(wxml).toMatch(/<view class="nav-team" bindtap="goTeam">/)
+    expect(wxml).toMatch(/<text class="nav-team-text">团队<\/text>/)
+    expect(wxss).toMatch(/\.custom-nav \.nav-team\s*\{[^}]*margin-left:\s*auto/s)
+  })
+
+  it('goTeam 带 skipEntryCache；墙上确有清缓存且不再改道的对应分支', () => {
+    const ts = read('pages/index/index.ts')
+    const wall = read('pages/team/team.ts')
+    expect(ts).toMatch(/goTeam\(\)\s*\{[^}]*reLaunch\(\{ url: '\/pages\/team\/team\?skipEntryCache=1' \}/s)
+    expect(wall).toMatch(/if \(skipEntryCache\) \{[^}]*clearEntryStaff\(entryKey\)[^}]*load\(\{ noRedirect: true \}\)/s)
   })
 })
 
