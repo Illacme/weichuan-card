@@ -59,22 +59,23 @@ const tenant = reactive({
 vi.mock('@/store/tenant', () => ({ useTenantStore: () => tenant }))
 vi.mock('@/composables/useBreakpoint', async () => {
   const { ref } = await import('vue')
-  return { useBreakpoint: () => ({ isPhone: ref(mocks.isPhone) }) }
+  // isDesktop 与 isPhone 同源：mock 里非手机即桌面（tablet 的抽屉语义与 phone 一致）
+  return { useBreakpoint: () => ({ isPhone: ref(mocks.isPhone), isDesktop: ref(!mocks.isPhone) }) }
 })
 
 const ElContainer = defineComponent({ name: 'ElContainer', template: `<div class="el-container"><slot /></div>` })
 const ElAside = defineComponent({
   name: 'ElAside',
   props: ['width'],
-  template: `<aside class="el-aside" v-bind="$attrs"><slot /></aside>`,
+  template: `<aside class="el-aside" :data-width="width" v-bind="$attrs"><slot /></aside>`,
   inheritAttrs: true,
 })
 const ElHeader = defineComponent({ name: 'ElHeader', template: `<header class="el-header"><slot /></header>` })
 const ElMain = defineComponent({ name: 'ElMain', template: `<main class="el-main"><slot /></main>` })
 const ElMenu = defineComponent({
   name: 'ElMenu',
-  props: ['defaultActive', 'router', 'backgroundColor', 'textColor', 'activeTextColor'],
-  template: `<nav class="el-menu" :data-active="defaultActive"><slot /></nav>`,
+  props: ['defaultActive', 'collapse', 'router', 'backgroundColor', 'textColor', 'activeTextColor'],
+  template: `<nav class="el-menu" :data-active="defaultActive" :data-collapse="collapse"><slot /></nav>`,
 })
 const ElSubMenu = defineComponent({
   name: 'ElSubMenu',
@@ -314,6 +315,7 @@ describe('layout/AdminLayout', () => {
     mocks.settingsLoad.mockClear()
     mocks.isPhone = false
     sessionStorage.clear()
+    localStorage.removeItem('admin_aside_collapsed')
     tenant.currentId = 0
     tenant.currentName = ''
     tenant.companyLogo = ''
@@ -440,6 +442,58 @@ describe('layout/AdminLayout', () => {
     expect(tenant.loadCompanyLogo).toHaveBeenCalled()
   })
 
+  // 桌面端侧栏折叠：顶栏按钮是唯一入口，收起后侧栏变图标列、内容区自动撑满。
+  // 与窄屏抽屉是两套机制，靠 isDesktop 分流，不能互相串。
+  it('桌面端：点菜单按钮收起/展开侧栏，品牌名随之收起', async () => {
+    const { w } = await mountLayout()
+    const btn = w.find('.menu-toggle')
+
+    expect(btn.attributes('aria-label')).toBe('收起侧栏')
+    expect(w.find('.admin-aside').attributes('data-width')).toBe('220px')
+    expect(w.find('.el-menu').attributes('data-collapse')).toBe('false')
+    expect(w.find('.brand-name').exists()).toBe(true)
+
+    await btn.trigger('click')
+    await nextTick()
+
+    expect(btn.attributes('aria-label')).toBe('展开侧栏')
+    expect(w.find('.admin-aside').attributes('data-width')).toBe('64px')
+    expect(w.find('.el-menu').attributes('data-collapse')).toBe('true')
+    expect(w.find('.brand-name').exists()).toBe(false)
+
+    await btn.trigger('click')
+    await nextTick()
+    expect(w.find('.admin-aside').attributes('data-width')).toBe('220px')
+  })
+
+  it('桌面折叠状态存 localStorage，刷新后保留', async () => {
+    const w1 = (await mountLayout()).w
+    await w1.find('.menu-toggle').trigger('click')
+    await nextTick()
+    expect(localStorage.getItem('admin_aside_collapsed')).toBe('1')
+
+    // 重新挂载 = 刷新页面：折叠偏好应被读回
+    const w2 = (await mountLayout()).w
+    expect(w2.find('.menu-toggle').attributes('aria-label')).toBe('展开侧栏')
+    expect(w2.find('.admin-aside').attributes('data-width')).toBe('64px')
+  })
+
+  it('窄屏：同一个按钮仍是开合抽屉，不动桌面折叠状态', async () => {
+    mocks.isPhone = true
+    const { w } = await mountLayout()
+    const btn = w.find('.menu-toggle')
+
+    expect(btn.attributes('aria-label')).toBe('菜单')
+    expect(w.find('.el-menu').attributes('data-collapse')).toBe('false')
+    expect(w.find('.admin-aside').attributes('data-width')).toBe('220px')
+
+    await btn.trigger('click')
+    await nextTick()
+    expect((w.vm as any).asideOpen).toBe(true)
+    expect(w.find('.admin-aside').attributes('data-width')).toBe('220px')
+    expect(localStorage.getItem('admin_aside_collapsed')).toBeNull()
+  })
+
   it('源码守门：顶栏标题不许回贴，身份区靠右，LOGO 在身份区之前', () => {
     const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
     expect(src).not.toContain('header-title')
@@ -448,6 +502,18 @@ describe('layout/AdminLayout', () => {
       .toMatch(/\.header-right\s*\{[^}]*margin-left:\s*auto/s)
     expect(src, '顶栏 LOGO 必须在身份区之前').toMatch(
       /v-if="tenant\.companyLogo"[\s\S]{0,240}<div class="header-right">/,
+    )
+    // 桌面折叠：侧栏宽度与 el-menu 的 collapse 必须都由 isDesktop 分流的状态驱动，
+    // 不能写死 220px（否则折叠后内容区不会撑满）。
+    expect(src, '侧栏宽度没接到折叠状态').toContain(':width="asideWidth"')
+    expect(src, 'el-menu 没接 collapse').toContain(':collapse="menuCollapsed"')
+    expect(src, '折叠状态没按屏宽分流').toMatch(/const menuCollapsed = computed\(\(\) => isDesktop\.value && asideCollapsed\.value\)/)
+    expect(src, '折叠偏好没持久化').toContain("localStorage.getItem(ASIDE_COLLAPSED_KEY)")
+    expect(src, '菜单按钮没改成双模式入口').toContain('@click="onToggleAside"')
+    // 折叠样式曾被误插进 .admin-aside 的规则体中间，把 display/flex 留成没有选择器的
+    // 孤立声明——CSS 语法错，但 type-check / eslint / vitest 全放过，只有 vite build 会红。
+    expect(src, '折叠样式与 aside 基础规则错位').toMatch(
+      /\.admin-aside\s*\{[^}]*display:\s*flex[^}]*flex-direction:[^}]*overflow:[^}]*\}/s,
     )
   })
 
@@ -598,6 +664,7 @@ describe('layout/AdminLayout 企业作用域', () => {
     mocks.settingsLoad.mockClear()
     mocks.isPhone = false
     sessionStorage.clear()
+    localStorage.removeItem('admin_aside_collapsed')
     tenant.currentId = 0
     tenant.currentName = ''
     tenant.companyLogo = ''

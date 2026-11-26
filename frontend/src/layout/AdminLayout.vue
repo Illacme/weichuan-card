@@ -2,13 +2,14 @@
   <el-container class="admin-layout">
     <!-- 窄屏（<1200）侧栏抽屉遮罩：点遮罩或选菜单后自动收起 -->
     <div class="aside-backdrop" :class="{ show: asideOpen }" @click="asideOpen = false" />
-    <el-aside width="220px" class="admin-aside" :class="{ open: asideOpen }">
+    <el-aside :width="asideWidth" class="admin-aside" :class="{ open: asideOpen, collapsed: menuCollapsed }">
       <div class="brand">
         <img class="brand-logo" src="/logo.png" alt="微传名片" />
-        <span class="brand-name">{{ brandName }}</span>
+        <span v-if="!menuCollapsed" class="brand-name">{{ brandName }}</span>
       </div>
       <el-menu
         :default-active="activeMenu"
+        :collapse="menuCollapsed"
         router
         class="admin-menu"
         background-color="#1f2d3d"
@@ -32,8 +33,10 @@
 
     <el-container>
       <el-header class="admin-header">
-        <el-button class="menu-toggle" text aria-label="菜单" @click="asideOpen = !asideOpen">
-          <el-icon><Menu /></el-icon>
+        <!-- 同一个按钮两种语义：桌面端收起/展开侧栏，窄屏开合抽屉。
+             入口合一是为了不让用户找两个按钮，行为按 isDesktop 分流。 -->
+        <el-button class="menu-toggle" text :aria-label="toggleLabel" :title="toggleLabel" @click="onToggleAside">
+          <el-icon><component :is="toggleIcon" /></el-icon>
         </el-button>
         <!-- 顶栏不再重复当前页名：页面标题只有内容区的 h3 一处。
              左侧改成企业自己配的 LOGO（公司信息页里设），没设就整块不渲染——
@@ -187,7 +190,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { UserFilled, Key, SwitchButton, Document, Van, DataLine, OfficeBuilding, School, Menu } from '@element-plus/icons-vue'
+import { UserFilled, Key, SwitchButton, Document, Van, DataLine, OfficeBuilding, School, Menu, Fold, Expand } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
 import { useSettingsStore } from '@/store/settings'
 import { useTenantStore } from '@/store/tenant'
@@ -210,7 +213,35 @@ const pickerOpen = ref(false)
 // 窄屏抽屉：<1200 时侧栏离场为抽屉，由汉堡按钮/遮罩/路由切换控制开合
 const asideOpen = ref(false)
 // 手机端（<768）把顶栏右侧的公司名/用户名/改密/退出收进头像下拉，避免顶栏拥挤
-const { isPhone } = useBreakpoint()
+const { isPhone, isDesktop } = useBreakpoint()
+
+// 桌面端侧栏折叠：与窄屏抽屉是两套互不相干的机制。
+// 同一个顶栏按钮按屏宽分流——桌面收起侧栏、窄屏开合抽屉，用户只记一个入口。
+// 折叠是个人浏览偏好（不是租户数据），存 localStorage，刷新后保留；登出不清，
+// 换人登录沿用同一个人的浏览习惯是合理的。
+const ASIDE_COLLAPSED_KEY = 'admin_aside_collapsed'
+const asideCollapsed = ref(localStorage.getItem(ASIDE_COLLAPSED_KEY) === '1')
+const menuCollapsed = computed(() => isDesktop.value && asideCollapsed.value)
+const asideWidth = computed(() => (menuCollapsed.value ? '64px' : '220px'))
+const toggleIcon = computed(() =>
+  !isDesktop.value ? Menu : asideCollapsed.value ? Expand : Fold
+)
+const toggleLabel = computed(() =>
+  !isDesktop.value ? '菜单' : asideCollapsed.value ? '展开侧栏' : '收起侧栏'
+)
+function onToggleAside() {
+  if (!isDesktop.value) {
+    asideOpen.value = !asideOpen.value
+    return
+  }
+  asideCollapsed.value = !asideCollapsed.value
+  try {
+    localStorage.setItem(ASIDE_COLLAPSED_KEY, asideCollapsed.value ? '1' : '0')
+  } catch {
+    // 隐私模式 / 存储被禁用：折叠仍在本会话生效，只是不记住
+  }
+}
+
 const avatarText = computed(() => (auth.username || '管理员').charAt(0))
 
 // 顶栏 LOGO 跟「当前管理的企业」走：企业管理员是本企业，平台超管是当前选中的那家。
@@ -488,15 +519,25 @@ function onCommand(cmd: string) {
 .admin-layout {
   height: 100vh;
 }
+/* 侧边栏改为「品牌头固定 + 菜单区独立滚动」：
+   菜单组全部展开（企业内容 7 项 + 审核管理 3 项 + 平台管理…）会超出视口高度，
+   此前 overflow:hidden 把底部「平台管理」组直接裁掉且无法滚动查看。
+   这里让 aside 成为纵向 flex：brand 固定 60px，菜单 flex:1 内部滚动。
+   桌面折叠态宽度由 :width 给到 64px，品牌头在 collapsed 时改为 logo 居中。 */
 .admin-aside {
   background: #1f2d3d;
-  /* 侧边栏改为「品牌头固定 + 菜单区独立滚动」：
-     菜单组全部展开（企业内容 7 项 + 审核管理 3 项 + 平台管理…）会超出视口高度，
-     此前 overflow:hidden 把底部「平台管理」组直接裁掉且无法滚动查看。
-     这里让 aside 成为纵向 flex：brand 固定 60px，菜单 flex:1 内部滚动。 */
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.2s ease;
+}
+.admin-aside.collapsed .brand {
+  padding: 0;
+  justify-content: center;
+}
+.admin-aside.collapsed .admin-menu :deep(.el-menu-item) {
+  padding: 0 !important;
+  justify-content: center;
 }
 .brand {
   flex: none;
@@ -655,16 +696,16 @@ function onCommand(cmd: string) {
 }
 
 /* ===== 窄屏响应式：<1200 侧栏变抽屉 =====
-   桌面（>=1200）保持原 220px 固定侧栏不变；窄屏下侧栏脱离文档流改为
-   左滑抽屉，由 .open 控制显隐，遮罩 .aside-backdrop 覆盖内容区。 */
+   桌面（>=1200）侧栏常驻，由顶栏按钮折叠成图标列；窄屏下侧栏脱离文档流改为
+   左滑抽屉，由 .open 控制显隐，遮罩 .aside-backdrop 覆盖内容区。
+   两套机制互斥（isDesktop 分流），窄屏不套用折叠态。 */
+/* 菜单按钮桌面/窄屏都显示：桌面收起侧栏、窄屏开合抽屉（同一个入口，按屏宽分流） */
 .menu-toggle {
-  display: none;
+  display: inline-flex;
   margin-right: 8px;
 }
 @media (max-width: 1199px) {
-  .menu-toggle {
-    display: inline-flex;
-  }
+
   .admin-aside {
     position: fixed;
     top: 0;

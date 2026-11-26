@@ -6613,3 +6613,34 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vitest run` | 118 文件 / 1989 例，本轮相关 1988 例全绿；1 例仍是工作区未提交的品牌名改动（`miniprogram/app.json` + `utils/brand.ts`）触发的守门，与本轮无关且不纳入提交 |
 | 后端 | 本轮未改后端：`company-info` 出口本就 `ResolveRefs` 成可访问 URL，无契约变更 |
 | CI | 提交 `3c211e7`，run `45760079368`，15 job 全绿 |
+
+## 第一百零五轮：桌面端侧栏折叠（2026-11-26）
+
+用户问：PC 端侧栏也该能收起/展开。此前「菜单」按钮只在窄屏出现（开合抽屉），桌面侧栏固定 220px 不能收，宽屏看内容时侧栏一直占着地方。
+
+### 产品判断
+
+- **一个入口、两种语义**：不新增按钮，顶栏原有的菜单按钮改成按 `isDesktop` 分流——桌面收起/展开侧栏，窄屏开合抽屉。用户只记一个位置，不用分辨「哪个按钮管折叠、哪个管抽屉」。图标与 `aria-label` 也随状态变（`Fold`/`Expand`，「收起侧栏」/「展开侧栏」）。
+- **折叠用组件库原生能力**：`el-menu :collapse` + 侧栏宽度 220↔64，品牌名在折叠态隐藏只留 LOGO；内容区由 flex 自动撑满，不做额外 JS 布局计算。手写一套折叠菜单会和 Element Plus 的弹出层、激活态重复实现且迟早漂移。
+- **偏好持久化，但不清理**：折叠是个人浏览习惯（不是租户数据），存 `localStorage`，刷新后保留；登出/切企业都不动它——换人沿用同一台机器的浏览习惯是合理的，把它塞进 `tenant.clear()` 只会让每次登录都被弹回展开态。
+- **和窄屏抽屉严格互斥**：`menuCollapsed = isDesktop && asideCollapsed`，窄屏永远不套折叠态；路由切换只收抽屉（`asideOpen=false`），不碰折叠，避免每换一页就弹回。
+
+### 改动
+
+- `layout/AdminLayout.vue`：`el-aside` 宽度绑定 `asideWidth`、`el-menu` 接 `collapse`；新增 `asideCollapsed` / `menuCollapsed` / `onToggleAside`，顶栏菜单按钮改双模式；折叠态样式（logo 居中、菜单项图标居中、宽度过渡）。
+- `frontend/README.md`：写明折叠与抽屉的分流与持久化。
+
+### 守门与反向验证
+
+- `AdminLayout.spec.ts`：渲染断言桌面按钮点击后宽度 220→64、`collapse` true→false、品牌名收起；偏好写入 localStorage 并在重新挂载后读回；窄屏点同一按钮只切抽屉、不写折叠偏好。源码断言宽度/`collapse`/屏宽分流/持久化/按钮接线一处不漏。`ElAside`/`ElMenu` stub 补 `data-width`、`data-collapse` 便于断言（不靠 DOM 猜）。
+- 反向验证：把 `:width="asideWidth"` 改回写死 `220px`，三条断言（桌面折叠、持久化读回、源码守门）立刻红，还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 前端 `vue-tsc --noEmit` / `eslint .` | 0 错 / 0 报错 |
+| `AdminLayout.spec.ts` | 48 例全绿 |
+| 前端 `vitest run` | 118 文件 / 1992 例，本轮相关 1991 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
+| `vite build` | 首次失败：插入折叠样式时把 `.admin-aside` 的 `display:flex` 等留成无选择器的孤立声明（CSS 语法错），type-check / eslint / vitest 都放过，只有构建能抓到；修复后通过。已在源码守门补「aside 基础规则必须含 display/flex-direction/overflow」的断言 |
+| 其余 | 见提交后的 CI 记录 |
