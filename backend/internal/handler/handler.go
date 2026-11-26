@@ -447,6 +447,30 @@ func New(db *gorm.DB) *gin.Engine {
 		})
 	})
 
+	// 展示配置版本号探针（0067）：给小程序端检测「后台保存了新配置」用。
+	//
+	// 为什么不复用 /api/home-layout 的响应体：那条挂了 cdnCache(c, 60)，
+	// 版本号若跟着一起被缓存，端上读到的永远是 60 秒前的号，可能永远检测不到
+	// 变化。这里单独开一个轻量端点并显式 no-store，让端上每次 onShow 都能读到
+	// 当前真实版本；只是两个整数比较，命中版本未变时端上零额外请求。
+	//
+	// 与 /api/home-layout 走同一套租户解析（?companyId=，缺省朗汇），保证端上
+	// 比对的是同一家企业的配置版本。查不到配置行（新租户从未保存过）也返回 1，
+	// 与模型/迁移默认值一致——端上第一次读到 1 记下来，之后只在号变化时刷新。
+	r.GET("/api/home-layout/version", func(c *gin.Context) {
+		cid, ok := publicCompanyID(c, db)
+		if !ok {
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		var hl model.HomeLayout
+		version := int64(1)
+		if err := db.Select("config_version").First(&hl, "company_id = ?", cid).Error; err == nil && hl.ConfigVersion > 0 {
+			version = hl.ConfigVersion
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "configVersion": version})
+	})
+
 	// 埋点上报（公开接口：小程序访客产生，无登录态——也因此是统计数据的
 	// 唯一进水口，按「会被刷」设计，限流与校验的取舍见 stat.go 各函数注释）。
 	r.POST("/api/stat/track", statTrackLimiter(db).Handler(), func(c *gin.Context) {

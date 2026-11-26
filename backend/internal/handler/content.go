@@ -665,6 +665,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 无配置行（新租户）时浓度回默认 100（原色），与模型 tag / 迁移默认值一致，
 		// 前端滑杆才不会落在 0（几乎不显主色）却无从解释。
 		bgGradient := 100
+		configVersion := int64(1)
 		// 三项展示数量 / 效果缺省取上限与 static：新租户与 0049 之前的存量行
 		// 都按「和加配置前一样」渲染，不会一升级就少显示内容。
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
@@ -681,6 +682,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 加配置前写死的 150×44 + aspectFit 居中，存量租户回显也不会突变。
 		logoSize, logoAlign := model.DefaultLogoSize, model.DefaultLogoAlign
 		if db.First(&hl, "company_id = ?", cid).Error == nil {
+			if hl.ConfigVersion > 0 {
+				configVersion = hl.ConfigVersion
+			}
 			if hl.Order != "" {
 				_ = json.Unmarshal([]byte(hl.Order), &order)
 			}
@@ -716,6 +720,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
 			"order": order, "bgImage": model.ResolveResourceRef(bgImage, model.PlatformOrigin()), "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
+			"configVersion":      configVersion,
 			"categoryLimit":      categoryLimit, "featuredCount": featuredCount,
 			"featuredEffect":   featuredEffect,
 			"featuredRatio":    featuredRatio,
@@ -1039,8 +1044,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				upd["style_id"] = styleID
 				upd["brand_color_id"] = brandColorID
 			}
+			// 0067：任何一次成功保存都递增展示配置版本，端上据此检测变化并自动刷新。
+			// 用 SQL 表达式而非读改写：并发保存时两次 +1 不会互相覆盖（GORM 的 Updates
+			// 遇到 map 里 gorm.Expr 会原样下发，不会被引号包成字符串）。
+			// 放在 len(upd) 判断之前，保证即使本次是「无字段变化的空保存」，版本也会
+			// 递增——管理员点保存就是「我改了配置」的语义，端上应无条件重拉一次。
+			upd["config_version"] = gorm.Expr("config_version + 1")
 			// 三个页签各存各的：只带风格字段的 payload 只改风格三列，
-			// 其余展示配置一律不动。upd 为空说明没带任何可写字段，直接回成功即可。
+			// 其余展示配置一律不动。0067 起 upd 恒含 config_version，故每次保存
+			// 都至少更新一列——「无字段空保存」也会递增版本，端上无条件重拉一次。
 			if len(upd) > 0 {
 				if err := db.Model(&hl).Updates(upd).Error; err != nil {
 					dbWriteFailed(c, "更新首页布局", "保存失败，请稍后重试", err)

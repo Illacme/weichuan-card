@@ -140,7 +140,9 @@ CREATE TABLE IF NOT EXISTS home_layouts (
   show_featured_name TINYINT(1) NOT NULL DEFAULT 0
   COMMENT '精选案例封面图下方是否显示名称，默认0=图内已有名称不重复',
   featured_ratio VARCHAR(16) NOT NULL DEFAULT 'none'
-  COMMENT '精选案例封面裁切比例：none/16:9/4:3/2:1/1:1，默认 none 不裁切'
+  COMMENT '精选案例封面裁切比例：none/16:9/4:3/2:1/1:1，默认 none 不裁切',
+  config_version BIGINT NOT NULL DEFAULT 1
+  COMMENT '小程序展示配置版本号；保存时递增，端上检测变化后自动刷新'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS stat_events (

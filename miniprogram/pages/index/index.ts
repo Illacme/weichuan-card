@@ -4,6 +4,8 @@ import { bindCompanyFromScene, getCompanyId } from '../../utils/tenant'
 import { clearEntryStaff } from '../../utils/entry'
 import { track, deriveSource } from '../../utils/track'
 import { FALLBACK_BRAND, startupBrandName } from '../../utils/brand'
+// 0067：后台保存展示配置后，端上靠版本探针检测变化并自动刷新（见 utils/configVersion.ts）。
+import { configVersionChanged } from '../../utils/configVersion'
 // 四个接口的响应信封类型（utils/types.ts）。传进来只是让 IDE / review 能看见字段，
 // 运行期不产生任何代码；不传泛型时 request 默认就是 ApiResult<any>，与旧行为等价。
 import type { AchievementsResp, CardResp, HomeLayoutResp, ServicesResp } from '../../utils/types'
@@ -240,6 +242,12 @@ Page({
     this.trackVisit()
     // 左上角「我的」入口跟随登录态刷新（登录 / 退出后回名片页时即时反映）
     this.loadMeInfo()
+    // 0067：后台改了展示配置后自动刷新。onShow 每次进入都比对一次版本号，
+    // 变了才静默重拉（silent 不闪加载态）；没变 / 探针失败都不动，零额外开销。
+    // 不 await：这是旁路探测，不能挡住页面显示。
+    void configVersionChanged().then((changed) => {
+      if (changed) this.loadAll({ silent: true })
+    })
   },
   // 页面滚动：把 scrollTop 映射到顶部遮罩透明度，滚过顶栏下沿（navHeight）时恰好浮现。
   // 带 0.01 死区，仅在视觉有变化时 setData，避免高频无效渲染。

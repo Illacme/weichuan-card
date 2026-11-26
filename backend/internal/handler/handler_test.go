@@ -897,6 +897,29 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.Equal(t, "medium", body["data"].(map[string]interface{})["logoSize"])
 		require.Equal(t, "center", body["data"].(map[string]interface{})["logoAlign"])
 
+		// 0067 展示配置版本号：新建行版本为 1；之后每次成功保存都 +1（含空保存）。
+		// 版本探针 /api/home-layout/version 必须与 admin GET 同号、且显式 no-store——
+		// 版本号若被 CDN 缓存就永远晚一拍，自动刷新等于失效。
+		versionBefore := int64(0)
+		_, body = c.do("GET", "/api/home-layout/version", nil, "")
+		require.EqualValues(t, 0, body["code"])
+		versionBefore = int64(body["configVersion"].(float64))
+		require.GreaterOrEqual(t, versionBefore, int64(1))
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.EqualValues(t, versionBefore, int64(body["data"].(map[string]interface{})["configVersion"].(float64)))
+		// 空保存（不带任何可写字段）同样递增——管理员点保存就是「我改了」的语义。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/home-layout/version", nil, "")
+		require.EqualValues(t, versionBefore+1, int64(body["configVersion"].(float64)), "空保存也应递增版本号")
+		// 被拒请求不得递增版本（否则端上白白刷新一次，且配置没变）。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredRatio": "3:2",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("GET", "/api/home-layout/version", nil, "")
+		require.EqualValues(t, versionBefore+1, int64(body["configVersion"].(float64)), "被拒请求不得递增版本号")
+
 		// 首页背景：写入 → 后台读回 → 公开接口下发
 		bgURL := "http://127.0.0.1:8080/uploads/library/bg-deepspace.jpg"
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{

@@ -103,7 +103,8 @@ func TestP0bUploaderWriteSitesMatchBoundaryList(t *testing.T) {
 		"写入侧文件集合变了：新增/删除上传写入点必须先更新 docs/tenant-storage-url-boundaries.md §1")
 }
 
-// TestP0bPublicGetRoutesMatchBoundaryList 钉住 §3.1 的 9 条公开 GET。
+// TestP0bPublicGetRoutesMatchBoundaryList 钉住 §3.1 的 9 条下发资源 URL 的公开 GET。
+// 0067 新增的版本探针是第 10 条公开 GET，但只回整数、无资源 URL，单独钉在下方。
 //
 // 关键事实：带 60 秒边缘缓存的只有 5 条，另外 4 条（company / team /
 // projects/:id / services/:id）同样下发资源 URL 却没有缓存头。按「那五条」
@@ -118,6 +119,10 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 	for _, m := range routeRe.FindAllStringSubmatch(src, -1) {
 		got[m[1]] = true
 	}
+	// 0067 版本探针是第 10 条公开 GET，但只回整数、无资源 URL，刻意不进 §3.1
+	// 的「下发资源 URL 9 条」清单；先摘出来，下面单独钉它的存在与 no-store。
+	probeInSrc := got["/api/home-layout/version"]
+	delete(got, "/api/home-layout/version")
 	want := map[string]bool{
 		"/api/card":         true,
 		"/api/company":      true,
@@ -131,6 +136,25 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 	}
 	require.Equal(t, want, got,
 		"公开 GET 路由集合变了：新增公开接口必须确认是否下发资源 URL，并登记到边界清单 §3.1")
+
+	// 0067 版本探针是第 10 条公开 GET，但它只回一个整数版本号、不携带任何资源 URL，
+	// 所以**刻意不进**上面的 §3.1 出参清单（那 9 条都是要过 ResolveRef 的）。
+	// 单独钉死它的存在与语义：一旦有人往这个响应里塞 bgImage 之类的资源字段，
+	// 这条守门就要同步更新并接 ResolveRef——正是本测试想逼出的那次决策。
+	require.True(t, probeInSrc,
+		"0067 版本探针 /api/home-layout/version 必须存在（端上靠它自动刷新配置）")
+	probeSrc, err := os.ReadFile(filepath.Join(handlerDir, "handler.go"))
+	require.NoError(t, err)
+	probeBlock := ""
+	if i := strings.Index(string(probeSrc), `r.GET("/api/home-layout/version"`); i >= 0 {
+		end := strings.Index(string(probeSrc)[i:], "\n\t})")
+		if end > 0 {
+			probeBlock = string(probeSrc)[i : i+end]
+		}
+	}
+	require.NotEmpty(t, probeBlock, "必须定位到版本探针的路由块")
+	require.Contains(t, probeBlock, "no-store", "版本探针必须 no-store，否则版本号被缓存、端上永远检测不到变化")
+	require.NotContains(t, probeBlock, "bgImage", "版本探针只回版本号，不得夹带资源 URL（否则须接入 ResolveRef 并更新 §3.1）")
 
 	// 只数真正的代码行，不算 handler.go:206 那条解释「刻意不设」的注释。
 	cacheCall := regexp.MustCompile(`(?m)^\s*cdnCache\(c, 60\)\s*$`)

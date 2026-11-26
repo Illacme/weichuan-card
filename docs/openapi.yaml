@@ -674,6 +674,40 @@ paths:
                     enum: [brand-crimson, brand-coral, brand-amber, brand-forest, brand-ocean, brand-indigo, brand-violet, brand-magenta, brand-royal, brand-scarlet]
                     description: 两轴第二轴「品牌色系（纯颜色层）」；null（缺省）= 用该风格默认色。P5 起可叠加在任意风格之上，10 款色系在 4 风格上取值一致。
 
+  /api/home-layout/version:
+    get:
+      tags: [公开内容]
+      summary: 小程序展示配置版本号（0067，端上自动刷新用）
+      description: |
+        极小探针：只回当前企业的展示配置版本号，供小程序端检测「后台保存了新配置」。
+        0067 前 `/api/home-layout` 响应挂 60 秒 CDN 缓存，版本号若写在那个响应体里
+        也会被缓存、端上永远晚一拍——所以单独开这个端点并显式 `Cache-Control: no-store`，
+        让端上每次 onShow 都能读到真实版本。号未变时端上零额外请求。
+        版本只在成功保存展示配置（PUT /api/admin/home-layout）时递增；查不到配置行
+        （新租户从未保存过）回 1，与模型/迁移默认值一致。
+      parameters:
+        - $ref: "#/components/parameters/CompanyScope"
+      responses:
+        "200":
+          description: code=0 成功；本端点不设 CDN 缓存（no-store）
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  configVersion:
+                    type: integer
+                    minimum: 1
+                    default: 1
+                    description: 当前企业展示配置版本号；与上次记录不同则端上重新拉 /api/home-layout
+
   /api/team:
     get:
       tags: [公开内容]
@@ -2951,12 +2985,20 @@ paths:
                         minimum: 0
                         maximum: 100
                         description: 背景遮罩浓度，0=不压暗
-                      bgGradientStrength:
-                        type: integer
-                        minimum: 0
-                        maximum: 100
-                        default: 100
-                        description: 首页顶部品牌主色浓度 0~100（100=原色），无背景图时生效
+                  bgGradientStrength:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+                    default: 100
+                    description: 首页顶部品牌主色浓度 0~100（100=原色），无背景图时生效
+                  configVersion:
+                    type: integer
+                    minimum: 1
+                    default: 1
+                    description: >-
+                      展示配置版本号（0067）。每次成功保存本端点的任意配置都会递增；
+                      公开探针 GET /api/home-layout/version 下发同一数值，端上据此自动刷新。
+                      admin GET 带回它便于排查「端上为什么没刷新」。
                       categoryLimit:
                         type: integer
                         minimum: 0

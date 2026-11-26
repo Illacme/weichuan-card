@@ -12,7 +12,7 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **138 paths**，最后同步 2026-11-26。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **139 paths**，最后同步 2026-11-26。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
@@ -6984,3 +6984,62 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 审计标签 / 迁移产物 | 全绿 / 28 张表 387 列项 |
 | 迁移链 | `history/0066` + 纯净 schema 重生成 + manifest + 基线保真 66 一致 |
 | CI | 提交 `ea71456`，run `45804853858`，15 job 全绿 |
+
+## 第一百一十三轮：展示配置版本号自动刷新（2026-11-26）
+
+后台「小程序设置」保存后，访客端 / 开发者工具里的名片页不会立即反映新配置。
+排查结论：生产 `/api/home-layout` 挂了 60 秒 `cdnCache(c, 60)`，边缘可能缓存旧配置；
+微信开发者工具直连本机后端虽然 `wx.request` 不缓存 GET，但已打开的页面不会重新
+`onLoad`，所以「保存后没变」的本质是端上没有重新拉配置。用户先选「后台加清除缓存按钮」，
+但该按钮无法清用户设备 / 已打开页面的缓存，最终改为**版本号自动刷新**。
+
+### 一、为什么版本号必须走独立 no-store 探针
+
+- 最初设想把版本号塞进 `/api/home-layout` 响应体，但该响应被 CDN 缓存 60 秒，
+  版本号会跟着被缓存、端上永远晚一拍，检测形同虚设。
+- 故单独开 `GET /api/home-layout/version`，只回一个整数 `configVersion`，
+  显式 `Cache-Control: no-store`，让端上每次 `onShow` 读到真实版本。
+- 走与 `/api/home-layout` 相同的租户解析（`publicCompanyID`，缺省朗汇），
+  保证比对的是同一家企业的配置版本。查不到配置行也回 1，与模型 / 迁移默认值一致。
+
+### 二、版本号写入语义
+
+- `home_layouts.config_version BIGINT NOT NULL DEFAULT 1`（0067），模型字段
+  `ConfigVersion int64`，公开探针与 admin GET 都下发。
+- 管理端 PUT `/api/admin/home-layout` 任何**成功保存**都用
+  `gorm.Expr("config_version + 1")` 在 SQL 层递增：并发保存不会互相覆盖；
+  「无字段空保存」也递增——管理员点保存就是「我改了」的语义。
+- 被拒请求（非法枚举 / 无授权）在递增之前就返回，不得让端上白刷一次。
+
+### 三、端上检测逻辑（utils/configVersion.ts）
+
+- `configVersionChanged()` 在首页 `onShow` 里 fire-and-forget 调用，变化才
+  `loadAll({ silent: true })` 静默重拉，不闪加载态、不弹提示、不打断访客。
+- 版本号按租户分键存 `homeLayoutConfigVersion:<cid>`；首次见到只记录不刷新
+  （首屏本来就是最新拉取），后续只在号真的变化时刷新。
+- 探针失败 / 旧后端不下发字段：静默当没变，绝不因为一个辅助探测让名片页报错。
+
+### 四、链路与守门
+
+迁移 0067 → 模型字段 → admin PUT 递增 → 两个 GET 下发 → 端上探针 + onShow 检测。
+
+- 新增公开探针触发 §3.1 路由边界守门（`TestP0bPublicGetRoutesMatchBoundaryList`）：
+  先确认它只回整数、不携带资源 URL，刻意不进「下发资源 URL 的 9 条」清单；
+  另用 `require.True(probeInSrc)` + 检查 `no-store` / 不含 `bgImage` 单独钉住，
+  往探针塞资源字段会立刻变红，逼着补 ResolveRef 并登记边界清单。
+- `TestHomeLayoutVersionProbe`：钉死 no-store 头与新租户缺省版本 1。
+- `TestAPIFlow/企业内容与布局`：版本探针与 admin GET 同号、空保存递增、被拒请求不递增。
+- `config_version.spec.ts`：首次只记录、变化才刷新、未变不刷、旧后端 / 探针失败静默、
+  按租户分键；源码守门钉住 onShow 必须调用探针且 silent 重拉、路径必须是独立探针。
+- 反向验证：把探针 no-store 改成 cdnCache(60) → `TestHomeLayoutVersionProbe` 红；
+  把 onShow 的 silent 重拉改成非 silent → `config_version.spec.ts` 红。两次变红后还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `gofmt -l .` / `go vet ./...` / `go build ./...` / `go test ./...` | 无输出 / 无输出 / 无输出 / 全绿 |
+| 前端 `vitest run` | 全绿（119 文件 2044 例） |
+| OpenAPI `check_openapi.py` | 139 paths / 138 路由全部对齐 |
+| 迁移链 | `history/0067` + 纯净 schema 重生成 + manifest + 基线保真 67 一致 |
+| 发版自检 `selftest_deploy_frontend.sh` | PASS=59 FAIL=0 |

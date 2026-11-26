@@ -143,7 +143,12 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 
 ## 3. 出参侧：URL 从哪里离开系统
 
-### 3.1 公开只读接口（`handler/handler.go`，守门精确对账 9 条路由）
+### 3.1 公开只读接口（`handler/handler.go`，守门精确对账 9 条出参路由）
+
+> 守门的 `want` 集合是**这 9 条下发资源 URL 的路由**。0067 新增的第 10 条公开 GET
+> `/api/home-layout/version`（展示配置版本探针）只回一个整数版本号、不携带任何资源 URL，
+> 故刻意不进这张表；守门另用 `require.True(got["/api/home-layout/version"])` + 检查
+> `no-store` / 不含 `bgImage` 单独钉住它（往探针里塞资源字段会立刻变红，逼着补 ResolveRef 与登记）。
 
 | 路由 | 下发内容 | 60s 边缘缓存 |
 | --- | --- | --- |

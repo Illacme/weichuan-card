@@ -539,6 +539,13 @@ type HomeLayout struct {
 	// BrandColorID 品牌色系（颜色层），叠加在所选风格之上；nil = 用该风格默认色。
 	// 两轴模型第二轴；P5 起全叉乘，全部品牌色系可叠加在任意风格上。
 	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
+	// ConfigVersion 小程序展示配置版本号（0067）。每次成功保存展示配置都 +1。
+	//
+	// 为什么单独一列：公开 /api/home-layout 响应被 CDN 缓存 60 秒，版本号若塞在
+	// 那个响应体里也会被缓存，端上永远晚一拍。端上改用独立 no-store 探针
+	// /api/home-layout/version 读这个号，发现变化就重新拉一次配置。
+	// 缺省 1：存量行升级即为 1，端上首次记录后不会因升级本身误触发刷新。
+	ConfigVersion int64 `gorm:"column:config_version;default:1" json:"configVersion"`
 	// LogoSize / LogoAlign 名片卡右上角企业 LOGO 的显示档位（见 LogoSize* / LogoAlign*）。
 	// 为什么不跟 company_infos.logo 放一起：那一列答的是「用哪张图」（公司信息），
 	// 这两列答的是「这张图怎么摆」（页面样式），与其它展示偏好同属本表，改版式时一处配齐。
