@@ -180,6 +180,13 @@ export type DetailTimeMode = 'hidden' | 'date' | 'minute'
 export type FeaturedEffect = 'static' | 'fade' | 'scroll' | 'flip'
 
 /**
+ * 精选案例封面图的裁切比例。与后端 model.FeaturedRatio* 白名单一一对应。
+ * none = 按原图比例展示（默认，升级零视觉突变）；其余四档为固定比例容器 +
+ * aspectFill 居中裁切（短边贴合容器，长边溢出部分居中裁掉）。
+ */
+export type FeaturedRatio = 'none' | '16:9' | '4:3' | '2:1' | '1:1'
+
+/**
  * 名片卡右上角企业 LOGO 的尺寸档。与后端 model.LogoSize* 一一对应。
  * medium = 加配置前写死的 150×44rpx，缺省；small / large 才显式改变大小。
  */
@@ -221,6 +228,8 @@ export interface HomeLayoutData {
   featuredCount: number
   /** 精选案例循环呈现效果，默认 static 静态平铺 */
   featuredEffect: FeaturedEffect
+  /** 精选案例封面裁切比例，默认 none（按原图比例，不裁切） */
+  featuredRatio: FeaturedRatio
   /**
    * 业绩分类封面图**下方**是否再显示名称，默认 false。
    * 设计稿把名称画进了封面图（带字方图），再渲染就重复；换成素图后打开此开关补回。
@@ -266,6 +275,7 @@ export function getHomeLayout() {
           categoryLimit: 20,
           featuredCount: 3,
           featuredEffect: 'static',
+          featuredRatio: 'none' as FeaturedRatio,
           projectTimeMode: 'date',
           serviceTimeMode: 'date',
           styleId: 'default',

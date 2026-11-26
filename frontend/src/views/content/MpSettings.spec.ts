@@ -494,6 +494,7 @@ describe('content/MpSettings', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      featuredRatio: 'none',
       // 0050 两个名称开关 + 0065 精选案例名称缺省 false：封面图里已经画了名称，再渲染一行就是重复
       showCategoryName: false,
       showFeaturedName: false,

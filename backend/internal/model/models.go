@@ -366,6 +366,37 @@ const (
 	FeaturedEffectFlip   = "flip"
 )
 
+// 首页精选案例封面图的裁切比例（home_layouts.featured_ratio）。
+//
+// 小程序不能动态加载 WXSS，比例档位随包内置，后台只下发 id 选择：
+//   - none 不裁切（升级前行为，图片按原比例 widthFix 自适应，存量租户零视觉突变）
+//   - 16:9 / 4:3 / 2:1 / 1:1 固定比例容器 + aspectFill 居中裁切：
+//     图片等比放大到短边贴合容器，长边溢出部分居中裁掉。
+//
+// 非法值归一为空串由调用方拒绝写入，避免端上落到「既不是原图也不是任何档位」的空白态。
+const (
+	FeaturedRatioNone = "none"
+	FeaturedRatio16x9 = "16:9"
+	FeaturedRatio4x3  = "4:3"
+	FeaturedRatio2x1  = "2:1"
+	FeaturedRatio1x1  = "1:1"
+)
+
+// DefaultFeaturedRatio 缺省不裁切，与加配置前完全一致。
+const DefaultFeaturedRatio = FeaturedRatioNone
+
+// NormalizeFeaturedRatio 归一裁切比例；非法值返回空串由调用方拒绝。
+func NormalizeFeaturedRatio(v string) string {
+	switch v {
+	case "":
+		return DefaultFeaturedRatio
+	case FeaturedRatioNone, FeaturedRatio16x9, FeaturedRatio4x3, FeaturedRatio2x1, FeaturedRatio1x1:
+		return v
+	default:
+		return ""
+	}
+}
+
 // DefaultFeaturedEffect 缺省效果：静态平铺，与加配置前完全一致。
 const DefaultFeaturedEffect = FeaturedEffectStatic
 
@@ -478,6 +509,9 @@ type HomeLayout struct {
 	FeaturedCount int `gorm:"column:featured_count;default:3" json:"featuredCount"`
 	// FeaturedEffect 精选案例的循环呈现效果，取值见 FeaturedEffect* 常量。
 	FeaturedEffect string `gorm:"column:featured_effect;size:16;default:static" json:"featuredEffect"`
+	// FeaturedRatio 精选案例封面图的裁切比例，取值见 FeaturedRatio* 常量。
+	// 缺省 none = 按原图比例展示（加配置前行为），四档比例走固定容器 + aspectFill 居中裁切。
+	FeaturedRatio string `gorm:"column:featured_ratio;size:16;default:none" json:"featuredRatio"`
 	// ShowCategoryName / ShowServiceName 是否在封面图**下方**再渲染一行文字名称（0050）。
 	//
 	// 缺省一律 false，因为设计稿把名称直接画进了封面图（业绩分类是「居住住宅」这类

@@ -15,9 +15,23 @@
       <!-- widthFix：宽度由均分规则给出，高度按原图比例自适应，不再被风格层固定高度裁成扁条。
            style="height:auto" 覆盖风格层三段选择器的固定高度；不用 !important，
            否则会连 widthFix 运行时算出的高度一起压掉。 -->
-      <image class="feat-cover" src="{{p.coverThumb}}" mode="widthFix" style="height:auto" lazy-load wx:if="{{p.cover}}"
-        binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
-      <view class="feat-cover" wx:else></view>
+      <!-- 两种封面渲染模式：
+           none（默认，升级前行为）：widthFix + 内联 height:auto 按原图比例自适应，
+                风格层的固定高度对图片失效，只作用于无图占位 view。
+           16:9 / 4:3 / 2:1 / 1:1：外层固定比例容器（aspect-ratio）+ overflow:hidden，
+                image 用 aspectFill 等比放大到短边贴合容器、长边溢出居中裁掉。
+           拆成两个分支而不是动态拼 mode：表达式复杂且 widthFix 与 aspectFill 的
+           内联样式互斥，分支更直白、也不会让两类语义混在一个标签上。 -->
+      <view class="feat-cover feat-ratio-{{ratio}}" wx:if="{{ratio !== 'none'}}">
+        <image class="feat-cover-fill" src="{{p.coverThumb}}" mode="aspectFill" lazy-load
+          wx:if="{{p.cover}}" binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}"
+          data-full="{{p.cover}}" />
+      </view>
+      <block wx:else>
+        <image class="feat-cover" src="{{p.coverThumb}}" mode="widthFix" style="height:auto" lazy-load wx:if="{{p.cover}}"
+          binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}" data-full="{{p.cover}}" />
+        <view class="feat-cover" wx:else></view>
+      </block>
       <!-- 名称：有图时默认不显示（名称已烧在图内），后台打开「精选案例名称」后补回；
            无图时始终显示（占位块里没有名称信息，不显示就彻底丢了）。
            与 wx:for 分标签，避免同一标签上的条件/循环冲突。 -->

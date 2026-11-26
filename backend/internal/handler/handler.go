@@ -403,6 +403,7 @@ func New(db *gorm.DB) *gin.Engine {
 		// 保证升级后存量租户看到的条数与效果不变。
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
 		featuredEffect := model.DefaultFeaturedEffect
+		featuredRatio := model.DefaultFeaturedRatio
 		// 封面图下方是否再显示名称：缺省 false（名称已画进封面图）。
 		showCategoryName, showServiceName, showFeaturedName := false, false, false
 		styleID, brandColorID := mptemplate.DefaultID, (*string)(nil)
@@ -418,6 +419,7 @@ func New(db *gorm.DB) *gin.Engine {
 			categoryLimit = clampInt(l.CategoryLimit, 0, 20)
 			featuredCount = clampInt(l.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(l.FeaturedEffect)
+			featuredRatio = model.NormalizeFeaturedRatio(l.FeaturedRatio)
 			showCategoryName, showServiceName, showFeaturedName = l.ShowCategoryName, l.ShowServiceName, l.ShowFeaturedName
 			logoSize = model.NormalizeLogoSize(l.LogoSize)
 			logoAlign = model.NormalizeLogoAlign(l.LogoAlign)
@@ -435,6 +437,7 @@ func New(db *gorm.DB) *gin.Engine {
 			"categoryLimit":      categoryLimit,
 			"featuredCount":      featuredCount,
 			"featuredEffect":     featuredEffect,
+			"featuredRatio":      featuredRatio,
 			"showCategoryName":   showCategoryName,
 			"showServiceName":    showServiceName,
 			"showFeaturedName":   showFeaturedName,

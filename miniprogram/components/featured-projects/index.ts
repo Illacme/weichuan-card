@@ -52,6 +52,9 @@ Component({
     featured: Array,
     featuredCount: { type: Number, value: 3 },
     effect: { type: String, value: 'static' },
+    // 封面裁切比例（0066）：none = 原图比例不裁切；其余四档走固定比例容器 + aspectFill
+    // 居中裁切（短边贴合容器、长边溢出裁掉）。端上白名单归一后透传，未知值落 none。
+    ratio: { type: String, value: 'none' },
     // 封面图下方是否显示案例名称（0065，缺省 false）：设计稿把名称烧在图内，
     // 客户换成素图后在后台「名片页面样式 → 精选案例名称」打开即补回。
     showName: { type: Boolean, value: false },

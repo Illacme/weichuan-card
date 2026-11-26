@@ -210,6 +210,20 @@
         <div class="bg-hint">只有一张精选案例时始终静态显示；轮播自动循环，点图仍进案例详情。</div>
       </el-form-item>
 
+      <el-form-item label="精选案例裁切比例">
+        <el-radio-group v-model="featuredRatio">
+          <el-radio value="none">原图比例</el-radio>
+          <el-radio value="16:9">16:9</el-radio>
+          <el-radio value="4:3">4:3</el-radio>
+          <el-radio value="2:1">2:1</el-radio>
+          <el-radio value="1:1">1:1</el-radio>
+        </el-radio-group>
+        <div class="bg-hint">
+          默认「原图比例」不裁切。选比例后封面图按该比例居中裁切显示：以图片短边贴合容器，
+          长边两端超出部分均匀裁掉——适合把不同尺寸的案例图统一成整齐的版式。
+        </div>
+      </el-form-item>
+
       <el-divider content-position="left">封面图名称</el-divider>
 
       <p class="desc desc-tight">
@@ -283,6 +297,7 @@ import {
   saveHomeLayout,
   type DetailTimeMode,
   type FeaturedEffect,
+  type FeaturedRatio,
   type LogoAlign,
   type LogoSize,
 } from '@/api/content'
@@ -307,6 +322,8 @@ const bgMask = ref(0)
 const categoryLimit = ref(20)
 const featuredCount = ref(3)
 const featuredEffect = ref<FeaturedEffect>('static')
+// 精选案例封面裁切比例：缺省 none = 按原图比例（加配置前行为），四档比例走固定容器 + 居中裁切
+const featuredRatio = ref<FeaturedRatio>('none')
 // 封面图下方是否再显示名称（0050）。缺省 false = 名称已在图内，与升级前完全一致。
 // 两个开关分开：分类图与服务卡常常不是同一批素材风格。
 const showCategoryName = ref(false)
@@ -377,6 +394,7 @@ async function load() {
     categoryLimit.value = d?.categoryLimit ?? 20
     featuredCount.value = d?.featuredCount ?? 3
     featuredEffect.value = d?.featuredEffect || 'static'
+    featuredRatio.value = d?.featuredRatio || 'none'
     // 用 === true 而不是 ||：后端可能下发 false，|| 会把它当假值再兜一遍虽然结果相同，
     // 但显式比较能挡住字符串 "false" 被当真值的情况。
     showCategoryName.value = d?.showCategoryName === true
@@ -411,6 +429,7 @@ async function save() {
       categoryLimit: categoryLimit.value,
       featuredCount: featuredCount.value,
       featuredEffect: featuredEffect.value,
+      featuredRatio: featuredRatio.value,
       showCategoryName: showCategoryName.value,
       showFeaturedName: showFeaturedName.value,
       showServiceName: showServiceName.value,

@@ -669,6 +669,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		// 都按「和加配置前一样」渲染，不会一升级就少显示内容。
 		categoryLimit, featuredCount := model.DefaultCategoryLimit, model.DefaultFeaturedCount
 		featuredEffect := model.DefaultFeaturedEffect
+		featuredRatio := model.DefaultFeaturedRatio
 		// 封面图下方是否再显示名称：缺省 false（名称已画进封面图，再渲染就重复）。
 		// 零值 false 与缺省一致，所以新租户 / 存量行不写这三列也是对的。
 		showCategoryName, showServiceName, showFeaturedName := false, false, false
@@ -688,6 +689,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			categoryLimit = clampInt(hl.CategoryLimit, 0, 20)
 			featuredCount = clampInt(hl.FeaturedCount, 0, 3)
 			featuredEffect = model.NormalizeFeaturedEffect(hl.FeaturedEffect)
+			featuredRatio = model.NormalizeFeaturedRatio(hl.FeaturedRatio)
 			showCategoryName, showServiceName, showFeaturedName = hl.ShowCategoryName, hl.ShowServiceName, hl.ShowFeaturedName
 			// 存量行（0040 之前建的）列值由迁移默认值补上，理论上不会是空串；
 			// 仍过一遍归一，避免脏值让前端渲染出未知档位。
@@ -716,6 +718,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			"bgGradientStrength": bgGradient,
 			"categoryLimit":      categoryLimit, "featuredCount": featuredCount,
 			"featuredEffect":   featuredEffect,
+			"featuredRatio":    featuredRatio,
 			"showCategoryName": showCategoryName, "showServiceName": showServiceName,
 			"showFeaturedName": showFeaturedName,
 			"projectTimeMode":  projectMode, "serviceTimeMode": serviceMode,
@@ -744,6 +747,7 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			CategoryLimit  *int    `json:"categoryLimit"`
 			FeaturedCount  *int    `json:"featuredCount"`
 			FeaturedEffect *string `json:"featuredEffect"`
+			FeaturedRatio  *string `json:"featuredRatio"`
 			// 封面图下方是否再显示名称（0050）。指针语义同上：只改数量的请求不能把
 			// 这两个开关冲回 false——那会让客户刚打开的「显示名称」莫名失效。
 			ShowCategoryName *bool `json:"showCategoryName"`
@@ -800,6 +804,15 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		if req.FeaturedEffect != nil {
 			if featuredEffect = model.NormalizeFeaturedEffect(*req.FeaturedEffect); featuredEffect == "" {
 				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "循环呈现效果无效"})
+				return
+			}
+		}
+		// 裁切比例同属白名单：端上拿到未知档位时四个 class 全落空，
+		// 图片既不是原图比例也没有固定容器，整块版式会乱掉，故非法值直接拒绝。
+		featuredRatio := ""
+		if req.FeaturedRatio != nil {
+			if featuredRatio = model.NormalizeFeaturedRatio(*req.FeaturedRatio); featuredRatio == "" {
+				c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "裁切比例无效"})
 				return
 			}
 		}
@@ -939,6 +952,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			if req.FeaturedEffect != nil {
 				created.FeaturedEffect = featuredEffect
 			}
+			if req.FeaturedRatio != nil {
+				created.FeaturedRatio = featuredRatio
+			}
 			if req.ShowCategoryName != nil {
 				created.ShowCategoryName = *req.ShowCategoryName
 			}
@@ -986,6 +1002,9 @@ func RegisterContent(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			}
 			if featuredEffect != "" {
 				upd["featured_effect"] = featuredEffect
+			}
+			if featuredRatio != "" {
+				upd["featured_ratio"] = featuredRatio
 			}
 			// 两个开关只在本次显式提交时写：指针区分「未提供」与「传 false」，
 			// 前者保持原值——否则后台只改分类数量的那次保存会把刚打开的名称开关关掉。

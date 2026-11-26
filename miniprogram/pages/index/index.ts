@@ -18,6 +18,15 @@ function normalizeFeaturedEffect(v: unknown): string {
   return typeof v === 'string' && FEATURED_EFFECTS.indexOf(v) >= 0 ? v : 'static'
 }
 
+// 精选案例封面裁切比例白名单，与后端 model.FeaturedRatio* 一一对应。
+// 未知值必须回落 none：非 none 档位对应 CSS class，落空会让图片既不是原图比例
+// 也没有固定容器，版式会散掉。
+const FEATURED_RATIOS = ['none', '16:9', '4:3', '2:1', '1:1']
+
+function normalizeFeaturedRatio(v: unknown): string {
+  return typeof v === 'string' && FEATURED_RATIOS.indexOf(v) >= 0 ? v : 'none'
+}
+
 // 名片卡右上角 LOGO 的两组档位（0053），与后端 model.LogoSize* / LogoAlign* 一一对应。
 // 端上再归一一次：旧后端不下发 → 落缺省（与改造前一致）；脏数据下发未知值 →
 // 若不归一，CSS 类名匹配不上会静默退回 flex-start（靠左），比不生效更误导。
@@ -64,6 +73,7 @@ Page({
     categoryLimit: 20,
     featuredCount: 3,
     featuredEffect: 'static',
+    featuredRatio: 'none',
     // 0050 封面图下方是否再显示名称：缺省 false —— 设计稿把名称画进了封面图，
     // 再渲染一行就是重复。客户换成不带字的素图后在后台打开即可补回。
     showCategoryName: false,
@@ -337,6 +347,7 @@ Page({
       const categoryLimit = Math.max(0, Math.min(20, layout.categoryLimit ?? 20))
       const featuredCount = Math.max(0, Math.min(3, layout.featuredCount ?? 3))
       const featuredEffect = normalizeFeaturedEffect(layout.featuredEffect)
+      const featuredRatio = normalizeFeaturedRatio(layout.featuredRatio)
       // 0050：封面图下方是否再显示名称。用 === true 而不是 ||，避免后端下发字符串
       // "false"（某些序列化会这样）被当真值，把重复的名称又渲染出来。
       const showCategoryName = layout.showCategoryName === true
@@ -394,6 +405,7 @@ Page({
         categoryLimit,
         featuredCount,
         featuredEffect,
+        featuredRatio,
         // 0050：名称是否显示在封面图下方（默认 false = 名称已在图内，不重复渲染）
         showCategoryName,
         showFeaturedName,

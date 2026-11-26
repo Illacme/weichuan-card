@@ -167,6 +167,8 @@ export type HomeLayoutResp = Envelope & {
   featuredCount?: number
   /** 精选案例循环效果：static / fade / scroll / flip，缺省 static */
   featuredEffect?: string
+  /** 精选案例封面裁切比例：none（原图，缺省）/ 16:9 / 4:3 / 2:1 / 1:1 */
+  featuredRatio?: string
   /**
    * 业绩分类封面图**下方**是否再显示一行名称，缺省 false。
    * 设计稿把名称画进了封面图（「居住住宅」这类带字方图），再渲染就重复；

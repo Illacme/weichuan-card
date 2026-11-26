@@ -117,7 +117,7 @@
           <!-- 板块标题装饰线：一小段左蓝右灰（用户 2026-10-20 要求，与企业名下同款语言） -->
           <view class="line-split sec-title-line"></view>
           <achievement-grid categories="{{categories}}" staffId="{{staffId}}" showName="{{showCategoryName}}" />
-          <featured-projects featured="{{featured}}" featuredCount="{{featuredCount}}" effect="{{featuredEffect}}" showName="{{showFeaturedName}}" staffId="{{staffId}}" />
+          <featured-projects featured="{{featured}}" featuredCount="{{featuredCount}}" effect="{{featuredEffect}}" ratio="{{featuredRatio}}" showName="{{showFeaturedName}}" staffId="{{staffId}}" />
         </view>
         <view wx:if="{{item === 'service'}}" class="section mp-services">
           <view class="sec-title">业务服务</view>

@@ -552,6 +552,8 @@ paths:
         小程序端据此截取业绩分类与精选案例，并用随包内置的动画播放循环效果。
         0050 起下发 `showCategoryName` / `showServiceName`，0065 起加 `showFeaturedName`：
         封面图下方是否再渲染名称，三者缺省 false——设计稿把名称画进了封面图，再渲染就是重复。
+        0066 起下发 `featuredRatio`：精选案例封面裁切比例，缺省 `none` 保持原图不裁切，
+        升版零视觉突变；选比例后端上用固定比例容器 + aspectFill 居中裁切。
         0053 起下发 `logoSize` / `logoAlign`：名片卡右上角企业 LOGO 的尺寸与位置档位，
         缺省 `medium` / `center` = 加配置前写死的 150×44rpx + aspectFit 居中，零视觉突变。
 
@@ -613,6 +615,15 @@ paths:
                     enum: [static, fade, scroll, flip]
                     default: static
                     description: 精选案例循环呈现效果（静态平铺 / 淡入淡出 / 横向滚动 / 立体翻转）；只有一张案例时始终静态
+                  featuredRatio:
+                    type: string
+                    enum: [none, "16:9", "4:3", "2:1", "1:1"]
+                    default: none
+                    description: >-
+                      精选案例封面裁切比例（0066）。none=原图比例不裁切（缺省，升级零视觉突变；
+                      圆角/阴影继承 .feat-cover）。其余档位用固定比例容器 + aspectFill：
+                      图片等比放大到**短边贴合容器**，长边两端超出部分居中均匀裁掉。
+                      端上再做一次白名单归一，未知档位一律回 none，防止脏数据破坏版式。
                   showCategoryName:
                     type: boolean
                     default: false
@@ -2963,6 +2974,13 @@ paths:
                         enum: [static, fade, scroll, flip]
                         default: static
                         description: 精选案例循环效果；非法值写入时拒绝（code=1），不静默兜底
+                      featuredRatio:
+                        type: string
+                        enum: [none, "16:9", "4:3", "2:1", "1:1"]
+                        default: none
+                        description: >-
+                          精选案例封面裁切比例（0066）。缺省 none 不裁切；其余档位按固定比例 +
+                          aspectFill 居中裁切（短边贴合容器，长边两端均匀裁掉）。
                       showCategoryName:
                         type: boolean
                         default: false
@@ -3070,6 +3088,9 @@ paths:
         效果枚举外的值与时间档位一样直接拒绝（code=1）。缺省取上限与 static：
         分类 20 即不截断、轮播 static 即原平铺；精选范围只有 0~3、无法表达「不限」，
         缺省 3 会让原本精选超过 3 张的租户收敛到前 3 张（案例不删，可改精选标记）。
+        `featuredRatio`（0066，none/16:9/4:3/2:1/1:1）同属本页签，管封面图裁切比例：
+        none=原图不裁切（缺省），其余档位用固定比例容器 + aspectFill 居中裁切（短边贴合、长边裁掉）。
+        指针语义，不传保持原值；枚举外的值直接拒绝（code=1），不静默兜底。
         **P5 全叉乘**：`styleId` 与 `brandColorId` 可任意组合（4 × 11 = 44 种），
         不再校验「色系属于哪个风格」；只拒绝未知风格 / 未知色系。
         `styleId` / `brandColorId` 是存储真值（迁移 0043 已删除历史 `template_id`
@@ -3116,6 +3137,12 @@ paths:
                   type: string
                   enum: [static, fade, scroll, flip]
                   description: 精选案例循环呈现效果；指针语义，不传保持原值；枚举外的值直接拒绝
+                featuredRatio:
+                  type: string
+                  enum: [none, "16:9", "4:3", "2:1", "1:1"]
+                  description: >-
+                    精选案例封面裁切比例（0066）；指针语义，不传保持原值。none=原图不裁切（缺省），
+                    其余档位固定比例容器 + aspectFill 居中裁切。枚举外的值直接拒绝（code=1）。
                 showCategoryName:
                   type: boolean
                   description: >-

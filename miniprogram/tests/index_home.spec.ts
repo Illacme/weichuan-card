@@ -858,22 +858,62 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     expect(wxml.match(/class="feat-page /g)).toHaveLength(1) // 真实页始终一个模板
   })
 
-  // 固定高度 + aspectFill 会把横版图裁成扁条（一张铺满时尤其明显）。改成 widthFix
-  // 后高度随原图比例走；风格层的固定 height 三段选择器用内联 height:auto 覆盖，
-  // 圆角 / 阴影 / padding 仍归风格层。高度由 grid 里最高的页撑出，不再需要占位图。
-  it('精选图按原图比例自适应高度，不写死高度也不压掉 widthFix', () => {
+  // 无裁切档（none，缺省）：宽度由均分规则给出，高度按原图比例自适应，不被风格层固定高度裁成扁条。
+  // style="height:auto" 覆盖风格层三段选择器的固定高度；不用 !important，否则连 widthFix
+  // 运行时算出的高度一起压掉。裁切档走另一个 aspectFill 分支，这里只守 none 分支不被污染。
+  it('精选图 none 档按原图比例自适应高度，不写死高度也不压掉 widthFix', () => {
     const wxml = read('components/featured-projects/index.wxml')
     const wxss = read('components/featured-projects/index.wxss')
     const images = wxml.match(/<image\b[^>]*>/g) || []
-    expect(images).toHaveLength(1) // 只有真实页，没有隐藏占位
-    for (const tag of images) {
-      expect(tag).toContain('mode="widthFix"')
-      // 覆盖风格层三段选择器的固定高度，但不能写 !important（会压掉 widthFix 算出的高度）
+    expect(images).toHaveLength(2) // none 分支的真实页 + 裁切分支，没有隐藏占位
+    const plain = images.filter((tag) => tag.includes('mode="widthFix"'))
+    expect(plain).toHaveLength(1)
+    for (const tag of plain) {
       expect(tag).toContain('style="height:auto"')
     }
-    expect(wxml).not.toContain('mode="aspectFill"')
     expect(wxss).not.toMatch(/height:\s*auto\s*!important/)
     expect(wxss).toMatch(/\.feat-page \{[^}]*align-items:\s*flex-start/)
+  })
+
+  // 0066 裁切比例：none 与四档必须拆成两个互斥分支（表达式拼 mode 会让两类语义混在一起），
+  // 裁切档用固定比例容器 + aspectFill，取短边贴合、长边居中裁掉。
+  it('精选案例裁切比例：none / 四档双分支 + 固定比例容器 + aspectFill 居中裁切', () => {
+    const wxml = read('components/featured-projects/index.wxml')
+    const wxss = read('components/featured-projects/index.wxss')
+    const ts = read('components/featured-projects/index.ts')
+
+    // 组件必须暴露 ratio 属性，缺省 none
+    expect(ts).toMatch(/ratio:\s*\{\s*type:\s*String,\s*value:\s*'none'\s*\}/)
+    // 两个互斥分支：裁切档 wx:if ratio !== none，else 里是 widthFix 原图
+    expect(wxml).toContain('wx:if="{{ratio !== \'none\'}}"')
+    expect(wxml).toContain('mode="aspectFill"')
+    expect(wxml).toMatch(/class="feat-cover feat-ratio-\{\{ratio\}\}"/)
+    // 容器裁掉长边溢出：overflow hidden + 四档 aspect-ratio
+    expect(wxss).toMatch(/\.feat-cover\.feat-ratio-16-9[\s\S]*?overflow:\s*hidden/)
+    for (const [sel, ratio] of [
+      ['feat-ratio-16-9', '16 \/ 9'], ['feat-ratio-4-3', '4 \/ 3'],
+      ['feat-ratio-2-1', '2 \/ 1'], ['feat-ratio-1-1', '1 \/ 1'],
+    ]) {
+      expect(wxss, `缺 ${sel} 比例容器`).toMatch(new RegExp(`\\.${sel}\\s*\\{[^}]*aspect-ratio:\\s*${ratio}`))
+    }
+    // 填充图铺满容器，不撑破比例
+    expect(wxss).toMatch(/\.feat-cover-fill\s*\{[^}]*position:\s*absolute[^}]*width:\s*100%[^}]*height:\s*100%/)
+  })
+
+  it('首页透传裁切比例给组件，未知档位端上白名单归一回 none', async () => {
+    const wxml = read('pages/index/index.wxml')
+    expect(wxml).toMatch(/<featured-projects[^>]*ratio="\{\{featuredRatio\}\}"/)
+
+    // 合法档位按公开接口下发值透传
+    mockApis({ layout: { ...layout, featuredRatio: '4:3' } })
+    const p = await page()
+    expect(p.data.featuredRatio).toBe('4:3')
+
+    // 未知档位（脏数据 / 老后端）不能让固定比例容器类名拼出未知选择器，
+    // 白名单归一回 none，端上按原图渲染，不破坏版式。
+    mockApis({ layout: { ...layout, featuredRatio: '3:2' } })
+    const p2 = await page()
+    expect(p2.data.featuredRatio).toBe('none')
   })
 
   it('轮播切页不换图片 src（iOS 滚动不再归零），回退仍同步到源数据', async () => {

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     categoryLimit: 20,
     featuredCount: 3,
     featuredEffect: 'static',
+    featuredRatio: 'none',
     companyNameScale: 'large',
     introFontScale: 'large',
     styleId: 'default',
@@ -316,6 +317,7 @@ describe('content/HomeLayout', () => {
     categoryLimit: 20,
     featuredCount: 3,
     featuredEffect: 'static',
+    featuredRatio: 'none',
     companyNameScale: 'large',
     introFontScale: 'large',
     logoSize: 'medium',
@@ -395,6 +397,7 @@ describe('content/HomeLayout', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      featuredRatio: 'none',
       showCategoryName: false,
       showFeaturedName: false,
       showServiceName: false,
@@ -431,6 +434,36 @@ describe('content/HomeLayout', () => {
     expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
       expect.objectContaining({ categoryLimit: 6, featuredCount: 3, featuredEffect: 'flip' })
     )
+  })
+
+  // 0066 裁切比例：单列枚举天然互斥，缺省 none 保持原图（升级零视觉突变）。
+  it('精选案例裁切比例：缺省原图不裁切，四档可切且随保存提交', async () => {
+    const w = await mountPage()
+    const group = () => formItemByLabel(w, '精选案例裁切比例').find('.el-radio-group')
+    expect(group().attributes('data-selected'), '缺省必须 none，否则存量租户升级当天封面就被裁').toBe('none')
+
+    for (const [label, value] of [
+      ['16:9', '16:9'], ['4:3', '4:3'], ['2:1', '2:1'], ['1:1', '1:1'], ['原图比例', 'none'],
+    ]) {
+      const radio = group().findAll('.el-radio').find((b: any) => b.text() === label)
+      expect(radio, `缺少 ${label} 档位`).toBeDefined()
+      await radio.trigger('click')
+      await flush()
+      expect(group().attributes('data-selected')).toBe(value)
+    }
+
+    await group().findAll('.el-radio').find((b: any) => b.text() === '2:1')!.trigger('click')
+    await flush()
+    await saveButton(w).trigger('click')
+    await flush()
+    expect(mocks.saveHomeLayout).toHaveBeenCalledWith(
+      expect.objectContaining({ featuredRatio: '2:1' })
+    )
+  })
+
+  it('精选案例裁切比例：回显后端值（刷新后仍保持已选比例）', async () => {
+    const w = await mountPage({ order: ['achievement', 'service'], featuredRatio: '4:3' })
+    expect(formItemByLabel(w, '精选案例裁切比例').find('.el-radio-group').attributes('data-selected')).toBe('4:3')
   })
 
   // 0050：封面图里已经画了名称（业绩是带字方图、服务是带字竖版卡），
@@ -524,6 +557,7 @@ describe('content/HomeLayout', () => {
       categoryLimit: 20,
       featuredCount: 3,
       featuredEffect: 'static',
+      featuredRatio: 'none',
       showCategoryName: false,
       showFeaturedName: false,
       showServiceName: false,

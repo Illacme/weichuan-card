@@ -53,3 +53,29 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ---- 封面裁切比例（0066）----
+   默认 none 走上面原图渲染，下面只作用于四档固定比例。
+   slot 复用 .feat-cover：圆角 / 阴影 / 背景色全部继承四套风格层，不必改 app.wxss。
+   用 4 类选择器压过风格层 3 类的固定 height，把高度来源换成 aspect-ratio；
+   容器 overflow:hidden，aspectFill 图片等比放大到短边贴合容器、长边溢出居中裁掉。*/
+.wc-theme .featured .feat-cover.feat-ratio-16-9,
+.wc-theme .featured .feat-cover.feat-ratio-4-3,
+.wc-theme .featured .feat-cover.feat-ratio-2-1,
+.wc-theme .featured .feat-cover.feat-ratio-1-1 {
+  position: relative;
+  overflow: hidden;
+  height: auto;
+}
+.wc-theme .featured .feat-ratio-16-9 { aspect-ratio: 16 / 9; }
+.wc-theme .featured .feat-ratio-4-3  { aspect-ratio: 4 / 3; }
+.wc-theme .featured .feat-ratio-2-1  { aspect-ratio: 2 / 1; }
+.wc-theme .featured .feat-ratio-1-1  { aspect-ratio: 1 / 1; }
+
+.feat-cover-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}

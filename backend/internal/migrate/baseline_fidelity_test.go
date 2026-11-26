@@ -59,5 +59,5 @@ func TestBaselineIsCleanSchema(t *testing.T) {
 			n++
 		}
 	}
-	require.Equal(t, 65, n, "history 应保留全部 65 个历史增量")
+	require.Equal(t, 66, n, "history 应保留全部 66 个历史增量")
 }

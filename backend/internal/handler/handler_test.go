@@ -884,6 +884,9 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 20, body["data"].(map[string]interface{})["categoryLimit"])
 		require.EqualValues(t, 3, body["data"].(map[string]interface{})["featuredCount"])
 		require.Equal(t, "static", body["data"].(map[string]interface{})["featuredEffect"])
+		// 0066 裁切比例缺省 none：保持原图不裁切，升版零视觉突变。
+		// 这条必须钉住——若默认变成某个固定比例，所有存量租户的精选封面当天就被裁掉两边。
+		require.Equal(t, "none", body["data"].(map[string]interface{})["featuredRatio"])
 		// 0050 两个名称开关缺省 false：封面图里已经画了名称，再渲染一行就是重复。
 		// 这条必须钉住——若默认变成 true，所有存量租户的首页会立刻多出一行重复文字。
 		require.EqualValues(t, false, body["data"].(map[string]interface{})["showCategoryName"])
@@ -899,7 +902,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
 			"order": []string{"service", "achievement"}, "bgImage": bgURL, "bgMask": 40,
 			"bgGradientStrength": 75, "categoryLimit": 5, "featuredCount": 2, "featuredEffect": "flip",
-			"showCategoryName": true, "showFeaturedName": true, "showServiceName": true,
+			"featuredRatio": "16:9", "showCategoryName": true, "showFeaturedName": true, "showServiceName": true,
 		}, adminToken)
 		require.EqualValues(t, 0, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
@@ -911,6 +914,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, hl["categoryLimit"])
 		require.EqualValues(t, 2, hl["featuredCount"])
 		require.Equal(t, "flip", hl["featuredEffect"])
+		require.Equal(t, "16:9", hl["featuredRatio"])
 		require.EqualValues(t, true, hl["showCategoryName"])
 		require.EqualValues(t, true, hl["showFeaturedName"])
 		require.EqualValues(t, true, hl["showServiceName"])
@@ -924,6 +928,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, body["categoryLimit"], "小程序按公开接口的配置截断分类")
 		require.EqualValues(t, 2, body["featuredCount"], "小程序按公开接口的配置截取精选")
 		require.Equal(t, "flip", body["featuredEffect"], "小程序按公开接口的效果播放动画")
+		require.Equal(t, "16:9", body["featuredRatio"], "小程序按公开接口的比例居中裁切封面")
 		require.EqualValues(t, true, body["showCategoryName"], "小程序按公开接口决定是否在图下写分类名")
 		require.EqualValues(t, true, body["showFeaturedName"], "小程序按公开接口决定是否在图下写精选案例名")
 		require.EqualValues(t, true, body["showServiceName"], "小程序按公开接口决定是否在图下写服务名")
@@ -953,6 +958,7 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 5, body["data"].(map[string]interface{})["categoryLimit"], "未提供不应被冲掉")
 		require.EqualValues(t, 2, body["data"].(map[string]interface{})["featuredCount"], "未提供不应被冲掉")
 		require.Equal(t, "flip", body["data"].(map[string]interface{})["featuredEffect"], "未提供不应被冲掉")
+		require.Equal(t, "16:9", body["data"].(map[string]interface{})["featuredRatio"], "未提供不应被改回 none")
 		// 只提交 order 时两个名称开关必须保持 true——否则「改一下板块顺序」
 		// 就会把客户刚打开的「显示名称」悄悄关掉，而界面上看不出来。
 		require.EqualValues(t, true, body["data"].(map[string]interface{})["showCategoryName"], "未提供不应被关掉")
@@ -1032,6 +1038,34 @@ func runAPIFlow(t *testing.T, c *testClient, adminToken string) {
 		require.EqualValues(t, 1, body["code"])
 		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
 		require.Equal(t, "flip", body["data"].(map[string]interface{})["featuredEffect"], "被拒请求不应改库")
+
+		// 0066 裁切比例：四档逐一切换，后台与公开接口都要即时同步。
+		for _, ratio := range []string{"4:3", "2:1", "1:1", "none", "16:9"} {
+			_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+				"featuredRatio": ratio,
+			}, adminToken)
+			require.EqualValues(t, 0, body["code"], "比例 %s 应合法：%v", ratio, body)
+			_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+			require.Equal(t, ratio, body["data"].(map[string]interface{})["featuredRatio"])
+			_, body = c.do("GET", "/api/home-layout", nil, "")
+			require.Equal(t, ratio, body["featuredRatio"], "小程序读的是公开接口，漏一处就是后台配了端上没变")
+		}
+
+		// 非法比例直接拒绝，不静默兜底成 none（否则后台看着存了、端上却是原图）。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredRatio": "3:2",
+		}, adminToken)
+		require.EqualValues(t, 1, body["code"])
+		_, body = c.do("GET", "/api/admin/home-layout", nil, adminToken)
+		require.Equal(t, "16:9", body["data"].(map[string]interface{})["featuredRatio"], "被拒请求不应改库")
+
+		// 显式传 none 应能关掉裁切——不能用 || 兜底成上一档。
+		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
+			"featuredRatio": "none",
+		}, adminToken)
+		require.EqualValues(t, 0, body["code"])
+		_, body = c.do("GET", "/api/home-layout", nil, "")
+		require.Equal(t, "none", body["featuredRatio"], "显式 none 应恢复原图不裁切")
 
 		// 显式传空串即清除背景（恢复灰底布局）
 		_, body = c.do("PUT", "/api/admin/home-layout", map[string]interface{}{
@@ -3122,6 +3156,9 @@ func TestHomeLayoutTenantIsolation(t *testing.T) {
 	d := body["data"].(map[string]interface{})
 	require.Equal(t, "default", d["styleId"], "新企业的默认整体风格必须是标准均衡")
 	require.Nil(t, d["brandColorId"], "默认色以 NULL 存储（= 用该风格自带默认色），不是字面量 \"default\"")
+	// 新企业没有 home_layout 行，走的是 handler 的缺省兜底。裁切比例必须是 none——
+	// 若默认改成某个固定比例，所有新企业从第一天起封面就被裁，且没有任何配置动作。
+	require.Equal(t, "none", d["featuredRatio"], "新企业缺省裁切比例必须 none（原图不裁切）")
 	require.True(t, d["templateEntitled"].(bool),
 		"测试环境应默认全开通高级款（Features 为空 = 全开）；这条前提变了，下面访客侧断言要跟着改")
 
@@ -3167,6 +3204,7 @@ func TestHomeLayoutTenantIsolation(t *testing.T) {
 
 	_, body = guest.do("GET", fmt.Sprintf("/api/home-layout?companyId=%d", comp2ID), nil, "")
 	require.EqualValues(t, 0, body["code"])
+	require.Equal(t, "none", body["featuredRatio"], "乙公司未配过裁切比例，公开接口必须下发 none（原图不裁切）")
 	require.Equal(t, "ink", body["styleId"], "访客带 companyId 时应看到该企业自己的主题")
 	require.Nil(t, body["brandColorId"])
 }

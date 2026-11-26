@@ -134,7 +134,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     expect(tsFields('AchievementsResp')).toEqual(['categories', 'featured'])
     expect(tsFields('HomeLayoutResp')).toEqual([
       'bgGradientStrength', 'bgImage', 'bgMask', 'brandColorId', 'categoryLimit',
-      'featuredCount', 'featuredEffect', 'logoAlign', 'logoSize', 'order',
+      'featuredCount', 'featuredEffect', 'featuredRatio', 'logoAlign', 'logoSize', 'order',
       'showCategoryName', 'showFeaturedName', 'showServiceName', 'styleId',
     ])
     // HomeLayoutResp 是根级信封：主题两轴 (styleId / brandColorId) 必须真实存在于
@@ -147,7 +147,7 @@ describe('小程序类型契约与 Go 模型对账', () => {
     // 旧 templateId 兼容列已随 0043 删除，端上不再保留可选字段。
     for (const key of [
       'styleId', 'brandColorId', 'bgGradientStrength',
-      'categoryLimit', 'featuredCount', 'featuredEffect',
+      'categoryLimit', 'featuredCount', 'featuredEffect', 'featuredRatio',
       'showCategoryName', 'showFeaturedName', 'showServiceName',
       // 0053 两个 LOGO 档位：后端模型必须真的有这两列，否则后台保存成功而端上
       // 永远读到 undefined → 位置档三档看起来完全一样，且没有任何报错。

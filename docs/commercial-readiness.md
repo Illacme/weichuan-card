@@ -61,11 +61,11 @@
 > 把当前版本作为产品初始版，数据库脚本按商业软件惯例分两条路径：
 > ① **全新初始化安装**：`backend/migrations/0001_init.sql` 是**纯净终态 schema**——
 > 只有 28 张表的 `CREATE TABLE IF NOT EXISTS`，不含任何历史 `ALTER` / 数据搬迁 `UPDATE` / `DROP`；
-> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源是 history 全部增量，截至 0065 为 65 个），
+> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源是 history 全部增量，截至 0066 为 66 个），
 > `baseline_fidelity_test.go` 静态守门纯净性。建表后由**安装向导**写 sys_setting / 初始超管 /
 > 签发 JWT·PII 密钥，内置文件存储由 `storageprofile/builtin.go` ensure——
 > **数据初始化不提供静态 SQL**：bcrypt 口令、密钥签发、凭据交互生成，静态 SQL 既不安全也不自洽。
-> ② **升级安装**：65 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
+> ② **升级安装**：66 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
 > 执行器与编译期清单只扫顶层，归档不进全新部署包，`deploy_frontend.sh` 修复命令显式排除它。
 > 两条路径的结构等价由 `clean_schema_parity_test.go` 在 CI 的真实 MySQL 里对账（建两个库分别跑，
 > 逐表逐列逐索引比对），生成器推演错了立刻红，不靠人肉维护。
@@ -6928,3 +6928,59 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
 | 迁移链 | `history/0065` + 纯净 schema 重生成 + manifest + 基线保真 65 一致 |
 | CI | 提交 `6f24fac`，run `45796896406`，15 job 全绿 |
+
+## 第一百一十二轮：精选案例封面裁切比例（2026-11-26）
+
+后台「小程序设置 → 名片页面样式 → 业绩与案例展示」新增「精选案例裁切比例」，
+除缺省「原图比例」外支持 16:9 / 4:3 / 2:1 / 1:1 四档居中裁切。
+
+### 一、配置模型：单列枚举而非开关 + 比例列
+
+- `home_layouts.featured_ratio VARCHAR(16) NOT NULL DEFAULT 'none'`（0066），
+  取值 `none | 16:9 | 4:3 | 2:1 | 1:1`。**单列天然互斥**，不存在「开了裁切但没选比例」
+  的中间态；`none` 同时表达缺省与「不裁切」。
+- 缺省 `none` 保证升级零视觉突变：所有存量租户精选封面维持原图 `widthFix`，
+  圆角 / 阴影继续继承 `.feat-cover`，不会在升级当天被裁掉两边。
+- 非法值后端 PUT 直接拒绝（`code=1`，"裁切比例无效"），**不静默兜底**——
+  否则管理员看着保存成功，端上却按原图渲染，是最难排查的一类问题。
+  端上再做一次白名单归一，未知档位回 `none`，防止脏数据拼出未知 CSS 类名破坏版式。
+
+### 二、居中裁切实现：短边贴合、长边两端均匀裁掉
+
+- `none` 档保持原分支：`<image mode="widthFix" style="height:auto">` 按原图比例自适应。
+- 四档比例走独立分支：外层 `.feat-cover.feat-ratio-{{ratio}}` 用 `aspect-ratio` 固定比例 +
+  `overflow:hidden`，内层 `<image mode="aspectFill">` 绝对定位铺满容器。
+  `aspectFill` 让图片等比放大到**短边贴合容器**，长边溢出的两端被均匀裁掉，
+  正是「取短边作为截取单边尺寸」的语义。
+- 拆成两个互斥分支而非动态拼 `mode`：widthFix 的内联 `height:auto` 与 aspectFill 的
+  绝对定位互斥，放同一标签会让两类语义混杂且难维护。
+- 四档 CSS 各自一条选择器，遵守小程序 WXSS「一条选择器一条规则」约定。
+
+### 三、链路与守门
+
+迁移 0066 → 模型归一化函数 → 管理 / 公开 GET 下发 → 管理 PUT 校验写入 →
+`HomeLayout.vue` 单选组（缺省 none，实时回显）→ `index.ts` 白名单解析 →
+`index.wxml` 透传 `ratio` → `featured-projects` 双分支渲染。
+
+- 后端 `TestAPIFlow` 覆盖缺省 none、四档逐一切换（后台与公开接口同步）、
+  非法值拒绝且不改库、显式 none 关闭裁切、局部保存不冲掉；
+  新增 `TestNormalizeFeaturedRatio` 钉住枚举契约与缺省值。
+- 前端 `HomeLayout.spec.ts` 新增 2 例（缺省 none、四档切换与保存、回显）；
+  `MpSettings.spec.ts` 精确断言补 `featuredRatio: 'none'`。
+- 小程序 `types_contract.spec.ts` 的 `HomeLayoutResp` 白名单与 Go JSON tag 循环补字段；
+  `index_home.spec.ts` 重写原 widthFix 守门以覆盖双分支，新增裁切比例守门
+  （比例属性 / 两分支 / aspectFill / 四档 `aspect-ratio` / 填充图铺满）与透传归一测试。
+- 反向验证：把组件 `aspectFill` 改成 `widthFix` → 裁切守门红；
+  把 PUT 非法值拒绝改成静默兜底 → `TestAPIFlow` 红；
+  把 `DefaultFeaturedRatio` 改成 `16:9` → 模型归一化测试红。三次确认变红后还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `gofmt -l .` / `go vet ./...` / `go test -count=1 ./...` | 无输出 / 无输出 / 全绿 |
+| 前端 `vue-tsc --noEmit` / `vitest run` / `eslint .` / `vite build` | 全绿（118 文件 2034 例） |
+| OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
+| 审计标签 / 迁移产物 | 全绿 / 28 张表 387 列项 |
+| 迁移链 | `history/0066` + 纯净 schema 重生成 + manifest + 基线保真 66 一致 |
+| CI | 待提交后补记 |
