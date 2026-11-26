@@ -6882,4 +6882,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vue-tsc --noEmit` / `vitest run` | 0 错 / 118 文件 2023 例全绿 |
 | OpenAPI `check_openapi.py` | 138 paths / 137 路由全部对齐 |
 | 迁移链 | `history/0064` + 纯净 schema 重生成 + manifest + 基线保真 64 一致 |
-| CI | 待提交后补记 |
+| CI | 提交 `e4ff7ea`，run `45788577412`，15 job 全绿 |
