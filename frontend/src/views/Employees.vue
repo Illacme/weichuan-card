@@ -24,6 +24,8 @@
         改动列宽时请按同一口径重算，宁紧勿松。操作列现为 260px（预览/编辑/启用
         或停用/重置密码/导出 五个 link 按钮，超窄会折行或挤占创建时间列）。
         微信绑定列由原 openid 全文列（210px）改为状态 + 掩码（150px），再省 60px。
+        新增「功能授权」按钮后操作列扩到 320px（六项 link 按钮，按每项约 52px 算），
+        其余列合计不变，总宽仍约 1176px——贴着内容区宽度，窄屏走卡片布局不展示表格。
       -->
       <el-table v-if="!isPhone" :data="rows" v-loading="loading" border stripe>
         <el-table-column prop="staffId" label="编号" width="62" align="center" />
@@ -76,10 +78,12 @@
         <el-table-column label="创建时间" width="180" v-if="!isPhone" show-overflow-tooltip>
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right" align="center">
+        <el-table-column label="操作" width="320" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="preview(row)">预览</el-button>
             <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+            <!-- 功能授权独立于编辑资料：改个手机号不该顺手改掉菜单权限 -->
+            <el-button type="primary" link @click="openEntries(row)">功能授权</el-button>
             <el-button
               v-if="row.status === 'disabled'"
               type="success"
@@ -129,6 +133,7 @@
           <div class="emp-card-actions">
             <el-button size="small" @click="preview(row)">预览</el-button>
             <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="primary" plain @click="openEntries(row)">功能授权</el-button>
             <el-button
               v-if="row.status === 'disabled'"
               size="small"
@@ -206,21 +211,45 @@
         <el-form-item label="头像">
           <UploadField v-model="form.avatar" :multiple="false" accept="image/*" library-type="avatar" />
         </el-form-item>
-        <!-- 小程序「我的」页的「团队成员」入口：默认关闭，逐个员工勾选。
-             看全员名单是额外开放的能力，不是每个员工都该有——很多企业只让
-             管理层或骨干看到。放在最末是因为它不影响名片本身，改了也不会
-             触发员工端审核流。 -->
-        <el-form-item label="团队成员">
-          <el-switch v-model="form.showTeamEntry" active-text="显示" inactive-text="不显示" />
-          <p class="field-tip">
-            开启后，该员工在小程序「我的」页能看到「团队成员」入口，查看企业全员名片。
-            关闭不影响名片墙本身（访客扫码仍能看到），只是员工菜单里不出现这一项。
-          </p>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 功能授权：四项小程序菜单入口的按员工开关。独立于编辑资料弹窗——
+         授权是权限配置，混在资料保存里容易被当成普通字段误改。 -->
+    <el-dialog
+      v-model="entriesVisible"
+      :title="`功能授权 · ${entriesRow?.name || ''}`"
+      width="520px"
+      class="resp-dialog"
+    >
+      <p class="entries-intro">
+        控制该员工在小程序「我的」页能看到哪些菜单入口。默认开启「生成海报」「数据统计」，
+        「团队成员」「管理员登录」需单独开启。关闭不影响功能本身（如名片墙仍可通过扫码访问），
+        只让这一行菜单不出现在员工的「我的」页。
+      </p>
+      <el-form label-width="120px">
+        <el-form-item label="生成海报">
+          <el-switch v-model="entriesForm.showPosterEntry" active-text="显示" inactive-text="不显示" />
+        </el-form-item>
+        <el-form-item label="团队成员">
+          <el-switch v-model="entriesForm.showTeamEntry" active-text="显示" inactive-text="不显示" />
+          <p class="field-tip">开启后该员工能进入名片墙查看企业全员名片</p>
+        </el-form-item>
+        <el-form-item label="数据统计">
+          <el-switch v-model="entriesForm.showStatEntry" active-text="显示" inactive-text="不显示" />
+        </el-form-item>
+        <el-form-item label="管理员登录">
+          <el-switch v-model="entriesForm.showAdminEntry" active-text="显示" inactive-text="不显示" />
+          <p class="field-tip">开启后该员工的「我的」页显示「企业管理员」入口</p>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="entriesVisible = false">取消</el-button>
+        <el-button type="primary" :loading="entriesSaving" @click="submitEntries">保存授权</el-button>
       </template>
     </el-dialog>
 
@@ -300,6 +329,7 @@ import {
   listEmployees,
   createEmployee,
   updateEmployee,
+  updateEmployeeEntries,
   disableEmployee,
   enableEmployee,
   resetPassword,
@@ -344,9 +374,6 @@ const form = reactive({
   landline: '',
   email: '',
   avatar: '',
-  // 小程序「我的」页是否显示「团队成员」入口。默认 false：这是额外开放的能力，
-  // 必须由管理员逐个勾选（后端列默认值同样是 0）。
-  showTeamEntry: false,
 })
 const rules: FormRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
@@ -383,8 +410,6 @@ function openEdit(row: any) {
   form.landline = row.landline || ''
   form.email = row.email
   form.avatar = row.avatar
-  // 老库 / 老接口没这个字段时按 false 处理，与「默认不显示」口径一致
-  form.showTeamEntry = !!row.showTeamEntry
   formRef.value?.clearValidate()
   dialogVisible.value = true
 }
@@ -405,7 +430,6 @@ function resetForm() {
   form.landline = ''
   form.email = ''
   form.avatar = ''
-  form.showTeamEntry = false
   editingId.value = null
   formRef.value?.clearValidate()
 }
@@ -433,6 +457,49 @@ async function submit() {
     /* 拦截器已提示 */
   } finally {
     saving.value = false
+  }
+}
+
+// ---- 功能授权（列表操作列的独立弹窗）----
+// 四项默认值两组相反：海报/统计开，团队/管理员登录关。老数据缺字段时按这组默认
+// 回填，与后端列默认值、小程序端兜底口径一致（不要写成全 false 或全 true）。
+const entriesVisible = ref(false)
+const entriesSaving = ref(false)
+const entriesRow = ref<any>(null)
+const entriesForm = reactive({
+  showPosterEntry: true,
+  showTeamEntry: false,
+  showStatEntry: true,
+  showAdminEntry: false,
+})
+
+function openEntries(row: any) {
+  entriesRow.value = row
+  entriesForm.showPosterEntry = row.showPosterEntry === undefined ? true : !!row.showPosterEntry
+  entriesForm.showTeamEntry = !!row.showTeamEntry
+  entriesForm.showStatEntry = row.showStatEntry === undefined ? true : !!row.showStatEntry
+  entriesForm.showAdminEntry = !!row.showAdminEntry
+  entriesVisible.value = true
+}
+
+async function submitEntries() {
+  if (!entriesRow.value) return
+  entriesSaving.value = true
+  try {
+    // 四项全传：关掉的项必须显式传 false，后端按地图更新，省略等于保持原值
+    await updateEmployeeEntries(entriesRow.value.staffId, {
+      showPosterEntry: entriesForm.showPosterEntry,
+      showTeamEntry: entriesForm.showTeamEntry,
+      showStatEntry: entriesForm.showStatEntry,
+      showAdminEntry: entriesForm.showAdminEntry,
+    })
+    ElMessage.success('已更新功能授权')
+    entriesVisible.value = false
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    entriesSaving.value = false
   }
 }
 
@@ -557,6 +624,16 @@ onMounted(load)
   font-size: 12px;
   line-height: 1.5;
   margin: 4px 0 0;
+}
+/* 功能授权弹窗导语：先讲清这四项控制什么、默认口径是什么，再给开关 */
+.entries-intro {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
 }
 /* 手机号行：输入框 + 右侧「+ 备用手机号」/「移除」按钮同一行 */
 .phone-row {

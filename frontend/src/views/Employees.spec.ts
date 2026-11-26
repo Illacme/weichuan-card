@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import Employees from './Employees.vue'
@@ -24,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   })),
   createEmployee: vi.fn(async () => ({ staffId: 99, initialPassword: 'init123' })),
   updateEmployee: vi.fn(async () => ({ code: 0 })),
+  updateEmployeeEntries: vi.fn(async () => ({ code: 0 })),
   disableEmployee: vi.fn(async () => ({ code: 0 })),
   enableEmployee: vi.fn(async () => ({ code: 0 })),
   resetPassword: vi.fn(async () => 'reset123'),
@@ -33,6 +37,7 @@ const {
   listEmployees,
   createEmployee,
   updateEmployee,
+  updateEmployeeEntries,
   disableEmployee,
   enableEmployee,
   resetPassword,
@@ -186,6 +191,7 @@ describe('Employees', () => {
     vi.mocked(listEmployees).mockClear()
     vi.mocked(createEmployee).mockClear()
     vi.mocked(updateEmployee).mockClear()
+    vi.mocked(updateEmployeeEntries).mockClear()
     vi.mocked(disableEmployee).mockClear()
     vi.mocked(enableEmployee).mockClear()
     vi.mocked(resetPassword).mockClear()
@@ -456,12 +462,13 @@ describe('Employees', () => {
   })
 })
 
-// 团队成员入口开关（2026-11-26）：按员工逐个开放，默认不显示。
+// 小程序菜单功能授权（2026-11-26）：列表「操作 → 功能授权」弹窗，四项按员工授权。
+// 产品口径：海报/统计默认开（本职功能），团队/管理员登录默认关（额外能力）。
 // 三条都必须钉住——漏任何一条都会变成「后台开了不生效」或「开了关不掉」：
-//   1. 默认 false（新建、以及列表里没这个字段的老数据）；
-//   2. 编辑回填已有值，保存时把值带给后端；
-//   3. 关掉也要**显式传 false**（省略就等于保持原值，开关就永远关不掉）。
-describe('Employees · 团队成员入口开关', () => {
+//   1. 默认值两组相反，老数据缺字段按同样的默认处理；
+//   2. 回填已有值，保存走**独立**接口（不能混进编辑资料）；
+//   3. 关掉也要**显式传 false**（后端按地图更新，省略就等于保持原值）。
+describe('Employees · 功能授权弹窗', () => {
   const rowWith = (extra: any = {}) => ({
     staffId: 9,
     name: '赵六',
@@ -476,73 +483,127 @@ describe('Employees · 团队成员入口开关', () => {
     ...extra,
   })
 
-  async function openEditWith(row: any) {
+  async function openWith(row: any, buttonText: string) {
     vi.mocked(listEmployees).mockResolvedValueOnce({ list: [row], total: 1, page: 1, size: 10 } as any)
     const w = mountEmployees()
     await flushLoad(w)
-    await w.findAll('button.el-button').find((b) => b.text() === '编辑')!.trigger('click')
+    await w.findAll('button.el-button').find((b) => b.text() === buttonText)!.trigger('click')
     await nextTick()
     return w
   }
 
-  it('新增员工：开关默认关闭，保存时带 showTeamEntry:false', async () => {
-    const w = mountEmployees()
-    await flushLoad(w)
+  // 弹窗里四项开关按模板顺序排列：海报 / 团队 / 统计 / 管理员。
+  // stub 的 el-form-item 不渲染 label，所以按序取即可（源码级守门另有断言锁住顺序与文案）。
+  const SWITCH_ORDER = ['生成海报', '团队成员', '数据统计', '管理员登录']
+  function switchOf(w: any, label: string) {
+    return w.findAll('.el-dialog .el-switch')[SWITCH_ORDER.indexOf(label)]
+  }
 
-    await w.findAll('button.el-button').find((b) => b.text() === '新增员工')!.trigger('click')
-    await nextTick()
-    const sw = w.find('.el-dialog .el-switch')
-    expect(sw.attributes('data-model-value')).toBe('false')
+  function switchValues(w: any) {
+    return w.findAll('.el-dialog .el-switch').map((s: any) => s.attributes('data-model-value'))
+  }
 
-    const inputs = w.findAll('.el-dialog input.el-input')
-    await inputs[0].setValue('新人')
-    await inputs[1].setValue('13600000010')
-    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
+  it('操作列有「功能授权」按钮，点击后弹窗四项开关按产品默认回填', async () => {
+    const w = await openWith(rowWith(), '功能授权')
 
-    await vi.waitFor(() => expect(vi.mocked(createEmployee)).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(createEmployee)).toHaveBeenCalledWith(
-      expect.objectContaining({ showTeamEntry: false })
-    )
+    expect(w.find('.el-dialog').exists()).toBe(true)
+    expect(w.find('.el-dialog h3').text()).toContain('功能授权')
+    // 海报/统计开，团队/管理员关——两组默认值相反
+    expect(switchValues(w)).toEqual(['true', 'false', 'true', 'false'])
   })
 
-  it('编辑员工：回填已有的开启状态；关掉后保存必须显式传 false', async () => {
-    const w = await openEditWith(rowWith({ showTeamEntry: true }))
-    const sw = w.find('.el-dialog .el-switch')
-    expect(sw.attributes('data-model-value'), '已开启的员工打开编辑时应是开').toBe('true')
+  it('编辑弹窗不再有功能开关：资料保存不会误改授权', async () => {
+    const w = await openWith(rowWith({ showTeamEntry: true }), '编辑')
+    expect(w.findAll('.el-dialog .el-switch')).toHaveLength(0)
+  })
 
-    // 关掉 → 保存
-    await sw.trigger('click')
+  it('保存四项授权走独立接口；关掉的项显式传 false，而不是省略', async () => {
+    const w = await openWith(rowWith(), '功能授权')
+
+    // 关「生成海报」（默认开 → 关），开「团队成员」+「管理员登录」（默认关 → 开）
+    await switchOf(w, '生成海报').trigger('click')
+    await switchOf(w, '团队成员').trigger('click')
+    await switchOf(w, '管理员登录').trigger('click')
     await nextTick()
-    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
-    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
+    expect(switchValues(w)).toEqual(['false', 'true', 'true', 'true'])
 
-    await vi.waitFor(() => expect(vi.mocked(updateEmployee)).toHaveBeenCalledTimes(1))
-    const [id, payload] = vi.mocked(updateEmployee).mock.calls[0] as unknown as [number, any]
+    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存授权')!.trigger('click')
+    await vi.waitFor(() => expect(vi.mocked(updateEmployeeEntries)).toHaveBeenCalledTimes(1))
+    const [id, payload] = vi.mocked(updateEmployeeEntries).mock.calls[0] as unknown as [number, any]
     expect(id).toBe(9)
-    // 必须是显式 false，不能是 undefined——后端按地图更新，省略就是保持原值
-    expect(payload.showTeamEntry).toBe(false)
+    expect(payload).toEqual({
+      showPosterEntry: false,
+      showTeamEntry: true,
+      showStatEntry: true,
+      showAdminEntry: true,
+    })
+    // 不能误调编辑资料接口
+    expect(vi.mocked(updateEmployee)).not.toHaveBeenCalled()
   })
 
-  it('老数据没有 showTeamEntry 字段：按关闭处理，不把 undefined 传给后端', async () => {
-    const w = await openEditWith(rowWith())
-    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
-
-    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
-    await vi.waitFor(() => expect(vi.mocked(updateEmployee)).toHaveBeenCalledTimes(1))
-    const payload = (vi.mocked(updateEmployee).mock.calls[0] as unknown as [number, any])[1]
-    expect(payload.showTeamEntry).toBe(false)
+  it('老数据缺字段：海报/统计仍按默认开，团队/管理员按默认关', async () => {
+    const w = await openWith(rowWith(), '功能授权')
+    expect(switchValues(w)).toEqual(['true', 'false', 'true', 'false'])
   })
 
-  it('弹窗关闭后重置：下一次新增不会带上上一次勾过的开关', async () => {
-    const w = await openEditWith(rowWith({ showTeamEntry: true }))
-    // 关闭弹窗（@closed 里 resetForm）
+  it('回填已有授权值：四项都按后端返回的状态显示', async () => {
+    const w = await openWith(rowWith({
+      showPosterEntry: false, showTeamEntry: true, showStatEntry: false, showAdminEntry: true,
+    }), '功能授权')
+    expect(switchValues(w)).toEqual(['false', 'true', 'false', 'true'])
+  })
+
+  it('关闭弹窗再开另一个员工：不残留上一个员工的授权状态', async () => {
+    const w = await openWith(rowWith({ showTeamEntry: true, showAdminEntry: true }), '功能授权')
+    expect(switchValues(w)).toEqual(['true', 'true', 'true', 'true'])
     const vm = w.vm as any
-    vm.dialogVisible = false
-    await nextTick()
-    await nextTick()
 
-    await w.findAll('button.el-button').find((b) => b.text() === '新增员工')!.trigger('click')
+    vm.entriesVisible = false
     await nextTick()
-    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
+    // 用另一个员工打开（openEntries 每次都从行数据重填，不沿用上次的表单值）
+    vm.openEntries(rowWith({ staffId: 10, name: '新人' }))
+    await nextTick()
+    expect(switchValues(w)).toEqual(['true', 'false', 'true', 'false'])
+  })
+})
+
+
+// 源码级守门：四项开关的文案与顺序是产品口径的一部分（默认两组相反）。
+// 行为用例能测出默认值错了，但测不出「文案被改成别的」——那会让管理员勾错项。
+describe('Employees · 功能授权弹窗源码守门', () => {
+  const src = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), './Employees.vue'),
+    'utf-8',
+  )
+
+  it('操作列（桌面与手机卡片）都要有「功能授权」按钮', () => {
+    const hits = (src.match(/@click="openEntries\(row\)">功能授权</g) || []).length
+    // 桌面表格 1 处 + 手机卡片 1 处
+    expect(hits).toBe(2)
+  })
+
+  it('四项开关的标签与默认口径按固定顺序写在弹窗里', () => {
+    const dialog = src.slice(src.indexOf('功能授权：四项小程序菜单入口'), src.indexOf('<!-- 名片预览'))
+    const labels = ['生成海报', '团队成员', '数据统计', '管理员登录']
+    let pos = 0
+    for (const label of labels) {
+      const at = dialog.indexOf(`label="${label}"`, pos)
+      expect(at, `弹窗缺少或顺序错乱：${label}`).toBeGreaterThan(-1)
+      pos = at
+    }
+  })
+
+  it('entriesForm 初值：海报/统计 true，团队/管理员 false（与后端列默认一致）', () => {
+    const block = src.slice(src.indexOf('const entriesForm = reactive'), src.indexOf('function openEntries'))
+    expect(block).toMatch(/showPosterEntry:\s*true/)
+    expect(block).toMatch(/showTeamEntry:\s*false/)
+    expect(block).toMatch(/showStatEntry:\s*true/)
+    expect(block).toMatch(/showAdminEntry:\s*false/)
+  })
+
+  it('编辑资料表单不再含任何菜单开关（授权独立于资料）', () => {
+    const form = src.slice(src.indexOf('新增 / 编辑员工（同一表单'), src.indexOf('<!-- 功能授权'))
+    expect(form).not.toContain('showTeamEntry')
+    expect(form).not.toContain('el-switch')
   })
 })

@@ -161,12 +161,14 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 单独给一个布尔值，而不是让前端去判 data.openid 是否为空——
 			// 「有没有绑定」是产品语义，前端不该知道它是由 openid 这个字段承载的。
 			"wechatBound": e.OpenID != "",
-			// 小程序「我的」页是否显示「团队成员」（名片墙）入口：按员工逐个开放，
-			// 默认不显示。放在根级而不是塞进 data——data 是 Employee 契约，小程序
-			// 端多页在消费它；新增一个布尔不需要改动那个结构。
-			// 前端按 true 才渲染，不依赖后端一定回 false（老库没跑迁移时不误显示）。
-			"showTeamEntry": e.ShowTeamEntry,
-			"companyName":   companyName, "companyShortName": companyShortName,
+			// 小程序「我的」页四个菜单入口的显示开关：按员工逐个授权，放在根级
+			// 而不是塞进 data——data 是 Employee 契约，小程序端多页在消费它；
+			// 新增四个布尔不需要改动那个结构。前端按 true 才渲染。
+			"showPosterEntry": e.ShowPosterEntry,
+			"showTeamEntry":   e.ShowTeamEntry,
+			"showStatEntry":   e.ShowStatEntry,
+			"showAdminEntry":  e.ShowAdminEntry,
+			"companyName":     companyName, "companyShortName": companyShortName,
 		})
 	})
 
@@ -715,7 +717,16 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码加密失败"})
 			return
 		}
-		emp := model.Employee{CompanyID: cid, Name: req.Name, Phone: req.Phone, Phone2: req.Phone2, Email: req.Email, Title: req.Title, Landline: req.Landline, Avatar: req.Avatar, ShowTeamEntry: req.ShowTeamEntry, PasswordHash: hash, Status: "enabled"}
+		// 菜单授权不随「新增员工」的资料请求体下发：四项走列表「操作 → 功能授权」
+		// 独立配置，新建一律落产品默认（海报 / 统计开，团队 / 管理员登录关）。
+		// 显式赋值而不是靠 GORM default tag——后者对 bool 零值的行为取决于版本，
+		// 写清楚才能保证「不传 = 海报统计开」这条口径在 SQLite / MySQL 都一样。
+		emp := model.Employee{
+			CompanyID: cid, Name: req.Name, Phone: req.Phone, Phone2: req.Phone2,
+			Email: req.Email, Title: req.Title, Landline: req.Landline, Avatar: req.Avatar,
+			ShowPosterEntry: true, ShowTeamEntry: false, ShowStatEntry: true, ShowAdminEntry: false,
+			PasswordHash: hash, Status: "enabled",
+		}
 		// 建号失败必须报错（同审批路径）：失败时返回 code:0 会让管理员拿到
 		// 一个不存在的员工编号与永远登不进去的密码，且无从察觉。
 		if err := db.Create(&emp).Error; err != nil {
@@ -741,14 +752,13 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.PUT("/api/admin/employees/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		var req struct {
-			Name          string `json:"name"`
-			Title         string `json:"title"`
-			Phone         string `json:"phone"`
-			Phone2        string `json:"phone2"`
-			Landline      string `json:"landline"`
-			Email         string `json:"email"`
-			Avatar        string `json:"avatar"`
-			ShowTeamEntry bool   `json:"showTeamEntry"`
+			Name     string `json:"name"`
+			Title    string `json:"title"`
+			Phone    string `json:"phone"`
+			Phone2   string `json:"phone2"`
+			Landline string `json:"landline"`
+			Email    string `json:"email"`
+			Avatar   string `json:"avatar"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -767,10 +777,6 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		updates := map[string]interface{}{
 			"title": req.Title, "landline": req.Landline, "avatar": req.Avatar,
-			// 小程序「我的」页是否显示「团队成员」：布尔列走 map 更新（与 PII 同一套
-			// Updates），默认不显示，由管理员逐个勾选。注意不能用 omitempty 省略：
-			// 取消勾选就是要把它写回 false，省略等于关不掉。
-			"show_team_entry": req.ShowTeamEntry,
 		}
 		// PII 字段必须显式加密 + 补盲索引（map 更新绕过模型钩子）。
 		for _, kv := range []struct{ col, val string }{
@@ -806,6 +812,69 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			TargetType: "employee",
 			TargetID:   strconv.FormatInt(id, 10),
 			Detail:     map[string]any{"companyId": targetCompanyID(c)},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
+	})
+
+	// 调整员工的小程序菜单功能授权（列表「操作 → 功能授权」弹窗）。
+	//
+	// 独立于编辑资料接口，原因有二：
+	//   1. 授权是权限配置，混进编辑资料保存会被误当成普通字段一起改掉；
+	//   2. 编辑资料走 PII 加密 + 盲索引，授权只是四个布尔列，没必要走那条重路径。
+	//
+	// 四个开关全部显式写回（不用 omitempty）：取消勾选就是要写 false，省略等于关不掉。
+	// 用 *bool 接收而不是 bool：缺字段时保持原值，避免老前端只传其中两个就把另两个
+	// 清零——弹窗是一次只改一项还是整表提交，由调用方决定，后端两种都安全。
+	r.PUT("/api/admin/employees/:id/entries", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
+		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+		var req struct {
+			ShowPosterEntry *bool `json:"showPosterEntry"`
+			ShowTeamEntry   *bool `json:"showTeamEntry"`
+			ShowStatEntry   *bool `json:"showStatEntry"`
+			ShowAdminEntry  *bool `json:"showAdminEntry"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
+			return
+		}
+		updates := map[string]interface{}{}
+		if req.ShowPosterEntry != nil {
+			updates["show_poster_entry"] = *req.ShowPosterEntry
+		}
+		if req.ShowTeamEntry != nil {
+			updates["show_team_entry"] = *req.ShowTeamEntry
+		}
+		if req.ShowStatEntry != nil {
+			updates["show_stat_entry"] = *req.ShowStatEntry
+		}
+		if req.ShowAdminEntry != nil {
+			updates["show_admin_entry"] = *req.ShowAdminEntry
+		}
+		if len(updates) == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未指定要调整的授权项"})
+			return
+		}
+		var cnt int64
+		if err := db.Model(&model.Employee{}).Where("staff_id = ?", id).
+			Scopes(scopeCond(c)).Count(&cnt).Error; err != nil {
+			dbWriteFailed(c, "调整功能授权（查目标）", "操作失败，请稍后重试", err)
+			return
+		}
+		if cnt == 0 {
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "未找到"})
+			return
+		}
+		if err := db.Model(&model.Employee{}).Where("staff_id = ?", id).Scopes(scopeCond(c)).
+			Updates(updates).Error; err != nil {
+			dbWriteFailed(c, "调整功能授权", "保存失败，请稍后重试", err)
+			return
+		}
+		// 授权变更必须留痕：Detail 只记四个布尔值，绝不含 PII。
+		audit.Record(db, c, audit.Entry{
+			Action:     audit.ActionEmployeeEntries,
+			TargetType: "employee",
+			TargetID:   strconv.FormatInt(id, 10),
+			Detail:     map[string]any{"companyId": targetCompanyID(c), "entries": updates},
 		})
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok"})
 	})

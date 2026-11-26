@@ -112,8 +112,12 @@ const (
 
 	ActionEmployeeCreate = "employee.create"
 	ActionEmployeeUpdate = "employee.update"
-	ActionEmployeeReset  = "employee.reset_password"
-	ActionEmployeeStatus = "employee.status"
+	// ActionEmployeeEntries 后台调整员工的小程序菜单功能授权（操作列「功能授权」弹窗）。
+	// 这是权限配置变更，不是资料编辑——谁能看到哪些内部入口属于授权决定，必须能追到
+	// 「谁在什么时候改了哪个员工的四项开关」。Detail 只记布尔值，不含 PII。
+	ActionEmployeeEntries = "employee.entries"
+	ActionEmployeeReset   = "employee.reset_password"
+	ActionEmployeeStatus  = "employee.status"
 	// ActionEmployeeCancel 员工本人注销账号（PIPL 删除权）：删除员工记录及关联 PII。
 	// 这是不可逆的特权动作，必须留痕——否则「谁注销了谁、什么时候」无从查起。
 	ActionEmployeeCancel = "employee.cancel"

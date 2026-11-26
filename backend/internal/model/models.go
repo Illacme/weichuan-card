@@ -20,11 +20,16 @@ type Employee struct {
 	PasswordHash string `gorm:"column:password_hash" json:"-"`
 	Status       string `gorm:"column:status;default:enabled" json:"status"` // enabled / disabled
 	TokenVersion int    `gorm:"column:token_version;default:0" json:"-"`     // 安全戳：改密/禁用自增，令旧令牌失效
-	// ShowTeamEntry 小程序「我的」页是否显示「团队成员」（名片墙）入口。
-	// 默认 false = 不显示：看全员名单是「额外开放的能力」，必须由管理员逐个勾选。
-	// 名片墙本身不受影响（访客扫体验版二维码仍能看到），这里只管员工端菜单里那一行。
-	ShowTeamEntry bool      `gorm:"column:show_team_entry;default:false" json:"showTeamEntry"`
-	CreatedAt     time.Time `gorm:"column:created_at" json:"createdAt"`
+	// ---- 小程序「我的」页菜单授权（四项，按员工逐个授权）----
+	// 产品口径：海报 / 统计是「本职功能」默认给（true）；团队成员 / 管理员登录是
+	// 「额外能力」默认拒绝（false）。管理员在员工列表「操作 → 功能授权」弹窗里逐个勾选。
+	// 这四列不塞进编辑资料接口：授权与资料是两件事，混在一起保存会把授权误清零。
+	// 名片墙本身不受这些开关影响——访客扫码仍能看到墙，这里只管员工端菜单的显隐。
+	ShowPosterEntry bool      `gorm:"column:show_poster_entry;default:true" json:"showPosterEntry"`
+	ShowTeamEntry   bool      `gorm:"column:show_team_entry;default:false" json:"showTeamEntry"`
+	ShowStatEntry   bool      `gorm:"column:show_stat_entry;default:true" json:"showStatEntry"`
+	ShowAdminEntry  bool      `gorm:"column:show_admin_entry;default:false" json:"showAdminEntry"`
+	CreatedAt       time.Time `gorm:"column:created_at" json:"createdAt"`
 
 	// ---- PII 明文：只存在内存，不落库（gorm:"-"）。读写由 pii 钩子在边界加解密，
 	//      因此 handler 仍按普通字符串使用这些字段，无感。JSON 名保持不变（对外契约不变）。

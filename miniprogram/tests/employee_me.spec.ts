@@ -169,54 +169,78 @@ describe('employee/me 页', () => {
     expect(wxStub.reLaunch).not.toHaveBeenCalled()
   })
 
-  // 团队成员入口是**按员工逐个开放**的额外能力，默认不显示：
-  // 后端 /api/employee/me 根级回 showTeamEntry，只有 === true 才亮出来。
-  it('后端回 showTeamEntry=true：入口显示', async () => {
+  // 四项菜单授权按员工下发，默认两组相反：海报/统计开（本职功能），
+  // 团队/管理员登录关（额外能力）。后端 /api/employee/me 根级回四个布尔。
+  it('后端回四项授权：默认海报/统计显示、团队/管理员登录不显示', async () => {
     storage.set('empToken', 'emp-token')
-    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: true })
+    mocks.request.mockResolvedValueOnce({
+      ...meData,
+      showPosterEntry: true, showTeamEntry: false, showStatEntry: true, showAdminEntry: false,
+    })
     const p = await page()
 
     await p.onShow()
     await flush()
 
-    expect(p.data.showTeamEntry).toBe(true)
+    expect(p.data.showPosterEntry).toBe(true)
+    expect(p.data.showTeamEntry).toBe(false)
+    expect(p.data.showStatEntry).toBe(true)
+    expect(p.data.showAdminEntry).toBe(false)
   })
 
-  it('后端没回 / 回 false / 回字符串 "false"：一律不显示（默认关闭）', async () => {
+  it('管理员开启团队/管理员登录、关掉海报：端上状态跟着走', async () => {
+    storage.set('empToken', 'emp-token')
+    mocks.request.mockResolvedValueOnce({
+      ...meData,
+      showPosterEntry: false, showTeamEntry: true, showStatEntry: true, showAdminEntry: true,
+    })
+    const p = await page()
+    await p.onShow()
+    await flush()
+
+    expect(p.data.showPosterEntry).toBe(false)
+    expect(p.data.showTeamEntry).toBe(true)
+    expect(p.data.showStatEntry).toBe(true)
+    expect(p.data.showAdminEntry).toBe(true)
+  })
+
+  it('老后端缺字段：海报/统计回退 true，团队/管理员回退 false；字符串 "false" 不算 true', async () => {
     storage.set('empToken', 'emp-token')
 
-    // 缺字段（老后端 / 老库没跑迁移）
+    // 全部缺字段（老后端 / 老库没跑迁移）：按产品默认兜底
     mocks.request.mockResolvedValueOnce({ ...meData })
     let p = await page()
     await p.onShow()
     await flush()
-    expect(p.data.showTeamEntry).toBe(false)
-
-    // 明确 false
-    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: false })
-    p = await page()
-    await p.onShow()
-    await flush()
-    expect(p.data.showTeamEntry).toBe(false)
+    expect([p.data.showPosterEntry, p.data.showTeamEntry, p.data.showStatEntry, p.data.showAdminEntry])
+      .toEqual([true, false, true, false])
 
     // 字符串 "false"：!! 会把它当 true 放进来，必须用 === true 挡住
-    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: 'false' })
+    mocks.request.mockResolvedValueOnce({
+      ...meData,
+      showPosterEntry: 'false', showTeamEntry: 'false', showStatEntry: 'false', showAdminEntry: 'false',
+    })
     p = await page()
     await p.onShow()
     await flush()
-    expect(p.data.showTeamEntry).toBe(false)
+    expect([p.data.showPosterEntry, p.data.showTeamEntry, p.data.showStatEntry, p.data.showAdminEntry])
+      .toEqual([false, false, false, false])
   })
 
-  it('退出登录 / 令牌失效：入口状态一起清掉，不残留给下一个人', async () => {
+  it('退出登录 / 令牌失效：四项授权状态一起清掉，不残留给下一个人', async () => {
     storage.set('empToken', 'emp-token')
-    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: true })
+    mocks.request.mockResolvedValueOnce({
+      ...meData,
+      showPosterEntry: false, showTeamEntry: true, showStatEntry: false, showAdminEntry: true,
+    })
     const p = await page()
     await p.onShow()
     await flush()
     expect(p.data.showTeamEntry).toBe(true)
 
     p.onLogoutTap()
-    expect(p.data.showTeamEntry).toBe(false)
+    expect([p.data.showPosterEntry, p.data.showTeamEntry, p.data.showStatEntry, p.data.showAdminEntry])
+      .toEqual([true, false, true, false])
   })
 
   it('「团队成员」只出现在已登录分组里，未登录看不到（不渲染给自己登录访客）', () => {
@@ -230,6 +254,23 @@ describe('employee/me 页', () => {
     // 除了「在已登录块内」，还必须受 showTeamEntry 控制——默认不显示的开关
     // 少了这个 wx:if，后台没勾选的员工也会看到入口。
     expect(loggedIn).toMatch(/class="cell" bindtap="goTeam"[^>]*wx:if="\{\{showTeamEntry\}\}"/)
+  })
+
+  // 四项入口的 WXML 接线：海报/统计/团队按对应开关控制，管理员登录在登录块外
+  // 但已登录员工受 showAdminEntry 控制（未登录访客保留入口，否则非员工管理员被锁在门外）。
+  it('四项入口都按授权开关控制显示（源码级）', () => {
+    const wxml = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pages/employee/me/me.wxml'),
+      'utf-8',
+    )
+    expect(wxml).toMatch(/bindtap="goPoster"[^>]*wx:if="\{\{showPosterEntry\}\}"/)
+    expect(wxml).toMatch(/bindtap="goTeam"[^>]*wx:if="\{\{showTeamEntry\}\}"/)
+    // 数据统计：wx:if 挂在 section 上（整组隐藏，不留空的 group-label）
+    expect(wxml).toMatch(/class="section cells" wx:if="\{\{showStatEntry\}\}"/)
+    // 管理员登录：!me（未登录访客）或 showAdminEntry（已授权员工）
+    expect(wxml).toMatch(/wx:if="\{\{!me \|\| showAdminEntry\}\}"/)
+    // 编辑资料弹窗不该再出现功能开关（授权独立）
+    expect(wxml).not.toContain('showTeamEntry:')
   })
 
   it('名片页不得再出现团队/名片墙入口（访客链路不放导流）', () => {

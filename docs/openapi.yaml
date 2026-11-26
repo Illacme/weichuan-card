@@ -1269,13 +1269,28 @@ paths:
                     description: |
                       本人是否已绑定微信（根级，不在 data 内）。「我的」页据此显示
                       「已绑定 / 点击绑定」，不靠前端猜 data.openid 是否为空。
+                  showPosterEntry:
+                    type: boolean
+                    description: |
+                      本人在小程序「我的」页是否显示「生成海报」入口（根级，不在 data 内）。
+                      按员工逐个授权，**默认 true = 显示**（本职功能）。端上按 `=== true` 判断。
                   showTeamEntry:
                     type: boolean
                     description: |
                       本人在小程序「我的」页是否显示「团队成员」（名片墙）入口（根级，
-                      不在 data 内）。按员工逐个开放，**默认 false = 不显示**；
-                      由后台「员工管理 → 编辑 → 团队成员」勾选。端上按 `=== true`
+                      不在 data 内）。按员工逐个授权，**默认 false = 不显示**（额外能力）；
+                      由后台「员工管理 → 操作 → 功能授权」勾选。端上按 `=== true`
                       判断，字段缺失一律按不显示处理。
+                  showStatEntry:
+                    type: boolean
+                    description: |
+                      本人在小程序「我的」页是否显示「数据统计」入口（根级，不在 data 内）。
+                      按员工逐个授权，**默认 true = 显示**（本职功能）。
+                  showAdminEntry:
+                    type: boolean
+                    description: |
+                      本人在小程序「我的」页是否显示「企业管理员」入口（根级，不在 data 内）。
+                      按员工逐个授权，**默认 false = 不显示**（额外能力）。
     put:
       tags: [员工端]
       summary: 提交名片信息修改申请（审核通过后才生效）
@@ -1906,11 +1921,6 @@ paths:
                   type: string
                 landline:
                   type: string
-                showTeamEntry:
-                  type: boolean
-                  description: |
-                    小程序「我的」页是否显示「团队成员」（名片墙）入口。**默认 false**，
-                    看全员名单属额外开放的能力，逐个员工勾选。
       responses:
         "200":
           description: code=0 成功；code=1 手机号已存在 / 参数错误
@@ -1965,12 +1975,10 @@ paths:
       tags: [超管-员工管理]
       summary: 编辑员工资料（即时生效，不经过员工端审核流）
       description: |
-        只开放白名单字段：姓名 / 职位 / 手机 / 手机号2 / 座机 / 邮箱 / 头像 /
-        showTeamEntry（小程序「我的」页的「团队成员」入口开关）。
+        只开放白名单字段：姓名 / 职位 / 手机 / 手机号2 / 座机 / 邮箱 / 头像。
         状态、密码各有专门端点（disable/enable/reset-password），此处不混写，避免绕过安全戳逻辑。
-
-        `showTeamEntry` 走地图更新，**取消勾选必须显式传 false**：省略该键等于保持原值，
-        否则「开了关不掉」。
+        小程序菜单授权另有专门端点 `PUT /api/admin/employees/{id}/entries`，此处**不碰**——
+        否则改个头像就会把四项授权一起重置。
       security:
         - cookieAuth: []
       parameters:
@@ -2002,14 +2010,54 @@ paths:
                   type: string
                 avatar:
                   type: string
-                showTeamEntry:
-                  type: boolean
-                  description: |
-                    小程序「我的」页是否显示「团队成员」（名片墙）入口。关闭时必须显式传
-                    false（省略等于保持原值）。
       responses:
         "200":
           description: code=0 成功；code=1 参数错误（姓名与手机必填）/ 不存在
+
+  /api/admin/employees/{id}/entries:
+    put:
+      tags: [超管-员工管理]
+      summary: 调整员工的小程序菜单功能授权（列表「操作 → 功能授权」弹窗）
+      description: |
+        四项开关：生成海报 / 团队成员 / 数据统计 / 管理员登录。默认值两组相反——
+        海报与统计是本职功能默认开，团队与管理员登录是额外能力默认关。
+        独立于编辑资料接口：授权是权限配置，混进资料保存容易被误改，也不该走 PII 加密路径。
+
+        四个字段都是**可选**的指针：不传的项保持原值（局部更新安全）；
+        传了就显式写回，**取消勾选必须传 false**——省略等于保持原值，会「开了关不掉」。
+        四项全不传返回 code=1，避免前端漏传参数时静默成功。
+        授权变更记审计动作 `employee.entries`，Detail 只含四个布尔值，不含 PII。
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                showPosterEntry:
+                  type: boolean
+                  description: 「生成海报」入口是否显示，默认 true，关闭须显式传 false
+                showTeamEntry:
+                  type: boolean
+                  description: 「团队成员」入口是否显示，默认 false，开启须显式传 true
+                showStatEntry:
+                  type: boolean
+                  description: 「数据统计」入口是否显示，默认 true，关闭须显式传 false
+                showAdminEntry:
+                  type: boolean
+                  description: 「管理员登录」入口是否显示，默认 false，开启须显式传 true
+      responses:
+        "200":
+          description: code=0 成功；code=1 参数错误 / 未指定授权项 / 不存在
 
   /api/admin/employees/{id}/disable:
     post:

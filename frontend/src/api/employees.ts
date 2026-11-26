@@ -11,10 +11,19 @@ export interface EmployeePayload {
   title?: string
   landline?: string
   avatar?: string
-  // 小程序「我的」页是否显示「团队成员」入口（名片墙）。默认不显示，逐个员工开启。
-  // 编辑时**必须显式传 false** 才能关掉——后端按地图更新，省略等于保持原值。
-  showTeamEntry?: boolean
 }
+
+// 小程序「我的」页四项菜单授权。后端四个字段都是可选的 *bool：
+// 不传的项保持原值，传了就显式写回——所以关闭必须传 false，省略等于没改。
+export interface EmployeeEntries {
+  showPosterEntry?: boolean
+  showTeamEntry?: boolean
+  showStatEntry?: boolean
+  showAdminEntry?: boolean
+}
+
+// 列表接口返回的行也带四项授权（用于「功能授权」弹窗回填）。
+// 与 EmployeePayload 分开：新增员工不提交授权，新建一律落产品默认。
 
 // 员工列表（服务端分页）。
 // keyword 在服务端匹配 姓名/手机/手机2/职位/座机/昵称/openid，与后台搜索框的范围一致；
@@ -37,6 +46,13 @@ export function createEmployee(payload: EmployeePayload) {
 // 超管编辑员工资料（即时生效，不经过员工端审核流）
 export function updateEmployee(id: number, payload: EmployeePayload) {
   return http.put(`/admin/employees/${id}`, payload)
+}
+
+// 调整员工的小程序菜单功能授权（列表「操作 → 功能授权」弹窗）。
+// 独立于编辑资料：授权是权限配置，不该跟头像/手机一起保存而被误改。
+// 四个字段全传（弹窗整表提交），关掉的项必须显式传 false。
+export function updateEmployeeEntries(id: number, payload: EmployeeEntries) {
+  return http.put(`/admin/employees/${id}/entries`, payload)
 }
 
 export function disableEmployee(id: number) {

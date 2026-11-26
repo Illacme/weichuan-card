@@ -58,6 +58,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'company.admin.reset_password': '重置企业管理员密码',
   'employee.create': '新增员工',
   'employee.update': '编辑员工',
+  'employee.entries': '调整员工功能授权',
   'employee.reset_password': '重置员工密码',
   'employee.status': '启停员工',
   // PIPL 权利入口：注销是不可逆的（员工与其申请单/统计一并删除），导出个人信息本身也是敏感动作

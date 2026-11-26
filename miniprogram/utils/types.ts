@@ -44,8 +44,11 @@ export interface Employee {
   email: string
   /** 微信昵称（登录时授权采集） */
   nickname: string
-  /** 「我的」页是否显示「团队成员」（名片墙）入口；后台按员工逐个开放，默认 false */
+  /** 「我的」页四项菜单授权，由 /api/employee/me 根级下发；默认海报/统计开、团队/管理员登录关 */
+  showPosterEntry: boolean
   showTeamEntry: boolean
+  showStatEntry: boolean
+  showAdminEntry: boolean
 }
 
 /** /api/card 根级 company（model.CompanyInfo） */

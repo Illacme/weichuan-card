@@ -37,11 +37,12 @@
         <text class="cell-value">{{pendingModify ? '审核中' : '修改需超管审核'}}</text>
         <text class="cell-arrow">›</text>
       </view>
-      <view class="cell" bindtap="goPoster" hover-class="cell-hover">
+      <!-- 生成海报：本职功能，默认显示；可按员工单独关闭 -->
+      <view class="cell" bindtap="goPoster" hover-class="cell-hover" wx:if="{{showPosterEntry}}">
         <text class="cell-label">生成海报</text>
         <text class="cell-arrow">›</text>
       </view>
-      <!-- 团队成员（名片墙）：按员工逐个开放，后台「员工管理 → 编辑 → 团队成员」勾选，
+      <!-- 团队成员（名片墙）：按员工逐个授权，后台「员工管理 → 操作 → 功能授权」勾选，
            **默认不显示**。看全员名单是额外能力，不是每个员工都该有。
            入口只在登录后的「我的」里，名片页（访客分享链路）不放——企业要传播的是
            销售自己的名片，把「这家公司还有谁」摆在访客眼前是替企业做决定。 -->
@@ -54,7 +55,7 @@
 
     <!-- 数据：对外访客/转化分析（与下方「个人信息」是两个东西，靠分组与命名区分） -->
     <view class="group-label">数据</view>
-    <view class="section cells">
+    <view class="section cells" wx:if="{{showStatEntry}}">
       <view class="cell" bindtap="goStat" hover-class="cell-hover">
         <text class="cell-label">数据统计</text>
         <text class="cell-arrow">›</text>
@@ -109,9 +110,12 @@
        文案按**管理员**登录态分两档（2026-11-15 真机反馈）：未登录时这一行实际是
        登录入口，写成「待审申请」会让绝大多数普通用户以为是自己提交的申请在待审、
        或以为自己可以去审核别人；只有已登录管理员才显示「待审申请 / 快捷审核」。
-       判据用 adminToken（hasAdminToken），不用员工 me——两套身份通道严格分离。 -->
-  <view class="group-label">企业管理员<text class="group-hint" wx:if="{{!adminLoggedIn}}"> · 仅管理员使用</text></view>
-  <view class="section cells">
+       判据用 adminToken（hasAdminToken），不用员工 me——两套身份通道严格分离。
+       显示控制：已登录员工按 showAdminEntry（后台「功能授权」勾选，默认关）决定是否显示；
+       未登录访客保留入口——老板/管理员通常不建员工号，拿不到员工授权，关掉会把他们
+       锁在门外。管理员本人走 PC 后台或用微信免密，不经这个员工菜单。 -->
+  <view class="group-label" wx:if="{{!me || showAdminEntry}}">企业管理员<text class="group-hint" wx:if="{{!adminLoggedIn}}"> · 仅管理员使用</text></view>
+  <view class="section cells" wx:if="{{!me || showAdminEntry}}">
     <view class="cell" bindtap="goAdminApply" hover-class="cell-hover">
       <text class="cell-label">{{adminLoggedIn ? '待审申请' : '管理员登录'}}</text>
       <text class="cell-value">{{adminLoggedIn ? '快捷审核' : '用 PC 后台账号'}}</text>
