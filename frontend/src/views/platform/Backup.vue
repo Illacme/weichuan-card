@@ -252,6 +252,38 @@ onBeforeUnmount(stopPoll)
 </script>
 
 <style scoped>
+/* 标题行：说明文字与「刷新 / 立即备份」整体靠右；别让按钮跟着标题贴在左边。 */
+.page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.page-bar h3 {
+  margin: 0;
+}
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.bar-tip {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+@media (max-width: 767px) {
+  .page-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .bar-tip {
+    display: none;
+  }
+}
 .kind-cell {
   display: flex;
   align-items: center;

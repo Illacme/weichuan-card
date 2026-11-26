@@ -35,7 +35,8 @@
         <el-button class="menu-toggle" text aria-label="菜单" @click="asideOpen = !asideOpen">
           <el-icon><Menu /></el-icon>
         </el-button>
-        <div class="header-title">{{ currentTitle }}</div>
+        <!-- 顶栏不再重复当前页名：页面标题只有内容区的 h3 一处，
+             这里留给品牌 / 企业身份 / 账号操作，手机端收起侧栏时内容区标题照样可见。 -->
         <div class="header-right">
           <template v-if="!isPhone">
             <!-- 平台超管：切换当前管理的企业（企业管理员没有这个选择器） -->
@@ -433,9 +434,6 @@ const brandName = computed(() => {
 })
 
 const activeMenu = computed(() => route.path)
-const currentTitle = computed(
-  () => (route.meta?.title as string) || `${settings.displayBrandName}管理后台`
-)
 
 async function onLogout() {
   try {
@@ -520,11 +518,6 @@ function onCommand(cmd: string) {
   justify-content: space-between;
   background: #fff;
   border-bottom: 1px solid #ebeef5;
-}
-.header-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
 }
 .header-right {
   display: flex;

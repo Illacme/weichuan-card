@@ -136,6 +136,38 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 标题行：说明文字与工具按钮整体靠右；与其他后台页面保持同一套排布。 */
+.page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.page-bar h3 {
+  margin: 0;
+}
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.bar-tip {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+@media (max-width: 767px) {
+  .page-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .bar-tip {
+    display: none;
+  }
+}
 .filter-bar {
   display: flex;
   gap: 10px;

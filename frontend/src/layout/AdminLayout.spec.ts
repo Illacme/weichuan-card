@@ -4,7 +4,7 @@ import { nextTick, defineComponent, h, provide, inject } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AdminLayout from './AdminLayout.vue'
 import { routes } from '@/router'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 
 // 后台外壳：菜单分组与权限过滤、品牌名回落、登出、手机端分流。
 // 「企业管理员看不到平台管理组」是这里的核心安全约束——菜单藏不住就等于没权限，
@@ -401,10 +401,35 @@ describe('layout/AdminLayout', () => {
     expect(w.find('.brand-name').text()).toBe('微传名片 · 管理后台')
   })
 
-  it('顶部标题取路由 meta.title', async () => {
+  it('顶栏不再重复当前页名，页面标题只出现在内容区', async () => {
     const { w } = await mountLayout('/content/projects')
 
-    expect(w.find('.header-title').text()).toBe('项目案例')
+    expect(w.find('.header-title').exists()).toBe(false)
+  })
+
+  it('源码守门：顶栏标题与 currentTitle 不许回贴', () => {
+    const src = readFileSync('src/layout/AdminLayout.vue', 'utf8')
+    expect(src).not.toContain('header-title')
+    expect(src).not.toContain('currentTitle')
+  })
+
+  it('所有页面的标题行都统一：h3 在左、工具按钮在右', () => {
+    const files = readdirSync('src/views', { recursive: true }).filter(
+      (f): f is string => typeof f === 'string' && f.endsWith('.vue'),
+    )
+    let checked = 0
+    for (const name of files) {
+      const src = readFileSync(`src/views/${name}`, 'utf8')
+      if (!src.includes('class="page-bar"')) continue
+      checked++
+      expect(src, `${name} 的 .page-bar 没设两端对齐，按钮会贴着标题`)
+        .toMatch(/\.page-bar\s*\{[^}]*justify-content:\s*space-between/s)
+      if (src.includes('class="bar-right"')) {
+        expect(src, `${name} 的 .bar-right 没设 flex，说明文字和按钮会挤在一起`)
+          .toMatch(/\.bar-right\s*\{[^}]*display:\s*flex/s)
+      }
+    }
+    expect(checked, '没扫到任何页面，守门空转').toBeGreaterThan(15)
   })
 
   it('当前菜单项跟随路由', async () => {

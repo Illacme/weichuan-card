@@ -282,6 +282,40 @@ onMounted(reload)
 </script>
 
 <style scoped>
+/* 标题行：说明文字与工具按钮整体靠右。这三行别省——少了它按钮会紧跟 h3
+   挤在左半边，跟其他页面的右上角操作区对不上。 */
+.page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.page-bar h3 {
+  margin: 0;
+}
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.bar-tip {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+/* 手机端：提示语换行，避免把「刷新」挤出屏幕 */
+@media (max-width: 767px) {
+  .page-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .bar-tip {
+    display: none;
+  }
+}
 .cfg-box {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;

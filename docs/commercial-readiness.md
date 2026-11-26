@@ -6535,3 +6535,43 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vitest run` | 118 文件 / 1977 例，本轮相关 1976 例全绿；1 例失败来自工作区并行改动 `miniprogram/app.json` + `utils/brand.ts`（写入具体客户名，触发品牌守门），与本轮无关且不纳入提交 |
 | 后端 `gofmt -l .` / `go vet ./...` / `go build ./...` / `go test ./...` | 无格式输出 / 0 错 / 0 错 / 全包通过 |
 | `check_openapi.py --selftest` | 通过；136 条后端路由、134 条已在契约中（两条运维探针不进契约） |
+
+---
+
+## 第一百零三轮：后台标题去重与页栏布局统一（2026-11-26）
+
+用户指出两处不一致：顶栏和正文各写一遍当前页名；「刷新」这类页级工具按钮有的靠右、有的贴着标题。
+
+### 诊断结论
+
+1. **重复标题来自顶栏的 `header-title`**（`route.meta.title`），而每个页面自身又有 `<h3>`。
+   顶栏同时还要放品牌、企业、账号与退出，标题挤在里面既重复又占地方；窄屏收起侧栏后
+   内容区标题照样可见，顶栏标签没有不可替代的作用。
+2. **按钮没靠右的三个页面都漏了 `.page-bar` 的 scoped 样式**：`ContentSec.vue` /
+   `AuditLogs.vue` / `Backup.vue`。它们有 `bar-right` 结构，但没有 `display:flex` +
+   `justify-content:space-between`，于是「刷新」紧跟说明文字贴在左半边。
+   其余 16 个页面本就统一，改的是这 3 个漏网的，不是全仓重构。
+
+### 改法
+
+- 删掉 `AdminLayout.vue` 的 `header-title` 元素、`currentTitle` computed 和对应 CSS；
+  顶栏只保留全局身份与操作。路由 `meta.title` 仍保留（菜单、守卫与测试都用它）。
+- 三个页面补齐与其他页一致的标题行样式：`h3` 左 / `bar-right` 右、`gap`、
+  手机端改为纵向并隐藏 `bar-tip`（避免长说明把「刷新」挤出屏幕）。
+- **不统一「重新加载」的措辞**：`CompanyInfo` / `CompanyProfile` / `HomeLayout` /
+  `MpEntry` / `MpSettings` 的「重新加载」与页级「刷新」是同一动作，但前者是页签内
+  与「保存」共用的一组操作，已有专门断言；本轮只统一位置，不为字面一致制造回归。
+
+### 守门与反向验证
+
+- `AdminLayout.spec.ts`：渲染断言顶栏不再有 `.header-title`；源码断言 `header-title` /
+  `currentTitle` 不许回贴；再扫 `src/views/**/*.vue`，凡有 `class="page-bar"` 必须定义
+  `justify-content: space-between`，有 `class="bar-right"` 必须定义 `display: flex`。
+- 反向验证：临时摘掉 `ContentSec.vue` 的 `.page-bar` 样式，守门立刻红并点名该文件，还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
+| 前端 `vitest run` | 118 文件 / 1979 例，本轮相关 1978 例全绿；1 例仍是工作区未提交的品牌名改动（`miniprogram/app.json` + `utils/brand.ts`）触发的守门，与本轮无关且不纳入提交 |
