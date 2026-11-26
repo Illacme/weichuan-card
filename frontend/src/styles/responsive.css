@@ -74,16 +74,29 @@
 }
 
 /* ===== 表单：手机端 label 顶部对齐、栅格退化单列 =====
-   弹窗内 el-form 在窄屏下 label 占满上行，输入占满下行，避免横向挤压。 */
+   label 占满上行、输入占满下行，避免横向挤压。两处都覆盖：
+   ① 弹窗内（teleport 到 body，不在 .admin-main 下）；
+   ② 页面主体表单（公司信息/公司简介/名片样式/小程序入口 这类 el-form 直接
+      铺在内容区的页面）——它们 label-width 90~140px，375px 屏上输入区被吃掉一半。
+   label-width 是 Element Plus 写到 label 上的内联 width，必须 !important 覆盖。 */
 @media (max-width: 767px) {
-  .el-dialog .el-form .el-form-item {
+  .el-dialog .el-form .el-form-item,
+  .admin-main .el-form .el-form-item {
     display: block;
   }
-  .el-dialog .el-form .el-form-item__label {
+  .el-dialog .el-form .el-form-item__label,
+  .admin-main .el-form .el-form-item__label {
     display: block;
+    width: auto !important;
     text-align: left;
     padding-bottom: 4px;
     line-height: 1.4;
+    height: auto;
+  }
+  .el-dialog .el-form .el-form-item__content,
+  .admin-main .el-form .el-form-item__content {
+    margin-left: 0 !important;
+    line-height: 1.6;
   }
 }
 

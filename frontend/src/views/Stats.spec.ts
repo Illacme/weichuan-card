@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent, h, provide, inject } from 'vue'
+import { readFileSync } from 'node:fs'
 import Stats from './Stats.vue'
 
 // 名片统计页依赖 api/stats（汇总 + 按员工 + 趋势 + 导出）与 element-plus 的消息/确认框，全部 mock 掉。
@@ -70,6 +71,12 @@ const mocks = vi.hoisted(() => ({
 const { adminStats, adminStatsDetail, exportStatsCsv } = mocks
 vi.mock('@/api/stats', () => mocks)
 
+const isPhoneRef = vi.hoisted(() => ({ value: false }))
+vi.mock('@/composables/useBreakpoint', async () => {
+  const { ref } = await import('vue')
+  return { useBreakpoint: () => ({ isPhone: ref(isPhoneRef.value) }) }
+})
+
 const ElCard = defineComponent({ name: 'ElCard', template: `<div class="el-card"><slot /></div>` })
 const ElInput = defineComponent({
   name: 'ElInput',
@@ -138,7 +145,7 @@ const ElTableColumn = defineComponent({
         : props.prop && row
           ? String(row[props.prop] ?? '')
           : ''
-      return h('div', { class: 'el-table-column' }, content)
+      return h('div', { class: 'el-table-column', 'data-prop': props.prop || '' }, content)
     }
   },
 })
@@ -215,6 +222,7 @@ function tablesOf(w: ReturnType<typeof mount>) {
 
 describe('Stats', () => {
   beforeEach(() => {
+    isPhoneRef.value = false
     vi.mocked(adminStats).mockClear()
     vi.mocked(adminStatsDetail).mockClear()
     vi.mocked(exportStatsCsv).mockClear()
@@ -273,6 +281,31 @@ describe('Stats', () => {
       '裂变',
       '操作',
     ])
+  })
+
+  // 手机端原表 9 列约 950px，核心数字被推到屏外。只收掉次要列，保留
+  // 「姓名 + 访问 + 内容浏览 + 裂变 + 明细」这条应急查看主线。
+  it('手机端员工表收掉次要列，只留核心数字与明细入口', async () => {
+    isPhoneRef.value = true
+    const w = mount(Stats, mountOpts)
+    await flushLoad(w)
+
+    const labels = [
+      ...new Set(tablesOf(w).staff.findAllComponents(ElTableColumn).map((c) => c.props('label'))),
+    ]
+    expect(labels).toEqual(['姓名', '访问', '内容浏览', '裂变', '操作'])
+    // TOP 榜三列本就窄，不该被误收
+    expect(tablesOf(w).top[0].findAllComponents(ElTableColumn).length).toBeGreaterThan(0)
+  })
+
+  it('源码守门：明细表次要列必须按 isPhone 收，不许写死全量', () => {
+    const src = readFileSync('src/views/Stats.vue', 'utf8')
+    expect(src).toContain("import { useBreakpoint } from '@/composables/useBreakpoint'")
+    for (const label of ['编号', '职位', '拨号', '保存']) {
+      expect(src, `${label} 列在手机上没收掉`).toMatch(
+        new RegExp(`<el-table-column[^>]*label="${label}"[^>]*v-if="!isPhone"`),
+      )
+    }
   })
 
   it('选日期范围后按 from/to 重新查询，范围文案同步更新', async () => {

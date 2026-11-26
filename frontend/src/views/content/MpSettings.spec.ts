@@ -534,4 +534,15 @@ describe('content/MpSettings', () => {
     expect(src).toContain('ref="appearanceRef"')
     expect(src).toContain('ref="themeRef"')
   })
+
+  // 手机端三个页签 + 两个按钮同排会溢出 375px 屏：改为两行，按钮另起一行右对齐。
+  it('手机端页签栏换两行，保存/重新加载不被挤出屏幕', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/views/content/MpSettings.vue'), 'utf-8')
+    expect(src, '页签栏缺窄屏换行规则').toMatch(
+      /@media \(max-width: 767px\)\s*\{[^}]*\.tabs-bar\s*\{[^}]*flex-wrap:\s*wrap/s,
+    )
+    expect(src, '操作按钮没有另起一行').toMatch(
+      /@media \(max-width: 767px\)\s*\{[\s\S]*?\.tab-actions\s*\{[^}]*width:\s*100%[^}]*justify-content:\s*flex-end/s,
+    )
+  })
 })

@@ -6644,3 +6644,34 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vitest run` | 118 文件 / 1992 例，本轮相关 1991 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
 | `vite build` | 首次失败：插入折叠样式时把 `.admin-aside` 的 `display:flex` 等留成无选择器的孤立声明（CSS 语法错），type-check / eslint / vitest 都放过，只有构建能抓到；修复后通过。已在源码守门补「aside 基础规则必须含 display/flex-direction/overflow」的断言 |
 | CI | 提交 `d9ef870`，run `45763221428`，15 job 全绿 |
+
+## 第一百零六轮：管理后台移动端缺口补齐（2026-11-26）
+
+用户问「整个后台对移动端是不是都做好了」。逐页盘点 23 个后台页面：13 个已有 `isPhone` 适配（员工/审核/企业/项目/服务/账号/日志/备份/内容安全/绑定等有卡片列表或收列），全局 `responsive.css` 有弹窗全屏、分页放大、工具条换行；但逐页核实后发现 4 处真缺口——不是「全做好了」。
+
+### 四处缺口与修法
+
+1. **`Stats.vue` 明细表**：9 列固定宽约 950px，只有汇总卡做了 `@media`，表格零适配，手机上核心数字被挤出屏。按 `isPhone` 收掉编号/职位/拨号/保存四列，保留「姓名 + 访问 + 内容浏览 + 裂变 + 明细」应急主线；TOP 榜三列本就窄，不动。
+2. **`StorageProfiles.vue` 文件存储/CDN 分发表**：零 `isPhone`，名称(240)+位置(220)+操作(220)互相挤压。手机上收掉版本/AK 掩码/公开域名等排障列，操作列 220→132；业务列（名称/位置/连通性）全留——「存哪」是这模块的核心问题，不能藏。
+3. **`MpSettings.vue` 页签栏**：三个页签 + 保存/重新加载两个按钮同排，`gap:28px`，375px 屏上按钮被挤出。窄屏改两行：页签一行、按钮另起一行右对齐，吸顶行为不变。
+4. **四个内容表单页**（公司信息/公司简介/名片样式/小程序入口）：`label-width` 90~140px，而全局 label 顶对齐规则只作用于 `.el-dialog .el-form`，页面主体表单不生效，375px 屏上输入区被吃掉一半。扩展 `responsive.css` 到 `.admin-main .el-form`，并用 `width:auto !important` 覆盖 Element Plus 写到 label 上的内联 width、content 的 `margin-left:0 !important` 防右移。
+
+### 取舍
+
+- **收列而非全量卡片化**：只有 Stats/StorageProfiles 两张表补了收列，未给它们做完整卡片列表（Employees/ApplyOpen 那套）。这两页是运维/分析场景，应急查看够用；卡片化要重做下钻与排序交互，收益不成比例。
+- **全局 CSS 而非四页各写**：表单顶对齐是通用规则，写在 `responsive.css` 一处；弹窗（teleport 到 body）与页面主体 `.admin-main` 两处选择器都覆盖，避免再次出现「只改了一半」。
+- **不碰移动端已做好的页面**：13 个已有适配的页面不动，避免大范围回归。
+
+### 守门与反向验证
+
+- `Stats.spec.ts`：手机端列断言（5 列）+ 源码守门（四个次要列必须带 `v-if="!isPhone"`）；`StorageProfiles.spec.ts`：源码守门（公开域名/版本列 + 操作列分流）+ 手机端渲染；`MpSettings.spec.ts`：页签栏两行 CSS 源码断言；`useBreakpoint.spec.ts`：响应式 CSS 两处选择器与 `!important` 覆盖断言（JS 断点与 CSS 规则是同一口径的两半，只守一半会漏）。
+- 反向验证：临时删掉 `responsive.css` 的 `.admin-main` 选择器，守门立刻红并点名「四个内容页会退回横向挤压」，还原复绿。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
+| 前端 `vitest run` | 118 文件 / 1997 例，本轮相关 1996 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
+| 后端 | 本轮未改后端 |
+| CI | 见提交后记录 |

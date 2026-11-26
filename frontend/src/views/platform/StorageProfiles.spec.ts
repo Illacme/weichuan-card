@@ -34,6 +34,12 @@ vi.mock('element-plus', () => ({
   ElMessageBox: { confirm: vi.fn().mockResolvedValue(true) },
 }))
 
+const isPhoneRef = vi.hoisted(() => ({ value: false }))
+vi.mock('@/composables/useBreakpoint', async () => {
+  const { ref } = await import('vue')
+  return { useBreakpoint: () => ({ isPhone: ref(isPhoneRef.value) }) }
+})
+
 import { ElMessage } from 'element-plus'
 import * as api from '@/api/storageProfiles'
 import { listCompanies } from '@/api/tenants'
@@ -82,6 +88,7 @@ function mountPage() {
 }
 
 beforeEach(() => {
+  isPhoneRef.value = false
   vi.clearAllMocks()
   // 新「主存储」标签会挂载 StorageSettingsPanel，它自己拉系统设置；
   // 这里显式给实现，避免 clearAllMocks 后拿不到返回值。
@@ -629,8 +636,8 @@ describe('存储与分发模块', () => {
   it('档案列表默认只给业务列，技术列按需展开；并直接标出谁在用', async () => {
     const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
     // 默认隐藏靠 v-if 真渲染控制，不是把列做成空内容
-    expect(src).toContain('v-if="showTechCols" prop="accessKeyMasked" label="AK 掩码"')
-    expect(src).toContain('v-if="showTechCols" prop="version" label="版本"')
+    expect(src).toContain('v-if="showTechCols && !isPhone" prop="accessKeyMasked" label="AK 掩码"')
+    expect(src).toContain('v-if="showTechCols && !isPhone" prop="version" label="版本"')
     // 使用中标签必须真渲染在档案行上，不能只留一个没人调用的函数
     expect(src).toContain('v-if="usageLabel(row.id, \'storage\')"')
     expect(src).toContain('v-if="usageLabel(row.id, \'delivery\')"')
@@ -647,6 +654,24 @@ describe('存储与分发模块', () => {
     await flush()
     expect(toggle.text()).toBe('收起技术列')
     expect(vm.showTechCols).toBe(true)
+  })
+
+  // 手机端：文件存储/CDN 两张核心表零适配时，名称/位置/操作互相挤压、按钮滑出屏幕。
+  // 收掉纯技术列（版本、AK 掩码、公开域名），操作列收窄；业务列全部保留。
+  it('手机端核心表格收掉技术列、操作列收窄', async () => {
+    const src = readFileSync('src/views/platform/StorageProfiles.vue', 'utf8')
+    expect(src).toContain("import { useBreakpoint } from '@/composables/useBreakpoint'")
+    expect(src).toContain('v-if="!isPhone" label="公开域名"')
+    expect(src).toContain('v-if="!isPhone" prop="version" label="版本"')
+    expect(src, '操作列宽度没按屏宽分流').toContain(':width="isPhone ? 132 : 220"')
+
+    isPhoneRef.value = true
+    const w = mountPage()
+    await flush()
+    // 手机端名称与连通性这些业务列仍在（elStubs 按 prop 渲染列）
+    const names = w.findAll('.el-table-row')
+    expect(names.length).toBeGreaterThan(0)
+    expect(w.text()).toContain('主站 OSS')
   })
 
   it('迁移表单按三栏排布并先提示试运行，空任务表给出下一步', () => {

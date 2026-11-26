@@ -215,4 +215,23 @@ async function onSaveActive() {
   margin-left: auto;
   padding-left: 16px;
 }
+/* 手机端页签栏改两行：三个页签 + 「保存/重新加载」两个按钮同排时，
+   375px 屏上按钮会被挤出可视区。页签独占一行、按钮另起一行右对齐，
+   两行都完整可点，吸顶行为不变。 */
+@media (max-width: 767px) {
+  .tabs-bar {
+    flex-wrap: wrap;
+    gap: 8px 0;
+  }
+  .tabs {
+    gap: 20px;
+    width: 100%;
+  }
+  .tab-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    padding-left: 0;
+  }
+}
 </style>

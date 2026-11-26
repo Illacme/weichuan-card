@@ -55,9 +55,9 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column v-if="showTechCols" prop="accessKeyMasked" label="AK 掩码" min-width="120" />
-          <el-table-column v-if="showTechCols" prop="version" label="版本" width="70" />
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column v-if="showTechCols && !isPhone" prop="accessKeyMasked" label="AK 掩码" min-width="120" />
+          <el-table-column v-if="showTechCols && !isPhone" prop="version" label="版本" width="70" />
+          <el-table-column label="操作" :width="isPhone ? 132 : 220" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openStorageDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkStorage(row)">自检</el-button>
@@ -92,7 +92,7 @@
           <el-table-column label="厂商" width="130">
             <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
           </el-table-column>
-          <el-table-column label="公开域名" min-width="220">
+          <el-table-column v-if="!isPhone" label="公开域名" min-width="220">
             <template #default="{ row }">
               <span v-if="row.purpose === 'platform_primary'" class="muted">
                 见「文件存储 → 主存储」的访问基址
@@ -107,8 +107,8 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column prop="version" label="版本" width="70" />
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column v-if="!isPhone" prop="version" label="版本" width="70" />
+          <el-table-column label="操作" :width="isPhone ? 132 : 220" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDeliveryDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="checkDelivery(row)">自检</el-button>
@@ -525,6 +525,11 @@ import {
 // 厂商列必须显示中文名：同一模块里「CDN 缓存刷新」已经显示「阿里云 CDN」，
 // 列表却显示 aliyun 原始 code，会让人以为是两个不同字段。
 import { cdnProviderLabel } from '@/utils/cdn'
+import { useBreakpoint } from '@/composables/useBreakpoint'
+
+// 手机端只保留业务列：文件存储/分发列表默认已是 4~6 列宽表，窄屏再带上
+// 版本、公开域名这些排障列就把「编辑/自检」挤出屏幕。与 Stats/Employees 同一收列口径。
+const { isPhone } = useBreakpoint()
 
 // 支持 ?tab=xxx 直达指定页签，?focus=<key> 由「主存储」面板消费。
 // 第一次进来落在「总览」：先看懂架构和现状，再去改配置。

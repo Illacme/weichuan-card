@@ -175,13 +175,16 @@
           <el-icon class="fold-arrow"><ArrowDown /></el-icon>
         </div>
         <div v-show="staffOpen" class="fold-body">
+          <!-- 手机端只留「姓名 + 三个核心数 + 明细」：原表 9 列固定宽约 950px，
+               窄屏要么横向滑很远，要么核心数字被挤出屏幕。次要列按 isPhone 收掉，
+               与 Employees/Companies 的收列口径一致（不用 CSS 隐藏 td，避免表头错位）。 -->
           <el-table :data="paged" v-loading="loading" border stripe>
-            <el-table-column prop="staffId" label="编号" width="80" align="center" />
+            <el-table-column prop="staffId" label="编号" width="80" align="center" v-if="!isPhone" />
             <el-table-column prop="name" label="姓名" width="120" />
-            <el-table-column prop="title" label="职位" width="120" />
+            <el-table-column prop="title" label="职位" width="120" v-if="!isPhone" />
             <el-table-column prop="visit" label="访问" width="110" align="right" sortable />
-            <el-table-column prop="call" label="拨号" width="110" align="right" sortable />
-            <el-table-column prop="save" label="保存" width="110" align="right" sortable />
+            <el-table-column prop="call" label="拨号" width="110" align="right" sortable v-if="!isPhone" />
+            <el-table-column prop="save" label="保存" width="110" align="right" sortable v-if="!isPhone" />
             <!-- 内容浏览：三类浏览事件的合计，悬浮看拆分。做成一列而不是三列——
                  三列会把表格推到需要横向滚动，而「谁带来的浏览多」用一个数就够读；
                  细分走行「明细」下钻（那里能按事件类型逐类筛） -->
@@ -248,7 +251,9 @@ import { adminStats, exportStatsCsv, type StatRange, type StatSummary, type Stat
 import StatTrend from '@/components/StatTrend.vue'
 import StatDetail from '@/components/StatDetail.vue'
 import { useTable } from '@/composables/useTable'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 
+const { isPhone } = useBreakpoint()
 const rows = ref<any[]>([])
 const { keyword, currentPage, size, total, paged } = useTable(
   rows,
