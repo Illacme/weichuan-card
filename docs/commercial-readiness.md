@@ -6643,4 +6643,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | `AdminLayout.spec.ts` | 48 例全绿 |
 | 前端 `vitest run` | 118 文件 / 1992 例，本轮相关 1991 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
 | `vite build` | 首次失败：插入折叠样式时把 `.admin-aside` 的 `display:flex` 等留成无选择器的孤立声明（CSS 语法错），type-check / eslint / vitest 都放过，只有构建能抓到；修复后通过。已在源码守门补「aside 基础规则必须含 display/flex-direction/overflow」的断言 |
-| 其余 | 见提交后的 CI 记录 |
+| CI | 提交 `d9ef870`，run `45763221428`，15 job 全绿 |
