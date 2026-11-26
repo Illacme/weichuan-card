@@ -206,6 +206,17 @@
         <el-form-item label="头像">
           <UploadField v-model="form.avatar" :multiple="false" accept="image/*" library-type="avatar" />
         </el-form-item>
+        <!-- 小程序「我的」页的「团队成员」入口：默认关闭，逐个员工勾选。
+             看全员名单是额外开放的能力，不是每个员工都该有——很多企业只让
+             管理层或骨干看到。放在最末是因为它不影响名片本身，改了也不会
+             触发员工端审核流。 -->
+        <el-form-item label="团队成员">
+          <el-switch v-model="form.showTeamEntry" active-text="显示" inactive-text="不显示" />
+          <p class="field-tip">
+            开启后，该员工在小程序「我的」页能看到「团队成员」入口，查看企业全员名片。
+            关闭不影响名片墙本身（访客扫码仍能看到），只是员工菜单里不出现这一项。
+          </p>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -333,6 +344,9 @@ const form = reactive({
   landline: '',
   email: '',
   avatar: '',
+  // 小程序「我的」页是否显示「团队成员」入口。默认 false：这是额外开放的能力，
+  // 必须由管理员逐个勾选（后端列默认值同样是 0）。
+  showTeamEntry: false,
 })
 const rules: FormRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
@@ -369,6 +383,8 @@ function openEdit(row: any) {
   form.landline = row.landline || ''
   form.email = row.email
   form.avatar = row.avatar
+  // 老库 / 老接口没这个字段时按 false 处理，与「默认不显示」口径一致
+  form.showTeamEntry = !!row.showTeamEntry
   formRef.value?.clearValidate()
   dialogVisible.value = true
 }
@@ -389,6 +405,7 @@ function resetForm() {
   form.landline = ''
   form.email = ''
   form.avatar = ''
+  form.showTeamEntry = false
   editingId.value = null
   formRef.value?.clearValidate()
 }

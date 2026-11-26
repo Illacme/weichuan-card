@@ -61,11 +61,11 @@
 > 把当前版本作为产品初始版，数据库脚本按商业软件惯例分两条路径：
 > ① **全新初始化安装**：`backend/migrations/0001_init.sql` 是**纯净终态 schema**——
 > 只有 28 张表的 `CREATE TABLE IF NOT EXISTS`，不含任何历史 `ALTER` / 数据搬迁 `UPDATE` / `DROP`；
-> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源仍是那 62 个增量），
+> 由 `scripts/gen_migrations_clean_schema.py` 从 history 推演生成（真值源是 history 全部增量，截至 0063 为 63 个），
 > `baseline_fidelity_test.go` 静态守门纯净性。建表后由**安装向导**写 sys_setting / 初始超管 /
 > 签发 JWT·PII 密钥，内置文件存储由 `storageprofile/builtin.go` ensure——
 > **数据初始化不提供静态 SQL**：bcrypt 口令、密钥签发、凭据交互生成，静态 SQL 既不安全也不自洽。
-> ② **升级安装**：62 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
+> ② **升级安装**：63 个历史增量保留在 `migrations/history/`，按 `schema_migrations` 记账逐次应用；
 > 执行器与编译期清单只扫顶层，归档不进全新部署包，`deploy_frontend.sh` 修复命令显式排除它。
 > 两条路径的结构等价由 `clean_schema_parity_test.go` 在 CI 的真实 MySQL 里对账（建两个库分别跑，
 > 逐表逐列逐索引比对），生成器推演错了立刻红，不靠人肉维护。
@@ -6745,3 +6745,63 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vitest run` | 118 文件 / 2002 例，本轮相关 2001 例全绿；1 例仍是工作区未提交的品牌名改动触发（`app.json` / `utils/brand.ts`） |
 | 后端 | 本轮未改后端 |
 | CI | 提交 `1b493a4`，run `45779820013`，15 job 全绿（`2852edb` 首版放名片页，已被用户否掉并撤回） |
+
+## 第一百零九轮：名片墙返回按钮与「团队成员」员工级开关（2026-11-26）
+
+上一轮把入口从名片页挪到「我的」页之后，露出两个问题：从「团队成员」点进去的名片墙回不来；而且入口对所有员工一律可见——管理员没有任何办法决定开给谁。
+
+### 一、名片墙返回按钮按页面栈条件显示
+
+**根因**：名片墙进得去、出不来。「我的」页是 `navigateTo` 进来的，系统返回键能用；但如果名片墙是被 `reLaunch` 改道进来的（后台配了默认员工入口），
+页面栈只剩一页，系统返回键落空。用户要的是：**从「团队成员」进来的要有返回，直接启动小程序的不要有**——后者若也画一个「返回」，点了无处可去。
+
+**修法**：判据用 `getCurrentPages().length > 1`，不用自传 `from` 参数。
+
+- 传参方案要逐个维护所有入口，今天 `navigateTo` 两处、明天扫码进入一处、后天分享卡片一处，迟早漏一个；栈长是事实，不依赖调用方自觉。
+- 裸启动 / 扫码 / `reLaunch` 改道进栈长度恒为 1 → 不画按钮；任何 `navigateTo` 进来恒 ≥ 2 → 画按钮。
+- 抽 `stackLength()` 做能力检测：`typeof getCurrentPages !== 'function'` 或抛错时返回 1。小程序基座一定有这个全局，但 vitest 环境没有，直接调用 `onLoad` 会 `TypeError` 白屏，30+ 例全红。
+- `goBack()` 失败兜底 `reLaunch({url:'/pages/index/index'})`，不让按钮变死键（例如栈被意外清空）。
+- 样式用 `position:absolute; left:24rpx` 挂在导航栏内层，标题才能保持严格居中，不因有无返回按钮而左右偏移。
+
+### 二、「团队成员」改成员工级开关，默认关闭
+
+**产品口径**：看全员名单是**额外开放的能力**，不是每个员工的默认权利。默认 `true` 等于升级当天给所有员工凭空多出一项管理员没同意过的菜单。
+所以 `show_team_entry` 默认 `0`，必须由管理员在「员工管理 → 编辑 → 团队成员」逐个勾选。
+
+**链路**（数据库 → 模型 → 后台 → 小程序）：
+
+- `history/0063_employee_show_team_entry.sql`：`employees.show_team_entry TINYINT(1) NOT NULL DEFAULT 0`。表名是复数 `employees`，写错生成器会报「ALTER 的表不存在」。
+- `model.Employee.ShowTeamEntry`（`default:false`）+ 重生成 `0001_init.sql` + `gen_migrations_manifest.py` + `baseline_fidelity_test.go` 62→63。
+- `apply.go` 三处：编辑请求体加字段、`updates` map 加该列、新建时赋值；`/api/employee/me` **根级**回 `showTeamEntry`——不塞进 `data`，不动 `Employee` 契约。
+- 前端 `Employees.vue` 加 `el-switch`，`openEdit` 用 `!!row.showTeamEntry` 回填。
+
+**两个易错点**：
+
+1. **关闭必须显式传 `false`**。后端 `updates` 走 map，省略键等于保持原值，`omitempty` 会让「开了关不掉」。前端 `EmployeePayload.showTeamEntry?` 注释已写明。
+2. **前端判断用 `r.showTeamEntry === true`，不用 `!!`**。JSON 里若是字符串 `'false'`，`!!'false'` 是 `true`，入口会误显示。
+
+**退出登录要清**：`logout()` 的 `setData` 补 `showTeamEntry: false`。否则残留状态会让下一个在本机登录的员工（可能是另一个人）看到不属于他的入口。这条是写用例时抓出来的——首版漏了，用例直接红。
+
+### 守门与反向验证
+
+- `employee_team_entry_test.go` 七例：新建默认 false、列表出参含该字段、`me` 回 false、开启后回 true、**关掉必须真正写回 false**、名片墙本身不受影响、新建时即可勾选。
+- `team.spec.ts` 五例：裸启动 `canBack=false`、栈长 2 为 true、无 `getCurrentPages` 按 false、`goBack` 走 `navigateBack` 且失败兜底 `reLaunch`、源码级接线守门。
+- `Employees.spec.ts` 四例：默认关闭、编辑回填且关掉传 `false`、老数据无字段按 false、弹窗关闭后重置。
+- `employee_me.spec.ts` 三例：true 显示、缺字段/`false`/字符串 `'false'` 都不显示、退出清掉。
+- `harness.ts` 新增 `installPageStack()`，给 vitest 补 `getCurrentPages` 桩。
+- 反向验证：后端把 `"show_team_entry": req.ShowTeamEntry` 改成硬编码 `true` → 「关掉必须真正写回 false」立刻红，还原复绿；前端临时删 `form.showTeamEntry` 初始值与 `openEdit` 回填 → 2 例红，从备份还原后 17 例复绿。
+
+### 取舍
+
+- **不用 `from` 参数判返回**：参数要每个入口维护一遍，栈长是既成事实。
+- **开关粒度到员工、不到企业**：企业级开关会让「只给销售主管开」这种常见诉求无从表达；名片墙本身不受开关影响（访客扫码照常能看），开关只管员工端菜单里那一行。
+- **`me` 接口回根级字段而不扩 `data`**：`data` 是 `Employee` 契约，被多处消费；多塞一个菜单开关会把身份数据和界面配置混在一起。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `gofmt -l .` / `go vet ./...` / `go test -count=1 ./...` | 无输出 / 无输出 / 36 包全绿 |
+| 前端 `vue-tsc --noEmit` / `eslint .` | 0 错 / 0 报错 |
+| OpenAPI 对齐 `check_openapi.py` | 137 paths / 136 路由全部对齐 |
+| 迁移链 | `history/0063` + 纯净 schema 重生成 + manifest 重生成 + 基线保真 63 一致 |

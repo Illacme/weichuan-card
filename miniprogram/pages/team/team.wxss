@@ -20,6 +20,34 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+/* 返回按钮绝对定位在左侧：标题仍严格居中，不因有没有返回按钮而左右偏移。
+   左内边距 24rpx 与微信原生返回键的视觉位置接近。 */
+.team-nav-back {
+  position: absolute;
+  left: 24rpx;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding-right: 16rpx;
+}
+.team-nav-back-hover {
+  opacity: .55;
+}
+/* 箭头用 CSS 画（旋转 45° 的两条边），不引入图片：随字号缩放、不发白、不额外请求 */
+.team-nav-back-arrow {
+  width: 18rpx;
+  height: 18rpx;
+  border-left: 4rpx solid #1b2a3a;
+  border-bottom: 4rpx solid #1b2a3a;
+  transform: rotate(45deg);
+  margin-right: 8rpx;
+}
+.team-nav-back-text {
+  font-size: 30rpx;
+  color: #1b2a3a;
 }
 .team-nav-title {
   font-size: 32rpx;

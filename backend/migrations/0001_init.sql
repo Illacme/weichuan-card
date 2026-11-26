@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS employees (
   INDEX idx_emp_phone_bidx (phone_bidx, company_id),
   INDEX idx_emp_phone2_bidx (phone2_bidx, company_id),
   INDEX idx_emp_email_bidx (email_bidx, company_id),
-  INDEX idx_emp_nickname_bidx (nickname_bidx, company_id)
+  INDEX idx_emp_nickname_bidx (nickname_bidx, company_id),
+  show_team_entry TINYINT(1) NOT NULL DEFAULT 0
+  COMMENT '小程序「我的」页是否显示「团队成员」入口（名片墙），默认不显示'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS company_infos (

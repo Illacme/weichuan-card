@@ -21,6 +21,13 @@
      确认是名片墙后换企业简称，错误态给中性标题；改道中始终留白。 -->
 <view class="team-custom-nav wc-theme {{themeClass}}" style="padding-top: {{statusBarHeight}}px;">
   <view class="team-nav-inner">
+    <!-- 返回：只有「从别的页面 navigateTo 进来」时才出现（见 team.ts 的 canBack）。
+         裸启动 / 扫码 / 改道进来时页面栈里没有可返回的上一页，画一个点了没反应的
+         返回箭头比不画更糟——访客会以为小程序坏了。 -->
+    <view class="team-nav-back" wx:if="{{canBack}}" bindtap="goBack" hover-class="team-nav-back-hover">
+      <view class="team-nav-back-arrow"></view>
+      <text class="team-nav-back-text">返回</text>
+    </view>
     <view class="team-nav-title" wx:if="{{!redirecting && navTitle}}">{{navTitle}}</view>
   </view>
 </view>

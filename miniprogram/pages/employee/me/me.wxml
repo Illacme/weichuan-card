@@ -41,10 +41,11 @@
         <text class="cell-label">生成海报</text>
         <text class="cell-arrow">›</text>
       </view>
-      <!-- 团队成员（名片墙）：只对**已登录员工**开放，访客分享出去的名片页不放这个入口——
-           企业要传播的是销售自己的名片，让访客顺手看见「这家公司还有谁」是替企业做决定。
-           员工自己要看全员时从这里进，不打扰访客链路。 -->
-      <view class="cell" bindtap="goTeam" hover-class="cell-hover">
+      <!-- 团队成员（名片墙）：按员工逐个开放，后台「员工管理 → 编辑 → 团队成员」勾选，
+           **默认不显示**。看全员名单是额外能力，不是每个员工都该有。
+           入口只在登录后的「我的」里，名片页（访客分享链路）不放——企业要传播的是
+           销售自己的名片，把「这家公司还有谁」摆在访客眼前是替企业做决定。 -->
+      <view class="cell" bindtap="goTeam" hover-class="cell-hover" wx:if="{{showTeamEntry}}">
         <text class="cell-label">团队成员</text>
         <text class="cell-value">看全员名片</text>
         <text class="cell-arrow">›</text>

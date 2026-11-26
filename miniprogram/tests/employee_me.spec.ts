@@ -169,6 +169,56 @@ describe('employee/me 页', () => {
     expect(wxStub.reLaunch).not.toHaveBeenCalled()
   })
 
+  // 团队成员入口是**按员工逐个开放**的额外能力，默认不显示：
+  // 后端 /api/employee/me 根级回 showTeamEntry，只有 === true 才亮出来。
+  it('后端回 showTeamEntry=true：入口显示', async () => {
+    storage.set('empToken', 'emp-token')
+    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: true })
+    const p = await page()
+
+    await p.onShow()
+    await flush()
+
+    expect(p.data.showTeamEntry).toBe(true)
+  })
+
+  it('后端没回 / 回 false / 回字符串 "false"：一律不显示（默认关闭）', async () => {
+    storage.set('empToken', 'emp-token')
+
+    // 缺字段（老后端 / 老库没跑迁移）
+    mocks.request.mockResolvedValueOnce({ ...meData })
+    let p = await page()
+    await p.onShow()
+    await flush()
+    expect(p.data.showTeamEntry).toBe(false)
+
+    // 明确 false
+    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: false })
+    p = await page()
+    await p.onShow()
+    await flush()
+    expect(p.data.showTeamEntry).toBe(false)
+
+    // 字符串 "false"：!! 会把它当 true 放进来，必须用 === true 挡住
+    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: 'false' })
+    p = await page()
+    await p.onShow()
+    await flush()
+    expect(p.data.showTeamEntry).toBe(false)
+  })
+
+  it('退出登录 / 令牌失效：入口状态一起清掉，不残留给下一个人', async () => {
+    storage.set('empToken', 'emp-token')
+    mocks.request.mockResolvedValueOnce({ ...meData, showTeamEntry: true })
+    const p = await page()
+    await p.onShow()
+    await flush()
+    expect(p.data.showTeamEntry).toBe(true)
+
+    p.onLogoutTap()
+    expect(p.data.showTeamEntry).toBe(false)
+  })
+
   it('「团队成员」只出现在已登录分组里，未登录看不到（不渲染给自己登录访客）', () => {
     const wxml = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pages/employee/me/me.wxml'),
@@ -177,7 +227,9 @@ describe('employee/me 页', () => {
     const guestBlock = wxml.slice(wxml.indexOf('class="section guest"'), wxml.indexOf('<!-- 已登录 -->'))
     expect(guestBlock).not.toContain('goTeam')
     const loggedIn = wxml.slice(wxml.indexOf('<!-- 已登录 -->'))
-    expect(loggedIn).toMatch(/bindtap="goTeam"/)
+    // 除了「在已登录块内」，还必须受 showTeamEntry 控制——默认不显示的开关
+    // 少了这个 wx:if，后台没勾选的员工也会看到入口。
+    expect(loggedIn).toMatch(/class="cell" bindtap="goTeam"[^>]*wx:if="\{\{showTeamEntry\}\}"/)
   })
 
   it('名片页不得再出现团队/名片墙入口（访客链路不放导流）', () => {

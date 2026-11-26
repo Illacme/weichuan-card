@@ -101,3 +101,11 @@ export function installApp(globalData: Record<string, any> = {}) {
   vi.stubGlobal('getApp', () => app)
   return app
 }
+
+// installPageStack 桩全局 getCurrentPages。
+// 默认长度 1 = 裸启动（栈里只有当前页），这正是名片墙「不显示返回」的常态。
+// 需要验证「从别的页面进来」的用例自己传 ['pages/employee/me/me', 'pages/team/team']。
+export function installPageStack(pages: string[] = ['pages/team/team']) {
+  vi.stubGlobal('getCurrentPages', () => pages.map((route) => ({ route })))
+  return pages
+}

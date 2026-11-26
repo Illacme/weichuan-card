@@ -11,16 +11,20 @@ import (
 // 小程序名片「座机」行优先展示本人的，为空时回退到公司总机。
 // CompanyID 为租户外键：员工归属企业；登录令牌携带该值实现后台按租户隔离。
 type Employee struct {
-	StaffID      int64     `gorm:"primaryKey;autoIncrement;column:staff_id" json:"staffId"`
-	CompanyID    int64     `gorm:"column:company_id;index" json:"companyId"`
-	Title        string    `gorm:"column:title" json:"title"`       // 职位（对外展示）
-	Avatar       string    `gorm:"column:avatar" json:"avatar"`     // 头像
-	Landline     string    `gorm:"column:landline" json:"landline"` // 座机（办公号，按业务电话处理，不加密）
-	OpenID       string    `gorm:"column:openid" json:"openid"`     // 微信 openid（登录时采集，供后台核实身份）
-	PasswordHash string    `gorm:"column:password_hash" json:"-"`
-	Status       string    `gorm:"column:status;default:enabled" json:"status"` // enabled / disabled
-	TokenVersion int       `gorm:"column:token_version;default:0" json:"-"`     // 安全戳：改密/禁用自增，令旧令牌失效
-	CreatedAt    time.Time `gorm:"column:created_at" json:"createdAt"`
+	StaffID      int64  `gorm:"primaryKey;autoIncrement;column:staff_id" json:"staffId"`
+	CompanyID    int64  `gorm:"column:company_id;index" json:"companyId"`
+	Title        string `gorm:"column:title" json:"title"`       // 职位（对外展示）
+	Avatar       string `gorm:"column:avatar" json:"avatar"`     // 头像
+	Landline     string `gorm:"column:landline" json:"landline"` // 座机（办公号，按业务电话处理，不加密）
+	OpenID       string `gorm:"column:openid" json:"openid"`     // 微信 openid（登录时采集，供后台核实身份）
+	PasswordHash string `gorm:"column:password_hash" json:"-"`
+	Status       string `gorm:"column:status;default:enabled" json:"status"` // enabled / disabled
+	TokenVersion int    `gorm:"column:token_version;default:0" json:"-"`     // 安全戳：改密/禁用自增，令旧令牌失效
+	// ShowTeamEntry 小程序「我的」页是否显示「团队成员」（名片墙）入口。
+	// 默认 false = 不显示：看全员名单是「额外开放的能力」，必须由管理员逐个勾选。
+	// 名片墙本身不受影响（访客扫体验版二维码仍能看到），这里只管员工端菜单里那一行。
+	ShowTeamEntry bool      `gorm:"column:show_team_entry;default:false" json:"showTeamEntry"`
+	CreatedAt     time.Time `gorm:"column:created_at" json:"createdAt"`
 
 	// ---- PII 明文：只存在内存，不落库（gorm:"-"）。读写由 pii 钩子在边界加解密，
 	//      因此 handler 仍按普通字符串使用这些字段，无感。JSON 名保持不变（对外契约不变）。

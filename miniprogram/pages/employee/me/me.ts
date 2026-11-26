@@ -14,6 +14,9 @@ Page({
     // 是否已绑定微信：由 /api/employee/me 根级下发，「微信一键登录」单元格据此显示状态。
     // 不用 me.openid 是否为空来判断——那是后端的承载字段，产品语义不该由前端猜。
     wechatBound: false,
+    // 是否显示「团队成员」（名片墙）入口：由 /api/employee/me 根级下发，按员工逐个开放，
+    // **默认不显示**。看全员名单是额外能力，不勾就不出现；后台「员工管理 → 编辑 → 团队成员」。
+    showTeamEntry: false,
     // 绑定请求在途：防连点（连点会连发两个 code，后一个必然失效并报错）
     bindingWechat: false,
     pwdVisible: false,
@@ -35,7 +38,7 @@ Page({
   async loadMe() {
     const token = wx.getStorageSync('empToken')
     if (!token) {
-      this.setData({ me: null, pendingModify: false, wechatBound: false })
+      this.setData({ me: null, pendingModify: false, wechatBound: false, showTeamEntry: false })
       return
     }
     const r = await request('GET', '/api/employee/me')
@@ -49,10 +52,13 @@ Page({
         me: r.data,
         pendingModify: !!r.pendingModify,
         wechatBound: !!r.wechatBound,
+        // 三态兜底：后端回 true 才显示；字段缺失 / false / 老版本后端一律不显示。
+        // 用 === true 而不是 !!：字符串 'false' 在 !! 下是 true，会把没开的人放进来。
+        showTeamEntry: r.showTeamEntry === true,
       })
     } else {
       // token 失效（拦截器已清 storage）：回到未登录态
-      this.setData({ me: null, pendingModify: false, wechatBound: false })
+      this.setData({ me: null, pendingModify: false, wechatBound: false, showTeamEntry: false })
     }
   },
   // 绑定微信：绑定后下次可直接「微信一键登录」，不用再记密码。
@@ -221,7 +227,9 @@ Page({
     app.globalData.myStaffId = 0
     wx.removeStorageSync('empToken')
     wx.removeStorageSync('empRefreshToken')
-    this.setData({ me: null, pendingModify: false, pwdVisible: false })
+    // showTeamEntry 也要清：它是「这个员工」的开放状态，退出后若残留，
+    // 下一个在本机登录的人（可能是另一个员工）会看到不属于他的入口。
+    this.setData({ me: null, pendingModify: false, pwdVisible: false, showTeamEntry: false })
     if (!silent) wx.showToast({ title: '已退出登录' })
   },
   // 注销账号（PIPL 删除权）：删除本人员工记录及关联 PII。

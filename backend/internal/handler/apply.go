@@ -161,7 +161,12 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			// 单独给一个布尔值，而不是让前端去判 data.openid 是否为空——
 			// 「有没有绑定」是产品语义，前端不该知道它是由 openid 这个字段承载的。
 			"wechatBound": e.OpenID != "",
-			"companyName": companyName, "companyShortName": companyShortName,
+			// 小程序「我的」页是否显示「团队成员」（名片墙）入口：按员工逐个开放，
+			// 默认不显示。放在根级而不是塞进 data——data 是 Employee 契约，小程序
+			// 端多页在消费它；新增一个布尔不需要改动那个结构。
+			// 前端按 true 才渲染，不依赖后端一定回 false（老库没跑迁移时不误显示）。
+			"showTeamEntry": e.ShowTeamEntry,
+			"companyName":   companyName, "companyShortName": companyShortName,
 		})
 	})
 
@@ -710,7 +715,7 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "密码加密失败"})
 			return
 		}
-		emp := model.Employee{CompanyID: cid, Name: req.Name, Phone: req.Phone, Phone2: req.Phone2, Email: req.Email, Title: req.Title, Landline: req.Landline, Avatar: req.Avatar, PasswordHash: hash, Status: "enabled"}
+		emp := model.Employee{CompanyID: cid, Name: req.Name, Phone: req.Phone, Phone2: req.Phone2, Email: req.Email, Title: req.Title, Landline: req.Landline, Avatar: req.Avatar, ShowTeamEntry: req.ShowTeamEntry, PasswordHash: hash, Status: "enabled"}
 		// 建号失败必须报错（同审批路径）：失败时返回 code:0 会让管理员拿到
 		// 一个不存在的员工编号与永远登不进去的密码，且无从察觉。
 		if err := db.Create(&emp).Error; err != nil {
@@ -736,13 +741,14 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 	r.PUT("/api/admin/employees/:id", middleware.AuthMiddleware(db, "admin"), func(c *gin.Context) {
 		id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 		var req struct {
-			Name     string `json:"name"`
-			Title    string `json:"title"`
-			Phone    string `json:"phone"`
-			Phone2   string `json:"phone2"`
-			Landline string `json:"landline"`
-			Email    string `json:"email"`
-			Avatar   string `json:"avatar"`
+			Name          string `json:"name"`
+			Title         string `json:"title"`
+			Phone         string `json:"phone"`
+			Phone2        string `json:"phone2"`
+			Landline      string `json:"landline"`
+			Email         string `json:"email"`
+			Avatar        string `json:"avatar"`
+			ShowTeamEntry bool   `json:"showTeamEntry"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "参数错误"})
@@ -761,6 +767,10 @@ func RegisterApply(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 		}
 		updates := map[string]interface{}{
 			"title": req.Title, "landline": req.Landline, "avatar": req.Avatar,
+			// 小程序「我的」页是否显示「团队成员」：布尔列走 map 更新（与 PII 同一套
+			// Updates），默认不显示，由管理员逐个勾选。注意不能用 omitempty 省略：
+			// 取消勾选就是要把它写回 false，省略等于关不掉。
+			"show_team_entry": req.ShowTeamEntry,
 		}
 		// PII 字段必须显式加密 + 补盲索引（map 更新绕过模型钩子）。
 		for _, kv := range []struct{ col, val string }{

@@ -39,6 +39,19 @@ function setNavTitle(title: string) {
   }
 }
 
+// 当前页面栈长度。包一层是因为 getCurrentPages 不是所有运行时都有
+// （单元测试 / 早期调试环境里直接 undefined），拿不到时按 1 处理——
+// 等价于「没有上一页」，不显示返回按钮，比抛错让整页白屏安全得多。
+function stackLength(): number {
+  try {
+    if (typeof getCurrentPages !== 'function') return 1
+    const pages = getCurrentPages()
+    return Array.isArray(pages) ? pages.length : 1
+  } catch {
+    return 1
+  }
+}
+
 Page({
   data: {
     themeClass: '',
@@ -95,6 +108,10 @@ Page({
     error: false,
     // 企业不存在 / 已停用（后端 code=1），与「公司暂时没有员工」区分开
     unavailable: false,
+    // 是否显示导航栏返回按钮：只有「页面栈里真有上一页」时才显示。
+    // 裸启动（扫码 / 直接打开）与改道进来时栈里没有可返回的页面，
+    // 画一个点了没反应的返回比不画更糟。见 onLoad 里怎么判定。
+    canBack: false,
   },
 
   // 搜索 / 清空 / 下拉刷新共用一个守门：连续换关键字时，旧关键字的响应晚回
@@ -114,6 +131,16 @@ Page({
   },
   // catchtouchmove 需要在页面里有对应处理函数，否则控制台会报 noop is not a function。
   noop() {},
+
+  // 返回上一页（从「我的 → 团队成员」进来的场景）。
+  // 兜底：栈顶其实没有上一页时（极端情况下 getCurrentPages 与渲染时机错位）
+  // 走 reLaunch 回名片页，而不是让按钮点了毫无反应。
+  goBack() {
+    wx.navigateBack({
+      delta: 1,
+      fail: () => wx.reLaunch({ url: '/pages/index/index' }),
+    })
+  },
 
   onLoad(query: any) {
     // 先算租户与搜索态：缓存命中时不需要量状态栏 / 绑主题 / 建请求守门。
@@ -168,6 +195,13 @@ Page({
       navHeight: sb + 44,
       // 启动标题取 app.json 配置名；墙态拿到企业名后会被 load() 覆盖。
       navTitle: bootTitle,
+      // 返回按钮只在「栈里真有上一页」时出现。
+      //
+      // 为什么用 getCurrentPages 而不是自己传一个 from 参数：上一页可能是「我的」，
+      // 也可能是任何 navigateTo 过来的页面（比如以后加的入口），栈长度是唯一不需要
+      // 逐个入口维护的判据。裸启动 / 扫码 / reLaunch 改道进来的栈长度恒为 1，
+      // 正好都不会误显示一个返回不了的箭头。
+      canBack: stackLength() > 1,
     })
     if (!this.guard) this.guard = latestGuard()
 

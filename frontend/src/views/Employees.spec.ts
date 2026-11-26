@@ -131,6 +131,22 @@ const ElTableColumn = defineComponent({
   },
 })
 
+// el-switch：外层带 data-model-value，用例据此断言「开关当前是开还是关」，
+// 并可以点击切换（复刻 Element Plus 的点击行为：翻转 modelValue）
+const ElSwitch = defineComponent({
+  name: 'ElSwitch',
+  props: ['modelValue', 'activeText', 'inactiveText'],
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    return () =>
+      h('button', {
+        class: 'el-switch',
+        'data-model-value': String(!!props.modelValue),
+        onClick: () => emit('update:modelValue', !props.modelValue),
+      }, props.modelValue ? props.activeText : props.inactiveText)
+  },
+})
+
 const mountOpts = {
   global: {
     stubs: {
@@ -147,6 +163,7 @@ const mountOpts = {
       'el-pagination': ElPagination,
       'el-table': ElTable,
       'el-table-column': ElTableColumn,
+      'el-switch': ElSwitch,
     },
     // el-table 上的 v-loading 指令在 stub 下无需行为，注册个空指令消除告警
     directives: { loading: {} },
@@ -436,5 +453,96 @@ describe('Employees', () => {
     await vi.waitFor(() => expect(vi.mocked(exportEmployees)).toHaveBeenCalledTimes(1))
     // 缺省无关键字 → 以空串下发（与列表页同口径，导出「当前看到的筛选结果」）
     expect(vi.mocked(exportEmployees)).toHaveBeenCalledWith({ keyword: '' })
+  })
+})
+
+// 团队成员入口开关（2026-11-26）：按员工逐个开放，默认不显示。
+// 三条都必须钉住——漏任何一条都会变成「后台开了不生效」或「开了关不掉」：
+//   1. 默认 false（新建、以及列表里没这个字段的老数据）；
+//   2. 编辑回填已有值，保存时把值带给后端；
+//   3. 关掉也要**显式传 false**（省略就等于保持原值，开关就永远关不掉）。
+describe('Employees · 团队成员入口开关', () => {
+  const rowWith = (extra: any = {}) => ({
+    staffId: 9,
+    name: '赵六',
+    title: '总监',
+    phone: '13600000009',
+    phone2: '',
+    landline: '',
+    email: 'z@a.com',
+    avatar: '',
+    status: 'enabled',
+    createdAt: '2026-01-04 10:00:00',
+    ...extra,
+  })
+
+  async function openEditWith(row: any) {
+    vi.mocked(listEmployees).mockResolvedValueOnce({ list: [row], total: 1, page: 1, size: 10 } as any)
+    const w = mountEmployees()
+    await flushLoad(w)
+    await w.findAll('button.el-button').find((b) => b.text() === '编辑')!.trigger('click')
+    await nextTick()
+    return w
+  }
+
+  it('新增员工：开关默认关闭，保存时带 showTeamEntry:false', async () => {
+    const w = mountEmployees()
+    await flushLoad(w)
+
+    await w.findAll('button.el-button').find((b) => b.text() === '新增员工')!.trigger('click')
+    await nextTick()
+    const sw = w.find('.el-dialog .el-switch')
+    expect(sw.attributes('data-model-value')).toBe('false')
+
+    const inputs = w.findAll('.el-dialog input.el-input')
+    await inputs[0].setValue('新人')
+    await inputs[1].setValue('13600000010')
+    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
+
+    await vi.waitFor(() => expect(vi.mocked(createEmployee)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(createEmployee)).toHaveBeenCalledWith(
+      expect.objectContaining({ showTeamEntry: false })
+    )
+  })
+
+  it('编辑员工：回填已有的开启状态；关掉后保存必须显式传 false', async () => {
+    const w = await openEditWith(rowWith({ showTeamEntry: true }))
+    const sw = w.find('.el-dialog .el-switch')
+    expect(sw.attributes('data-model-value'), '已开启的员工打开编辑时应是开').toBe('true')
+
+    // 关掉 → 保存
+    await sw.trigger('click')
+    await nextTick()
+    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
+    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
+
+    await vi.waitFor(() => expect(vi.mocked(updateEmployee)).toHaveBeenCalledTimes(1))
+    const [id, payload] = vi.mocked(updateEmployee).mock.calls[0] as unknown as [number, any]
+    expect(id).toBe(9)
+    // 必须是显式 false，不能是 undefined——后端按地图更新，省略就是保持原值
+    expect(payload.showTeamEntry).toBe(false)
+  })
+
+  it('老数据没有 showTeamEntry 字段：按关闭处理，不把 undefined 传给后端', async () => {
+    const w = await openEditWith(rowWith())
+    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
+
+    await w.findAll('.el-dialog button.el-button').find((b) => b.text() === '保存')!.trigger('click')
+    await vi.waitFor(() => expect(vi.mocked(updateEmployee)).toHaveBeenCalledTimes(1))
+    const payload = (vi.mocked(updateEmployee).mock.calls[0] as unknown as [number, any])[1]
+    expect(payload.showTeamEntry).toBe(false)
+  })
+
+  it('弹窗关闭后重置：下一次新增不会带上上一次勾过的开关', async () => {
+    const w = await openEditWith(rowWith({ showTeamEntry: true }))
+    // 关闭弹窗（@closed 里 resetForm）
+    const vm = w.vm as any
+    vm.dialogVisible = false
+    await nextTick()
+    await nextTick()
+
+    await w.findAll('button.el-button').find((b) => b.text() === '新增员工')!.trigger('click')
+    await nextTick()
+    expect(w.find('.el-dialog .el-switch').attributes('data-model-value')).toBe('false')
   })
 })

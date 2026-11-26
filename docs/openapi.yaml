@@ -1269,6 +1269,13 @@ paths:
                     description: |
                       本人是否已绑定微信（根级，不在 data 内）。「我的」页据此显示
                       「已绑定 / 点击绑定」，不靠前端猜 data.openid 是否为空。
+                  showTeamEntry:
+                    type: boolean
+                    description: |
+                      本人在小程序「我的」页是否显示「团队成员」（名片墙）入口（根级，
+                      不在 data 内）。按员工逐个开放，**默认 false = 不显示**；
+                      由后台「员工管理 → 编辑 → 团队成员」勾选。端上按 `=== true`
+                      判断，字段缺失一律按不显示处理。
     put:
       tags: [员工端]
       summary: 提交名片信息修改申请（审核通过后才生效）
@@ -1899,6 +1906,11 @@ paths:
                   type: string
                 landline:
                   type: string
+                showTeamEntry:
+                  type: boolean
+                  description: |
+                    小程序「我的」页是否显示「团队成员」（名片墙）入口。**默认 false**，
+                    看全员名单属额外开放的能力，逐个员工勾选。
       responses:
         "200":
           description: code=0 成功；code=1 手机号已存在 / 参数错误
@@ -1953,8 +1965,12 @@ paths:
       tags: [超管-员工管理]
       summary: 编辑员工资料（即时生效，不经过员工端审核流）
       description: |
-        只开放白名单字段：姓名 / 职位 / 手机 / 手机号2 / 座机 / 邮箱 / 头像。
+        只开放白名单字段：姓名 / 职位 / 手机 / 手机号2 / 座机 / 邮箱 / 头像 /
+        showTeamEntry（小程序「我的」页的「团队成员」入口开关）。
         状态、密码各有专门端点（disable/enable/reset-password），此处不混写，避免绕过安全戳逻辑。
+
+        `showTeamEntry` 走地图更新，**取消勾选必须显式传 false**：省略该键等于保持原值，
+        否则「开了关不掉」。
       security:
         - cookieAuth: []
       parameters:
@@ -1986,6 +2002,11 @@ paths:
                   type: string
                 avatar:
                   type: string
+                showTeamEntry:
+                  type: boolean
+                  description: |
+                    小程序「我的」页是否显示「团队成员」（名片墙）入口。关闭时必须显式传
+                    false（省略等于保持原值）。
       responses:
         "200":
           description: code=0 成功；code=1 参数错误（姓名与手机必填）/ 不存在

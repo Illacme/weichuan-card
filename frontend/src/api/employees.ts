@@ -11,6 +11,9 @@ export interface EmployeePayload {
   title?: string
   landline?: string
   avatar?: string
+  // 小程序「我的」页是否显示「团队成员」入口（名片墙）。默认不显示，逐个员工开启。
+  // 编辑时**必须显式传 false** 才能关掉——后端按地图更新，省略等于保持原值。
+  showTeamEntry?: boolean
 }
 
 // 员工列表（服务端分页）。

@@ -47,7 +47,7 @@ frontend/
         ├── Login.vue
         ├── ApplyOpen.vue     # 开通审核（通过弹初始密码 / 驳回）
         ├── ApplyModify.vue   # 修改审核（snapshot 旧值→新值对比）
-        ├── Employees.vue     # 员工管理（新增/启用停用/重置密码）
+        ├── Employees.vue     # 员工管理（新增/启用停用/重置密码/团队成员入口开关）
         ├── WechatBindings.vue # 绑定管理（集中清单 / 代解绑 / 平台超管反查）
         └── content/
             ├── CompanyInfo.vue
@@ -233,7 +233,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
   事件下拉覆盖八类、对象列渲染。
 - `src/components/StatTrend.spec.ts`（13 例）：趋势图几何与交互——折线连点、轴刻度、
   **图例点选（默认三线 / 勾选后纵轴重算 / 最后一项点不掉）**、tooltip、空态与 NaN 兜底。
-- `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等；微信绑定列只出状态 + 掩码。
+- `src/views/Employees.spec.ts`：员工管理页视图层用例——列表渲染、启用/停用/重置密码的弹窗确认与接口调用、`el-table` 行上下文（provide/inject 复刻列槽 `{ row }`）等；微信绑定列只出状态 + 掩码；**团队成员入口开关**（默认关闭、编辑回填、关掉必须显式传 `false`、弹窗关后重置不串到下一次新增）。
 - `src/components/WechatBindingCell.spec.ts`（9 例）：绑定状态单元格的四种表现（已绑 / 未绑 / 掩码为空 / compact），外加**三页接入静态守门**（三个账号页都要有 `prop="wechatBound"` 列、传的是掩码字段、员工页不再铺开 `openid` 明文列）与**安全底线**（`model.Admin.WXOpenID` 仍是 `json:"-"`）。静态守门先剥注释，避免注释里的历史写法造成假红/假绿；另由 `Companies.spec.ts` / `Employees.spec.ts` 的真实 DOM 断言（`data-bound`）兜住「源码里有、实际没渲染」。
 - `src/views/WechatBindings.spec.ts`（18 例）：绑定管理页——清单两类账号 + 企业 + 掩码、服务端分页参数、类型筛选带 `kind`、空态给出「由本人到小程序绑定」的出路；**解绑二次确认的三个后果**（免密入口失效 / 令牌失效 / 后台不能代绑）、取消不发请求、`kind+id` 定位、`self=true` 时清登录态跳登录页；**反查平台超管专属**（企业管理员连入口都看不到）、空值不发请求、完整 openid 只进请求体且结果只显掩码/输入框清空、反查结果里解绑就地移除不重发 lookup；静态守门钉住「每列 `prop`」「api 层没有代绑函数」「页面不写 localStorage」「路由不误标 `platformOnly`」。
 - `src/views/ApplyOpen.spec.ts`（19 例）：开通审核——三种状态标签与「已处理」行无操作按钮、副号下沉与缺失昵称/openid 的占位、关键字防抖后回第 1 页、手机端卡片列表；**通过后密码弹窗必现并带「仅展示一次」**、**审批后行就地变「已处理」**（不刷新按钮还在，点第二下等于建两个员工账号）、审批失败不弹空密码窗、**驳回原因空/纯空格都点不动**、重开能清掉上次原因、驳回失败不关窗不误报成功；**「提交时间必须是第一列」静态守门 3 例**（读模板钉住列顺序与 `prop="createdAt"`、时间列只出现一次、手机卡片首行也是提交时间）。

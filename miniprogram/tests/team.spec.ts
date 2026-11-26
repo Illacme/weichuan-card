@@ -24,6 +24,7 @@ import {
   makeInstance,
   installWx,
   installApp,
+  installPageStack,
   flush,
 } from './helpers/harness'
 
@@ -58,6 +59,9 @@ beforeEach(() => {
   wxStub = installed.wx
   storage = installed.storage
   installApp({ myStaffId: 0 })
+  // 默认按裸启动装页面栈（长度 1）。名片墙的返回按钮只在栈里真有上一页时出现，
+  // 让默认值等于「扫码 / 直接打开」这个最常见场景，少数用例自己覆写。
+  installPageStack()
   mocks.request.mockClear()
 })
 
@@ -603,5 +607,66 @@ describe('名片墙 · 首屏渲染守门', () => {
     expect(WXML).toMatch(/class="team-hero[^"]*" wx:if="\{\{!booting && !redirecting/)
     expect(WXML).toMatch(/class="team-search[^"]*" wx:if="\{\{!booting && !redirecting/)
     expect(WXML).toMatch(/wx:elif="\{\{!redirecting\}\}"/)
+  })
+})
+
+// 返回按钮（2026-11-26）：名片墙有两个入口——裸启动（扫码 / 直接打开）与
+// 员工从「我的 → 团队成员」navigateTo 进来。后者必须能返回，前者栈里没有上一页，
+// 画个点了没反应的箭头比不画更糟。判据是页面栈长度，不是某个 from 参数：
+// 上一页可能来自任何 navigateTo 的页面，逐个入口维护参数迟早漏。
+describe('名片墙 · 返回按钮（按页面栈决定有无）', () => {
+  it('裸启动（栈里只有自己）：canBack=false，不渲染返回箭头', async () => {
+    installPageStack(['pages/team/team'])
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    const p = await page()
+
+    expect(p.data.canBack).toBe(false)
+  })
+
+  it('从「我的」navigateTo 进来（栈长度 2）：canBack=true', async () => {
+    installPageStack(['pages/employee/me/me', 'pages/team/team'])
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    const p = await page({ skipEntryCache: '1' })
+
+    expect(p.data.canBack).toBe(true)
+  })
+
+  it('运行时拿不到 getCurrentPages：按「没有上一页」处理，不抛错不显示', async () => {
+    vi.stubGlobal('getCurrentPages', undefined)
+    mocks.request.mockResolvedValueOnce(teamResp())
+
+    const p = await page()
+
+    expect(p.data.canBack).toBe(false)
+  })
+
+  it('点返回走 navigateBack；栈里其实没有上一页时兜底 reLaunch 回名片页', async () => {
+    installPageStack(['pages/employee/me/me', 'pages/team/team'])
+    mocks.request.mockResolvedValueOnce(teamResp())
+    const p = await page({ skipEntryCache: '1' })
+
+    p.goBack()
+    expect(wxStub.navigateBack).toHaveBeenCalledWith(expect.objectContaining({ delta: 1 }))
+
+    // 兜底分支：navigateBack 失败不能让按钮变成死键
+    wxStub.navigateBack.mockImplementationOnce((opt: any) => opt && opt.fail && opt.fail())
+    p.goBack()
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/index/index' })
+  })
+
+  it('源码级接线：按钮受 canBack 约束、绑定 goBack、栈长度判据走 length > 1', () => {
+    const dir = dirname(fileURLToPath(import.meta.url))
+    const wxml = readFileSync(resolve(dir, '../pages/team/team.wxml'), 'utf-8')
+    const wxss = readFileSync(resolve(dir, '../pages/team/team.wxss'), 'utf-8')
+    const ts = readFileSync(resolve(dir, '../pages/team/team.ts'), 'utf-8')
+
+    // 少任何一端——按钮没渲染、没绑 goBack、判据写反——都会变成死键或裸启动多出返回
+    expect(wxml).toMatch(/class="team-nav-back" wx:if="\{\{canBack\}\}" bindtap="goBack"/)
+    expect(ts).toMatch(/canBack: stackLength\(\) > 1/)
+    // 返回键绝对定位在左侧，标题才能保持严格居中（否则有无返回按钮标题会左右偏）
+    expect(wxss).toMatch(/\.team-nav-back\s*\{[^}]*position:\s*absolute[^}]*left:/s)
+    expect(wxss).toMatch(/\.team-nav-inner\s*\{[^}]*position:\s*relative/s)
   })
 })
