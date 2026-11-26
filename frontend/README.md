@@ -287,7 +287,7 @@ npm run dev        # 启动开发服务器（默认 http://localhost:5173）
 - `entry.spec.ts`（11 例）：「默认入口」本地缓存的边界——**按租户分键**（不分键会把 A 企业的默认员工套到 B 企业）、TTL 边界（等于 TTL 仍有效、超过才过期）、**本机时钟回拨按过期处理**、坏数据不抛异常、`staffId<=0` 不写入。时间全部走可注入的 `now`/`at`，不依赖真实时钟。
 - `postersnap.spec.ts`（12 例）：海报页图片地址快照的边界——**按员工分键**、TTL 边界、**时钟回拨按过期**、**只认 http(s) 绝对地址**（相对路径会让 `createImage` 静默失败却占住失败锁）、三项全空不落库、`staffId<=0` 不读不写、脏数据与 `at` 缺失当没有、`clear` 自愈、写存储抛异常不影响调用方。同样全部走可注入的 `now`/`at`。
 - `apply_open.spec.ts`（17 例）：企业名简称回落、头像上传三种响应（成功 / 业务错误 / 非 JSON）、昵称授权、提交校验与 `saving` 复位、返回兜底。
-- `employee_me.spec.ts`（14 例）：未登录与失效回退、头像绝对化 + `globalData` 回写、改密三条校验、**改密成功后延时静默登出**、退出清两个令牌。
+- `employee_me.spec.ts`（24 例）：未登录与失效回退、头像绝对化 + `globalData` 回写、**已登录点「我的名片」reLaunch 到自己的编号（不被默认入口纠正）/ 未登录仍 navigateBack**、改密三条校验、**改密成功后延时静默登出**、退出清两个令牌。
 - `employee_edit.spec.ts`（13 例）：回填与头像绝对化、备用手机号**收起即清空**、上传三条支线、提交待审。
 - `project_list.spec.ts`（15 例）：分类根级、`toView` 滚动定位、标题回显与三种回落、切换分类去重。
 - `project_detail.spec.ts`（16 例）/ `service_detail.spec.ts`（11 例）：绝对 URL、富文本片段、时间格式化、空态文案、分享回带 `companyId`、相册预览、**加载成功上报 view 埋点（失败/不存在不上报）**、**分享上报 share 且带 targetId**。

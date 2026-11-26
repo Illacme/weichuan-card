@@ -116,9 +116,20 @@ Page({
   goPrivacy() {
     wx.navigateTo({ url: '/pages/privacy/privacy' })
   },
-  // 返回名片首页：底部 tabBar 已移除，「我的」页由 navigateTo 进入，返回用 navigateBack；
-  // 若栈内已无名片页（极端入口），兜底 reLaunch 回名片页
+  // 返回名片首页。已登录与未登录的语义完全不同，不能一律 navigateBack：
+  //   - 未登录的访客：从哪张名片进「我的」就回哪张，navigateBack 复用页面实例即可；
+  //   - 已登录的员工：进来时那张可能是后台配的「默认名片」（或别人分享的名片），
+  //     他要的是**自己**那张。navigateBack 复用旧实例，staffId 还是那张名片，
+  //     onLoad 不会重跑、onShow 又只刷头像不重取名片，于是点「我的名片」毫无反应。
+  //     这里必须 reLaunch 重建页面、带上自己的编号，让 onLoad 按新 staffId 取数。
+  //     不带 fromEntryCache：否则 index 的 reconcileEntry 会把他纠正回后台默认那位。
   goMyCard() {
+    const app = getApp() as any
+    const myStaffId = (app && app.globalData && app.globalData.myStaffId) || 0
+    if (myStaffId > 0) {
+      wx.reLaunch({ url: '/pages/index/index?staffId=' + myStaffId })
+      return
+    }
     wx.navigateBack({
       delta: 1,
       fail: () => wx.reLaunch({ url: '/pages/index/index' }),

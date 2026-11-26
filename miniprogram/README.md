@@ -78,7 +78,7 @@ miniprogram/
 
 `admin.mobile_login`（手机端拿到管理员身份）与 `admin.wx_bind`（给某个微信号开管理员入口）都留痕；四个审批接口也补上了 `apply.approve` / `apply.reject`——这两个常量早就有定义，但此前只发订阅消息、没有落审计。
 
-用例见 `tests/admin_request.spec.ts`（7 例）、`tests/admin_entry.spec.ts`（18 例）、`tests/admin_apply.spec.ts`（20 例）、`tests/admin_login.spec.ts`（16 例）、`tests/employee_me.spec.ts`（19 例），后端见 `admin_mobile_test.go`。
+用例见 `tests/admin_request.spec.ts`（7 例）、`tests/admin_entry.spec.ts`（18 例）、`tests/admin_apply.spec.ts`（20 例）、`tests/admin_login.spec.ts`（16 例）、`tests/employee_me.spec.ts`（24 例），后端见 `admin_mobile_test.go`。
 
 > **2026-11-07 真机反馈订正**：上述入口 / 冷却 / 限流文案三条是同一次修复的产物，因果链是「审核页 `onShow` 自动免密 → 页面先渲染再异步 redirect → 闪一下列表 + 打满登录限流桶 → 用户点按钮收到 429 且被套错标题」。修完后真机需复核四件事：点入口不再闪列表、两个按钮居中且单行、绑定过的微信点入口直达审核列表、429 弹窗不再叫「免密登录不可用」。
 
@@ -678,6 +678,13 @@ node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
 
 核对**只在 `fromEntryCache` 为真时生效**：扫码进来看某个人时，`staffId` 本来就不是
 默认入口，这时去「纠正」会把访客从他要看的人那儿弹走。这条有反向用例钉着。
+
+**已登录员工点「我的名片」是例外，不能被默认入口纠正**：员工从后台配的默认名片进「我的」
+登录后，`globalData.myStaffId` 已是自己的编号，但「我的名片」原来用 `navigateBack` 回旧页面
+实例——`staffId` 仍是那张默认名片、`onLoad` 不重跑、`onShow` 只刷头像不重取，于是点了没反应，
+始终停在别人的名片上。现在「我的名片」在已登录时 `reLaunch` 到
+`/pages/index/index?staffId=<自己的编号>`，重建页面按自己的编号取数；不带 `fromEntryCache`
+就不会被 `reconcileEntry` 弹回后台默认那位。未登录访客仍是 navigateBack 回来源名片。
 
 顺带修掉同一现场的两个观感问题：
 

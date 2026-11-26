@@ -121,6 +121,29 @@ describe('employee/me 页', () => {
     expect(wxStub.navigateTo).not.toHaveBeenCalled()
   })
 
+  // 已登录：必须 reLaunch 到自己的名片，不能 navigateBack 复用旧实例。
+  // 旧实例 staffId 还是进来时那张「后台默认名片」，onShow 又不重取数据，
+  // 于是用户点了「我的名片」却仿佛没反应——线上反馈就是这个。
+  it('已登录点「我的名片」：reLaunch 到自己的编号，不带 fromEntryCache', async () => {
+    app.globalData.myStaffId = 42
+    const p = await page()
+
+    p.goMyCard()
+
+    expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/index/index?staffId=42' })
+    expect(wxStub.navigateBack).not.toHaveBeenCalled()
+  })
+
+  it('未登录点「我的名片」：仍是 navigateBack 回来源名片', async () => {
+    app.globalData.myStaffId = 0
+    const p = await page()
+
+    p.goMyCard()
+
+    expect(wxStub.navigateBack).toHaveBeenCalledWith(expect.objectContaining({ delta: 1 }))
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+  })
+
   it('返回名片页：栈内没有名片页时兜底 reLaunch 到首页', async () => {
     const p = await page()
     wxStub.navigateBack.mockImplementationOnce((opt: any) => opt.fail && opt.fail())

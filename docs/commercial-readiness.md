@@ -6675,3 +6675,31 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vitest run` | 118 文件 / 1997 例，本轮相关 1996 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
 | 后端 | 本轮未改后端 |
 | CI | 提交 `cb68016`，run `45770000394`，15 job 全绿 |
+
+## 第一百零七轮：小程序登录后切不到自己名片（2026-11-26）
+
+用户反馈：登录自己的账号后，小程序里始终显示后台配的那张固定名片，切不到自己的。
+
+### 根因
+
+后台配「默认进入某位员工」后，名片墙把所有人弹到那张名片（`index?staffId=X&fromEntryCache=1`）。用户在那张名片上进「我的」登录成功后，`globalData.myStaffId` 确实写成了自己的编号；但「我的名片」按钮的 `goMyCard()` 用 `navigateBack` 回旧页面实例——`staffId` 还是 X，`onLoad` 不重跑，`onShow` 只刷头像和埋点、不重新取名片数据。于是点了像没反应，始终停在别人名片上。`reconcileEntry` 还会在 `fromEntryCache` 时把人纠正回后台默认那位。
+
+### 修法
+
+`goMyCard()` 按登录态分流：
+- 已登录（`myStaffId>0`）：`reLaunch` 到 `/pages/index/index?staffId=<自己的编号>`，重建页面按新编号取数。不带 `fromEntryCache`，因此 `reconcileEntry` 不会把他弹回后台默认员工。
+- 未登录访客：保持 `navigateBack` 回来源名片（从哪张进来回哪张），兜底仍 reLaunch 首页。
+
+不改登录成功后的跳转：回「我的」页让用户看到登录态/绑定状态是刻意设计，「我的名片」入口就在资料区，点一下即可切过去。不为「登录后直接跳名片」改动两种登录方式共用的收尾逻辑。
+
+### 守门与反向验证
+
+`employee_me.spec.ts` 加两条对照（已登录 reLaunch 带自己编号且 navigateBack 未调用 / 未登录仍 navigateBack），并把「我的名片」用例从 14→24 例的表述同步到两份 README。反向验证：把 `if (myStaffId > 0)` 改成恒假，新断言立刻红，还原复绿。`index_home.spec.ts` 61 例全绿，确认带 staffId 进入的路径本就正常——问题只在返回方式。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
+| 前端 `vitest run` | 118 文件 / 1999 例，本轮相关 1998 例全绿；1 例仍是工作区未提交的品牌名改动触发 |
+| CI | 见提交后记录 |
