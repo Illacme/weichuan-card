@@ -6737,3 +6737,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vue-tsc --noEmit` / `eslint .` / `vite build` | 0 错 / 0 报错 / 构建成功 |
 | 前端 `vitest run` | 118 文件 / 2002 例，本轮相关 2001 例全绿；1 例仍是工作区未提交的品牌名改动触发（`app.json` / `utils/brand.ts`） |
 | 后端 | 本轮未改后端 |
+| CI | 提交 `2852edb`，run `45776558654`，15 job 全绿 |
