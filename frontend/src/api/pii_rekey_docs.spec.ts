@@ -240,3 +240,33 @@ describe('上线判据文档：数字与生效口径不回退', () => {
     expect(doc).toContain('51 条断言')
   })
 })
+
+describe('内容安全：多租户推送配置的责任归属不漂移', () => {
+  // 第一百零一轮评估发现的真问题：推送共用一条全局通道，但「谁去各家小程序后台配」
+  // 没有归属方。少一家配置，那家的图就永远停在「待结论」，平台侧还看不到报错。
+  // 三份指引必须同时写清填什么、Token 以谁为准、为什么不会串租户。
+  const GUIDE_DOCS = [
+    resolve(REPO, 'README.md'),
+    resolve(REPO, 'docs/launch-checklist.md'),
+    resolve(REPO, 'docs/deploy-runbook.md'),
+  ]
+  const ANCHORS = ['同一个推送地址', 'Token 必须与平台那把一致', 'trace_id', '全局唯一']
+
+  it('三份手册都写清了各企业小程序该填什么、以谁的 Token 为准', () => {
+    for (const p of GUIDE_DOCS) {
+      const src = read(p)
+      for (const anchor of ANCHORS) {
+        expect(src, `${p.slice(REPO.length + 1)} 缺「${anchor}」`).toContain(anchor)
+      }
+    }
+  })
+
+  it('界面分层不回退：企业管理员分支不能给他指系统设置那条点不开的路', () => {
+    const src = read(resolve(REPO, 'frontend/src/views/platform/ContentSec.vue'))
+    expect(src).toContain("auth.isPlatform ? '推送配置' : '本企业状态'")
+    const enterprise = src.slice(src.indexOf('<div v-else-if='), src.indexOf('当前积压'))
+    expect(enterprise.length, '企业分支没抓到，守门空转').toBeGreaterThan(50)
+    expect(enterprise).toContain('联系平台管理员')
+    expect(enterprise).not.toContain('系统设置 → 微信')
+  })
+})

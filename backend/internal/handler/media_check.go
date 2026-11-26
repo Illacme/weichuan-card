@@ -388,6 +388,11 @@ func listMediaChecks(db *gorm.DB) gin.HandlerFunc {
 //
 // 这三项都是运营在微信公众平台那边要填/要抄的值，散在文档里没人看，
 // 放在界面上才能真的配起来。
+//
+// 字段口径：tokenReady / aesReady / pushUrl 是平台全局（只有平台超管改得了、
+// 也只有他要把推送地址抄到各家小程序后台）；credReady / pending / risky 按当前
+// 企业 cid 解析。接口一次回全部字段，按身份收窄放在前端 ContentSec.vue——
+// 两类管理员共用这个端点，在这里按 role 删字段会让前端分不清「没返回」和「没配」。
 func mediaCheckConfig(db *gorm.DB, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cid := middleware.CurrentCompanyID(c)

@@ -13,42 +13,58 @@
       :closable="false"
       show-icon
       title="图片检测是异步的：上传时送检，结论由微信推送回来"
-      description="微信只提供异步接口，送出去只拿到一个追踪号，判定结果要等「消息推送」推回本系统。所以列表里的「待结论」是正常中间态；长时间停在待结论，通常是消息推送没配好（见下方配置状态）。命中违规后不会自动处理——覆盖是不可逆的，需要人工确认后点「下架」。"
+      :description="alertDesc"
       style="margin-bottom: 14px"
     />
 
-    <!-- 配置状态：把「还缺什么」直接摆出来。这三项散在微信公众平台那边，
-         只写在文档里没人看，放在界面上才真的配得起来。 -->
+    <!-- 两种身份看到的不是同一块：企业管理员只关心「本企业有几张要处置」，
+         推送配置由平台超管在「系统设置」里维护，企业管理员进不去那页——
+         把 Token / 推送地址摆给他，等于指一条他点不开的路。 -->
     <div class="cfg-box">
       <div class="cfg-head">
-        <span class="cfg-title">推送配置</span>
+        <span class="cfg-title">{{ auth.isPlatform ? '推送配置' : '本企业状态' }}</span>
         <el-tag v-if="cfg.enabled" size="small" type="success" effect="plain">检测已开启</el-tag>
-        <el-tag v-else size="small" type="info" effect="plain">检测已关闭（系统设置 → 内容安全检测）</el-tag>
+        <el-tag v-else size="small" type="info" effect="plain">
+          {{ auth.isPlatform ? '检测已关闭（系统设置 → 内容安全检测）' : '检测已关闭' }}
+        </el-tag>
       </div>
-      <div class="cfg-row">
-        <span class="cfg-label">推送地址</span>
-        <code class="cfg-code">{{ cfg.pushUrl || '未配置上传基址，无法推导推送地址' }}</code>
-        <el-button v-if="cfg.pushUrl" size="small" text type="primary" @click="copy(cfg.pushUrl)">
-          复制
-        </el-button>
-      </div>
-      <div class="cfg-row">
-        <span class="cfg-label">就绪情况</span>
-        <span class="tag-row">
-          <el-tag size="small" :type="cfg.credReady ? 'success' : 'danger'" effect="plain">
-            小程序凭据 {{ cfg.credReady ? '已配' : '未配' }}
-          </el-tag>
-          <el-tag size="small" :type="cfg.tokenReady ? 'success' : 'danger'" effect="plain">
-            推送 Token {{ cfg.tokenReady ? '已配' : '未配' }}
-          </el-tag>
-          <el-tag size="small" :type="cfg.aesReady ? 'success' : 'info'" effect="plain">
-            EncodingAESKey {{ cfg.aesReady ? '已配' : '未配（仅安全模式需要）' }}
-          </el-tag>
-        </span>
-      </div>
-      <div v-if="!cfg.tokenReady" class="cfg-warn">
-        没有推送 Token 时<strong>不会送检</strong>——送出去也收不到结论，只会造出一堆永远「待结论」的记录。
-        请到「系统设置 → 微信」填 Token，再把上面的推送地址填到微信公众平台的消息推送配置里。
+      <!-- 平台超管专属：推送地址 / Token / AESKey 都是全局配置，
+           且要抄到微信公众平台，只有能进系统设置的人用得上 -->
+      <template v-if="auth.isPlatform">
+        <div class="cfg-row">
+          <span class="cfg-label">推送地址</span>
+          <code class="cfg-code">{{ cfg.pushUrl || '未配置上传基址，无法推导推送地址' }}</code>
+          <el-button v-if="cfg.pushUrl" size="small" text type="primary" @click="copy(cfg.pushUrl)">
+            复制
+          </el-button>
+        </div>
+        <div class="cfg-row">
+          <span class="cfg-label">就绪情况</span>
+          <span class="tag-row">
+            <el-tag size="small" :type="cfg.credReady ? 'success' : 'danger'" effect="plain">
+              小程序凭据 {{ cfg.credReady ? '已配' : '未配' }}
+            </el-tag>
+            <el-tag size="small" :type="cfg.tokenReady ? 'success' : 'danger'" effect="plain">
+              推送 Token {{ cfg.tokenReady ? '已配' : '未配' }}
+            </el-tag>
+            <el-tag size="small" :type="cfg.aesReady ? 'success' : 'info'" effect="plain">
+              EncodingAESKey {{ cfg.aesReady ? '已配' : '未配（仅安全模式需要）' }}
+            </el-tag>
+          </span>
+        </div>
+        <div v-if="!cfg.tokenReady" class="cfg-warn">
+          没有推送 Token 时<strong>不会送检</strong>——送出去也收不到结论，只会造出一堆永远「待结论」的记录。
+          请到「系统设置 → 微信」填 Token，再把上面的推送地址填到微信公众平台的消息推送配置里。
+        </div>
+        <div class="cfg-row">
+          <span class="cfg-label">配置位置</span>
+          <span class="cfg-hint">系统设置 → 微信（Token / AESKey 改完即时生效）</span>
+        </div>
+      </template>
+      <!-- 企业管理员：只给「联系谁」的出路，不给一堆自己改不了的红色标签 -->
+      <div v-else-if="!cfg.enabled || !cfg.tokenReady" class="cfg-warn">
+        检测未正常开启，当前没有新的违规判定。配置由平台管理员维护，请联系平台管理员处理；
+        已判定的违规图片仍可正常下架。
       </div>
       <div class="cfg-row">
         <span class="cfg-label">当前积压</span>
@@ -129,8 +145,9 @@
 <script setup lang="ts">
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { isSuperseded, latestOnly } from '@/api/latest'
+import { useAuthStore } from '@/store/auth'
 import ImageThumb from '@/components/ImageThumb.vue'
 import {
   SOURCE_LABELS,
@@ -148,6 +165,14 @@ import { formatDateTime } from '@/utils/datetime'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 
 const { isPhone } = useBreakpoint()
+const auth = useAuthStore()
+
+// 顶部说明按身份分流：企业管理员进不了「系统设置」，不给他指那条路。
+const alertDesc = computed(() =>
+  auth.isPlatform
+    ? '微信只提供异步接口，送出去只拿到一个追踪号，判定结果要等「消息推送」推回本系统。所以列表里的「待结论」是正常中间态；长时间停在待结论，通常是推送没配好（见下方配置状态）。命中违规后不会自动处理——覆盖是不可逆的，需要人工确认后点「下架」。'
+    : '微信只提供异步接口，判定结果由平台配置的「消息推送」传回。列表里的「待结论」是正常中间态；长时间停在待结论请反馈给平台管理员。命中违规后不会自动处理——覆盖不可逆，需确认后点「下架」。',
+)
 
 const rows = ref<MediaCheck[]>([])
 const loading = ref(false)
@@ -296,6 +321,10 @@ onMounted(reload)
   padding: 2px 8px;
   border-radius: 4px;
   word-break: break-all;
+}
+.cfg-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 .cfg-warn {
   color: var(--el-color-danger);

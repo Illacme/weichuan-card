@@ -30,14 +30,17 @@ export interface MediaCheck {
 export type MediaCheckStatus = 'pending' | 'pass' | 'review' | 'risky' | 'failed'
 
 // 后台要显示「要让图片检测跑起来还缺什么」，所以除了列表还要这份配置状态。
+// 字段口径不同：token / aes / pushUrl 是**平台全局**配置，只有平台超管进得去系统设置、
+// 也只有他需要把推送地址抄到微信公众平台；credReady 按当前企业解析；pending / risky
+// 按当前企业统计。ContentSec.vue 按 auth.isPlatform 分层渲染，别把全局字段摆给企业管理员。
 export interface MediaCheckConfig {
   enabled: boolean
-  tokenReady: boolean // 消息推送 Token（验签用，必填）
-  aesReady: boolean // EncodingAESKey（安全模式才需要）
-  credReady: boolean // 小程序 AppID / AppSecret
-  pushUrl: string // 要填到微信后台的推送地址
-  pending: number
-  risky: number
+  tokenReady: boolean // 平台全局：消息推送 Token（验签用，必填）
+  aesReady: boolean // 平台全局：EncodingAESKey（安全模式才需要）
+  credReady: boolean // 本企业：小程序 AppID / AppSecret
+  pushUrl: string // 平台全局：要填到微信后台的推送地址
+  pending: number // 本企业
+  risky: number // 本企业
 }
 
 export const STATUS_LABELS: Record<MediaCheckStatus, string> = {

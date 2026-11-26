@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/api/mediaCheck', async (orig) => {
   const actual = (await orig()) as Record<string, unknown>
@@ -21,6 +22,7 @@ import {
   type MediaCheck,
 } from '@/api/mediaCheck'
 import ContentSec from './ContentSec.vue'
+import { useAuthStore } from '@/store/auth'
 
 const SIGNAL = expect.objectContaining({
   signal: expect.objectContaining({ aborted: expect.any(Boolean) }),
@@ -126,7 +128,10 @@ function mockConfig(over: Record<string, unknown> = {}) {
   }) as any)
 }
 
-async function setup() {
+// 页面按 auth.isPlatform 分成两套视图：默认按平台超管跑（守住老断言），
+// 传 false 切到企业管理员，验证他看不到自己改不了的全局配置。
+async function setup(isPlatform = true) {
+  useAuthStore().isPlatform = isPlatform
   const w = mount(ContentSec, mountOpts)
   await vi.waitFor(() => expect(listMediaChecks).toHaveBeenCalled())
   await nextTick()
@@ -135,6 +140,7 @@ async function setup() {
 
 describe('ContentSec 内容安全', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.mocked(listMediaChecks).mockReset()
     vi.mocked(getMediaCheckConfig).mockReset()
     vi.mocked(listMediaChecks).mockImplementation(async () => ({
@@ -174,18 +180,41 @@ describe('ContentSec 内容安全', () => {
     expect(listMediaChecks).toHaveBeenCalledWith(expect.objectContaining({ onlyTakedownable: '1' }), SIGNAL)
   })
 
-  it('没配推送 Token 时明确提示「不会送检」', async () => {
+  it('平台超管：没配推送 Token 时明确提示「不会送检」', async () => {
     mockConfig({ tokenReady: false })
-    const w = await setup()
+    const w = await setup(true)
     // 这是最容易被误解的一条：送检能成功、结论永远收不到，
     // 界面上必须直说「不会送检」，否则运营会以为图片在检。
+    expect(w.find('.cfg-title').text()).toBe('推送配置')
+    expect(w.text()).toContain('推送 Token 未配')
     expect(w.text()).toContain('不会送检')
     expect(w.text()).toContain('待结论')
   })
 
-  it('推送地址显示出来供复制（运维要抄到微信后台）', async () => {
-    const w = await setup()
+  it('平台超管：推送地址显示出来供复制（运维要抄到各家小程序后台）', async () => {
+    const w = await setup(true)
     expect(w.text()).toContain('https://card.example.com/api/wechat/msgpush')
+    expect(w.text()).toContain('系统设置')
+  })
+
+  it('企业管理员：只给本企业状态与联系人，不摆他进不去的推送配置', async () => {
+    mockConfig({ tokenReady: false })
+    const w = await setup(false)
+    const text = w.text()
+    expect(w.find('.cfg-title').text()).toBe('本企业状态')
+    // 这三项都要抄到各家小程序后台，只有平台超管改得了；摆给企业管理员
+    // 等于让他照着一条点不开的路排查，旧版本就是这么设计的。
+    expect(text).not.toContain('推送地址')
+    expect(text).not.toContain('推送 Token')
+    expect(text).not.toContain('EncodingAESKey')
+    expect(text).not.toContain('https://card.example.com/api/wechat/msgpush')
+    expect(text).not.toContain('系统设置')
+    expect(text).not.toContain('不会送检')
+    // 但本企业该处置的数和「找谁修」必须留下
+    expect(text).toContain('待结论 1')
+    expect(text).toContain('违规未处置 1')
+    expect(text).toContain('联系平台管理员')
+    expect(text).toContain('请反馈给平台管理员')
   })
 })
 
