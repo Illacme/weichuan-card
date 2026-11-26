@@ -472,17 +472,6 @@ Page({
   goMe() {
     wx.navigateTo({ url: '/pages/employee/me/me' })
   },
-  // 右上角「团队」入口：后台把默认入口设成某位员工时，裸启动会从名片墙直接改道
-  // 到这张名片，访客就再也没有办法看到「这家公司还有谁」。这里给一张可见的回墙入口。
-  //
-  // 为什么带 skipEntryCache=1：不带的话墙会读上次记住的默认入口，又立刻把人弹回同一张
-  // 名片，等于按钮点了没反应。带了这个标记，墙会清掉那份缓存并走 load({noRedirect:true})，
-  // 即使后台此刻仍配着默认员工也照常渲染墙（见 pages/team/team.ts）。
-  // 不额外带 companyId：onLoad 已 bindCompanyFromScene 粘滞租户，墙按同一个键清缓存，
-  // 与「默认入口失效自愈」那条路径保持同一写法。
-  goTeam() {
-    wx.reLaunch({ url: '/pages/team/team?skipEntryCache=1' })
-  },
   goPoster() {
     wx.navigateTo({ url: '/pages/poster/poster?staffId=' + this.data.staffId })
   },

@@ -44,13 +44,7 @@
           <view class="nav-me-user-icon" wx:else></view>
           <text class="nav-me-text">我的</text>
         </view>
-        <!-- 右上角「团队」入口：后台配了「默认进指定员工」时，裸启动会直接落在这张名片上，
-             没有它访客就永远看不到名片墙。skipEntryCache=1 让墙这一次不被默认入口再次改道。 -->
-        <view class="nav-team" bindtap="goTeam">
-          <view class="nav-team-icon"></view>
-          <text class="nav-team-text">团队</text>
-        </view>
-        <!-- 企业简称居中展示（pointer-events:none 不挡「我的」/「团队」点击）。
+        <!-- 企业简称居中展示（pointer-events:none 不挡「我的」点击）。
              企业信息未就绪时**留白**而不是写死某个企业名——一套代码多租户，
              写死客户名等于给别的客户看别人家的公司名 -->
         <!-- 顶部深底时反白：滚动过 navHeight（白遮罩浮现）或浓度调低（底变浅）时都要切回深色，

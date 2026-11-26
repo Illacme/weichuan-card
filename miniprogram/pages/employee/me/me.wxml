@@ -41,6 +41,14 @@
         <text class="cell-label">生成海报</text>
         <text class="cell-arrow">›</text>
       </view>
+      <!-- 团队成员（名片墙）：只对**已登录员工**开放，访客分享出去的名片页不放这个入口——
+           企业要传播的是销售自己的名片，让访客顺手看见「这家公司还有谁」是替企业做决定。
+           员工自己要看全员时从这里进，不打扰访客链路。 -->
+      <view class="cell" bindtap="goTeam" hover-class="cell-hover">
+        <text class="cell-label">团队成员</text>
+        <text class="cell-value">看全员名片</text>
+        <text class="cell-arrow">›</text>
+      </view>
     </view>
 
     <!-- 数据：对外访客/转化分析（与下方「个人信息」是两个东西，靠分组与命名区分） -->

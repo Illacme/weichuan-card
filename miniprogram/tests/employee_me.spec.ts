@@ -2,6 +2,9 @@
 // 改密这条链路尤其要紧——成功后旧令牌立即失效，必须真的把人踢回未登录态，
 // 否则页面还显示着「已登录」，下一步操作全部 401。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   installPageCapture,
   capturedPage,
@@ -151,6 +154,36 @@ describe('employee/me 页', () => {
     p.goMyCard()
 
     expect(wxStub.reLaunch).toHaveBeenCalledWith({ url: '/pages/index/index' })
+  })
+
+  // 团队入口只在登录后的「我的」里，名片页（访客分享链路）不放——企业要传播的是
+  // 销售自己的名片，不该让访客顺手看见全公司还有谁。
+  // 带 skipEntryCache=1 是必须的：后台可能配了「访客直接进指定员工名片」，不带标记
+  // 名片墙会按缓存立刻改道，点进来又被弹回同一张名片，等于没反应。
+  it('点「团队成员」：navigateTo 名片墙并带 skipEntryCache，避免被默认入口弹回', async () => {
+    const p = await page()
+
+    p.goTeam()
+
+    expect(wxStub.navigateTo).toHaveBeenCalledWith({ url: '/pages/team/team?skipEntryCache=1' })
+    expect(wxStub.reLaunch).not.toHaveBeenCalled()
+  })
+
+  it('「团队成员」只出现在已登录分组里，未登录看不到（不渲染给自己登录访客）', () => {
+    const wxml = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pages/employee/me/me.wxml'),
+      'utf-8',
+    )
+    const guestBlock = wxml.slice(wxml.indexOf('class="section guest"'), wxml.indexOf('<!-- 已登录 -->'))
+    expect(guestBlock).not.toContain('goTeam')
+    const loggedIn = wxml.slice(wxml.indexOf('<!-- 已登录 -->'))
+    expect(loggedIn).toMatch(/bindtap="goTeam"/)
+  })
+
+  it('名片页不得再出现团队/名片墙入口（访客链路不放导流）', () => {
+    const base = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pages/index')
+    expect(readFileSync(resolve(base, 'index.wxml'), 'utf-8')).not.toMatch(/nav-team|goTeam/)
+    expect(readFileSync(resolve(base, 'index.ts'), 'utf-8')).not.toMatch(/goTeam/)
   })
 
   // 目标页由 adminEntry 在导航前定好；本页绝不自己 navigateTo 审核页，

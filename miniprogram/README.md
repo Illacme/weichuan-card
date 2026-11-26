@@ -31,7 +31,7 @@ miniprogram/
 ├── pages/
 │   ├── team/           # 名片墙（**裸启动落地页**）：公司抬头 + 搜索 + 首屏一页 60 + 「查看全部 N 位同事」；企业把默认入口配成「指定员工」时这里只做一次 reLaunch 改道
 │   ├── team/all/       # 查看全部同事：搜索 + 滚动加载（onReachBottom 续页）；样式 @import 落地页的 wxss，不复制一份
-│   ├── index/          # 名片首页（自定义顶栏含「我的」「团队」两个入口 + 员工卡 + 公司简介卡片 + 业绩 + 服务；底部 tabBar 已移除）
+│   ├── index/          # 名片首页（自定义顶栏含「我的」入口 + 员工卡 + 公司简介卡片 + 业绩 + 服务；底部 tabBar 已移除；**访客链路不放团队/名片墙入口**）
 │   ├── project/list/   # 项目列表（按分类）
 │   ├── project/detail/ # 项目详情（富文本+视频号拆分+相册）
 │   ├── service/detail/ # 服务详情（富文本+视频号拆分）
@@ -78,7 +78,7 @@ miniprogram/
 
 `admin.mobile_login`（手机端拿到管理员身份）与 `admin.wx_bind`（给某个微信号开管理员入口）都留痕；四个审批接口也补上了 `apply.approve` / `apply.reject`——这两个常量早就有定义，但此前只发订阅消息、没有落审计。
 
-用例见 `tests/admin_request.spec.ts`（7 例）、`tests/admin_entry.spec.ts`（18 例）、`tests/admin_apply.spec.ts`（20 例）、`tests/admin_login.spec.ts`（16 例）、`tests/employee_me.spec.ts`（24 例），后端见 `admin_mobile_test.go`。
+用例见 `tests/admin_request.spec.ts`（7 例）、`tests/admin_entry.spec.ts`（18 例）、`tests/admin_apply.spec.ts`（20 例）、`tests/admin_login.spec.ts`（16 例）、`tests/employee_me.spec.ts`（27 例），后端见 `admin_mobile_test.go`。
 
 > **2026-11-07 真机反馈订正**：上述入口 / 冷却 / 限流文案三条是同一次修复的产物，因果链是「审核页 `onShow` 自动免密 → 页面先渲染再异步 redirect → 闪一下列表 + 打满登录限流桶 → 用户点按钮收到 429 且被套错标题」。修完后真机需复核四件事：点入口不再闪列表、两个按钮居中且单行、绑定过的微信点入口直达审核列表、429 弹窗不再叫「免密登录不可用」。
 
@@ -686,12 +686,15 @@ node miniprogram/scripts/enable-tencent-video.mjs       # 只看状态
 `/pages/index/index?staffId=<自己的编号>`，重建页面按自己的编号取数；不带 `fromEntryCache`
 就不会被 `reconcileEntry` 弹回后台默认那位。未登录访客仍是 navigateBack 回来源名片。
 
-**访客也要能回到名片墙**：后台把默认入口配成指定员工时，裸启动会直接落在那张名片上，
-原本名片页没有任何回墙入口——访客永远看不到「这家公司还有谁」。现在顶栏右上角有
-「团队」按钮，`goTeam()` 跳 `/pages/team/team?skipEntryCache=1`：墙上清掉默认入口缓存并
-走 `load({noRedirect:true})`，即使后台此刻仍配着默认员工也照常渲染墙，不会被再次弹回来。
-它和「我的名片」是两条独立路径——一个给员工看自己，一个给访客看全员；顶栏企业名左右
-各留 170rpx 避开这两枚胶囊，长名字显示省略号而不是压在按钮上。
+**员工要看全员，走「我的」页**：后台把默认入口配成指定员工时，裸启动会直接落在那张名片上，
+名片页本身没有任何回墙入口——这是刻意的：企业分享出去的是**某位销售的名片**，把「这家公司
+还有谁」摆在访客眼前，等于替企业做一个它可能并不想要的导流决定。入口放在登录后「我的」页
+「名片：看 / 改 / 分享」分组末尾的「团队成员 / 看全员名片」，未登录访客看不到这一行。
+
+`goTeam()` 跳 `/pages/team/team?skipEntryCache=1`：墙上清掉默认入口缓存并走
+`load({noRedirect:true})`，即使后台此刻仍配着默认员工也照常渲染墙，不会被再次弹回来。
+企业若确实想让访客看到全员，正确做法是关掉「默认进指定员工」——那是显式的企业配置，
+而不是在访客页面上偷偷挂一个按钮。
 
 顺带修掉同一现场的两个观感问题：
 
@@ -1171,7 +1174,7 @@ URL，错位只会让标记失效（多画一次图），不会把别的图误�
 - `tests/login_wechat.spec.ts`（15 例）：**微信一键登录**——成功时带 `code` + `companyId` 换令牌并存 `refreshToken`、未绑定（code=3）弹 modal 说清「先密码登录 → 我的页绑定」且不跳转不存令牌、`wx.login` 拿不到 code 时不发请求、其它业务失败用后端文案、网络异常不卡 loading、连点只发一次；**手机号密码**断网时 `submitting` 也要落下来（原来没 catch，按钮会永远转圈）；**绑定微信**——`wechatBound` 落到 data、未登录归位 false、未绑定能绑、已绑定不发请求只说明怎么换、绑定失败用 modal 说全原因、在途连点只发一次。
 - `tests/img_fallback.spec.ts`：**图片失败兜底**——扫全部 `.wxml` 断言每个 `<image>` 都挂了 `binderror`、且带 `data-fail` 或 `data-arr`（漏写会安静地留一块白）；`onImgFail` 的单图 / 图集 / `idx=0` / 缺参数 / 字段还不是数组五种形态；`onThumbError` 的「缩略图挂了改回原图」与「已在原图上不再 setData」（后者防的是 binderror 无限循环）。
 - `tests/subscribe.spec.ts`（9 例）：**审核结果订阅消息**——模板 ID 预取后缓存不重复请求、未配置时不弹窗、`tmplIds` 传数组、预取失败**不缓存空串**（缓存了会让整个会话都收不到通知且用户无从察觉）、用户拒绝不抛错不重试；**页面接线**：申请页「先请求订阅、再发提交请求」的顺序断言（顺序反了微信直接拒授权）、拒绝订阅提交照样发出、后端没配模板时既不弹窗也不拦提交、编辑页同样在提交前订阅。
-- `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**、以及**顶栏「团队」回墙必须带 `skipEntryCache=1`**（源码守门同时钉住按钮渲染与墙侧自愈分支，少一端就是假入口）。
+- `tests/index_home.spec.ts`：名片首页四请求拼装、`/api/card` 根级字段（误读会恒走 notFound）、失败不停在「加载中」、访问埋点去重与**时序兜底**（onShow 早于 staffId 就绪时由 loadAll 补报）、**裸启动不再弹「输入员工编号」而是 reLaunch 到名片墙**、以及**名片页不得出现团队/名片墙入口**（访客链路不放导流，反向守门防止按钮被加回）。
 - `tests/admin_request.spec.ts`（7 例）：**管理员请求通道**——带的是 `adminToken` 而不是 `empToken`、GET 参数拼 query、**不自动注入 companyId**（租户隔离靠 JWT）、`401` 时用 `adminRefreshToken` 单飞刷新并重试一次（并发只刷一次）、刷新失败彻底清令牌并把 401 交回页面、网关兜底页（HTML）按网络错误 reject、`saveAdminAuth` 拒绝空令牌、**微信绑定标记独立于令牌**（401 只清令牌、主动退出才清绑定）。
 - `tests/admin_entry.spec.ts`（18 例）：**管理员入口决策层**——升级后首次允许一次探测、探测失败的设备此后不再打登录接口（反向钉住限流误伤）、已有令牌直达审核页、60s 冷却且失败也记账、空 code 不发请求、业务失败 / 网络异常 / 存令牌失败都静默返回 false、静默成功直达审核页且 loading 必收起、静默失败安静落登录页、主动退出把探测时间写成当前值而非清 0（否则退出按钮失效）；静态守门钉住「审核页绝不出现 `/api/admin/login/wechat`」「WXML 在 `ready` 前不渲染列表」「『我的』页不再无条件 navigateTo 审核页」。
 - `tests/admin_apply.spec.ts`（20 例）：**企业审核页**——有令牌置 `ready` 后拉列表、无令牌当帧同步跳登录页且零请求（不再先闪列表）、审核页不消费任何微信登录响应、退出走 `endAdminSession`、列表 401 清令牌跳登录、开通申请卡片时间格式化与联系方式行、修改申请 snapshot 解析（头像显示「已更换」、清空显示「（清空）」）、切页签/切筛选重置到第一页并带对参数、`hasMore` 按 total 判定、接口失败落到可重试错误态而非空列表、通过开通申请必须把**员工编号与初始密码**弹出来、取消确认不发请求、驳回理由原样进请求体、驳回失败保留弹窗与理由；静态守门另钉住审核页只用 `adminRequest` 且不含 `wxLoginCode`。

@@ -147,6 +147,16 @@ Page({
     if (!this.data.me) return
     wx.navigateTo({ url: '/pages/poster/poster?staffId=' + this.data.me.staffId })
   },
+  // 团队成员（名片墙）：只在登录后的「我的」里提供，名片页（访客分享链路）不放这个入口。
+  // 企业要让访客看的是**自己员工那张名片**，把「这家公司还有谁」摆在访客眼前等于替企业
+  // 做导流决定——很多企业并不希望访客顺手看到别的销售。员工自己有需要时才进。
+  //
+  // 为什么带 skipEntryCache=1：后台可能配了「访客直接进指定员工名片」，名片墙会按缓存的
+  // 默认入口立刻改道。不带标记的话点进来又立刻弹回同一张名片，等于点了没反应。带了标记，
+  // 墙会清掉这份缓存并走 load({noRedirect:true}) 正常渲染全员（见 pages/team/team.ts）。
+  goTeam() {
+    wx.navigateTo({ url: '/pages/team/team?skipEntryCache=1' })
+  },
   goEdit() {
     wx.navigateTo({ url: '/pages/employee/edit/edit' })
   },
