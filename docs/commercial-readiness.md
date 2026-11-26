@@ -6805,3 +6805,4 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 前端 `vue-tsc --noEmit` / `eslint .` | 0 错 / 0 报错 |
 | OpenAPI 对齐 `check_openapi.py` | 137 paths / 136 路由全部对齐 |
 | 迁移链 | `history/0063` + 纯净 schema 重生成 + manifest 重生成 + 基线保真 63 一致 |
+| CI | 提交 `c5d669f`，run `45782924206`，15 job 全绿 |
