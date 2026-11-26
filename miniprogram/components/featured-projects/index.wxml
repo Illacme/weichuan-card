@@ -21,8 +21,11 @@
            16:9 / 4:3 / 2:1 / 1:1：外层固定比例容器（aspect-ratio）+ overflow:hidden，
                 image 用 aspectFill 等比放大到短边贴合容器、长边溢出居中裁掉。
            拆成两个分支而不是动态拼 mode：表达式复杂且 widthFix 与 aspectFill 的
-           内联样式互斥，分支更直白、也不会让两类语义混在一个标签上。 -->
-      <view class="feat-cover feat-ratio-{{ratio}}" wx:if="{{ratio !== 'none'}}">
+           内联样式互斥，分支更直白、也不会让两类语义混在一个标签上。
+           注意用 ratioClass（冒号已换连字符）而非原始 ratio：后端枚举是 16:9，
+           直接拼 class 得到 feat-ratio-16:9，与 WXSS 的 .feat-ratio-16-9 对不上，
+           裁切样式失效后绝对定位的填充图会盖住下面的名称。 -->
+      <view class="feat-cover feat-ratio-{{ratioClass}}" wx:if="{{ratio !== 'none'}}">
         <image class="feat-cover-fill" src="{{p.coverThumb}}" mode="aspectFill" lazy-load
           wx:if="{{p.cover}}" binderror="onImgErr" data-arr="featured" data-idx="{{p.globalIdx}}"
           data-full="{{p.cover}}" />

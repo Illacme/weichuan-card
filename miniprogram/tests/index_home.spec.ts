@@ -887,7 +887,11 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     // 两个互斥分支：裁切档 wx:if ratio !== none，else 里是 widthFix 原图
     expect(wxml).toContain('wx:if="{{ratio !== \'none\'}}"')
     expect(wxml).toContain('mode="aspectFill"')
-    expect(wxml).toMatch(/class="feat-cover feat-ratio-\{\{ratio\}\}"/)
+    // 类名必须用 ratioClass（已把冒号换连字符），不能直接拼原始 ratio。
+    // 后端枚举是 16:9，直接拼会得到 feat-ratio-16:9，与 WXSS 的 .feat-ratio-16-9
+    // 对不上——裁切样式全失效，绝对定位填充图铺满精选区盖住名称（真实 bug）。
+    expect(wxml).toMatch(/class="feat-cover feat-ratio-\{\{ratioClass\}\}"/)
+    expect(wxml).not.toMatch(/class="feat-cover feat-ratio-\{\{ratio\}\}"/)
     // 容器裁掉长边溢出：overflow hidden + 四档 aspect-ratio
     expect(wxss).toMatch(/\.feat-cover\.feat-ratio-16-9[\s\S]*?overflow:\s*hidden/)
     for (const [sel, ratio] of [
@@ -898,6 +902,39 @@ describe('精选案例循环效果的接线守门（源码级）', () => {
     }
     // 填充图铺满容器，不撑破比例
     expect(wxss).toMatch(/\.feat-cover-fill\s*\{[^}]*position:\s*absolute[^}]*width:\s*100%[^}]*height:\s*100%/)
+    // 端上必须有「冒号 → 连字符」的映射，否则上面两处对不上。
+    expect(ts).toMatch(/replace\(\/:\/g,\s*'-'\)/)
+  })
+
+  // 回归守门：ratio=16:9 必须产出类名 feat-ratio-16-9（连字符），
+  // 这样 .feat-ratio-16-9 的 aspect-ratio/overflow 才生效、填充图才不会盖住名称。
+  it('比例类名映射：16:9 → feat-ratio-16-9，none → 空（真实 bug 回归）', async () => {
+    vi.resetModules()
+    let opts: any = null
+    vi.stubGlobal('Component', (o: any) => { opts = o })
+    await import('../components/featured-projects/index')
+    expect(opts).toBeTruthy()
+
+    const inst: any = {
+      data: { ...JSON.parse(JSON.stringify(opts.data)), featured: [], featuredCount: 0 },
+      setData(patch: any) { Object.assign(this.data, patch) },
+      stopTimer() {}, applyStyles() {}, startTimer() {},
+    }
+    for (const [k, v] of Object.entries(opts.methods)) inst[k] = (v as any).bind(inst)
+
+    // 四档：冒号必须换成连字符（返回的是后缀，WXML 再拼 feat-ratio- 前缀）
+    for (const [ratio, suffix] of [
+      ['16:9', '16-9'], ['4:3', '4-3'],
+      ['2:1', '2-1'], ['1:1', '1-1'],
+    ]) {
+      inst.data.ratio = ratio
+      inst.sync()
+      expect(inst.data.ratioClass, `${ratio} 应映射成后缀 ${suffix}`).toBe(suffix)
+    }
+    // none：空类名，走 widthFix 原图分支
+    inst.data.ratio = 'none'
+    inst.sync()
+    expect(inst.data.ratioClass).toBe('')
   })
 
   it('首页透传裁切比例给组件，未知档位端上白名单归一回 none', async () => {

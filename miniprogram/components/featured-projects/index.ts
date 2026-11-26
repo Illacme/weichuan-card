@@ -46,6 +46,14 @@ function onFeaturedImgErr(this: any, e: any): void {
   this.setData(patch)
 }
 
+// 比例枚举值带冒号（16:9），不能当 CSS 类名——WXSS 选择器写的是连字符
+// （.feat-ratio-16-9）。冒号换连字符得到类名；none 返回空串。
+// 不这么做的话类名不匹配、裁切样式全失效：填充图 position:absolute 会相对
+// 最外层 .featured-paged 铺满，把 .feat-name 盖住（表现=「开了显示名称却看不到」）。
+function ratioClassOf(v: unknown): string {
+  return typeof v === 'string' && v && v !== 'none' ? v.replace(/:/g, '-') : ''
+}
+
 Component({
   options: { addGlobalClass: true },
   properties: {
@@ -61,6 +69,9 @@ Component({
     staffId: Number, // 从首页透传，子页分享/返回名片用（跳转页文档 §5）
   },
   data: {
+    // 比例值带冒号（16:9）→ CSS 安全类名（16-9），由 sync 统一算入 setData。
+    // 缺省 none。见 ratioClassOf 注释：不匹配会让填充图盖住名称。
+    ratioClass: '',
     pageSize: 3, // 钳制后的每页张数
     pageCount: 0,
     current: 0,
@@ -69,7 +80,8 @@ Component({
     pageStyles: [] as string[], // 按原页码索引的整页动画样式
   },
   observers: {
-    'featured, featuredCount, effect': function () {
+    // ratio 变化时也要重算类名并同步分页（否则切比例不生效）。sync 内统一算 ratioClass。
+    'featured, featuredCount, effect, ratio': function () {
       ;(this as any).sync()
     },
   },
@@ -97,6 +109,7 @@ Component({
       if (pageSize === 0 || list.length === 0) {
         this.setData({
           pageSize, pageCount: 0, current: 0, cycleOn: false,
+          ratioClass: ratioClassOf(this.data.ratio),
           visiblePages: [], pageStyles: [],
         })
         return
@@ -123,6 +136,7 @@ Component({
       // 把 scrollTop 钳回 0（用户实测「切下一张就滚回页面顶部」，华为未复现）。
       this.setData({
         pageSize, pageCount: pages.length, current, cycleOn,
+        ratioClass: ratioClassOf(this.data.ratio),
         visiblePages,
       })
       this.applyStyles()
