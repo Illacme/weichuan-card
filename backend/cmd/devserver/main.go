@@ -50,20 +50,40 @@ import (
 // 而 401，见 main_test.go 的守卫）。
 var devModels = model.All()
 
+// resolveDevDBPath 决定 devserver 用哪个 SQLite 文件库：
+//   - 默认（DEV_DB_PATH 为空）：每次新建临时库，重启即重置为演示数据——联调首选，
+//     保证每次启动都是干净可预期的初始态；
+//   - 显式设置 DEV_DB_PATH：复用该路径（不存在则由 dbopen 建库），重启保留数据。
+//     典型场景是改了 Go 代码要重启、但不想丢已配好的企业与设置。
+//
+// 抽成函数是为了可单测：两种分支的路径来源与「临时库 fd 必须关闭」都能被验证。
+func resolveDevDBPath() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("DEV_DB_PATH")); p != "" {
+		return p, nil
+	}
+	tmpDB, err := os.CreateTemp("", "weichuan-dev-*.db")
+	if err != nil {
+		return "", err
+	}
+	// 只是借它拿一个不冲突的路径，文件本身马上由 gorm 打开；关闭失败无后果。
+	_ = tmpDB.Close()
+	return tmpDB.Name(), nil
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// 临时 SQLite 文件库（比内存库更稳，避免共享缓存连接断开后数据丢失）
-	tmpDB, err := os.CreateTemp("", "weichuan-dev-*.db")
+	// SQLite 文件库（比内存库更稳，避免共享缓存连接断开后数据丢失）。
+	// 默认每次启动新建临时库（重启即重置，联调首选）；显式设置 DEV_DB_PATH 时
+	// 复用该文件——用于「改了 Go 代码需要重启、但想保留联调数据」的场景，
+	// 免去重启后企业 / 设置全部变回演示数据的麻烦。
+	dbPath, err := resolveDevDBPath()
 	if err != nil {
-		log.Fatalf("create temp db: %v", err)
+		log.Fatalf("resolve dev db: %v", err)
 	}
-	dbPath := tmpDB.Name()
-	// 只是借它拿一个不冲突的路径，文件本身马上由 gorm 打开；关闭失败无后果
-	_ = tmpDB.Close()
 	log.Printf("dev db: %s", dbPath)
 	// 如实回写 DB_DSN：本进程是拿 dbPath 直连 gorm 的，**不经过 DB_DSN 配置**，
 	// 但 /api/setup/status（与生产同一套 StatusPayload）只认 DB_DSN——不回写就会

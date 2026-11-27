@@ -125,3 +125,36 @@ func TestDevModelsCoverAllTables(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveDevDBPath 守门禁：DEV_DB_PATH 两种分支的来源正确。
+// 回归场景（2026-11-27）：改了 Go 代码要重启 devserver，但默认临时库重启即重置，
+// 会丢掉联调数据。加了 DEV_DB_PATH 复用选项后，必须确保：
+//   - 未设置时仍走临时库（重启即重置的默认语义不能丢）；
+//   - 设置时原样复用（含首尾空白容错），否则用户以为保留了其实又建了新库。
+func TestResolveDevDBPath(t *testing.T) {
+	t.Setenv("DEV_DB_PATH", "")
+	p1, err := resolveDevDBPath()
+	if err != nil {
+		t.Fatalf("默认分支: %v", err)
+	}
+	if p1 == "" || !strings.Contains(filepath.Base(p1), "weichuan-dev-") {
+		t.Errorf("未设 DEV_DB_PATH 应新建 weichuan-dev-* 临时库，得到 %q", p1)
+	}
+	p2, err := resolveDevDBPath()
+	if err != nil {
+		t.Fatalf("默认分支第二次: %v", err)
+	}
+	if p1 == p2 {
+		t.Errorf("两次默认调用应各建一个新库，却都返回 %q", p1)
+	}
+
+	custom := filepath.Join(t.TempDir(), "my-dev.db")
+	t.Setenv("DEV_DB_PATH", "  "+custom+"  ")
+	got, err := resolveDevDBPath()
+	if err != nil {
+		t.Fatalf("指定分支: %v", err)
+	}
+	if got != custom {
+		t.Errorf("DEV_DB_PATH 应原样复用（含 trim 空白），want %q got %q", custom, got)
+	}
+}
