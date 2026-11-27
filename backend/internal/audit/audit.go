@@ -23,6 +23,9 @@ import (
 // 动作常量：命名沿用「对象.动作」，便于按前缀聚合统计。
 const (
 	ActionSettingUpdate = "setting.update"
+	// ActionCacheRefresh：后台点「立即刷新缓存」递增公开接口缓存版本号。
+	// 这是一个明确的运维动作（影响所有访客的缓存键），必须留痕。
+	ActionCacheRefresh = "cache.refresh"
 
 	ActionLoginFail = "login.fail"
 	ActionLogin     = "login.success"

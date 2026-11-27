@@ -28,6 +28,8 @@ const GO_PII = resolve(REPO, 'backend/internal/pii/pii.go')
 const MP_CONFIG = resolve(REPO, 'miniprogram/utils/config.ts')
 const FE_API = resolve(REPO, 'frontend/src/api/settings.ts')
 const FE_SPEC = resolve(REPO, 'frontend/src/views/platform/Settings.spec.ts')
+const MP_REQUEST = resolve(REPO, 'miniprogram/utils/request.ts')
+const MP_APP = resolve(REPO, 'miniprogram/app.ts')
 
 /**
  * 只剥「整行注释」，不碰行尾注释与字符串内容。
@@ -190,9 +192,14 @@ describe('① 公开配置白名单：setting.publicKeys ↔ 小程序 PublicSet
   const registry = goRegistry()
 
   it('量尺自己有读数：两侧都抓到键，且后端 registry 不是空壳', () => {
-    expect(backend.length).toBeGreaterThanOrEqual(3)
-    expect(backend).toEqual(['brand_name', 'miniprogram_base_url', 'pinned_company_id'])
-    expect(mini.all.length).toBeGreaterThanOrEqual(3)
+    expect(backend.length).toBeGreaterThanOrEqual(4)
+    expect(backend).toEqual([
+      'brand_name',
+      'miniprogram_base_url',
+      'pinned_company_id',
+      'public_cache_version',
+    ])
+    expect(mini.all.length).toBeGreaterThanOrEqual(4)
     expect(mini.all).toContain('miniprogram_base_url')
     expect(registry.length).toBeGreaterThan(40)
   })
@@ -332,5 +339,51 @@ describe('④ 存储面板 FRIENDLY 名称 ↔ setting.registry 的 Name', () =>
       }
     }
     expect(diffs, `同一项两个名字：\n${diffs.join('\n')}`).toEqual([])
+  })
+})
+
+describe('⑤ 缓存版本号端到端契约：下发 → 端上接收 → 请求注入', () => {
+  it('小程序 PublicSettings 的缓存版本字段与后端 publicKeys 同源', () => {
+    const backend = goPublicKeys()
+    const mini = tsInterface(MP_CONFIG, 'PublicSettings')
+    expect(backend).toContain('public_cache_version')
+    expect(mini.all).toContain('public_cache_version')
+  })
+
+  it('冷启动把后台下发的版本号写进 globalData，供请求层读', () => {
+    const app = readClean(MP_APP)
+    expect(app, 'applySettings 必须写入 publicCacheVersion')
+      .toMatch(/globalData\.publicCacheVersion\s*=\s*cacheVersionOf\(data\)/)
+    expect(app, '必须 import cacheVersionOf').toMatch(/cacheVersionOf/)
+  })
+
+  it('request.ts 只对五条被缓存的 GET 注入 cv，且排除版本探针与详情接口', () => {
+    const req = readClean(MP_REQUEST)
+    // 五条精确前缀必须都在名单里
+    for (const p of [
+      '/api/card',
+      '/api/achievements',
+      '/api/projects',
+      '/api/services',
+      '/api/home-layout',
+    ]) {
+      expect(req, `缺缓存 GET 前缀 ${p}`).toContain(`'${p}'`)
+    }
+    // 反例：探针与详情接口不能被当成「被缓存的 GET」——
+    // 探针带 cv 会污染版本检测，详情带 cv 只会白耗回源。
+    const listBlock = req.match(/const CACHED_GET_PREFIXES = \[([\s\S]*?)\]/)
+    expect(listBlock, '找不到缓存 GET 前缀清单').not.toBeNull()
+    expect(listBlock![1]).not.toContain('/api/home-layout/version')
+    expect(listBlock![1]).not.toContain('/api/projects/:id')
+    expect(listBlock![1]).not.toContain('/api/services/:id')
+    expect(req).toContain('cv: cacheVersion()')
+  })
+
+  it('前端设置页有「立即刷新缓存」按钮且调用独立接口（不混进通用设置保存）', () => {
+    const vue = readFileSync(resolve(REPO, 'frontend/src/views/platform/Settings.vue'), 'utf8')
+    expect(vue).toContain('立即刷新缓存')
+    expect(vue).toContain('refreshPublicCache')
+    const api = readClean(FE_API)
+    expect(api).toContain("/admin/cache/refresh")
   })
 })

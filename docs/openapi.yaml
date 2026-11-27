@@ -3778,8 +3778,11 @@ paths:
     get:
       summary: 公开配置（无需登录）
       description: |
-        仅下发非敏感项：brand_name / miniprogram_base_url / pinned_company_id 等。
+        仅下发非敏感项：brand_name / miniprogram_base_url / pinned_company_id /
+        public_cache_version 等。
         小程序冷启动与 PC 登录页取品牌名都走这个接口，因此**不能要求登录**。
+        public_cache_version 是公开接口缓存版本号：端上把它作为 ?cv=N 附加到被缓存的
+        公开 GET 上，后台点「立即刷新缓存」递增它后端上换缓存键绕过 CDN 旧副本。
         支持查询参数 ?company=<白标码>：精确匹配 enabled 企业的 login_code，
         命中则 data 额外返回 login_brand_name（该企业 short_name），用于登录页按企业区分显示简称；
         未命中（无参数 / 不匹配 / 企业停用）则不返回该键，前端回落全局 brand_name。
@@ -3964,6 +3967,39 @@ paths:
                     type: string
                   data:
                     $ref: "#/components/schemas/PathBrowseResult"
+
+  /api/admin/cache/refresh:
+    post:
+      summary: 立即刷新公开接口缓存（平台超管）
+      description: |
+        把公开接口缓存版本号（sys_setting 的 public_cache_version）原子 +1 并返回新值。
+        这是「刷新」而非「清除」：HTTP 缓存副本存在 CDN / 反代上，服务端没有主动失效能力
+        （除非接 CDN 厂商 purge API）。小程序冷启动拉到新版本号后，把 ?cv=N 附加到被缓存的
+        五条公开 GET（card / achievements / projects / services / home-layout）上——对 CDN
+        来说这就是全新缓存键，必然回源拿到新内容。不依赖任何厂商凭据，本地 / 任意 CDN 都生效。
+        即时生效：内存缓存同步刷新，下一次公开请求与公开配置下发都读到新值，无需重启。
+        TTL 本身由 PUT /api/admin/settings 的 public_cache_ttl_seconds 配置（0 = 关闭缓存）。
+        写操作留痕（审计动作 cache.refresh）。
+      tags: [设置]
+      responses:
+        "200":
+          description: code=0 刷新成功；非 0 为越权或刷新失败
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    $ref: "#/components/schemas/Code"
+                  msg:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      cacheVersion:
+                        type: integer
+                        format: int64
+                        description: 递增后的缓存版本号，小程序据此换缓存键
 
   # ===== 平台超管账号管理 =====
   /api/admin/platform-admins:

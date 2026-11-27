@@ -88,6 +88,15 @@ const KeyPlatformStorageProfileID = "platform_storage_profile_id"
 // CDN 刷新凭据本身在 delivery_profiles 里，这里只回答「平台对象用哪一套刷新器」。
 const KeyPlatformDeliveryProfileID = "platform_delivery_profile_id"
 
+// 公开接口缓存的两项配置键（供 handler 读取，避免各处散落字符串字面量）。
+// TTL 决定 Cache-Control 的 max-age / s-maxage（0 = 关闭缓存，回 no-store）；
+// Version 由后台「立即刷新缓存」原子递增，小程序作为 ?cv=N 附加到被缓存的 GET 上，
+// 用新缓存键绕过已缓存的旧副本（无需 CDN 厂商凭据）。
+const (
+	KeyPublicCacheTTL     = "public_cache_ttl_seconds"
+	KeyPublicCacheVersion = "public_cache_version"
+)
+
 // Item 后台「系统设置」渲染用 DTO。
 // 与 DB 模型 Setting 分开，避免把 secret 的真实值随表结构一并序列化出去。
 type Item struct {
@@ -139,6 +148,32 @@ var registry = []def{
 		Name:     "独立版锁定企业",
 		Validate: companyEnabledOrZero,
 		Desc:     "把整套系统锁定成某一个企业的独立版：填企业 ID 后，小程序只展示该企业的内容（该企业必须已存在且启用）；填 0 表示平台模式，不锁定。"},
+	// ---- 公开接口缓存（小程序 / CDN / 反代共享）----
+	//
+	// 这两项管的是 /api/card、/api/achievements、/api/projects、/api/services、
+	// /api/home-layout 五条公开只读接口的 HTTP 缓存策略，与「存储与分发 → CDN 缓存
+	// 刷新」（那是刷静态资源 URL）不是一层。缓存由 Cache-Control 的 max-age /
+	// s-maxage 控制：wx.request 不利用 HTTP 缓存，真正受益的是 CDN / 反代——
+	// 同一个访客反复进出首页时，重复回源被挡在边缘。
+	//
+	// TTL 默认 60 秒、可填 0~3600；**0 = 关闭缓存**（回 no-store，而不是 max-age=0，
+	// 后者在部分边缘节点上仍有缓存歧义）。默认值刻意不为 0：线上无存量的前提下，
+	// 缓存就该默认起效、替后端挡重复请求，需要「立刻看新内容」时点「立即刷新」。
+	{Key: "public_cache_ttl_seconds", Group: "miniprogram", Type: "int", Value: "60",
+		Name:     "公开接口缓存时长",
+		Validate: intRange(0, 3600),
+		Desc:     "小程序名片 / 案例 / 服务 / 首页布局这五条公开接口在 CDN / 反代上的缓存时长（秒），可填 0~3600，默认 60。缓存能把访客反复进出首页的重复请求挡在边缘、减轻后端压力；填 0 = 关闭缓存（每次都回源）。后台改了内容又不想等缓存过期，用下面的「立即刷新缓存」。"},
+	// 缓存版本号：端上把它作为 ?cv=N 附加到被缓存的公开 GET 上。HTTP 缓存没有
+	// 「服务端主动失效」能力（除非接 CDN 厂商 purge API），新缓存键是唯一不依赖
+	// 厂商凭据、本地 / 任意 CDN 都生效的刷新手段。Bump 用 SQL 原子递增，避免
+	// 多人同时点刷新时互相覆盖。默认 1，由 seedDefaults 落库。
+	//
+	// 不把它塞进 SETTINGS registry 供界面改：它是「刷新动作」的内部状态，暴露成
+	// 输入框只会让人手填乱版本。但必须在 registry 登记才能 seed + 走 Upsert 的
+	// 类型契约，故登记但不放进前端分组展示（前端按 group 渲染，这里没有对应控件）。
+	{Key: "public_cache_version", Group: "miniprogram", Type: "int", Value: "1",
+		Name: "公开接口缓存版本",
+		Desc: "内部使用：每次点「立即刷新缓存」自动 +1，小程序据此换缓存键绕过旧缓存。无需手工修改。"},
 	{Key: "upload_max_mb", Group: "upload", Type: "int", Value: "10",
 		Name:     "单张图片大小上限",
 		Validate: intRange(1, 1024),
@@ -439,6 +474,7 @@ var publicKeys = map[string]bool{
 	"brand_name":           true,
 	"miniprogram_base_url": true,
 	"pinned_company_id":    true,
+	"public_cache_version": true, // 小程序据此生成 ?cv=N 缓存键，绕过已缓存副本
 }
 
 // Store 内存缓存 + DB 持久化的设置存储。
@@ -838,6 +874,42 @@ func Upsert(key, value string) error {
 		return fmt.Errorf("系统设置未初始化")
 	}
 	return s.Set(key, value)
+}
+
+// Bump 把整数型设置项原子 +1，返回新值。用于「立即刷新缓存」这类计数动作：
+// 用一条 SQL 的 `value + 1` 完成递增（value 列虽是 TEXT，但 MySQL / SQLite 在数值
+// 上下文都会做数字 coercion），而不是「读-改-写」——后者在两人同时点刷新时会互相
+// 覆盖，版本号原地踏步、端上根本察觉不到变化。
+// 只允许 bump 已登记且类型为 int 的项，避免误操作其它配置。
+func Bump(key string) (int64, error) {
+	s := getStore()
+	if s.db == nil {
+		return 0, fmt.Errorf("系统设置未初始化")
+	}
+	d, ok := registryByKey[key]
+	if !ok || d.Type != "int" {
+		return 0, fmt.Errorf("设置项 %s 不是可递增的整数项", key)
+	}
+	// 单条 SQL 原子递增；WHERE 用 map 让 gorm 给 MySQL 的保留字 key 加引号。
+	if err := s.db.Model(&Setting{}).
+		Where(map[string]interface{}{"key": key}).
+		Update("value", gorm.Expr("value + 1")).Error; err != nil {
+		return 0, err
+	}
+	// 回读真值：不读内存缓存（它还是旧值）。
+	var row Setting
+	if err := s.db.Where(map[string]interface{}{"key": key}).First(&row).Error; err != nil {
+		return 0, err
+	}
+	next, err := strconv.ParseInt(row.Value, 10, 64)
+	if err != nil || next < 1 {
+		next = 1
+	}
+	// 同步内存缓存，让下一次请求立刻读到新版本号。
+	s.mu.Lock()
+	s.values[key] = strconv.FormatInt(next, 10)
+	s.mu.Unlock()
+	return next, nil
 }
 
 // Public 返回非敏感公开项（小程序 / 前端引导用）。

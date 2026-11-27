@@ -76,6 +76,13 @@ async function loadRequest() {
   return import('../utils/request')
 }
 
+// 注入一个带指定缓存版本号的 getApp 桩（用于 ?cv=N 注入用例）。
+function installWxWithCacheVersion(version: number) {
+  const ctx = installWx()
+  vi.stubGlobal('getApp', () => ({ globalData: { baseUrl: 'http://test', publicCacheVersion: version } }))
+  return ctx
+}
+
 beforeEach(() => {
   vi.unstubAllGlobals()
 })
@@ -87,7 +94,8 @@ describe('request 基础行为', () => {
 
     request('GET', '/api/card', { staffId: 1, keyword: '', extra: undefined })
     expect(calls).toHaveLength(1)
-    expect(calls[0].url).toBe('http://test/api/card?staffId=1')
+    // cv 是缓存键版本号：默认 1，被 HTTP 缓存的公开 GET 都会带上它
+    expect(calls[0].url).toBe('http://test/api/card?staffId=1&cv=1')
     expect(calls[0].method).toBe('GET')
     expect(calls[0].data).toBeUndefined()
   })
@@ -108,6 +116,68 @@ describe('request 基础行为', () => {
     const p = request('POST', '/api/stat/track', { a: 1 })
     respond(0, 'fail')
     await expect(p).rejects.toThrow('network')
+  })
+})
+
+// 公开接口缓存键注入（第一百一十四轮）：五条被缓存的 GET 带 ?cv=N，
+// 后台「立即刷新缓存」递增 N → 端上换缓存键绕过 CDN 旧副本。
+// 探针 / 详情 / 后台接口一律不带，否则版本检测被污染或无谓浪费回源。
+describe('公开接口缓存版本号 ?cv=N 注入', () => {
+  it('五条被缓存的 GET 都注入 cv，值来自 globalData.publicCacheVersion', async () => {
+    const { calls } = installWxWithCacheVersion(7)
+    const { request } = await loadRequest()
+
+    for (const p of [
+      '/api/card?staffId=1',
+      '/api/achievements',
+      '/api/projects',
+      '/api/services',
+      '/api/home-layout',
+    ]) {
+      request('GET', p)
+    }
+    expect(calls).toHaveLength(5)
+    for (const c of calls) {
+      expect(c.url, `${c.url} 应带 cv=7`).toContain('cv=7')
+    }
+  })
+
+  it('版本探针 / 详情 / 后台接口 / 非 GET 都不带 cv', async () => {
+    const { calls } = installWxWithCacheVersion(7)
+    const { request } = await loadRequest()
+
+    request('GET', '/api/home-layout/version') // 0067 探针（no-store）
+    request('GET', '/api/projects/12')        // 详情（无缓存头）
+    request('GET', '/api/services/12')
+    request('GET', '/api/team')               // 名片墙（刻意不缓存）
+    request('GET', '/api/company')            // 企业公开信息（无缓存头）
+    request('GET', '/api/employee/me')        // 登录态接口
+    request('POST', '/api/card', { a: 1 })    // 非 GET
+
+    expect(calls).toHaveLength(7)
+    for (const c of calls) {
+      expect(c.url, `${c.url} 不应带 cv`).not.toContain('cv=')
+    }
+  })
+
+  it('与 companyId / 已有 query 共存：cv 追加在 & 之后，不破坏原参数', async () => {
+    const { calls } = installWxWithCacheVersion(3)
+    const { request } = await loadRequest()
+
+    request('GET', '/api/card?staffId=1', { keyword: 'x' })
+    const url = calls[0].url
+    expect(url).toContain('staffId=1')
+    expect(url).toContain('keyword=x')
+    expect(url).toContain('cv=3')
+    expect(url).toMatch(/^http:\/\/test\/api\/card\?[^?]*$/)
+  })
+
+  it('未注入版本号（旧 app / 单测桩）回落 1，缓存键稳定', async () => {
+    const { calls } = installWx() // getApp 只有 baseUrl，没有 publicCacheVersion
+    const { request } = await loadRequest()
+
+    request('GET', '/api/home-layout')
+    expect(calls[0].url).toContain('cv=1')
   })
 })
 

@@ -13,6 +13,7 @@ vi.mock('@/api/storageProfiles', () => ({
 vi.mock('@/api/settings', () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(async () => ({ code: 0, data: { restartKeys: [] } })),
+  refreshPublicCache: vi.fn(async () => ({ code: 0, data: { cacheVersion: 2 } })),
   getPublicSettings: vi.fn(async () => ({ code: 0, data: { brand_name: '微传名片' } })),
   // 路径选择器：三项 pathKind 配置各自会打开一个弹窗，点「浏览…」时拉一次目录
   browseServerPaths: vi.fn(async () => ({
@@ -37,7 +38,7 @@ vi.mock('element-plus', () => ({
 }))
 
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { browseServerPaths, getSettings, updateSettings } from '@/api/settings'
+import { browseServerPaths, getSettings, refreshPublicCache, updateSettings } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import Settings from './Settings.vue'
 import type { SettingItem } from '@/api/settings'
@@ -47,6 +48,8 @@ const items: SettingItem[] = [
   { key: 'brand_name', name: '品牌名称', group: 'general', type: 'string', value: '微传名片', description: '品牌名', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'miniprogram_base_url', name: '小程序接口基址', group: 'miniprogram', type: 'string', value: '', description: '小程序基址', secret: false, restart: false, readOnly: false, envVar: '', configured: false },
   { key: 'pinned_company_id', name: '独立版锁定企业', group: 'miniprogram', type: 'int', value: '0', description: '锁定租户', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'public_cache_ttl_seconds', name: '公开接口缓存时长', group: 'miniprogram', type: 'int', value: '60', description: '公开接口缓存时长', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
+  { key: 'public_cache_version', name: '公开接口缓存版本', group: 'miniprogram', type: 'int', value: '1', description: '缓存版本', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_allow_ext', name: '允许上传的文件类型', group: 'upload', type: 'string_slice', value: 'png,jpg', description: '扩展名', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_max_mb', name: '单张图片大小上限', group: 'upload', type: 'int', value: '10', description: '上传上限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
   { key: 'upload_video_max_mb', name: '单个视频大小上限', group: 'upload', type: 'int', value: '100', description: '视频上限', secret: false, restart: false, readOnly: false, envVar: '', configured: true },
@@ -275,6 +278,25 @@ describe('Settings 系统设置', () => {
     } catch {
       // jsdom 一定能读写；真出异常时至少不影响其它断言
     }
+  })
+
+  it('立即刷新缓存：按钮调用独立接口，不混进通用设置保存', async () => {
+    const { w } = await setup()
+    vi.mocked(refreshPublicCache).mockClear()
+    const btn = w.findAll('button.el-button').find((b: any) => b.text().includes('立即刷新缓存'))
+    expect(btn, '找不到「立即刷新缓存」按钮').toBeTruthy()
+    await btn!.trigger('click')
+    await nextTick()
+    expect(refreshPublicCache).toHaveBeenCalledTimes(1)
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(ElMessage.success).toHaveBeenCalled()
+  })
+
+  it('公开接口缓存版本是内部项，不作为可手填的输入框暴露', async () => {
+    const { w } = await setup()
+    expect(rowExists(w, 'public_cache_version')).toBe(false)
+    // 但 TTL 是管理员要调的，必须可见可改
+    expect(rowExists(w, 'public_cache_ttl_seconds')).toBe(true)
   })
 
   it('按分组渲染全部配置项与说明（含存储与只读分组）', async () => {

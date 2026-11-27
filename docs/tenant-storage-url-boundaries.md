@@ -25,8 +25,9 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 或者更糟：某个后台表单把绝对 URL 直接写回库，把去 URL 化的成果冲掉，
 而页面全 200、没有任何报错——又是「没人报错时用户无从察觉」。
 
-**本轮最重要的发现**：P1 加的 60 秒边缘缓存只覆盖 **5 条**公开只读接口
-（`cdnCache(c, 60)` 在 `handler/handler.go` 出现 5 次），
+**本轮最重要的发现**：P1 加的边缘缓存只覆盖 **5 条**公开只读接口
+（`cdnCache(c)` 在 `handler/handler.go` 出现 5 次，TTL 现在由后台
+「系统设置 → 小程序 → 公开接口缓存时长」配置，默认 60 秒、可关），
 但 `handler.go` 里下发资源 URL 的公开 GET 有 **9 条**。
 若照着「那五条缓存接口」去接 `ResolveRef`，会直接漏掉 4 条：
 
@@ -162,7 +163,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | `/api/services/:id` | 内嵌 `model.BizService` + `timeMode` | ❌ |
 | `/api/home-layout` | 根级 `bgImage` | ✅ `:361` |
 
-**时序约束**：带缓存的 5 条，解析必须在 `cdnCache(c, 60)` **之前**完成；
+**时序约束**：带缓存的 5 条，解析必须在 `cdnCache(c)` **之前**完成；
 错误分支仍不许带缓存头（`public_list_test.go` 已钉）。
 **第六十九轮起响应不再是「统一入口 URL」**：按租户选 origin 后，同一条路由对不同企业
 可能返回不同域名的绝对 URL。缓存键必须能区分租户——小程序对这批 GET 都会带
@@ -249,7 +250,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
 | --- | --- |
 | `TestP0bBoundaryTokensStillExist` | 清单里每个文件 + 标识符必须真实存在；代码挪走 / 改名后清单不许腐 |
 | `TestP0bUploaderWriteSitesMatchBoundaryList` | `handler/*.go` 中含 `up.Save(` / `up.SaveBytes(` 的**文件集合**必须等于 W1–W4；新增写入点必红 |
-| `TestP0bPublicGetRoutesMatchBoundaryList` | `handler.go` 的公开 GET 路由集合必须等于 §3.1 的 9 条；`cdnCache(c, 60)` 必须恰好 5 处；新增公开接口必红 |
+| `TestP0bPublicGetRoutesMatchBoundaryList` | `handler.go` 的公开 GET 路由集合必须等于 §3.1 的 9 条；`cdnCache(c)` 必须恰好 5 处（TTL 已后台可配，不许写死 60）；新增公开接口必红 |
 | `TestP0bResourceJSONFieldsMatchBoundaryList` | model 包里所有「名字含 url/image/logo/cover/avatar/icon/bg/file/album」的 json 字段集合必须等于 §2 的 8 个 + 4 个白名单；新增资源字段必红。另单独钉住 `album` / `object_key` 两个隐藏边界 |
 | `TestP0bMiniProgramAssetUrlConsumersMatchBoundaryList` | 小程序里含 `assetUrl(` 的 `.ts` 文件集合必须等于 13 个；端上新增消费点必红 |
 
@@ -292,7 +293,7 @@ P0a 已经把纯函数写好了，但真正接入时最容易出事的**不是�
     `ProjectCase.Cover` / `BizService.Icon`；字段集合严格对齐 §2。
 - **`handler/handler.go` 接入 9 条公开 GET**：
   - 整模型序列化路由（`/api/card`、`/api/achievements`、`/api/projects`、`/api/services`、
-    `/api/services/:id`）在 `cdnCache(c, 60)` **之前**调 `ResolveRefs()`；
+    `/api/services/:id`）在 `cdnCache(c)` **之前**调 `ResolveRefs()`；
   - 内联 `gin.H` 路由（`/api/company`、`/api/team`、`/api/projects/:id`、`/api/home-layout`）
     直接调 `model.ResolveResourceRef(...)`（见 `handler.go:152,198,220,298,304,393`）。
 - **`handler/storage.go` 的 `signHandler` 修正**：用 `storage.ObjectKeyFromURL` 复用 `legacyRel`

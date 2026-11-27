@@ -3,6 +3,7 @@ import { prefetchTheme } from './utils/themeBootstrap'
 import {
   baseUrlOf,
   cacheSettings,
+  cacheVersionOf,
   cachedSettings,
   fetchPublicSettings,
   hasBaseUrl,
@@ -21,6 +22,10 @@ const globalData = {
   baseUrl: resolveBaseUrl(),
   // 当前登录员工的 staffId：供「我的 → 我的名片」navigateBack 回名片页时回带。
   myStaffId: 0,
+  // 公开接口缓存版本号：冷启动从后台下发的 public_cache_version 读取，
+  // request.ts 给被缓存的 GET 注入 ?cv=N。后台点「立即刷新缓存」后此值变化，
+  // 端上换缓存键绕过 CDN 旧副本。develop 环境同样应用（缓存键与后端 TTL 无关）。
+  publicCacheVersion: 1,
 }
 
 // 应用后台下发的公开配置：只覆盖「已配置」的项，留空的项保持当前值。
@@ -33,6 +38,9 @@ function applySettings(data: PublicSettings | null, allowBackendOverride: boolea
   if (url && allowBackendOverride) globalData.baseUrl = url
   const pinned = pinnedCompanyOf(data)
   if (pinned > 0) tenantConfig.pinnedCompanyId = pinned
+  // 缓存版本号与基址无关，develop 也应用：它只决定 ?cv=N 缓存键，
+  // 让开发者工具联调时也能验证「立即刷新」绕过旧缓存。
+  globalData.publicCacheVersion = cacheVersionOf(data)
 }
 
 App({

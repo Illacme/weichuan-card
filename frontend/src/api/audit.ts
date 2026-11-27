@@ -35,6 +35,8 @@ export function listAuditLogs(params: {
 // 动作的中文名：界面给运营看，不能把 setting.update 这样的键直接摊开。
 export const ACTION_LABELS: Record<string, string> = {
   'setting.update': '修改系统设置',
+  // 后台点「立即刷新缓存」递增公开接口缓存版本号（影响所有访客的缓存键）
+  'cache.refresh': '立即刷新缓存',
   'login.fail': '登录失败',
   'login.success': '登录成功',
   logout: '登出',

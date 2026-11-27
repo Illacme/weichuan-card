@@ -1035,7 +1035,8 @@ type Resolver interface {
 
 ### 3.8 与 P1 边缘缓存的关系
 
-- 五条公开只读接口的 60 秒缓存（`cdnCache(c, 60)`）应在 `Resolve` **之后**发出；
+- 五条公开只读接口的边缘缓存（`cdnCache(c)`，TTL 由后台「系统设置 → 小程序 →
+  公开接口缓存时长」配置，默认 60 秒、0 = 关闭）应在 `Resolve` **之后**发出；
   第六十九轮之前响应里都是平台统一入口 URL；
 - `staffId → company_id` 是确定映射，且 `staffId` 进 cache key ⇒ 不会跨租户串号；
 - 改动后必须重跑 CF 行为验收：五条路径 + 错误分支 `BYPASS` + 查询串不折叠。
@@ -1225,7 +1226,7 @@ type Resolver interface {
 > 5. **后台出口一律平台零值**。`content.go` 十处 `ResolveRefs` 与员工导出传
 >    `model.PlatformOrigin()`；`/api/card` 只按 `staffId` 定位、租户取 `e.CompanyID`，
 >    绝不读访客可改的 `?companyId=`；小程序「我的」页与公开 GET 同口径。
->    9 条公开 GET 的解析仍全部在 `cdnCache(c, 60)` **之前**完成。
+>    9 条公开 GET 的解析仍全部在 `cdnCache(c)` **之前**完成。
 >
 > **端上契约零改动**：小程序 `assetUrl` 对 `^https?://` 原样返回，后端从相对
 > `/uploads/...` 换成绝对客户域名 URL 无需改端上代码；新增

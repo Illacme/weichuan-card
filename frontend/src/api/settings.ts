@@ -96,6 +96,18 @@ export function updateSettings(values: Record<string, string>) {
   return http.put<UpdateSettingsResp>('/admin/settings', values)
 }
 
+// 立即刷新公开接口缓存（POST /api/admin/cache/refresh）。
+// 后端把缓存版本号原子 +1；小程序冷启动拉到新版本号后，用新 ?cv=N 缓存键绕过
+// CDN / 反代上已缓存的旧副本。刷新是特权操作（仅平台超管），也留审计。
+export interface RefreshCacheResp {
+  code: number
+  msg?: string
+  data?: { cacheVersion: number }
+}
+export function refreshPublicCache() {
+  return http.post<RefreshCacheResp>('/admin/cache/refresh')
+}
+
 // 公开配置（GET /api/public/settings）：仅返回非敏感项（品牌名 / 小程序基址 / 锁定租户），
 // 无需登录——小程序冷启动与后台品牌展示都走这个接口。
 // company：登录页白标码（?company=），命中 enabled 企业时回传 login_brand_name（该企业简称）；

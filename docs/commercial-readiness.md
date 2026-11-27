@@ -12,7 +12,7 @@
 > **本轮末尾已按本报告实施修复**：A4 / A5 / A6 / A7 / A1-b / B1-a 六项全部落地并有测试。
 > 实施过程中**回到微信官方文档核实了本报告初稿的三处事实错误**，见下方「实施记录与事实订正」。
 
-> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **139 paths**，最后同步 2026-11-26。
+> **当前 API 契约基线（CI 守门）**：`docs/openapi.yaml` = **140 paths**，最后同步 2026-11-27。
 > 这是 `scripts/check_openapi.py` 唯一的路径数真值源：新增 / 删除接口必须同步改契约和这一行。
 > 下文各历史轮次里的「106 paths」「108 paths」是**当时**的实测值，属留档事实，不参与当前契约对账。
 > 2026-11-20 起守门还做**代码注册路由 ⊆ 契约 paths** 的正向对账：
@@ -7044,3 +7044,54 @@ router meta.title、`AdminLayout.vue` 手写菜单、页面 `h3`、路由 spec �
 | 迁移链 | `history/0067` + 纯净 schema 重生成 + manifest + 基线保真 67 一致 |
 | 发版自检 `selftest_deploy_frontend.sh` | PASS=59 FAIL=0 |
 | CI | 提交 `8d683c1`，run `45837516478`，15 job 全绿 |
+
+## 第一百一十四轮：公开接口缓存可配置与立即刷新（2026-11-27）
+
+用户诉求：0067 的版本号自动刷新解决了「端上自动发现配置变化」，但不是传统
+缓存管理——管理员希望能配置「是否缓存 / 缓存多久」、并能随时点按钮立即刷新，
+同时仍让缓存发挥减轻后端压力的作用。三项产品决策：刷新语义 = 生成新版本号；
+配置位置 = 系统设置 → 小程序分组；TTL 范围 = 0~3600 秒、默认 60。
+
+### 一、两层缓存的边界（先厘清，避免接错层）
+
+- 「存储与分发 → CDN 缓存刷新」（`POST /admin/cdn/refresh`）刷的是平台自有 CDN 上
+  的**静态资源 URL**（图片 / 素材 / 小程序码），不读写 HTTP `Cache-Control`。
+- 本轮管的是五条公开只读接口的 **HTTP 缓存**：`/api/card`、`/api/achievements`、
+  `/api/projects`、`/api/services`、`/api/home-layout`。`wx.request` 不利用 HTTP
+  缓存，真正受益的是 CDN / 反代——访客反复进出首页时把重复回源挡在边缘。
+
+### 二、后端：TTL 可配置 + 刷新版本号
+
+- `sys_setting` 新增两项（group=miniprogram，无需迁移，seed 自动落库）：
+  - `public_cache_ttl_seconds`：int，默认 60，`intRange(0, 3600)`；**0 = 关闭缓存**。
+  - `public_cache_version`：int，默认 1；「立即刷新」时原子 +1，不暴露成手填输入框。
+- `cdnCache(c, 60)` → `cdnCache(c)`：TTL 从 setting 动态读；`<=0` 回 `no-store`
+  （不用 `max-age=0`，后者在部分边缘节点仍有缓存歧义）；成功分支调用、错误分支
+  不设头的纪律不变。
+- `POST /api/admin/cache/refresh`（平台超管）调用 `setting.Bump` 用单条 SQL
+  `value = value + 1` 原子递增版本号并同步内存缓存；写审计 `cache.refresh`。
+- `/api/public/settings` 新增下发 `public_cache_version`（非敏感、与小程序
+  `PublicSettings` 双向对账）。
+
+### 三、刷新为何是「换缓存键」而不是「清缓存」
+
+HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非接厂商 purge API）。
+递增版本号后，小程序把 `?cv=N` 附加到上述五条被缓存的 GET 上——对 CDN 是全新
+缓存键、必然回源。不依赖厂商凭据，本地 / 任意 CDN 都生效。
+端上从 `app.globalData.publicCacheVersion`（冷启动拉公开配置写入）读版本号，
+`request.ts` 只对五条被缓存的 GET 注入 `cv`，**排除**：
+- `/api/home-layout/version`（0067 的 no-store 探针，带 cv 会污染版本检测）；
+- `/api/projects/:id`、`/api/services/:id`（详情无缓存头，带 cv 白耗回源）；
+- `/api/team`、`/api/company`（刻意不缓存）、登录态接口与非 GET。
+
+### 四、验证记录
+
+| 项 | 结果 |
+|---|---|
+| 后端 `gofmt -l .` / `go vet ./...` / `go build ./...` / `go test ./...` | 无输出 / 无输出 / 无输出 / 全绿 |
+| 前端 `vitest run` | 全绿（119 文件 2054 例） |
+| OpenAPI `check_openapi.py` | 140 paths / 139 路由全部对齐 |
+| 发版自检 `selftest_deploy_frontend.sh` | PASS=59 FAIL=0 |
+| 新增守门 | `TestPublicCacheConfigurable`（TTL 60/120/0/no-store/非法拒绝）、`TestCacheRefreshBumpsVersion`（递增+下发）、`TestCacheRefreshRequiresPlatformAdmin`、`settings_contract.spec.ts` ⑤ 全链路契约、`request.spec.ts` cv 注入/排除、`Settings.spec.ts` 刷新按钮 + 内部项不暴露 |
+| 反向验证 | TTL 写死 60 会被 `ref_boundaries_test.go` 拦；cv 注入到探针/详情会被 request.spec 拦；漏下发版本字段会被 settings_contract 拦 |
+| CI | 待提交后补记 |

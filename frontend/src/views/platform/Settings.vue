@@ -16,6 +16,11 @@
           <!-- 配置向导：给第一次部署的人一条明确顺序（品牌→存储→上传→微信→小程序→确认），
                不必在 35 个输入框里自己猜该从哪开始、按什么顺序配 -->
           <el-button :disabled="loading" @click="openWizard">配置向导</el-button>
+          <!-- 立即刷新缓存：把缓存版本号 +1，端上换 ?cv=N 缓存键绕过 CDN 旧副本。
+               与「保存」是两个动作——改 TTL 要保存，立即刷新只需点一下，不能混在一起 -->
+          <el-button :disabled="loading || refreshingCache" :loading="refreshingCache" @click="refreshCache">
+            立即刷新缓存
+          </el-button>
           <el-button :disabled="!dirty || saving" @click="reset">重置</el-button>
           <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">
             保存{{ dirty ? `（${changedCount} 项）` : '' }}
@@ -362,7 +367,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { getSettings, updateSettings, type SettingItem } from '@/api/settings'
+import { getSettings, refreshPublicCache, updateSettings, type SettingItem } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import SettingRow from '@/components/SettingRow.vue'
 import { clearWizardDraft, loadWizardDraft, saveWizardDraft } from '@/utils/wizardDraft'
@@ -399,7 +404,7 @@ const GROUP_BLURBS: Record<string, string> = {
     '主存储的部署期事实：服务器上传目录、备份存储目录、备份存储开关与 CDN 刷新这几项改完要重启。p/ 平台对象（素材采用 / 小程序码）与未绑定文件存储的企业始终走启动期配置指定的那份存储，不受企业绑定影响。驱动 / 桶 / 凭据 / 访问基址已收进「存储与分发 → 文件存储」的「主存储」一行，可在那里直接自检，保存即生效、无需重启；只有本页这两个目录改动才需重启。要给企业换桶、设全局默认或迁移历史文件，同样到「存储与分发」——那边新上传下一个请求即生效。',
   upload:
     '文件存哪定了，再限制单文件大小、类型与临时链接时效。默认值已可用：「直传链接有效期」管直传预签名（对象存储下公私桶都会走），「签名下载链接有效期」用于把对象地址换成限时链接（小程序临时地址、第三方临时下载），与桶是否私有无关。',
-  miniprogram: '小程序端如何找到后端、是否锁定为单一企业版。首次部署必配「小程序接口基址」。',
+  miniprogram: '小程序端如何找到后端、是否锁定为单一企业版，以及公开内容接口的缓存策略。首次部署必配「小程序接口基址」；改了内容想立刻生效用顶部「立即刷新缓存」。',
   wechat:
     '微信凭据（小程序码与微信登录用）、小程序码的缓存时长，以及消息推送（图片内容安全靠它把结论推回来，不配则图片不送检）。',
   mpupload: '后台直接把小程序代码传到微信时需要的服务器环境：Node 可执行文件、miniprogram-ci 安装目录、小程序源码目录、上传超时。纯 CI 上传（代码由 CI 传、后台只登记版本号）用不到，可以不管；要走「后台上传代码」这条路才需要配。各项留空都会回落环境变量或默认值。',
@@ -507,6 +512,8 @@ watch(
 )
 const loading = ref(true)
 const saving = ref(false)
+// 「立即刷新缓存」进行中：按钮转圈并禁用，防止连点把版本号刷飞。
+const refreshingCache = ref(false)
 // 保存后「需重启才生效」的项（中文名）：常驻提示到用户手动关掉。
 // toast 几秒就消失，错过就会变成「改了为什么不生效」的排查。
 const restartPending = ref<string[]>([])
@@ -519,6 +526,9 @@ const groups = computed(() => {
     // 存储 / 上传两组已集中到「存储与分发 → 主存储」，
     // 主列表不再重复展示。items.value 仍是全量：配置向导首装时照常要用这些项。
     if (it.group === 'storage' || it.group === 'upload') continue
+    // 公开接口缓存版本号是「立即刷新」动作的内部状态，界面通过顶部按钮操作，
+    // 不暴露成可手填的输入框（手填乱版本会让端上缓存键错乱）。
+    if (it.key === 'public_cache_version') continue
     if (!map.has(it.group)) map.set(it.group, [])
     map.get(it.group)!.push(it)
   }
@@ -1154,6 +1164,25 @@ async function wizardFinish() {
     return
   }
   if (await save()) wizardOpen.value = false
+}
+
+// 立即刷新公开接口缓存：后端把缓存版本号 +1，端上换 ?cv=N 缓存键绕过旧副本。
+// 它是独立动作、不进 draft：即使当前有未保存的 TTL 改动，也不会被这次点击顺手提交。
+async function refreshCache() {
+  if (refreshingCache.value) return
+  refreshingCache.value = true
+  try {
+    const r = await refreshPublicCache()
+    if (r && r.code === 0) {
+      ElMessage.success('已刷新缓存，访客下次进入小程序即可看到最新内容')
+    } else {
+      ElMessage.error((r && r.msg) || '刷新失败，请重试')
+    }
+  } catch {
+    // 拦截器已弹错误提示
+  } finally {
+    refreshingCache.value = false
+  }
 }
 
 function setVal(k: string, v: string) {

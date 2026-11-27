@@ -541,8 +541,8 @@ type HomeLayout struct {
 	BrandColorID *string `gorm:"column:brand_color_id;size:32" json:"brandColorId"`
 	// ConfigVersion 小程序展示配置版本号（0067）。每次成功保存展示配置都 +1。
 	//
-	// 为什么单独一列：公开 /api/home-layout 响应被 CDN 缓存 60 秒，版本号若塞在
-	// 那个响应体里也会被缓存，端上永远晚一拍。端上改用独立 no-store 探针
+	// 为什么单独一列：公开 /api/home-layout 响应带 HTTP 缓存（默认 60 秒、后台可调），
+	// 版本号若塞在那个响应体里也会被缓存，端上永远晚一拍。端上改用独立 no-store 探针
 	// /api/home-layout/version 读这个号，发现变化就重新拉一次配置。
 	// 缺省 1：存量行升级即为 1，端上首次记录后不会因升级本身误触发刷新。
 	ConfigVersion int64 `gorm:"column:config_version;default:1" json:"configVersion"`

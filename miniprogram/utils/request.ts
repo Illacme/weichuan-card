@@ -97,16 +97,51 @@ function tenantAwarePath(path: string): boolean {
   )
 }
 
+// 挂了 HTTP 缓存（Cache-Control）的公开 GET 前缀，恰好是五条：
+//   /api/card、/api/achievements、/api/projects、/api/services、/api/home-layout
+// 把这五条加上 ?cv=N（后台下发的缓存版本号），后台点「立即刷新缓存」后 N 递增，
+// 对 CDN / 反代就是全新缓存键、必然回源——这是不依赖 CDN 厂商凭据的刷新方式。
+//
+// 必须精确匹配「前缀 + 边界」，否则：
+//   · /api/home-layout/version 也以 /api/home-layout 开头，但它是 0067 的 no-store
+//     探针，绝不能带 cv（版本被自己污染就永远探不到变化）；
+//   · /api/projects/:id、/api/services/:id 详情接口虽然同源前缀，但**没有** HTTP
+//     缓存头，加上 cv 只会产生无意义的唯一缓存键、更费回源。
+// 因此这里逐条列出五个精确前缀，并用「路径到此结束或紧跟 ? /」来收边。
+const CACHED_GET_PREFIXES = [
+  '/api/card',
+  '/api/achievements',
+  '/api/projects',
+  '/api/services',
+  '/api/home-layout',
+]
+function cachedGetPath(path: string): boolean {
+  const bare = path.split('?')[0]
+  return CACHED_GET_PREFIXES.some((p) => bare === p)
+}
+
+// 从 globalData 读缓存版本号（app.ts 冷启动从公开配置写入；未初始化回落 1）。
+function cacheVersion(): number {
+  const v = app && app.globalData && app.globalData.publicCacheVersion
+  return typeof v === 'number' && v > 0 ? v : 1
+}
+
 // 按租户语义为请求补 companyId（>0 才补；0 = 不传，走后端缺省）。
 // 独立版恒为锁定值；平台模式为粘滞值；申请提交按 body 归属租户。
-function withCompanyId(method: 'GET' | 'POST' | 'PUT', path: string, data: any): any {
+// 同时给被 HTTP 缓存的五条公开 GET 补 cv=缓存版本号（见 cachedGetPath）。
+function withTenantAndCache(method: 'GET' | 'POST' | 'PUT', path: string, data: any): any {
+  let out = data
+  // 缓存版本号：只对那五条被缓存的 GET 注入；探针 / 详情 / 后台接口一律不碰。
+  if (method === 'GET' && cachedGetPath(path)) {
+    out = { ...(out || {}), cv: cacheVersion() }
+  }
   const isApply = path.indexOf('/api/apply/open') === 0
   if (!(method === 'GET' && tenantAwarePath(path)) && !(method !== 'GET' && isApply)) {
-    return data
+    return out
   }
   const cid = getCompanyId()
-  if (cid <= 0) return data
-  return { ...(data || {}), companyId: cid }
+  if (cid <= 0) return out
+  return { ...(out || {}), companyId: cid }
 }
 
 // method 支持 GET/POST/PUT；GET 的 data 会拼成 query string。
@@ -137,7 +172,7 @@ function doRequest<R = ApiResult<any>>(
   signal?: RequestSignal
 ): Promise<R> {
   return new Promise((resolve, reject) => {
-    data = withCompanyId(method, path, data)
+    data = withTenantAndCache(method, path, data)
     let url = baseUrl() + path
     let body: any = data
     if (method === 'GET' && data) {

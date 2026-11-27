@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+
+	"weichuan/internal/setting"
 )
 
 // 后台列表分页的统一约定（2026-10-19）：
@@ -45,12 +47,13 @@ func limitParam(c *gin.Context, def, max int) int {
 	return n
 }
 
-// cdnCache 给公开只读接口加短缓存（只给共享缓存用，不给端上）。
+// cdnCache 给公开只读接口加「可配置的」HTTP 缓存头（给共享缓存用，不给端上）。
 //
 // 小程序自身的 wx.request 不利用 HTTP 缓存，所以这不是给端上用的——是给反向代理
 // / CDN 用的：内容型列表重复访问比例很高（同一个访客反复进出首页），短缓存能把
-// 这部分重复回源挡掉。时长刻意取短（分钟级）：后台改了内容后，访客不该长时间
-// 看到旧数据。
+// 这部分重复回源挡掉。TTL 由后台「系统设置 → 小程序 → 公开接口缓存时长」决定，
+// 默认 60 秒；填 0 = 关闭缓存（发 no-store，而不是 max-age=0——后者在部分边缘
+// 节点上仍有缓存歧义）。
 //
 // 为什么同时发 max-age 和 s-maxage（2026-11-12 补）：
 //
@@ -62,9 +65,15 @@ func limitParam(c *gin.Context, def, max int) int {
 // 为什么必须**只在成功分支**调用：`add_header`/`Header()` 一旦落到错误响应上，
 // 4xx/5xx 也会被边缘缓存——「员工不存在」被缓存一分钟事小，接口抖动期间把
 // 500 缓存住才是灾难。所以调用点全部写在 `code == 0` 的那一支前面。
-func cdnCache(c *gin.Context, seconds int) {
-	c.Header("Cache-Control",
-		"public, max-age="+strconv.Itoa(seconds)+", s-maxage="+strconv.Itoa(seconds))
+func cdnCache(c *gin.Context) {
+	ttl := setting.GetInt(setting.KeyPublicCacheTTL, 60)
+	if ttl <= 0 {
+		// 关闭缓存：no-store 比 max-age=0 更明确（后者在部分 CDN 上仍可能缓存）。
+		c.Header("Cache-Control", "no-store")
+		return
+	}
+	v := strconv.Itoa(ttl)
+	c.Header("Cache-Control", "public, max-age="+v+", s-maxage="+v)
 }
 
 // pageParams 解析分页参数：非法值回落缺省，size 超上限截断。

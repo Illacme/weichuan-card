@@ -126,18 +126,18 @@ func New(db *gorm.DB) *gin.Engine {
 		ci.CompanyNameScale = model.NormalizeCompanyNameScale(ci.CompanyNameScale)
 		// 公开只读，且**只按 staffId 决定内容**（没有登录态、没有访客相关字段），
 		// 所以可以交给边缘短缓存：访客打开名片要 4 个接口并发，每次回源都要付一次
-		// 跨境往返；缓存 60 秒能把「同一个员工的名片被反复打开」这部分回源全挡掉。
+		// 跨境往返；短缓存（默认 60 秒，后台可调）能把「同一个员工的名片被反复打开」这部分回源全挡掉。
 		// 停用 / 不存在两支（code=1/2）**不设头**——错误响应不能被缓存。
 		// 出参侧按租户选 origin（第六十九轮）：/api/card 只按 staffId 定位，
 		// 租户必须取自员工归属 e.CompanyID —— 绝不能读 ?companyId=，那是别的
 		// 接口的参数、访客可以随手改，读了就是跨租户串号。平台对象（p/）与
 		// 历史无前缀裸键仍走平台入口，见 storage.ResolveRefForTenant。
-		// 必须在发 60s 缓存头之前完成，否则边缘会缓存旧形态。
+		// 必须在发缓存头之前完成，否则边缘会缓存旧形态。
 		origin := publicOriginFor(e.CompanyID)
 		e.ResolveRefs(origin)
 		ci.ResolveRefs(origin)
 		cp.ResolveRefs(origin)
-		cdnCache(c, 60)
+		cdnCache(c)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "employee": e, "company": ci, "profile": cp})
 	})
 
@@ -221,8 +221,8 @@ func New(db *gorm.DB) *gin.Engine {
 		// 「直接进某个员工的名片」，见 handler/mp_entry.go。端上拿到 entry 后若为
 		// staff 就 reLaunch 到该员工名片，不再渲染这一页。
 		//
-		// **这里刻意不设 Cache-Control**：其它公开内容接口都挂了 cdnCache(c, 60)，
-		// 但这一条是路由决策——管理员改完设置立刻扫码验证，若被缓存 60 秒，
+		// **这里刻意不设 Cache-Control**：其它公开内容接口都挂了 cdnCache(c)，
+		// 但这一条是路由决策——管理员改完设置立刻扫码验证，若被缓存，
 		// 他会以为设置没生效，然后反复改、反复验，越查越乱。
 		entryMode, entryStaffID := resolveMPEntry(db, cid)
 		c.JSON(http.StatusOK, gin.H{
@@ -256,14 +256,14 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 出参侧资源引用解析（多租户自有存储 P0b）：category.icon / projectCase.cover
-		// 经 ResolveRefs 零行为变更；必须在发 60s 缓存头之前完成。
+		// 经 ResolveRefs 零行为变更；必须在发缓存头之前完成。
 		for i := range cats {
 			cats[i].ResolveRefs(origin)
 		}
 		for i := range featured {
 			featured[i].ResolveRefs(origin)
 		}
-		cdnCache(c, 60)
+		cdnCache(c)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "categories": cats, "featured": featured})
 	})
 
@@ -284,11 +284,11 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 出参侧资源引用解析（多租户自有存储 P0b）：projectCase.cover 零行为变更；
-		// 必须在发 60s 缓存头之前完成。
+		// 必须在发缓存头之前完成。
 		for i := range ps {
 			ps[i].ResolveRefs(origin)
 		}
-		cdnCache(c, 60)
+		cdnCache(c)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": ps})
 	})
 
@@ -346,11 +346,11 @@ func New(db *gorm.DB) *gin.Engine {
 			return
 		}
 		// 出参侧资源引用解析（多租户自有存储 P0b）：bizService.icon 零行为变更；
-		// 必须在发 60s 缓存头之前完成。
+		// 必须在发缓存头之前完成。
 		for i := range s {
 			s[i].ResolveRefs(origin)
 		}
-		cdnCache(c, 60)
+		cdnCache(c)
 		c.JSON(http.StatusOK, gin.H{"code": 0, "data": s})
 	})
 
@@ -430,7 +430,7 @@ func New(db *gorm.DB) *gin.Engine {
 		}
 		// 同上，公开只读且只按 companyId 决定内容（styleId 的授权回落也在服务端算完），
 		// 可以交给边缘短缓存。这条是名片页 4 个并发请求之一，且每次切风格都会重新取。
-		cdnCache(c, 60)
+		cdnCache(c)
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "order": order, "bgImage": model.ResolveResourceRef(bgImage, origin), "bgMask": bgMask,
 			"bgGradientStrength": bgGradient,
@@ -449,8 +449,8 @@ func New(db *gorm.DB) *gin.Engine {
 
 	// 展示配置版本号探针（0067）：给小程序端检测「后台保存了新配置」用。
 	//
-	// 为什么不复用 /api/home-layout 的响应体：那条挂了 cdnCache(c, 60)，
-	// 版本号若跟着一起被缓存，端上读到的永远是 60 秒前的号，可能永远检测不到
+	// 为什么不复用 /api/home-layout 的响应体：那条挂了 cdnCache(c)，
+	// 版本号若跟着一起被缓存，端上读到的永远是过期的号，可能永远检测不到
 	// 变化。这里单独开一个轻量端点并显式 no-store，让端上每次 onShow 都能读到
 	// 当前真实版本；只是两个整数比较，命中版本未变时端上零额外请求。
 	//

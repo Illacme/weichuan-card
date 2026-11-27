@@ -109,6 +109,9 @@ export interface PublicSettings {
   brand_name?: string
   miniprogram_base_url?: string
   pinned_company_id?: string
+  /** 公开接口缓存版本号：端上把它作为 ?cv=N 附加到被缓存的 GET 上。
+      后台点「立即刷新缓存」时后端递增它，端上换缓存键绕过 CDN 旧副本。 */
+  public_cache_version?: string
 }
 
 // 取上次缓存的后台配置（同步）：冷启动首帧先用它，避免首屏请求打到旧地址。
@@ -169,4 +172,16 @@ export function pinnedCompanyOf(data: PublicSettings | null): number {
   if (!data) return 0
   const n = parseInt(String(data.pinned_company_id ?? '0'), 10)
   return n > 0 ? n : 0
+}
+
+// 公开接口缓存版本号（供 request.ts 给被缓存的 GET 注入 ?cv=N）。
+// 从上次缓存的后台配置里读，不额外发请求；非法 / 旧后端不下发时回落到 1
+// （与后端 seed 默认值一致，保证老后端下所有端上的缓存键都稳定）。
+const FALLBACK_CACHE_VERSION = 1
+export function cacheVersionOf(data: PublicSettings | null): number {
+  if (!data) return FALLBACK_CACHE_VERSION
+  const raw = data.public_cache_version
+  if (raw === undefined || raw === null || raw === '') return FALLBACK_CACHE_VERSION
+  const n = parseInt(String(raw), 10)
+  return n > 0 ? n : FALLBACK_CACHE_VERSION
 }

@@ -156,10 +156,14 @@ func TestP0bPublicGetRoutesMatchBoundaryList(t *testing.T) {
 	require.Contains(t, probeBlock, "no-store", "版本探针必须 no-store，否则版本号被缓存、端上永远检测不到变化")
 	require.NotContains(t, probeBlock, "bgImage", "版本探针只回版本号，不得夹带资源 URL（否则须接入 ResolveRef 并更新 §3.1）")
 
-	// 只数真正的代码行，不算 handler.go:206 那条解释「刻意不设」的注释。
-	cacheCall := regexp.MustCompile(`(?m)^\s*cdnCache\(c, 60\)\s*$`)
+	// 只数真正的代码行，不算注释里解释「刻意不设」的那一句。
+	// TTL 已从写死 60 秒改成后台可配（cdnCache(c) 内部读 setting），这里钉住调用形态
+	// 与数量：五条公开 GET 仍必须过 cdnCache，且 ResolveRef 出现在它之前。
+	cacheCall := regexp.MustCompile(`(?m)^\s*cdnCache\(c\)\s*$`)
 	require.Len(t, cacheCall.FindAllString(src, -1), 5,
-		"P1 的五条 60 秒边缘缓存接口数量变了；ResolveRef 必须在这五条的 cdnCache 之前完成")
+		"P1 的五条边缘缓存接口数量变了；ResolveRef 必须在这五条的 cdnCache 之前完成")
+	require.NotContains(t, src, "cdnCache(c, 60)",
+		"TTL 已收敛到后台配置，不允许再写死 60 秒调用（读 cdnCache 内部）")
 }
 
 // TestP0bResourceJSONFieldsMatchBoundaryList 钉住 §2 的字段集合。

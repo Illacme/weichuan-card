@@ -23,6 +23,7 @@ import (
 //   - GET  /api/public/settings  公开：仅返回非敏感项（小程序 / 前端引导用）
 //   - GET  /api/admin/settings   平台超管读取全部可配置项（按分组）
 //   - PUT  /api/admin/settings   平台超管批量更新配置（按类型校验）
+//   - POST /api/admin/cache/refresh  平台超管：立即刷新公开接口缓存（递增版本号）
 //
 // 三档生效方式（详见 internal/setting 包注释）：
 //  1. 常规项保存即时生效（内存缓存即时回写）；
@@ -138,6 +139,34 @@ func RegisterSettings(r *gin.Engine, db *gorm.DB, cfg config.Config) {
 				strings.Join(restartKeys, "、")
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": msg, "data": gin.H{"restartKeys": restartKeys}})
+	})
+
+	// 立即刷新公开接口缓存：把缓存版本号原子 +1。
+	//
+	// 为什么不是「清除缓存」：HTTP 缓存的副本存在 CDN / 反代上，服务端没有主动
+	// 失效的能力（除非接 CDN 厂商 purge API）。递增版本号后，小程序把新版本号
+	// 作为 ?cv=N 附加到被缓存的 GET 上——对 CDN 来说这是全新的缓存键，必然回源
+	// 拿到新内容。这条路不依赖任何厂商凭据，本地 / 任意 CDN 都生效。
+	//
+	// 即时生效：Bump 同步刷新 setting 内存缓存，下一次公开请求的响应头 TTL 与
+	// 端上拉到的版本号都是新值，无需重启。写操作留痕（cache.refresh 审计）。
+	r.POST("/api/admin/cache/refresh", plat, func(c *gin.Context) {
+		next, err := setting.Bump(setting.KeyPublicCacheVersion)
+		if err != nil {
+			audit.Record(db, c, audit.Entry{
+				Action: audit.ActionCacheRefresh, TargetType: "setting",
+				TargetID: setting.KeyPublicCacheVersion,
+				Result:   audit.ResultFail, Detail: map[string]any{"error": err.Error()},
+			})
+			c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "刷新失败：" + err.Error()})
+			return
+		}
+		audit.Record(db, c, audit.Entry{
+			Action: audit.ActionCacheRefresh, TargetType: "setting",
+			TargetID: setting.KeyPublicCacheVersion,
+			Detail:   map[string]any{"cacheVersion": next},
+		})
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已刷新缓存", "data": gin.H{"cacheVersion": next}})
 	})
 }
 
