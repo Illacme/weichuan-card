@@ -7094,4 +7094,4 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 | 发版自检 `selftest_deploy_frontend.sh` | PASS=59 FAIL=0 |
 | 新增守门 | `TestPublicCacheConfigurable`（TTL 60/120/0/no-store/非法拒绝）、`TestCacheRefreshBumpsVersion`（递增+下发）、`TestCacheRefreshRequiresPlatformAdmin`、`settings_contract.spec.ts` ⑤ 全链路契约、`request.spec.ts` cv 注入/排除、`Settings.spec.ts` 刷新按钮 + 内部项不暴露 |
 | 反向验证 | TTL 写死 60 会被 `ref_boundaries_test.go` 拦；cv 注入到探针/详情会被 request.spec 拦；漏下发版本字段会被 settings_contract 拦 |
-| CI | 待提交后补记 |
+| CI | 提交 `216c968`，run `45918447689`，15 job 全绿 |
