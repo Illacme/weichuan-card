@@ -221,14 +221,18 @@ func Load(db *gorm.DB, opt Options) (Result, error) {
 	}
 
 	// ---- 首页布局 ----
-	// 演示数据按最终验收稿配齐：小字简介、每页 1 张精选、横向滚动、宝蓝主色 80% 浓度。
-	// 这些是**演示初始值**，不是全局缺省：现有租户的存量行 FirstOrCreate 命中后不会被改写。
+	// 演示数据按最终验收稿配齐：小字简介、每页 1 张精选、横向滚动、宝蓝主色 80% 浓度，
+	// 精选案例 16:9 居中裁切 + 显示名称（开发联调 / 验收时默认就能看到这两个效果，
+	// 不必每次手动开）。
+	// 这些是**演示初始值**，不是全局缺省：现有租户的存量行 FirstOrCreate 命中后不会被改写；
+	// 真实企业新建仍走 model 缺省（不裁切 / 不显示名称），生产环境不受影响。
 	demoBrand := "brand-royal"
 	add("创建首页布局", db.Where("company_id = ?", DemoCompanyID).FirstOrCreate(
 		&model.HomeLayout{
 			CompanyID: DemoCompanyID, Order: `["achievement","service"]`,
 			FeaturedCount: 1, FeaturedEffect: model.FeaturedEffectScroll,
 			BgGradientStrength: 80, BrandColorID: &demoBrand,
+			FeaturedRatio: model.FeaturedRatio16x9, ShowFeaturedName: true,
 		}).Error)
 
 	// 腾讯视频档：只在「加载演示数据」时打开（本地联调 / 安装向导勾选项）。

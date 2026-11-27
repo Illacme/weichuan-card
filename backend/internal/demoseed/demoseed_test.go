@@ -154,6 +154,14 @@ func TestLoadDemoPresentationDefaults(t *testing.T) {
 		hl.BgGradientStrength != 80 {
 		t.Errorf("首页布局呈现参数不对：%+v", hl)
 	}
+	// 演示初始值：精选案例 16:9 裁切 + 显示名称，让开发联调 / 验收时开箱就见效果。
+	// 注意这**不是**全局缺省（见 model.DefaultFeaturedRatio = none）——别在这里改全局。
+	if hl.FeaturedRatio != model.FeaturedRatio16x9 {
+		t.Errorf("演示精选裁切比应为 16:9，got %q", hl.FeaturedRatio)
+	}
+	if !hl.ShowFeaturedName {
+		t.Errorf("演示精选案例名称应默认显示")
+	}
 	if hl.BrandColorID == nil || *hl.BrandColorID != "brand-royal" {
 		t.Errorf("品牌配色应为宝蓝 brand-royal，got %v", hl.BrandColorID)
 	}
