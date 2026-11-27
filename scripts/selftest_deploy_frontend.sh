@@ -13,8 +13,9 @@
 #   5. 不带口令时完全不碰 askpass（配了免密的用户不能被影响）；
 #   6. --password 缺值 / 把下一个选项吃成口令时能立刻拦下；
 #   7. 发版前比对远端 migrations/ 文件名清单：顶层基线 + history/ 增量两份都要比；
-#      一致 / 缺顶层 / 缺 history 里的 0066 / history 整目录缺失 / 整目录缺失 /
-#      远端读不到（不许假报全缺）/ 严格模式拒绝发版 / 显式跳过 / 本地模式。
+#      默认按升级发版硬门禁（缺任一即拒发），--fresh-install 只放宽 history/：
+#      一致 / 缺顶层（任何模式都拒）/ 缺 0066（默认拒、fresh 放）/ history 整目录缺失 /
+#      整目录缺失 / 远端读不到（不许假报全缺）/ 显式跳过 / 本地模式。
 #
 # 用法：bash scripts/selftest_deploy_frontend.sh   （CI 里跑这个，退出码非 0 即失败）
 # ─────────────────────────────────────────────────────────────
@@ -339,10 +340,10 @@ RC=$?
 if [ "$RC" -ne 0 ] && has "$OUT" '不能为空'; then ok "--password= 空值被拦住"; else bad "空值没拦住（rc=${RC}）"; fi
 
 reset_probe
-"${COMMON[@]}" "$DEPLOY" --password --require-migrations > "$OUT" 2>&1
+"${COMMON[@]}" "$DEPLOY" --password --fresh-install > "$OUT" 2>&1
 RC=$?
 if [ "$RC" -ne 0 ] && has "$OUT" '漏了口令'; then
-    ok "--password 不会把新选项 --require-migrations 吃成口令"
+    ok "--password 不会把新选项 --fresh-install 吃成口令"
 else
     bad "新选项被误吃成口令（rc=${RC}）"
 fi
@@ -412,12 +413,18 @@ fi
 if has "$OUT" "$FAKE_PW"; then bad "报错信息里泄漏了口令"; else ok "报错信息不含口令"; fi
 
 # ─────────────────────────────────────────────────────────────
-head_ "7. 发版前迁移清单完整性自检"
-if has "$ROOT/help.txt" '--require-migrations' && has "$ROOT/help.txt" 'DEPLOY_MIGRATIONS_DIR' \
+head_ "7. 发版前迁移清单完整性自检（默认=升级硬门禁，fresh 才放宽）"
+if has "$ROOT/help.txt" '--fresh-install' && has "$ROOT/help.txt" 'DEPLOY_FRESH_INSTALL' \
+   && has "$ROOT/help.txt" 'DEPLOY_MIGRATIONS_DIR' \
    && has "$ROOT/help.txt" 'DEPLOY_LOCAL_MIGRATIONS_DIR'; then
-    ok "-h 里有严格模式与两份迁移目录说明"
+    ok "-h 里有全新安装开关与两份迁移目录说明"
 else
     bad "-h 缺少迁移清单相关说明"
+fi
+if has "$ROOT/help.txt" '--require-migrations'; then
+    bad "-h 仍留着已移除的 --require-migrations"
+else
+    ok "旧 --require-migrations 已从帮助移除"
 fi
 
 # 7.1 默认路径：两份清单都一致，别误报事故
@@ -429,142 +436,161 @@ if [ "$RC" -eq 0 ] && has "$OUT" "migrations 清单一致（顶层 ${MIG_COUNT} 
 else
     bad "清单一致路径不对（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
 fi
-if has "$OUT" '部署包不完整'; then bad "清单一致却误报事故"; else ok "清单一致不误报事故"; fi
+if has "$OUT" '部署包不完整' || has "$OUT" '全新安装模式'; then
+    bad "清单一致却误报事故或声明全新安装"
+else
+    ok "清单一致不误报事故、不声明全新安装"
+fi
 
-# 7.2 远端缺 1 个顶层文件：列出名字 + 事故说明 + 修复命令，默认只警告不阻断
+# 7.2 顶层基线缺失：任何模式都硬拦（全新安装也要 0001_init.sql）
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG"; then
-    ok "缺顶层文件：列出具体文件名，默认不阻断发版"
+if [ "$RC" -ne 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" '顶层基线缺失'; then
+    ok "默认模式缺顶层文件：列出名字、拒绝发版"
 else
-    bad "缺顶层文件没报出文件名或误阻断了（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
+    bad "默认缺顶层文件没拦住（rc=${RC}）：$(tail -5 "$OUT" | tr '\n' ' ')"
 fi
-if has "$OUT" '部署包不完整' && has "$OUT" 'rsync -av backend/migrations/' && has "$OUT" './server migrate'; then
-    ok "给出 0035/0038 事故说明与 rsync（含 history）+ 迁移修复命令"
+if has "$OUT" '上传 assets'; then bad "默认缺顶层仍进了上传步骤"; else ok "默认缺顶层在上传前退出"; fi
+if has "$OUT" 'rsync -av backend/migrations/' && has "$OUT" './server migrate'; then
+    ok "给出 rsync（含 history）+ 迁移修复命令"
 else
-    bad "事故说明或修复命令不全"
+    bad "修复命令不全"
 fi
-if has "$OUT" '--exclude=history/'; then
-    bad "修复命令仍在用 --exclude=history/ 老写法（会漏传 0066 等增量）"
-else
-    ok "修复命令不再排除 history/"
-fi
-if has "$OUT" '默认只警告、继续发版'; then ok "默认模式明确提示可加严格模式"; else bad "缺少严格模式引导"; fi
-# 盯住「探针回传真实目录」这一行：MIG_DIR 若被第一个 .sql 文件名污染，
-# 修复命令里的 rsync 目标就不再是目录，而 7.1 仍可能因为别的原因看起来正常。
+if has "$OUT" '--exclude=history/'; then bad "修复命令仍排除 history/"; else ok "修复命令不再排除 history/"; fi
+# 盯住探针真实目录行：被 .sql 文件名污染会让修复命令指错地方。
 if has "$OUT" "rsync -av backend/migrations/ fake@127.0.0.1:${MIG_SRC}/"; then
     ok "修复命令用探针回传的真实目录（没被 .sql 文件名污染）"
 else
     bad "迁移目录回传契约漂移：修复命令里的路径不对"
 fi
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify --fresh-install > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && has "$OUT" "      - $HIDE_MIG"; then
+    ok "--fresh-install 也不放过顶层基线缺失"
+else
+    bad "--fresh-install 放过了顶层缺失（rc=${RC}）"
+fi
 
-# 7.2b 真事故形态：顶层齐、history 缺 0066。老脚本只比顶层，这里必红。
+# 7.2b 真事故形态：顶层齐、history 缺 0066。默认必须拒发。
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" "顶层基线齐、只缺 history/"; then
-    ok "history 缺 ${HIDE_HIST_MIG}：报出文件名并说明升级发版必须补齐"
+if [ "$RC" -ne 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" 'history 缺 1'; then
+    ok "默认模式 history 缺 ${HIDE_HIST_MIG}：报出文件名并拒绝发版"
 else
-    bad "history 缺 0066 没被识别（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
+    bad "默认缺 0066 没拦住（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
 fi
 if has "$OUT" 'migrations 清单一致'; then
     bad "缺 0066 却仍打印「清单一致」——正是发版日志里的假绿"
 else
     ok "缺 0066 时不再打印「清单一致」"
 fi
-if has "$OUT" 'history 缺 1'; then ok "分账打印 history 缺几个，不与顶层混算"; else bad "没按两份清单分别计数"; fi
-reset_probe
-"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
-RC=$?
-if [ "$RC" -ne 0 ] && has "$OUT" "$HIDE_HIST_MIG" && has "$OUT" '严格模式：远端迁移清单不完整，拒绝发版'; then
-    ok "严格模式下 history 缺 0066 直接拒绝发版"
+if has "$OUT" '升级发版绝不缺 history/' && has "$OUT" '上传 assets'; then
+    bad "缺 0066 仍进了上传步骤"
 else
-    bad "严格模式放过了 history 缺文件（rc=${RC}）"
+    ok "缺 0066 在上传前拒绝，且提示升级发版不得缺 history/"
 fi
 
-# 7.2c history 整目录缺失：老脚本会打「1 个 .sql 一致」，这里必须拦下。
+# 7.2c 全新安装才放行 history/：同一份残缺目录，加 --fresh-install 后应通过
+reset_probe
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" "$DEPLOY" -n --no-verify --fresh-install > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" '全新安装模式放行，继续发版'; then
+    ok "--fresh-install 下 history 缺 0066 只告警放行"
+else
+    bad "--fresh-install 没放行 history 缺文件（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
+fi
+reset_probe
+"${COMMON[@]}" "DEPLOY_FRESH_INSTALL=1" "FAKE_MIGRATIONS_DIR=$ROOT/partial-history-only" \
+    "$DEPLOY" -n --no-verify > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '全新安装模式'; then
+    ok "DEPLOY_FRESH_INSTALL=1 等同 --fresh-install（CI / 无人值守用）"
+else
+    bad "环境变量形式的全新安装开关没生效（rc=${RC}）"
+fi
+
+# 7.2d history 整目录缺失：默认拒发，fresh 放行
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/no-history-migrations" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" "history 缺 ${HIST_COUNT}"; then
-    ok "history 整目录缺失：报出 ${HIST_COUNT} 个缺文件，默认只警告"
+if [ "$RC" -ne 0 ] && has "$OUT" "      - $HIDE_HIST_MIG" && has "$OUT" "history 缺 ${HIST_COUNT}"; then
+    ok "默认模式 history 整目录缺失：报出 ${HIST_COUNT} 个缺文件并拒绝"
 else
-    bad "history 整目录缺失没报全（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
+    bad "history 整目录缺失没拦住（rc=${RC}）：$(tail -6 "$OUT" | tr '\n' ' ')"
 fi
 if has "$OUT" 'migrations 清单一致'; then bad "history 整目录缺失仍报「清单一致」"; else ok "history 整目录缺失不再假绿"; fi
-
-# 7.2d 本地量尺残缺：空集比空集不能假绿。
 reset_probe
-"${COMMON[@]}" "DEPLOY_LOCAL_MIGRATIONS_DIR=$ROOT/local-no-history" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+"${COMMON[@]}" "FAKE_MIGRATIONS_DIR=$ROOT/no-history-migrations" "$DEPLOY" -n --no-verify --fresh-install > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '全新安装模式放行，继续发版'; then
+    ok "--fresh-install 下 history 整目录缺失放行"
+else
+    bad "--fresh-install 未放行 history 整目录缺失（rc=${RC}）"
+fi
+
+# 7.2e 本地量尺残缺：空集比空集不能假绿；fresh 下本地无 history 是合法的
+reset_probe
+"${COMMON[@]}" "DEPLOY_LOCAL_MIGRATIONS_DIR=$ROOT/local-no-history" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
 if [ "$RC" -ne 0 ] && has "$OUT" '清单不完整' && has "$OUT" '迁移清单无法校验，拒绝发版'; then
-    ok "本地 history 残缺：严格模式拒绝，不拿空清单假比对"
+    ok "默认模式本地 history 残缺：拒绝，不拿空清单假比对"
 else
     bad "本地量尺残缺被放过（rc=${RC}）"
 fi
-
-# 7.3 严格模式：上传前就死
 reset_probe
-"${COMMON[@]}" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+"${COMMON[@]}" "DEPLOY_LOCAL_MIGRATIONS_DIR=$ROOT/local-no-history" "$DEPLOY" -n --no-verify --fresh-install > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -ne 0 ] && has "$OUT" '严格模式：远端迁移清单不完整，拒绝发版'; then
-    ok "--require-migrations 直接拒绝发版"
+if [ "$RC" -eq 0 ] && has "$OUT" '本地无 history/ 清单，只校验顶层基线'; then
+    ok "--fresh-install 下本地无 history 合法，只校验顶层"
 else
-    bad "严格模式没拦住（rc=${RC}）"
-fi
-if has "$OUT" '上传 assets'; then bad "严格模式仍进了上传步骤"; else ok "严格模式在上传前就退出"; fi
-
-reset_probe
-"${COMMON[@]}" "DEPLOY_REQUIRE_MIGRATIONS=1" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" \
-    "$DEPLOY" -n --no-verify > "$OUT" 2>&1
-RC=$?
-if [ "$RC" -ne 0 ] && has "$OUT" '拒绝发版'; then
-    ok "DEPLOY_REQUIRE_MIGRATIONS=1 等同 --require-migrations（CI 用）"
-else
-    bad "环境变量形式的严格模式没生效（rc=${RC}）"
+    bad "--fresh-install 下本地无 history 被误拦（rc=${RC}）"
 fi
 
-# 7.4 整目录缺失：不能只说一句「目录不存在」而不给清单
+# 7.3 整目录缺失：既报清单，也在上传前死
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_DIR_MISSING=1" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" '目录不存在' && has "$OUT" "      - $HIDE_MIG"; then
-    ok "整目录缺失：告警并列出应补齐的文件"
+if [ "$RC" -ne 0 ] && has "$OUT" '目录不存在' && has "$OUT" "      - $HIDE_MIG" && ! has "$OUT" '上传 assets'; then
+    ok "整目录缺失：列出应补齐文件且在上传前拒绝"
 else
     bad "整目录缺失处理不对（rc=${RC}）"
 fi
 
-# 7.5 远端命令失败：绝不能把整批文件全报成「缺失」（假警报比不报更糟）
+# 7.4 远端命令失败：单独告警「无法校验」，不假报整批缺失，且默认拒发
 reset_probe
 "${COMMON[@]}" "FAKE_MIGRATIONS_UNKNOWN=1" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" '读不到远端迁移目录' && ! has "$OUT" '部署包不完整'; then
-    ok "远端读不到时单独告警，不假报整批文件缺失"
+if [ "$RC" -ne 0 ] && has "$OUT" '读不到远端迁移目录' && ! has "$OUT" '部署包不完整' \
+   && has "$OUT" '迁移清单无法校验，拒绝发版'; then
+    ok "远端读不到时单独告警、拒绝发版，不假报整批文件缺失"
 else
-    bad "远端读不到被误判成缺文件（rc=${RC}）"
-fi
-reset_probe
-"${COMMON[@]}" "FAKE_MIGRATIONS_UNKNOWN=1" "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
-RC=$?
-if [ "$RC" -ne 0 ] && has "$OUT" '迁移清单无法校验，拒绝发版'; then
-    ok "严格模式下「无法校验」同样拒绝发版"
-else
-    bad "严格模式放过了无法校验（rc=${RC}）"
+    bad "远端读不到处理不对（rc=${RC}）"
 fi
 
-# 7.6 显式跳过：连严格模式也不该拦
+# 7.5 显式跳过：任何模式都不该拦
 reset_probe
 "${COMMON[@]}" "DEPLOY_MIGRATIONS_DIR=" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" \
-    "$DEPLOY" -n --no-verify --require-migrations > "$OUT" 2>&1
+    "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
 if [ "$RC" -eq 0 ] && has "$OUT" '已显式跳过'; then
-    ok "DEPLOY_MIGRATIONS_DIR= 显式跳过，严格模式也不拦"
+    ok "DEPLOY_MIGRATIONS_DIR= 显式跳过，默认模式也不拦"
 else
     bad "显式跳过没生效（rc=${RC}）"
 fi
+reset_probe
+"${COMMON[@]}" "DEPLOY_MIGRATIONS_DIR=" "FAKE_MIGRATIONS_HIDE=$HIDE_MIG" \
+    "$DEPLOY" -n --no-verify --fresh-install > "$OUT" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && has "$OUT" '已显式跳过'; then
+    ok "显式跳过在 --fresh-install 下同样生效"
+else
+    bad "显式跳过在 fresh 下失效（rc=${RC}）"
+fi
 
-# 7.7 本地模式：默认从 DEPLOY_PATH 父目录推导，修复命令也换成 cp 而非 rsync
+# 7.6 本地模式：默认从 DEPLOY_PATH 父目录推导，修复命令也换成 cp 而非 rsync
 reset_probe
 "${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
@@ -577,7 +603,7 @@ reset_probe
 "${COMMON[@]}" "DEPLOY_HOST=" "DEPLOY_PATH=$ROOT/target" "DEPLOY_MIGRATIONS_DIR=$ROOT/partial-migrations" \
     "$DEPLOY" -n --no-verify > "$OUT" 2>&1
 RC=$?
-if [ "$RC" -eq 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' \
+if [ "$RC" -ne 0 ] && has "$OUT" "      - $HIDE_MIG" && has "$OUT" 'mkdir -p ' \
    && has "$OUT" 'cp -a backend/migrations/.' && ! has "$OUT" '--exclude=history/'; then
     ok "本地模式缺文件给出本地修复命令（先建目录，cp -a 整目录含 history）"
 else

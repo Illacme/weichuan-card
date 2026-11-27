@@ -235,12 +235,12 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
   0035 / 0038 两次线上事故
   都是「只换产物、漏同步迁移目录」，后端启动虽打 `[MIGRATE][FATAL] 部署包不完整` 却刻意不终止，
   故障藏到运行期变成一句「保存失败」。缺文件会列出具体名字与 `rsync` / `./server migrate` 修复命令
-  （整目录同步，不再用会漏传增量的 `--exclude=history/`）；
-  `--require-migrations`（或 `DEPLOY_REQUIRE_MIGRATIONS=1`）把它变成上传前的硬门禁，
-  默认只警告（全新安装只发顶层，所以 `history/` 缺失默认不拦；升级发版务必加硬门禁）；
-  远端目录布局不同用 `DEPLOY_MIGRATIONS_DIR` 指定，纯前端流水线用
-  `DEPLOY_MIGRATIONS_DIR=` 显式跳过。`scripts/selftest_deploy_frontend.sh` 离线守门（CI job
-  「发版脚本自检」，59 条断言）。详见 `docs/deploy-runbook.md` §3.2。
+  （整目录同步，不再用会漏传增量的 `--exclude=history/`）。
+  **默认按升级发版处理**：顶层与 `history/` 任一缺失、或远端读不到，都在上传前拒绝发版；
+  只有空库首次部署才用 `--fresh-install`（或 `DEPLOY_FRESH_INSTALL=1`）放宽 `history/`，
+  顶层基线在任何模式下都不放过。远端目录布局不同用 `DEPLOY_MIGRATIONS_DIR` 指定，
+  纯前端流水线用 `DEPLOY_MIGRATIONS_DIR=` 显式跳过。`scripts/selftest_deploy_frontend.sh`
+  离线守门（CI job「发版脚本自检」，61 条断言）。详见 `docs/deploy-runbook.md` §3.2。
 - **后台「测试地址」带完整 SSRF 防护**：`POST /api/admin/url-probe` 对管理员填的 CDN 地址发一次受限 HEAD，直接给出 403（CDN 未启用 HTTPS / 防盗链）、404（漏了对象目录前缀）、200 却是 `text/html` 错误页等结论，用来排查小程序黑屏 00:00 且无报错。防护在 `backend/internal/urlprobe`：协议/凭据/本机域名白名单 → 自解析 DNS 逐个排除私网、回环、链路本地、云元数据与保留段 → 把已校验 IP 固定进 `DialContext` 防 DNS rebinding → 关代理、禁重定向、6s 超时、只发 HEAD 不读响应体；接入层还有后台鉴权、10 次/分双维度限流与 `url_probe.check` 审计（只记 host）。它只证明服务端可达，**不等于真机能播**。契约见 `docs/openapi.yaml`，安全边界见 `backend/README.md`。
 - **备份与恢复**：`scripts/backup.sh` 按 `DB_DRIVER` 选形态——MySQL 走 `mysqldump --single-transaction`，
   SQLite 走二进制自带的 `server backup`（`VACUUM INTO` 在线快照，**不能直接 `cp` 库文件**：

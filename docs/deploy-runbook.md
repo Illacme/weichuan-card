@@ -557,8 +557,11 @@ DEPLOY_PASSWORD='服务器 root 口令' ./scripts/deploy_frontend.sh --build
 # ③ 最稳妥的长期方案仍是免密，之后连口令都不用带
 ssh-copy-id root@123.56.154.49
 
-# CI / 升级发版：远端 migrations/ 清单不完整就直接拒绝发版（默认只警告）
-DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build --require-migrations
+# 升级发版（默认）：远端 migrations/ 清单不完整就在上传前拒绝发版
+DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build
+
+# 全新安装（空库首次部署）：只要求顶层基线，缺 history/ 告警放行
+DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build --fresh-install
 ```
 
 脚本做了六件手拖做不到的事：
@@ -581,13 +584,16 @@ DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build --require-migrations
    - 默认从 `DEPLOY_PATH` 的父目录推导远端 `migrations/`（二进制与迁移目录同级）。
      布局不同就设 `DEPLOY_MIGRATIONS_DIR=/实际/路径/migrations`；
      `DEPLOY_MIGRATIONS_DIR=` 显式置空 = 跳过。
-   - 默认**只警告、继续发版**（发前端的机器上可能没有后端源码，或迁移由另一条流水线部署）。
-     想变成硬门禁加 `--require-migrations`，等价环境变量 `DEPLOY_REQUIRE_MIGRATIONS=1`；
-     严格模式下「缺文件」「整目录缺失」「远端读不到」三种情况都在上传前退出。
-   - **全新安装**只发顶层 `0001_init.sql`，所以 `history/` 缺失在默认模式下只告警；
-     **升级发版**必须带齐 `history/`，请加 `--require-migrations` 让它变成硬门禁。
-     修复命令一律给「整目录同步」，不再用会漏传增量的 `--exclude=history/`。
-   - 远端命令失败时**不会**把整批文件全报成缺失（那是假警报），而是单独告警「无法比对」。
+   - **默认按升级发版处理**：「缺文件」「整目录缺失」「远端读不到」三种情况都在上传前
+     退出，顶层基线与 `history/` 增量缺任一份都不发。
+   - 只有**空库首次部署**（全新安装）才用 `--fresh-install`，等价环境变量
+     `DEPLOY_FRESH_INSTALL=1`：只要求顶层 `0001_init.sql`，缺 `history/` 告警放行。
+     顶层基线在任何模式下都是硬要求。远端已有数据 / 已有历史壳时**绝不要**用这个开关——
+     2026-11-27 那次 `0067_home_config_version.sql` 漏传正是升级按全新安装放过的形态。
+   - 「发前端的机器上没有后端源码」「迁移由另一条流水线部署」用 `DEPLOY_MIGRATIONS_DIR=`
+     显式跳过，不要用 `--fresh-install` 冒充。
+   - 修复命令一律给「整目录同步」，不再用会漏传增量的 `--exclude=history/`。
+   - 远端命令失败时**不会**把整批文件全报成缺失（那是假警报），而是单独告警「无法校验」。
    - 只比文件名，不查 `schema_migrations`、也不代替 `./server migrate`：清单齐了但列没加上，
      仍要看启动日志 / 手工跑迁移子命令。
 4. **先 assets 后 index.html**（见上）。
@@ -635,9 +641,9 @@ DEPLOY_PASSWORD='…' ./scripts/deploy_frontend.sh --build --require-migrations
 
 其它可用环境变量见 `./scripts/deploy_frontend.sh -h`（`DEPLOY_PORT` / `DEPLOY_PATH` /
 `DEPLOY_URL` / `DEPLOY_PASSWORD` / `DIST_DIR` / `DEPLOY_MIGRATIONS_DIR` /
-`DEPLOY_REQUIRE_MIGRATIONS`）；`--password` 会覆盖 `DEPLOY_PASSWORD`。
+`DEPLOY_FRESH_INSTALL`）；`--password` 会覆盖 `DEPLOY_PASSWORD`。
 这条脚本链路（口令注入 + 迁移清单）有 `scripts/selftest_deploy_frontend.sh` 守门，
-CI 的「发版脚本自检」job 每次都跑；目前 59 条断言，含缺顶层 / history 缺 0066 /
+CI 的「发版脚本自检」job 每次都跑；目前 61 条断言，含缺顶层 / history 缺 0066 /
 history 整目录缺失 / 本地清单残缺 / 严格模式 / 远端读不到等分支。
 没有 SSH 直连的机器可以不用脚本，但**手动传时务必遵守「先 assets 后 index.html」**，
 并且自己按 §4 核对一次远端迁移目录。
@@ -712,7 +718,7 @@ migrations 目录（/www/wwwroot/xxx/migrations）缺 1 个：0035_company_wx_ap
 `ls <部署目录>/migrations/history/*.sql | wc -l` 与本地
 `backend/migrations/history/` 的文件数一致（务必含 `0066_home_featured_ratio.sql`）。
 只查顶层正是 2026-11-25 那次假绿的成因。这两条现在都由 `scripts/deploy_frontend.sh`
-在每次发版前自动比对（见 §3.2 第 3 项），加 `--require-migrations` 可变成硬门禁；
+在每次发版前自动比对（见 §3.2 第 3 项），默认即硬门禁、缺文件会在上传前拒绝；
 `docs/deploy-runbook.md` 的这一节仍然是排查手册。
 
 > **已经漏了怎么认出来**：运行期表现是后台某个保存接口只弹一句「保存失败」，
@@ -2287,7 +2293,7 @@ LOG_FORMAT=json          # .env 里设置；容器形态 compose 已留好变量
 | 上传报 413 | 请求体超限：`frontend/nginx.conf` 已设 50m；前置 Caddy 默认不限 |
 | 小程序码接口 code=1 | 未配 `WX_APPID/WX_APPSECRET`，联调期属预期；配了仍失败多为凭据不配对或调用 IP 不在白名单（`PREFLIGHT_WX_LIVE=1 scripts/preflight.sh` 可直接问微信接口） |
 | 启动日志出现 `[MIGRATE][FATAL]` | 迁移没应用完（表结构落后于代码版本）。看上面的报错处理，或 `AUTO_MIGRATE=0` + `docker exec weichuan-backend /app/server migrate` 单独跑（详见 §4）。服务不会因此终止，但功能可能报错 |
-| 发版时提示「远端 migrations 缺 N 个文件」 | 升级只换了产物、没同步迁移目录。按脚本打印的 `rsync -av backend/migrations/ …` 与 `./server migrate` 补齐即可，**不必重启服务**；CI 里加 `--require-migrations` 可让它在上传前直接失败。远端目录布局不是 `DEPLOY_PATH` 父目录下的 `migrations/` 时设 `DEPLOY_MIGRATIONS_DIR=...`，纯前端流水线（后端单独发）用 `DEPLOY_MIGRATIONS_DIR=` 显式跳过。注意脚本只比文件名，清单齐了但列仍没加上要看启动日志 |
+| 发版时提示「远端 migrations 缺 N 个文件」 | 升级只换了产物、没同步迁移目录。按脚本打印的 `rsync -av backend/migrations/ …` 与 `./server migrate` 补齐即可，**不必重启服务**；默认即在上传前直接失败；确属空库首次部署才用 `--fresh-install` 放行 history/。远端目录布局不是 `DEPLOY_PATH` 父目录下的 `migrations/` 时设 `DEPLOY_MIGRATIONS_DIR=...`，纯前端流水线（后端单独发）用 `DEPLOY_MIGRATIONS_DIR=` 显式跳过。注意脚本只比文件名，清单齐了但列仍没加上要看启动日志 |
 | 后台「测试地址」报 403 / 404 / 返回网页 | 这不是后端故障，是 CDN 地址本身取不到。**403 按响应头分三种，别一律往「没启用 HTTPS」上想**：① 带 `X-Error-Info: httpsDisabled` → 该域名确实没开 HTTPS，改用 `http://` 地址或去 CDN 控制台开；② 带 `cf-ray` / `server: cloudflare` → 403 是 Cloudflare 边缘返回的，**请求根本没到源站**，查 CF 的代理开关、回源设置与防火墙规则（已验证的真实组合：**七牛域名只开了 http，而 CF 回源走代理 → 400/403**，在 CF 后台把该记录的「代理」关掉即恢复）；③ 两样都没有 → 按防盗链 Referer、签名有效期、存储桶读权限查。**探测的是 http 地址时界面不会再提「是否启用 HTTPS」**——那是 https 探测才成立的成因，早期版本混成一句会把排查方向整个带反。404 多为「文件访问基址」漏了对象存储的目录前缀（如 `aitel/`）；200 但 `Content-Type: text/html` 是 CDN 的错误页。302 不跟随（防 SSRF），若 Location 是同域名的 https 会直接提示「改成 https:// 开头」。按钮的结论是从应用服务器发一次 HEAD 得来的，能取到也不代表手机一定能播，最终仍要小程序真机确认；站内相对路径不测（防 SSRF），请点开链接在浏览器确认 |
 | 视频地址是 `http://`，能不能存 / 能不能播 | **能存、多数情况能播，但不可靠**。① 写入侧：同 host 只差协议的地址一律放行（第五十九轮上线首日曾因按字符串前缀剥基址把存量 http 七牛地址判成「不合法」，已修）；② 硬规定只管**服务器域名**（`request` / `uploadFile` / `downloadFile` / `connectSocket`：必须已备案 + https + 无端口/IP），**媒体资源的 `src` 不校验业务域名**，http 在真机上能加载；③ 但微信在收紧：**基础库 3.8.7 起 `image` 在开发版 / 体验版已不支持 http 图片**，`<video>` 的 http 失败（`Failed to load media` / 安卓黑屏）是社区高频问题。所以后台只在地址是 http 时给橙色提示、**不拦保存**（拦会把「存量地址 + 什么都没改」的客户卡死在保存按钮上）。生产环境一律换 https |
 | 版本升级后功能报错、表缺列 | 同上一行：确认 `schema_migrations` 里有没有最新那个迁移文件（§4 有查询 SQL） |

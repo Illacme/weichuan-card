@@ -162,7 +162,7 @@
 | 1 | T−2 ~ T−1 | #4 三类服务器合法域名 👤 | mp.weixin.qq.com → 开发管理 → 开发设置 | `request` / `uploadFile` / `downloadFile` **三类**都含 `https://weichuan.ziyuanxingqiu.cn` | 域名改动有次数限制与生效延迟，必须早于阶段 2 的真机复核；逐项判据见 `docs/real-device-acceptance.md` §0.5 |
 | 1 | T−1 | #7 强随机密钥与后台凭据 🤖 | 部署环境 / 后台「系统设置」 | `JWT_KEY` / `ADMIN_PASS` 非内置缺省值；`WX_*`、对象存储、CDN 凭据配齐；`[SECURITY]` 告警清零 | **必须在该部署的服务器上**跑 `preflight.sh`，开发机裸跑的 FAIL 多是「本机无 .env」假警报；见 §三与脚本注释 |
 | 1 | T−1 | #8 Cloudflare 面板两项 👤 | CF 控制台 | ① Browser Cache TTL = **Respect Existing Headers**（否则 `/uploads/` immutable 被覆盖成 4h）；② HTML 边缘短缓存 60s 规则 | ② 的前置是「发版不清空 `assets/`」。配置后用下方探测块第 3/4 条实测，别只看面板开关 |
-| 1 | T−1 | 迁移目录同步 🤖 | 发版脚本 / 服务器 | 上线同步顶层 `backend/migrations/*.sql` 与 `history/`（全新部署用 `--exclude=history/`，升级才带归档）；`deploy_frontend.sh --require-migrations` 不报缺文件；启动日志**无** `[MIGRATE][FATAL]` | 只换二进制不换迁移 → 运行期才 `Unknown column`；已按 0001..0062 记账的旧库启动时自动切 `history/`，无需手设环境变量；补齐后 `./server migrate`，**不必重启** |
+| 1 | T−1 | 迁移目录同步 🤖 | 发版脚本 / 服务器 | 上线同步顶层 `backend/migrations/*.sql` 与 `history/`（全新部署用 `--exclude=history/`，升级才带归档）；`deploy_frontend.sh` 默认即硬门禁、不报缺文件（空库首次部署才用 `--fresh-install`）；启动日志**无** `[MIGRATE][FATAL]` | 只换二进制不换迁移 → 运行期才 `Unknown column`；已按 0001..0062 记账的旧库启动时自动切 `history/`，无需手设环境变量；补齐后 `./server migrate`，**不必重启** |
 | 2 | **T 日** | 一键只读探测 🤖 | 服务器 | 下方探测块 8 条全部符合预期 | 全程 GET/HEAD，不写库、不重启、不清缓存 |
 | 2 | T 日 | 三类域名真机生效 👤 | 真机 + 体验版小程序 | 上传头像（uploadFile）、海报换背景 / 小程序码（downloadFile）、普通接口（request）都通 | **开发者工具勾了「不校验合法域名」时完全复现不出来**，必须真机 |
 | 2 | T 日 | #1 隐私指引复核 👤 | 真机 | 点「存入通讯录」不再 `errno 112` 死循环 | 2026-11-07 已审核通过；**换账号 / 换主体须重新提交**，审核 1~2 工作日又是串行阻塞 |
