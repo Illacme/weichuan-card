@@ -169,7 +169,7 @@ else
   fi
 fi
 
-# 轮转：删除超过保留天数的旧备份（两种形态各自一套通配，互不影响）
+# 轮转：删除超过保留天数的旧备份（三种驱动各自一套通配，互不影响）
 if [ -d "$BACKUP_DIR" ]; then
   find "$BACKUP_DIR" -name "${DB_NAME}-*.sql.gz" -type f -mtime +"$KEEP_DAYS" -print -delete
   find "$BACKUP_DIR" -name "${DB_NAME}-*.db.gz" -type f -mtime +"$KEEP_DAYS" -print -delete
