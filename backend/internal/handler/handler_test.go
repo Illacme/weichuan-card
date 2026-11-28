@@ -6,8 +6,9 @@
 //  2. 默认测试不依赖外部 MySQL：注入一个临时文件的 SQLite 库（纯 Go 驱动 glebarez/sqlite，
 //     免 cgo），并用 GORM AutoMigrate 按模型建表。SQLite 把模型里的 JSON 列按 TEXT 存储，
 //     与 MySQL JSON 列在读写字符串语义上等价，足以验证 handler 业务逻辑。
-//  3. 生产契约一致性：设置 TEST_MYSQL_DSN 后，TestAPIFlowMySQL 会连真实 MySQL、应用
-//     migrations/*.sql，再跑与 SQLite 完全相同的断言（runAPIFlow），用于 CI 中的 parity 校验。
+//  3. 生产契约一致性：设置 TEST_MYSQL_DSN / TEST_POSTGRES_DSN 后，TestAPIFlowMySQL /
+//     TestAPIFlowPostgres 分别连真实 MySQL（应用 migrations/*.sql）与真实 PostgreSQL
+//     （AutoMigrate 建表），再跑与 SQLite 完全相同的断言（runAPIFlow），三方 parity。
 //  4. 鉴权中间件约定：未登录/无权限返回的是 HTTP 200 + {code:401|403}，而不是 HTTP 状态
 //     码，因此本测试统一断言 body["code"]，不依赖状态码。
 //  5. 存储增强的「成功分支」用 fake Presigner/Signer/CDNRefresher 覆盖（见 TestStorageEnhanceSuccess）；
@@ -17,6 +18,7 @@
 //
 //	cd backend && go test ./internal/handler/ -v
 //	TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/weichuan_test?charset=utf8mb4&parseTime=true' go test ./internal/handler/ -run TestAPIFlowMySQL -v
+//	TEST_POSTGRES_DSN='host=127.0.0.1 port=5432 user=postgres password=pw dbname=weichuan_test sslmode=disable' go test ./internal/handler/ -run TestAPIFlowPostgres -v
 package handler
 
 import (
@@ -51,6 +53,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -2109,6 +2112,56 @@ func TestAPIFlowMySQL(t *testing.T) {
 	// 与 setupSQLiteEngine 完全同构：迁移只建表结构，1 号租户由代码种子补齐。
 	// 漏掉这行会让「公开接口 / 审核流 / 员工管理 / 分类 / 服务 / 统计 / 企业内容」
 	// 七个 flow 集体因 company id=1 不存在而假失败。
+	seedDefaultCompany(t, db)
+
+	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(uploadDir) })
+
+	cfg := config.Config{
+		UploadDir:     uploadDir,
+		UploadBaseURL: "http://127.0.0.1:8080/uploads",
+		StorageDriver: "local",
+		StoragePublic: true,
+		JWTKey:        "test-jwt-key",
+		AdminUser:     "admin",
+		AdminPass:     "admin123456",
+	}
+	up := &storage.LocalUploader{
+		Dir:      cfg.UploadDir,
+		BaseURL:  cfg.UploadBaseURL,
+		MaxBytes: 10 * 1024 * 1024,
+		AllowExt: storage.DefaultAllowExt,
+	}
+	var refresher storage.CDNRefresher
+	r := buildEngine(t, db, cfg, up, refresher)
+	c := newTestClient(r, t)
+	adminToken := loginAdmin(t, c)
+	runAPIFlow(t, c, adminToken)
+}
+
+// TestAPIFlowPostgres 生产契约 parity：连真实 PostgreSQL、AutoMigrate 建表，
+// 再跑与 SQLite / MySQL **完全相同**的 runAPIFlow 断言集合。
+//
+// 本地无 TEST_POSTGRES_DSN 时跳过；CI 中用 postgres service 容器提供 DSN。
+// 与 MySQL parity 的差异只有建表方式：PG 走 AutoMigrate（migrations/*.sql 是
+// MySQL 方言，ENGINE/AUTO_INCREMENT/反引号 PG 都不认），MySQL 走迁移脚本。
+// 三条 parity 共用一套断言，才能真正证明「换库不改业务语义」。
+func TestAPIFlowPostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set TEST_POSTGRES_DSN (e.g. host=127.0.0.1 port=5432 user=postgres password=pw dbname=weichuan_test sslmode=disable) to run PostgreSQL parity")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+
+	// 可重复跑：DROP SCHEMA public CASCADE 比逐表 TRUNCATE 更彻底——
+	// AutoMigrate 可能留下历史版本的残留表，残留列会让下一次断言带偏。
+	// 空库上这两条也安全（public schema 一定存在）。
+	require.NoError(t, db.Exec("DROP SCHEMA public CASCADE").Error)
+	require.NoError(t, db.Exec("CREATE SCHEMA public").Error)
+	require.NoError(t, db.AutoMigrate(model.All()...))
+	// 与 setupSQLiteEngine 完全同构：AutoMigrate 只建表结构，1 号租户由代码种子补齐。
 	seedDefaultCompany(t, db)
 
 	uploadDir, err := os.MkdirTemp("", "weichuan-upload-")

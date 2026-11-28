@@ -4,6 +4,7 @@
 #
 #   DB_DRIVER=mysql （默认）  mysqldump → gzip → 按保留天数轮转
 #   DB_DRIVER=sqlite          容器内 `server backup`（VACUUM INTO 一致性快照）→ gzip → 轮转
+#   DB_DRIVER=postgres        容器内 pg_dump -Fc（自定义格式一致快照）→ gzip → 轮转
 #   文件与密钥                 转交 scripts/backup_files.sh（uploads-*.tar.gz / mirror-*.tar.gz / secrets-*.tar.gz.enc）
 #
 # **为什么必须是三件套**：只有数据库备份救不回两类东西——
@@ -57,8 +58,8 @@ export BACKUP_ENC_KEY
 DB_OUT=""
 
 case "$DB_DRIVER" in
-  mysql|sqlite) ;;
-  *) echo "[backup] 未知 DB_DRIVER=${DB_DRIVER}（可选 mysql / sqlite）" >&2; exit 2 ;;
+  mysql|sqlite|postgres) ;;
+  *) echo "[backup] 未知 DB_DRIVER=${DB_DRIVER}（可选 mysql / sqlite / postgres）" >&2; exit 2 ;;
 esac
 
 command -v docker >/dev/null 2>&1 || { echo "[backup] 需要 docker（备份在容器内执行）" >&2; exit 1; }
@@ -119,8 +120,27 @@ backup_sqlite() {
   echo "[backup] OK -> $out ($(du -h "$out" | cut -f1))"
 }
 
+# ── PostgreSQL：pg_dump -Fc 自定义格式一致性快照 ──
+# -Fc 输出的是 pg_restore 可直接读的归档（非纯 SQL），支持按表选择性恢复；
+# 用容器内的 pg_dump 而非常驻机安装，与 mysql/sqlite 形态的「docker 内执行」一致。
+backup_postgres() {
+  local out="$BACKUP_DIR/${DB_NAME}-${STAMP}.dump.gz"
+  echo "[backup] $STAMP dumping ${DB_NAME} from container ${DB_CONTAINER} ..."
+  if docker exec -e PGPASSWORD="$DB_PASSWORD" "$DB_CONTAINER" \
+    pg_dump -Fc -U"$DB_USER" -d"$DB_NAME" | gzip > "$out"; then
+    DB_OUT="$out"
+    echo "[backup] OK -> $out ($(du -h "$out" | cut -f1))"
+  else
+    echo "[backup] FAILED (docker exec pg_dump 非零退出)" >&2
+    rm -f "$out"
+    exit 1
+  fi
+}
+
 if [ "$DB_DRIVER" = "sqlite" ]; then
   backup_sqlite
+elif [ "$DB_DRIVER" = "postgres" ]; then
+  backup_postgres
 else
   backup_mysql
 fi
@@ -150,6 +170,7 @@ fi
 if [ -d "$BACKUP_DIR" ]; then
   find "$BACKUP_DIR" -name "${DB_NAME}-*.sql.gz" -type f -mtime +"$KEEP_DAYS" -print -delete
   find "$BACKUP_DIR" -name "${DB_NAME}-*.db.gz" -type f -mtime +"$KEEP_DAYS" -print -delete
+  find "$BACKUP_DIR" -name "${DB_NAME}-*.dump.gz" -type f -mtime +"$KEEP_DAYS" -print -delete
 fi
 
 echo "[backup] done (driver=${DB_DRIVER}, keep ${KEEP_DAYS} days)"

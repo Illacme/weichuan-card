@@ -285,12 +285,14 @@ type AchievementCategory struct {
 
 // ProjectCase 项目案例（按租户隔离）
 type ProjectCase struct {
-	ID             int64          `gorm:"primaryKey;column:id" json:"id"`
-	CompanyID      int64          `gorm:"column:company_id;index" json:"companyId"`
-	CategoryID     int64          `gorm:"column:category_id;index" json:"categoryId"`
-	Name           string         `gorm:"column:name" json:"name"`
-	Summary        string         `gorm:"column:summary" json:"summary"`
-	Detail         string         `gorm:"column:detail;type:mediumtext" json:"detail"`
+	ID         int64  `gorm:"primaryKey;column:id" json:"id"`
+	CompanyID  int64  `gorm:"column:company_id;index" json:"companyId"`
+	CategoryID int64  `gorm:"column:category_id;index" json:"categoryId"`
+	Name       string `gorm:"column:name" json:"name"`
+	Summary    string `gorm:"column:summary" json:"summary"`
+	// type:text 是方言通用写法：SQLite / PostgreSQL 的 AutoMigrate 都认；
+	// MySQL 生产表的 detail 列由 migrations/0001_init.sql 定义为 MEDIUMTEXT，不受此 tag 影响。
+	Detail         string         `gorm:"column:detail;type:text" json:"detail"`
 	Cover          string         `gorm:"column:cover" json:"cover"`
 	Album          string         `gorm:"column:album;type:json" json:"-"` // 存 JSON 数组字符串
 	IsHomeFeatured bool           `gorm:"column:is_home_featured;default:false" json:"isHomeFeatured"`
@@ -307,11 +309,12 @@ type ProjectCase struct {
 
 // BizService 业务服务（富文本含视频号块，按租户隔离）
 type BizService struct {
-	ID        int64          `gorm:"primaryKey;column:id" json:"id"`
-	CompanyID int64          `gorm:"column:company_id;index" json:"companyId"`
-	Title     string         `gorm:"column:title" json:"title"`
-	Icon      string         `gorm:"column:icon" json:"icon"` // 业务服务图标（首页服务区卡片展示）
-	Content   string         `gorm:"column:content;type:mediumtext" json:"content"`
+	ID        int64  `gorm:"primaryKey;column:id" json:"id"`
+	CompanyID int64  `gorm:"column:company_id;index" json:"companyId"`
+	Title     string `gorm:"column:title" json:"title"`
+	Icon      string `gorm:"column:icon" json:"icon"` // 业务服务图标（首页服务区卡片展示）
+	// type:text 同上：方言通用；MySQL 生产表 content 列为 MEDIUMTEXT（由迁移脚本定义）。
+	Content   string         `gorm:"column:content;type:text" json:"content"`
 	Sort      int            `gorm:"column:sort" json:"sort"`
 	CreatedAt time.Time      `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt time.Time      `gorm:"column:updated_at" json:"updatedAt"`

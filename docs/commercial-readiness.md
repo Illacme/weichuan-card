@@ -7095,3 +7095,50 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 | 新增守门 | `TestPublicCacheConfigurable`（TTL 60/120/0/no-store/非法拒绝）、`TestCacheRefreshBumpsVersion`（递增+下发）、`TestCacheRefreshRequiresPlatformAdmin`、`settings_contract.spec.ts` ⑤ 全链路契约、`request.spec.ts` cv 注入/排除、`Settings.spec.ts` 刷新按钮 + 内部项不暴露 |
 | 反向验证 | TTL 写死 60 会被 `ref_boundaries_test.go` 拦；cv 注入到探针/详情会被 request.spec 拦；漏下发版本字段会被 settings_contract 拦 |
 | CI | 提交 `216c968`，run `45918447689`，15 job 全绿 |
+
+---
+
+## 第一百一十五轮：接入 PostgreSQL 与三方 parity（2026-11-28）
+
+### 一、目标与结论
+
+把 PostgreSQL 作为第三种数据库接入，与 MySQL / SQLite 共用**同一套业务断言**。
+结论：技术可行且已完成。架构上 `dbopen.Open(dsn)` 本就是驱动收敛点，扩展成本集中在
+方言强耦合处；这一轮真正的收获是**真实 PG 抓出了 4 个 SQLite/MySQL 掩盖的 bug**，
+其中 2 个是静默错误（不报错但数据错），单靠代码审查发现不了。
+
+### 二、接入改动
+
+| 面 | 改动 |
+|---|---|
+| 驱动 | `go.mod` 加 `gorm.io/driver/postgres@v1.5.11`（gorm 连带 1.25.7→1.25.10）；`dbopen` 加 `DriverPostgreSQL`、PG DSN 识别（URL 与 key=value 两种形态）、Open 分支 |
+| 建表 | PG 走 AutoMigrate（与 SQLite 同路）；`migrations/*.sql` 是 MySQL 方言，PG 不认 ENGINE/AUTO_INCREMENT/反引号 |
+| 模型 | `mediumtext` → `text`（两处）——PG 无 mediumtext 类型；MySQL 生产表类型由迁移脚本定义，不受模型 tag 影响。`album` 的 `type:json` 守门 token 保留（PG 原生支持） |
+| 安装向导 | 三种引擎卡片、`composeDSN` PG 分支（`postgres://` URL + 密码百分号转义）、端口默认 5432、错误提示按方言分流 |
+| 备份 | `backup.sh` 接 `DB_DRIVER=postgres`（`pg_dump -Fc`），复用文件/密钥三件套与轮转；`server backup` 对非 SQLite DSN 明确拒绝 |
+| CI | 新增 `backend-postgres` job（`postgres:16-alpine` service 自供给 DSN），16 job 全必跑 |
+
+### 三、真实 PG 抓出的 4 个 bug（重点）
+
+1. **`ON CONFLICT DO UPDATE SET hits = hits + 1` 在 PG 报 42702**（列歧义）：
+   PG 要表名限定 `rate_limit_hits.hits + 1`，SQLite 反过来不接受限定——两条语句按方言分。
+2. **`CAST(stat_date AS CHAR)` 在 PG 返回 `'2'`**（char 默认长度 1）：不报错但日期全错，
+   属最危险的静默失败；PG 必须 `AS TEXT`。已改为 `statDateExpr(db)` 方言函数。
+3. **SQL 别名反引号在 PG 报 42601**：而裸 `call` 在 MySQL 8 是保留字报 1064——
+   两端互斥。加 `sqlQuote(db, name)`：PG 用双引号、MySQL/SQLite 用反引号，45 处统一走它。
+4. **`setting.Bump` 的 `value + 1` 在 PG 报 42883**（`text + integer`）：
+   「立即刷新缓存」在 PG 上永远失败，SQLite parity 覆盖不到。改 `CAST(CAST(value AS BIGINT) + 1 AS TEXT)`，
+   并加 `TestBumpPostgres` 真库守门。
+
+### 四、验证记录
+
+| 项 | 结果 |
+|---|---|
+| 三方 parity（同一套 `runAPIFlow`） | SQLite / MySQL 8.0.46 / PostgreSQL 16.16 **全 PASS** |
+| 真实 PG 端到端 | 生产二进制启动 `database driver=postgres`、27 表 AutoMigrate、登录、55 项设置、缓存刷新 1→2、TTL 120/0/60 运行时生效 |
+| PG 备份 | `DB_DRIVER=postgres scripts/backup.sh` 产出 32K 自定义格式归档，`pg_restore -l` 列出 239 TOC 条目 |
+| 全量后端 | gofmt / vet / build / `go test ./...`（36 包）全绿 |
+| 前端 | vitest 2053/2054 通过；唯一失败是用户工作区未提交的 `app.json`/`brand.ts`（启动标题），与本次无关 |
+| OpenAPI | 140 paths / 139 路由对齐 |
+| 新增守门 | `TestIsPostgresDSN`、`TestDSNFormsMutuallyExclusive`、`TestOpenPostgres`、`TestComposeDSNPostgres`、`TestAPIFlowPostgres`、`TestBumpPostgres` |
+| CI | 待提交后补记 |

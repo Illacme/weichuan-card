@@ -45,7 +45,7 @@ export interface SetupStatus {
 
 /** 安装表单（字段与后端 InstallReq 一一对应，扁平 JSON）。 */
 export interface InstallPayload {
-  engine: 'mysql' | 'sqlite'
+  engine: 'mysql' | 'sqlite' | 'postgres'
   dbHost?: string
   dbPort?: string
   dbUser?: string

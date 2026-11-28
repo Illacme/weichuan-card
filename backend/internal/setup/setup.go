@@ -101,7 +101,7 @@ func StatusPayload() Status {
 		Hint: "推荐直接使用本页下方的安装向导；也可以把配置写进 .env 后重启。" +
 			"优先级：环境变量 > " + cfgFile + " > 内置缺省值。",
 		Installable: Unconfigured(),
-		Engines:     []string{"mysql", "sqlite"},
+		Engines:     []string{"mysql", "sqlite", "postgres"},
 		SQLitePath:  filepath.Join(filepath.Dir(cfgFile), "weichuan.db"),
 		ConfigFile:  cfgFile,
 		AdminUser:   "admin",
@@ -433,7 +433,7 @@ const pageTpl = `<!doctype html>
   .block.details > *:not(summary) { margin-left:20px; margin-right:20px; }
   .block.details > pre { margin-left:20px; margin-right:20px; }
   h2 { margin:0 0 14px; font-size:15px; }
-  .engines { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
+  .engines { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px; }
   .engine { border:1px solid #ebeef5; border-radius:8px; padding:14px 16px; cursor:pointer; background:#fff; }
   .engine:hover { border-color:#c0d9f5; }
   .engine b { display:block; font-size:15px; margin-bottom:6px; }
@@ -511,20 +511,24 @@ const pageTpl = `<!doctype html>
           <b>MySQL</b>
           <p>适合生产与多人使用。需要一台可访问的 MySQL 服务，docker compose 部署已内置。</p>
         </div>
+        <div class="engine" data-engine="postgres">
+          <b>PostgreSQL</b>
+          <p>开源关系库，适合自建与国产化环境。需一台可访问的 PG 服务，表结构由服务启动时自动维护。</p>
+        </div>
         <div class="engine" data-engine="sqlite">
           <b>SQLite</b>
           <p>零依赖单机版，数据即一个文件。适合试用与小规模内部使用；不支持多副本并发写，请勿放在网络盘。</p>
         </div>
       </div>
 
-      <div id="mysql-fields" class="grid">
+      <div id="server-fields" class="grid">
         <label>主机<input id="f-dbHost" type="text" value="127.0.0.1" autocomplete="off"></label>
         <label>端口<input id="f-dbPort" type="text" value="3306" inputmode="numeric" autocomplete="off"></label>
         <label>库名<input id="f-dbName" type="text" value="weichuan" autocomplete="off"></label>
         <label>用户名<input id="f-dbUser" type="text" value="root" autocomplete="off"></label>
         <label>密码<input id="f-dbPassword" type="password" autocomplete="new-password"></label>
         <div></div>
-        <div class="chk"><input type="checkbox" id="f-createDatabase" checked><span>数据库不存在时自动创建</span></div>
+        <div class="chk" id="create-db-chk"><input type="checkbox" id="f-createDatabase" checked><span>数据库不存在时自动创建</span></div>
         <p class="tip" id="compose-tip" hidden></p>
       </div>
 
@@ -646,13 +650,14 @@ const pageTpl = `<!doctype html>
       cookieSecure: chk('f-cookieSecure'),
       loadDemoData: chk('f-loadDemoData')
     };
-    if (state.engine === 'mysql') {
+    if (state.engine === 'mysql' || state.engine === 'postgres') {
       p.dbHost = val('f-dbHost');
       p.dbPort = val('f-dbPort');
       p.dbUser = val('f-dbUser');
       p.dbPassword = raw('f-dbPassword');
       p.dbName = val('f-dbName');
-      p.createDatabase = chk('f-createDatabase');
+      // PG 需预建库，不提供自动建库选项
+      p.createDatabase = state.engine === 'mysql' && chk('f-createDatabase');
     } else {
       p.sqlitePath = val('f-sqlitePath');
     }
@@ -660,10 +665,14 @@ const pageTpl = `<!doctype html>
   }
 
   function previewText() {
+    var pw = raw('f-dbPassword') ? '******' : '';
     if (state.engine === 'mysql') {
-      var pw = raw('f-dbPassword') ? '******' : '';
       return val('f-dbUser') + ':' + pw + '@tcp(' + val('f-dbHost') + ':' +
         (val('f-dbPort') || '3306') + ')/' + val('f-dbName') + '?charset=utf8mb4&parseTime=true';
+    }
+    if (state.engine === 'postgres') {
+      return 'postgres://' + val('f-dbUser') + ':' + pw + '@' + val('f-dbHost') + ':' +
+        (val('f-dbPort') || '5432') + '/' + val('f-dbName') + '?sslmode=disable';
     }
     return 'sqlite://' + val('f-sqlitePath');
   }
@@ -690,8 +699,11 @@ const pageTpl = `<!doctype html>
       for (var j = 0; j < cards.length; j++) {
         cards[j].className = 'engine' + (cards[j] === this ? ' active' : '');
       }
-      $('mysql-fields').hidden = e !== 'mysql';
+      $('server-fields').hidden = !(e === 'mysql' || e === 'postgres');
       $('sqlite-fields').hidden = e !== 'sqlite';
+      $('create-db-chk').hidden = e !== 'mysql';
+      if (e === 'postgres') $('f-dbPort').value = '5432';
+      if (e === 'mysql') $('f-dbPort').value = '3306';
       hideBanner();
       preview();
     });
@@ -720,9 +732,10 @@ const pageTpl = `<!doctype html>
   $('btn-install').addEventListener('click', function () {
     hideBanner();
     // 客户端预检与服务端同规则，只为少一次往返；真正的判据在服务端
-    if (state.engine === 'mysql') {
+    if (state.engine === 'mysql' || state.engine === 'postgres') {
       if (!val('f-dbHost') || !val('f-dbUser') || !val('f-dbName')) {
-        showBanner('err', '请填写完整的 MySQL 连接信息（主机、用户名、库名）');
+        showBanner('err', '请填写完整的 ' + (state.engine === 'mysql' ? 'MySQL' : 'PostgreSQL') +
+          ' 连接信息（主机、用户名、库名）');
         return;
       }
     } else if (!val('f-sqlitePath')) {

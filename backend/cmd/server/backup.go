@@ -10,6 +10,7 @@ import (
 
 	"weichuan/internal/config"
 	"weichuan/internal/dbbackup"
+	"weichuan/internal/dbopen"
 )
 
 // `server backup` / `server dbcheck` 两个运维子命令。
@@ -22,6 +23,7 @@ const backupUsage = `用法：
   server backup  --out <文件> [--db <dsn>]
       对 SQLite 库做在线一致性快照（VACUUM INTO），并立即校验产物。
       MySQL 请用 scripts/backup.sh（mysqldump --single-transaction 才有一致性快照）。
+      PostgreSQL 请用 DB_DRIVER=postgres scripts/backup.sh（pg_dump -Fc 在线一致性快照）。
 
   server dbcheck --file <文件> [--json | --field <字段>]
       只读体检一个 SQLite 备份文件：integrity_check / 表数 / 各表行数。
@@ -43,6 +45,14 @@ func runBackup(cfg config.Config) {
 	d := strings.TrimSpace(*dsn)
 	if d == "" {
 		d = cfg.DBDSN
+	}
+	// backup 命令只做 SQLite 快照。传进来的是 PG / MySQL DSN 时明确拒绝并给出
+	// 正确工具，避免拿 pg_dump/mysqldump 的 DSN 去执行 VACUUM INTO 报一堆看不懂的错。
+	if dbopen.IsPostgresDSN(d) {
+		log.Fatal("[BACKUP][FATAL] 这是 PostgreSQL DSN：请用 DB_DRIVER=postgres scripts/backup.sh（pg_dump -Fc）备份")
+	}
+	if !dbopen.IsSQLiteDSN(d) {
+		log.Fatal("[BACKUP][FATAL] 这不是 SQLite DSN：MySQL 请用 scripts/backup.sh，PostgreSQL 请用 DB_DRIVER=postgres scripts/backup.sh")
 	}
 	rep, err := dbbackup.Snapshot(d, *out)
 	if err != nil {

@@ -1,6 +1,6 @@
 # 第三方依赖许可清单（自动生成）
 
-> 生成日期：2026-11-24　·　随依赖版本变动会失效，交付前请重新生成一次。
+> 生成日期：2026-11-28　·　随依赖版本变动会失效，交付前请重新生成一次。
 >
 > 本软件（微传名片）为专有商业软件，许可见 [../LICENSE](../LICENSE)。
 > **本清单中的第三方组件不因该许可而改变**——它们各自仍受其原始许可约束。
@@ -16,7 +16,7 @@ python3 scripts/gen_third_party_notices.py    # 仓库根目录执行，覆写�
 后者可能与实际文件不符，本次生成就遇到两处不一致，一律以正文为准）。
 BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Clause。
 
-## 后端 Go 依赖（44 个，随服务二进制分发）
+## 后端 Go 依赖（50 个，随服务二进制分发）
 
 | 模块                                            | 许可                          | 依据文件       |
 |-----------------------------------------------|-----------------------------|------------|
@@ -34,6 +34,10 @@ BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Cl
 | github.com/go-sql-driver/mysql                | MPL-2.0                     | LICENSE    |
 | github.com/golang-jwt/jwt/v5                  | MIT                         | LICENSE    |
 | github.com/google/uuid                        | BSD-3-Clause                | LICENSE    |
+| github.com/jackc/pgpassfile                   | MIT                         | LICENSE    |
+| github.com/jackc/pgservicefile                | MIT                         | LICENSE    |
+| github.com/jackc/pgx/v5                       | MIT                         | LICENSE    |
+| github.com/jackc/puddle/v2                    | MIT                         | LICENSE    |
 | github.com/jinzhu/inflection                  | MIT                         | LICENSE    |
 | github.com/jinzhu/now                         | MIT                         | License    |
 | github.com/klauspost/compress                 | Apache-2.0                  | LICENSE    |
@@ -53,12 +57,14 @@ BSD 家族按第三条款（不得以作者名义背书）区分 2-Clause / 3-Cl
 | go.yaml.in/yaml/v3                            | MIT / Apache-2.0（双许可，取其一即可） | LICENSE    |
 | golang.org/x/crypto                           | BSD-3-Clause                | LICENSE    |
 | golang.org/x/net                              | BSD-3-Clause                | LICENSE    |
+| golang.org/x/sync                             | BSD-3-Clause                | LICENSE    |
 | golang.org/x/sys                              | BSD-3-Clause                | LICENSE    |
 | golang.org/x/text                             | BSD-3-Clause                | LICENSE    |
 | golang.org/x/time                             | BSD-3-Clause                | LICENSE    |
 | google.golang.org/protobuf                    | BSD-3-Clause                | LICENSE    |
 | gopkg.in/yaml.v3                              | MIT / Apache-2.0（双许可，取其一即可） | LICENSE    |
 | gorm.io/driver/mysql                          | MIT                         | License    |
+| gorm.io/driver/postgres                       | MIT                         | License    |
 | gorm.io/gorm                                  | MIT                         | LICENSE    |
 | modernc.org/libc                              | BSD-3-Clause                | LICENSE    |
 | modernc.org/mathutil                          | BSD-3-Clause                | LICENSE    |

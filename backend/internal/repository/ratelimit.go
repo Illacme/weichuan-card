@@ -14,8 +14,20 @@ import (
 // isMySQLDialect 是否 MySQL 方言。与 migrate 包的同名判断是两份：
 // 那个是包私有的（迁移用），这里是仓储层自己的（UPSERT 语法分流用）。
 // 判据取 Dialector.Name()，与 dbopen 的 DriverMySQL 常量保持同一套字符串。
+//
+// 非 MySQL 分支（SQLite / PostgreSQL）共用 `ON CONFLICT ... DO UPDATE` 骨架，
+// 但 PG 要求 SET 右侧列表名限定、SQLite 不接受，故 RateHit 里仍按方言分两条语句。
+// 反过来若哪天接了既不支持 ON DUPLICATE KEY 也不支持 ON CONFLICT 的库，
+// 必须在这里显式分流，不能让它静默走错语法。
 func isMySQLDialect(db *gorm.DB) bool {
 	return db != nil && db.Dialector != nil && db.Dialector.Name() == "mysql"
+}
+
+// isPostgresDialect 是否 PG 方言。与 isMySQLDialect 同理取 Dialector.Name()。
+// 单独列出来是因为 PG 与 SQLite 虽共用 ON CONFLICT，但 PG 要求 UPSERT 的
+// DO UPDATE SET 右侧列必须表名限定（SQLite 不接受），见 RateHit 的语句分支。
+func isPostgresDialect(db *gorm.DB) bool {
+	return db != nil && db.Dialector != nil && db.Dialector.Name() == "postgres"
 }
 
 // 限流计数的跨副本共享实现。
@@ -91,10 +103,17 @@ func RateHit(db *gorm.DB, key string, window time.Duration) (int, error) {
 	}
 	start := windowStart(window)
 	var stmt string
-	if isMySQLDialect(db) {
+	switch {
+	case isMySQLDialect(db):
 		stmt = "INSERT INTO rate_limit_hits (bucket_key, window_start, hits) VALUES (?, ?, 1) " +
 			"ON DUPLICATE KEY UPDATE hits = hits + 1"
-	} else {
+	case isPostgresDialect(db):
+		// PG 的 ON CONFLICT 里裸 `hits` 会同时匹配目标表与 excluded 表，
+		// 报 42702 column reference "hits" is ambiguous；必须表名限定。
+		// SQLite 反过来不接受表名限定，故两者不能共用同一条语句。
+		stmt = "INSERT INTO rate_limit_hits (bucket_key, window_start, hits) VALUES (?, ?, 1) " +
+			"ON CONFLICT(bucket_key, window_start) DO UPDATE SET hits = rate_limit_hits.hits + 1"
+	default: // SQLite
 		stmt = "INSERT INTO rate_limit_hits (bucket_key, window_start, hits) VALUES (?, ?, 1) " +
 			"ON CONFLICT(bucket_key, window_start) DO UPDATE SET hits = hits + 1"
 	}

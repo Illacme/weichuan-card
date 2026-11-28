@@ -224,6 +224,64 @@ jobs:
           grep -q '^--- PASS: TestInstallMySQLEndToEnd' /tmp/mysql-install.log \
             || { echo "::error::TestInstallMySQLEndToEnd 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
 
+  # ───────── 后端：PostgreSQL 生产契约 parity（2026-11-28 起必跑） ─────────
+  # 与 MySQL job 同样的自供给 service 模式，不需要仓库变量。
+  # PG 与 MySQL 的建表路径不同：MySQL 走 migrations/*.sql，PG 走 AutoMigrate；
+  # 两边跑的是同一套 runAPIFlow 断言，才能真正证明「换库不改业务语义」。
+  # 每一步都 grep PASS 断言，避免 DSN 丢失 / 用例改名时「绿着跳过」。
+  backend-postgres:
+    name: 后端 (Go / PostgreSQL parity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # 与下方 services.postgres 的口令 / 库名对应
+      TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres password=root dbname=weichuan_test sslmode=disable
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: weichuan_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d weichuan_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 设置 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: 测试（PG parity：与 SQLite / MySQL 同一套断言）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/handler -run TestAPIFlowPostgres -v 2>&1 | tee /tmp/pg-parity.log
+          grep -q '^--- PASS: TestAPIFlowPostgres' /tmp/pg-parity.log \
+            || { echo "::error::TestAPIFlowPostgres 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
+
+      - name: 测试（PG 系统设置原子递增：TEXT 列 +1 方言兼容）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/setting -run TestBumpPostgres -v 2>&1 | tee /tmp/pg-bump.log
+          grep -q '^--- PASS: TestBumpPostgres' /tmp/pg-bump.log \
+            || { echo "::error::TestBumpPostgres 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
+
+      - name: 测试（PG DSN 分派与全模型 AutoMigrate）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/dbopen -run TestOpenPostgres -v 2>&1 | tee /tmp/pg-open.log
+          grep -q '^--- PASS: TestOpenPostgres' /tmp/pg-open.log \
+            || { echo "::error::TestOpenPostgres 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
+
   # ───────── 前端：Vue 生产构建 + 单元测试 ─────────
   frontend:
     name: 前端 (Vue)

@@ -128,8 +128,9 @@ func TestStatusPayloadInstallerFields(t *testing.T) {
 	if !st.Installable {
 		t.Fatal("未配置时应允许安装")
 	}
-	if len(st.Engines) != 2 || st.Engines[0] != "mysql" || st.Engines[1] != "sqlite" {
-		t.Fatalf("应支持 mysql/sqlite 两种引擎，实际 %+v", st.Engines)
+	if len(st.Engines) != 3 || st.Engines[0] != "mysql" || st.Engines[1] != "sqlite" ||
+		st.Engines[2] != "postgres" {
+		t.Fatalf("应支持 mysql/sqlite/postgres 三种引擎，实际 %+v", st.Engines)
 	}
 	if st.SQLitePath == "" || st.ConfigFile == "" || st.AdminUser == "" {
 		t.Fatalf("安装向导预填信息不全：%+v", st)

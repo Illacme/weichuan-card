@@ -172,6 +172,22 @@ DB_DSN=file:/var/lib/weichuan/weichuan.db      # 等价的 URI 写法
 DB_DSN=/var/lib/weichuan/weichuan.db           # 裸路径兜底（仅认 .db/.sqlite/.sqlite3 结尾）
 ```
 
+### E. PostgreSQL 生产（自建 / 国产化环境）
+
+同样只靠 `DB_DSN` 形态切换，无需换二进制。两种写法都认：
+
+```bash
+DB_DSN=postgres://user:pass@127.0.0.1:5432/weichuan?sslmode=disable
+DB_DSN='host=127.0.0.1 port=5432 user=postgres password=pass dbname=weichuan sslmode=disable'
+```
+
+- **建库**：PG 不提供向导里的「自动创建数据库」，请先用 `CREATE DATABASE weichuan;` 建好。
+- **建表**：启动服务时按模型 AutoMigrate（PG 不认 MySQL 方言的 `migrations/*.sql`），
+  日志首行会打印 `database driver=postgres`；`server migrate` 对 PG 无需手工执行。
+- **备份**：`DB_DRIVER=postgres scripts/backup.sh`（容器内 `pg_dump -Fc` 在线一致性快照，
+  与文件/密钥三件套共用一套轮转）；`server backup` 只做 SQLite 的 VACUUM INTO，
+  传 PG DSN 会明确拒绝并给出正确工具。PG 恢复用 `pg_restore`（自定义格式归档）。
+
 ```bash
 cd backend && go build -o weichuan-server ./cmd/server
 sudo mkdir -p /var/lib/weichuan /var/lib/weichuan/uploads /var/lib/weichuan/mirror

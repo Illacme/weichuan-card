@@ -3,6 +3,7 @@ package dbopen
 import (
 	"bytes"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -243,5 +244,74 @@ func TestOpenFileURI(t *testing.T) {
 	}
 	if err := db.Exec("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)").Error; err != nil {
 		t.Fatalf("create table: %v", err)
+	}
+}
+
+// TestIsPostgresDSN 钉死 PG 判据：三种 DSN 形态必须互斥。
+// 回归场景（2026-11-28）：接入 PG 后，key=value 形式的 PG DSN 不以 .db 结尾，
+// 若漏判会落到 MySQL 分支——用 MySQL 驱动连 PG 只会得到一团糊涂的启动错误。
+// 反过来也不能把 MySQL / SQLite DSN 吞进 PG，否则生产库会被读成空库。
+func TestIsPostgresDSN(t *testing.T) {
+	cases := []struct {
+		name string
+		dsn  string
+		want bool
+	}{
+		{"postgres:// URL", "postgres://user:pw@127.0.0.1:5432/weichuan?sslmode=disable", true},
+		{"postgresql:// URL", "postgresql://user@host/db", true},
+		{"URL 大写前缀", "POSTGRES://HOST/DB", true},
+		{"key=value 完整", "host=127.0.0.1 port=5432 user=postgres dbname=weichuan sslmode=disable", true},
+		{"key=value 两个键", "host=/var/run dbname=weichuan", true},
+		{"只有单个键不算", "host=127.0.0.1", false},
+		{"默认 MySQL DSN", "root:root@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true", false},
+		{"compose MySQL DSN", "root:pw@tcp(mysql:3306)/weichuan?charset=utf8mb4&parseTime=true", false},
+		{"sqlite:// DSN", "sqlite:///data/weichuan.db", false},
+		{"裸路径 .db", "/data/weichuan.db", false},
+		{"空串", "", false},
+	}
+	for _, c := range cases {
+		if got := IsPostgresDSN(c.dsn); got != c.want {
+			t.Errorf("%s：IsPostgresDSN(%q) = %v，want %v", c.name, c.dsn, got, c.want)
+		}
+	}
+}
+
+// TestDSNFormsMutuallyExclusive 三种驱动判据两两互斥——这是 Open 分派的地基。
+func TestDSNFormsMutuallyExclusive(t *testing.T) {
+	for _, dsn := range []string{
+		"root:root@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true",
+		"sqlite:///data/weichuan.db",
+		"file:/data/weichuan.db",
+		"/data/weichuan.db",
+		"postgres://user:pw@127.0.0.1:5432/weichuan?sslmode=disable",
+		"host=127.0.0.1 port=5432 user=postgres dbname=weichuan sslmode=disable",
+	} {
+		pg, sq := IsPostgresDSN(dsn), IsSQLiteDSN(dsn)
+		if pg && sq {
+			t.Errorf("DSN %q 同时被判为 PG 与 SQLite", dsn)
+		}
+	}
+}
+
+// TestOpenPostgres 连真实 PG 验证 Open 的分派（本地有 PG 时必须真跑，不 Skip）。
+// DSN 由 TEST_POSTGRES_DSN 提供；无 PG 环境时 Skip，CI 的 postgres service 会覆盖。
+func TestOpenPostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set TEST_POSTGRES_DSN to run real PostgreSQL parity")
+	}
+	db, driver, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("Open(PG): %v", err)
+	}
+	if driver != DriverPostgreSQL {
+		t.Errorf("driver = %q，want %q", driver, DriverPostgreSQL)
+	}
+	if got := db.Dialector.Name(); got != "postgres" {
+		t.Errorf("Dialector.Name() = %q，want postgres", got)
+	}
+	var one int
+	if err := db.Raw("SELECT 1").Scan(&one).Error; err != nil || one != 1 {
+		t.Errorf("SELECT 1: val=%d err=%v", one, err)
 	}
 }

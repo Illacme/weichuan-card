@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,7 +42,7 @@ import (
 
 // InstallReq 安装请求（扁平 JSON，与页面表单一一对应）。
 type InstallReq struct {
-	Engine         string `json:"engine"` // mysql | sqlite（空按 mysql）
+	Engine         string `json:"engine"` // mysql | sqlite | postgres（空按 mysql）
 	DBHost         string `json:"dbHost"`
 	DBPort         string `json:"dbPort"`
 	DBUser         string `json:"dbUser"`
@@ -216,7 +218,7 @@ func Install(req InstallReq) (InstallResult, error) {
 	//      「AutoMigrate 擅自改列类型」；
 	//   ③ sys_setting 因唯一有显式 TableName 而撞车，触发 gorm mysql driver 的
 	//      MigrateColumnUnique 假阳性直接 1091（详见 setting.Init 的注释）。
-	if driver == dbopen.DriverSQLite {
+	if driver == dbopen.DriverSQLite || driver == dbopen.DriverPostgreSQL {
 		if err := db.AutoMigrate(model.All()...); err != nil {
 			return InstallResult{}, fmt.Errorf("初始化表结构失败：%v", err)
 		}
@@ -439,8 +441,40 @@ func composeDSN(req InstallReq) (dsn, driver string, err error) {
 		dsn = user + ":" + req.DBPassword + "@tcp(" + host + ":" + port + ")/" + name +
 			"?charset=utf8mb4&parseTime=true"
 		return dsn, dbopen.DriverMySQL, nil
+	case "postgres", "postgresql":
+		host := strings.TrimSpace(req.DBHost)
+		port := strings.TrimSpace(req.DBPort)
+		user := strings.TrimSpace(req.DBUser)
+		name := strings.TrimSpace(req.DBName)
+		if host == "" || user == "" || name == "" {
+			return "", "", errors.New("请填写完整的 PostgreSQL 连接信息（主机、用户名、库名）")
+		}
+		if port == "" {
+			port = "5432"
+		}
+		if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
+			return "", "", fmt.Errorf("端口 %q 不是有效端口号（1-65535）", port)
+		}
+		if !validDBName(name) {
+			return "", "", fmt.Errorf("库名 %q 只能包含字母、数字和下划线（且不超过 64 字符）", name)
+		}
+		if strings.ContainsAny(host+user+req.DBPassword, "\n\r") {
+			return "", "", errors.New("连接信息不能包含换行")
+		}
+		// 用 URL 形式（postgres://），确保 dbopen.IsPostgresDSN 一眼可判；
+		// 用户名/密码走 url.UserPassword 做百分号转义，避免密码里的 @ : / 破坏 URL。
+		u := &url.URL{
+			Scheme: "postgres",
+			User:   url.UserPassword(user, req.DBPassword),
+			Host:   net.JoinHostPort(host, port),
+			Path:   "/" + name,
+		}
+		q := u.Query()
+		q.Set("sslmode", "disable")
+		u.RawQuery = q.Encode()
+		return u.String(), dbopen.DriverPostgreSQL, nil
 	default:
-		return "", "", fmt.Errorf("不支持的数据库类型 %q（可选 mysql / sqlite）", req.Engine)
+		return "", "", fmt.Errorf("不支持的数据库类型 %q（可选 mysql / sqlite / postgres）", req.Engine)
 	}
 }
 
@@ -514,10 +548,14 @@ func scrubDSN(msg, dsn string) string {
 func friendlyErr(driver, dsn string, err error) error {
 	msg := scrubDSN(err.Error(), dsn)
 	switch {
+	case driver == dbopen.DriverPostgreSQL && strings.Contains(msg, "does not exist"):
+		return errors.New("数据库不存在：请先在 PostgreSQL 中建好库（CREATE DATABASE）")
 	case strings.Contains(msg, "Unknown database"):
 		return errors.New("数据库不存在：请勾选「自动创建数据库」，或先在 MySQL 中建好库")
 	case strings.Contains(msg, "Access denied"):
 		return errors.New("MySQL 拒绝访问：请检查用户名与密码")
+	case driver == dbopen.DriverPostgreSQL && strings.Contains(msg, "password authentication failed"):
+		return errors.New("PostgreSQL 密码错误：请检查用户名与密码")
 	case strings.Contains(msg, "connection refused"):
 		return errors.New("连不上数据库服务器：请确认主机与端口正确、服务已启动")
 	case strings.Contains(msg, "client is required to use authentication"):

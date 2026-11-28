@@ -126,8 +126,9 @@ func main() {
 		log.Printf("[SECURITY] %s", w)
 	}
 
-	// 驱动由 DB_DSN 形态决定：默认是 MySQL；写成 sqlite://<路径> / file:<URI> /
-	// *.db 则走 SQLite（详见 docs/deploy-runbook.md「路径 D：SQLite 单机部署」）。
+	// 驱动由 DB_DSN 形态决定：默认是 MySQL；sqlite://<路径> / file:<URI> / *.db
+	// 走 SQLite；postgres://<URL> 或 host=... dbname=... 走 PostgreSQL
+	// （详见 docs/deploy-runbook.md）。
 	// 注意 db_dsn 是系统设置里的只读项——改错会连不上库、把「改回来的入口」一起弄丢，
 	// 所以库地址只能在启动时用环境变量定好，上线后改不动。
 	db, driver, err := dbopen.Open(cfg.DBDSN)
@@ -143,10 +144,11 @@ func main() {
 		log.Fatal("db connect failed")
 	}
 
-	// SQLite 没有可执行的 migrations：`migrations/*.sql` 是 MySQL 方言
-	// （ENGINE=InnoDB / AUTO_INCREMENT / 反引号），这里改为按模型建表。
+	// SQLite / PostgreSQL 没有可执行的 migrations：`migrations/*.sql` 是 MySQL 方言
+	// （ENGINE=InnoDB / AUTO_INCREMENT / 反引号），这两侧改为按模型 AutoMigrate。
 	// MySQL 侧不动——生产库的表结构由迁移脚本管，AutoMigrate 擅自改列类型风险更大。
-	if driver == dbopen.DriverSQLite {
+	// PG 的 type tag 兼容性已在 model 层处理（mediumtext→text，json 原生支持）。
+	if driver == dbopen.DriverSQLite || driver == dbopen.DriverPostgreSQL {
 		if err := db.AutoMigrate(model.All()...); err != nil {
 			log.Fatalf("auto migrate: %v", err)
 		}
@@ -155,6 +157,10 @@ func main() {
 	if driver == dbopen.DriverSQLite {
 		log.Printf("[INFO] SQLite 为单写者且不支持多副本：请勿将库文件放在 NFS 等网络盘，" +
 			"备份请用 VACUUM INTO 取在线一致性快照（详见 docs/deploy-runbook.md）")
+	}
+	if driver == dbopen.DriverPostgreSQL {
+		log.Printf("[INFO] PostgreSQL 表结构由 AutoMigrate 管理；备份请用 pg_dump" +
+			"（详见 docs/deploy-runbook.md）")
 	}
 
 	// MySQL 升级自动补齐迁移：compose 的 initdb.d 只在卷为空时执行，存量库
@@ -562,8 +568,8 @@ func runMigrate(cfg config.Config) {
 		log.Printf("[MIGRATE] 连接数据库失败（driver=%s）：%v", driver, err)
 		log.Fatal("[MIGRATE] 排查顺序：库是否已启动 / 地址端口是否可达 / 账号口令与库名是否正确（日志不打印 DSN）")
 	}
-	if driver == dbopen.DriverSQLite {
-		log.Print("[MIGRATE] SQLite 部署无需手工迁移：表由服务启动时按模型 AutoMigrate 维护")
+	if driver == dbopen.DriverSQLite || driver == dbopen.DriverPostgreSQL {
+		log.Printf("[MIGRATE] %s 部署无需手工迁移：表由服务启动时按模型 AutoMigrate 维护", driver)
 		return
 	}
 	applied, err := migrate.ApplyWithReport(db)

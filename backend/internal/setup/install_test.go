@@ -906,3 +906,43 @@ func TestInstallKeepsExistingPIIKey(t *testing.T) {
 	}
 	// 演示数据（如果装）将用环境里的钥加密——这里不装，只验证落盘行为
 }
+
+// TestComposeDSNPostgres 钉住 PG DSN 生成：必须用 postgres:// URL 形式（dbopen
+// 一眼可判），且密码里的 @ : / 等字符要百分号转义，否则 URL 会被截断连错库。
+func TestComposeDSNPostgres(t *testing.T) {
+	dsn, driver, err := composeDSN(InstallReq{
+		Engine: "postgres", DBHost: "db.internal", DBUser: "u",
+		DBPassword: "p@ss/w:rd", DBName: "weichuan",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if driver != dbopen.DriverPostgreSQL {
+		t.Fatalf("driver=%q want %q", driver, dbopen.DriverPostgreSQL)
+	}
+	if !strings.HasPrefix(dsn, "postgres://") {
+		t.Fatalf("DSN 应以 postgres:// 开头，实际 %q", dsn)
+	}
+	if !strings.Contains(dsn, "p%40ss%2Fw%3Ard") {
+		t.Fatalf("密码中的 @ / : 应做 URL 转义，实际 %q", dsn)
+	}
+	if !strings.Contains(dsn, "sslmode=disable") || !strings.Contains(dsn, ":5432/") {
+		t.Fatalf("应含默认端口 5432 与 sslmode，实际 %q", dsn)
+	}
+	if !dbopen.IsPostgresDSN(dsn) {
+		t.Fatalf("生成的 DSN 必须能被 dbopen 判为 PG：%q", dsn)
+	}
+
+	// postgresql 写法是同义词，默认端口同样 5432
+	dsn2, drv2, err := composeDSN(InstallReq{
+		Engine: "postgresql", DBHost: "h", DBUser: "u", DBName: "d",
+	})
+	if err != nil || drv2 != dbopen.DriverPostgreSQL || !strings.Contains(dsn2, ":5432/") {
+		t.Fatalf("postgresql 别名：dsn=%q driver=%q err=%v", dsn2, drv2, err)
+	}
+
+	// 字段不全要报错（对齐 mysql 分支的校验口径）
+	if _, _, err := composeDSN(InstallReq{Engine: "postgres", DBHost: "h"}); err == nil {
+		t.Fatal("PG 缺用户名/库名应报错")
+	}
+}

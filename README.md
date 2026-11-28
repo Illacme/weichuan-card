@@ -19,7 +19,7 @@
 
 ## 技术栈
 
-- **后端**：Go 1.26 · Gin · GORM · MySQL（生产）/ SQLite（默认测试）· MinIO / 阿里云 OSS（可选对象存储）
+- **后端**：Go 1.26 · Gin · GORM · MySQL / PostgreSQL / SQLite 三种数据库（`DB_DSN` 形态自动选驱动）· MinIO / 阿里云 OSS（可选对象存储）
 - **前端**：Vue 3.5 · TypeScript · Vite 5 · Element Plus 2 · Pinia · Vue Router 4 · Vitest
 - **小程序**：微信小程序原生 + TypeScript
 
@@ -172,6 +172,7 @@ CI 见 `.github/workflows/ci.yml`，**15 个 job 全部阻塞合并**（2026-11-
 
 - **后端 (Go / SQLite)**：`go build` + `go vet` + `go test ./...`，**默认零外部依赖**，用 SQLite 跑完整接口流程、上传内容嗅探与 MinIO/OSS 驱动的 httptest 假服务测试。
 - **后端 (Go / MySQL parity)**：GitHub Actions 自带 `mysql:8.0` service 容器，连真 MySQL 跑「连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支」；DSN 写在 job 内，**无需**仓库变量。每步额外断言用例确实 `--- PASS`，防止 `t.Skip` 让 job 绿着跳过。
+- **后端 (Go / PostgreSQL parity)**：同理用 `postgres:16-alpine` service 容器，跑同一套 `runAPIFlow` 断言 + `sys_setting` TEXT 列原子递增；PG 走 AutoMigrate（MySQL 走迁移脚本），三方共用断言才算「换库不改业务语义」。
 - **后端 lint (golangci-lint)**：固定 v2.15.0，只开五条「静默失败」类规则。
 - **前端 (Vue)**：`npm ci` + eslint + `npm run build` + `npm test`（Vitest；含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
 - **前端类型检查 (vue-tsc)**：`vue-tsc --noEmit`，历史 4 个 `@wangeditor/*` 类型错误已修复，**现为阻塞门禁**。
@@ -262,7 +263,7 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - **运维子命令**：`server backup --out <文件>`（SQLite 在线快照）、
   `server dbcheck --file <文件> [--field <字段>]`（只读体检：完整性 / 表数 / 各表行数），
   与 `server migrate` 一样不启服务，可进 cron 与流水线。
-- **测试覆盖**：后端 httptest 集成（SQLite 零外部依赖 + CI 必跑的真 MySQL parity）+ MinIO/OSS 假服务单测；前端含视图层组件测试；小程序纯逻辑测试经前端 Vitest 运行。
+- **测试覆盖**：后端 httptest 集成（SQLite 零外部依赖 + CI 必跑的真 MySQL / PostgreSQL 双库 parity）+ MinIO/OSS 假服务单测；前端含视图层组件测试；小程序纯逻辑测试经前端 Vitest 运行。
 - **操作审计**：后台写操作（改系统设置 / 管理员增删改 / 企业启停 / 改密码）与**登录失败**
   全部记进 `audit_log`，平台超管可在「平台管理 → 操作日志」按动作 / 操作人 / 结果筛选查询。
   敏感值只记「已修改」不落明文（否则审计表会变成新的泄密面）；只提供查询、不提供修改——

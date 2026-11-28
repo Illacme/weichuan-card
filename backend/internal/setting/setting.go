@@ -877,10 +877,14 @@ func Upsert(key, value string) error {
 }
 
 // Bump 把整数型设置项原子 +1，返回新值。用于「立即刷新缓存」这类计数动作：
-// 用一条 SQL 的 `value + 1` 完成递增（value 列虽是 TEXT，但 MySQL / SQLite 在数值
-// 上下文都会做数字 coercion），而不是「读-改-写」——后者在两人同时点刷新时会互相
+// 用一条 SQL 完成递增，而不是「读-改-写」——后者在两人同时点刷新时会互相
 // 覆盖，版本号原地踏步、端上根本察觉不到变化。
 // 只允许 bump 已登记且类型为 int 的项，避免误操作其它配置。
+//
+// 方言差异（2026-11-28 PG 端到端实测抓到）：
+//   - MySQL / SQLite：value 列虽是 TEXT，数值上下文会隐式 coercion，`value + 1` 直接可用；
+//   - PostgreSQL：严格类型，`text + integer` 报 42883。必须显式 CAST 成 BIGINT 再加，
+//     再 CAST 回 TEXT 写回列（否则类型不匹配）。
 func Bump(key string) (int64, error) {
 	s := getStore()
 	if s.db == nil {
@@ -890,10 +894,14 @@ func Bump(key string) (int64, error) {
 	if !ok || d.Type != "int" {
 		return 0, fmt.Errorf("设置项 %s 不是可递增的整数项", key)
 	}
+	expr := "value + 1"
+	if s.db.Dialector != nil && s.db.Dialector.Name() == "postgres" {
+		expr = "CAST(CAST(value AS BIGINT) + 1 AS TEXT)"
+	}
 	// 单条 SQL 原子递增；WHERE 用 map 让 gorm 给 MySQL 的保留字 key 加引号。
 	if err := s.db.Model(&Setting{}).
 		Where(map[string]interface{}{"key": key}).
-		Update("value", gorm.Expr("value + 1")).Error; err != nil {
+		Update("value", gorm.Expr(expr)).Error; err != nil {
 		return 0, err
 	}
 	// 回读真值：不读内存缓存（它还是旧值）。

@@ -1,12 +1,15 @@
-// Package dbopen 按 DSN 形态选择数据库驱动，让同一个生产二进制同时支持 MySQL 与 SQLite。
+// Package dbopen 按 DSN 形态选择数据库驱动，让同一个生产二进制同时支持
+// MySQL、SQLite 与 PostgreSQL。
 //
 // 为什么需要这个包：业务层是方言无关的（`TestAPIFlow` 在 SQLite 上跑完整流程，
-// `TestAPIFlowMySQL` 用真实 MySQL 跑完全相同断言做 parity），唯一写死 MySQL 的地方
-// 是 `cmd/server` 的 `gorm.Open(mysql.Open(...))`。把驱动选择收敛到这里，
+// `TestAPIFlowMySQL` / `TestAPIFlowPostgres` 用真实库跑完全相同断言做 parity），
+// 唯一写死驱动的地方是 `cmd/server` 的 `gorm.Open(...)`。把驱动选择收敛到这里，
 // 部署时就能只靠一个 `DB_DSN` 环境变量决定用哪个库，不必换二进制。
 //
 // 调用方还需要按返回的驱动名决定建表方式：`migrations/*.sql` 是 MySQL 方言
-// （ENGINE=InnoDB / AUTO_INCREMENT / 反引号），SQLite 侧只能走 GORM AutoMigrate。
+// （ENGINE=InnoDB / AUTO_INCREMENT / 反引号），SQLite 与 PostgreSQL 侧走 GORM AutoMigrate。
+// PG 之所以能走 AutoMigrate：模型里唯一的非 PG 类型是 `mediumtext`（两处），
+// 已改为方言通用的 `text`；MySQL 生产表的列类型由迁移脚本定义，不受模型 tag 影响。
 package dbopen
 
 import (
@@ -17,14 +20,18 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 // 驱动名常量，供调用方分支（建表方式、日志、运维提示）。
+// DriverPostgreSQL 的字符串与 postgres.Dialector.Name() 一致，
+// 方言判断（Dialector.Name()）与驱动分派统一用这套值。
 const (
-	DriverMySQL  = "mysql"
-	DriverSQLite = "sqlite"
+	DriverMySQL      = "mysql"
+	DriverSQLite     = "sqlite"
+	DriverPostgreSQL = "postgres"
 )
 
 // gormLogger 返回统一的 GORM 日志配置。三道防线：
@@ -135,7 +142,20 @@ func redactSQL(sql string) string {
 // Open 按 DSN 形态打开数据库连接，第二个返回值是实际使用的驱动名。
 //
 //	err = db 为 nil 时的错误（调用方直接 log.Fatal 即可）。
+//
+// 判定顺序刻意是 PG → SQLite → MySQL：PG 的 key=value 形式（host=... sslmode=...）
+// 不以 .db 结尾，若先走 SQLite 判据会漏到 MySQL 分支，用 MySQL 驱动去连 PG 只能是
+// 启动期一团糊涂的报错。三种形态互斥，宁可判不出也不猜。
 func Open(dsn string) (*gorm.DB, string, error) {
+	if IsPostgresDSN(dsn) {
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: gormLogger(),
+		})
+		if err != nil {
+			return nil, DriverPostgreSQL, err
+		}
+		return db, DriverPostgreSQL, nil
+	}
 	if IsSQLiteDSN(dsn) {
 		db, err := gorm.Open(sqlite.Open(NormalizeSQLiteDSN(dsn)), &gorm.Config{
 			Logger: gormLogger(),
@@ -152,6 +172,37 @@ func Open(dsn string) (*gorm.DB, string, error) {
 		return nil, DriverMySQL, err
 	}
 	return db, DriverMySQL, nil
+}
+
+// IsPostgresDSN 判定 DSN 是否指向 PostgreSQL。
+//
+// 识别 URL 形式（`postgres://` / `postgresql://`）与 libpq 的 key=value 形式。
+// key=value 只看 PG 专属键（host= / sslmode= / dbname= 等）——不能「非 SQLite 即 PG」，
+// 那会把 MySQL DSN 的 `tcp(...)`/`charset=` 也吞进来。
+// 边界：MySQL DSN 里若真有 `host=` 参数（非本项目格式）会被误判，但本项目
+// 安装向导生成的 MySQL DSN 固定是 `user:pw@tcp(host:port)/db?charset=...`，
+// 不含裸 `host=`，故这个取舍是安全的。
+func IsPostgresDSN(dsn string) bool {
+	s := strings.TrimSpace(dsn)
+	if s == "" {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
+		return true
+	}
+	// key=value 形式：按空白分词，要求至少两个 PG 专属键命中，
+	// 避免把偶然含单个 `dbname=` 的其它 DSN 误判为 PG。
+	keys := 0
+	for _, token := range strings.Fields(s) {
+		for _, k := range []string{"host=", "user=", "dbname=", "sslmode=", "port="} {
+			if strings.HasPrefix(strings.ToLower(token), k) {
+				keys++
+				break
+			}
+		}
+	}
+	return keys >= 2
 }
 
 // IsSQLiteDSN 判定 DSN 是否指向 SQLite。

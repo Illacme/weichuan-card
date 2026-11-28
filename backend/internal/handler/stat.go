@@ -248,14 +248,14 @@ func statRowsByStaff(c *gin.Context, db *gorm.DB, from, to string) ([]statStaffR
 		q := db.Model(&model.StatEvent{}).
 			Where("staff_id IN (?)", db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
 			Select("staff_id, " +
-				"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
-				"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
-				"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
-				"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
-				"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
-				"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
-				"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
-				"SUM(CASE WHEN event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+				"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "visit") + ", " +
+				"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "call") + ", " +
+				"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "save") + ", " +
+				"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "project_view") + ", " +
+				"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "service_view") + ", " +
+				"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "video_play") + ", " +
+				"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "share") + ", " +
+				"SUM(CASE WHEN event_type = 'poster_save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "poster_save")).
 			Group("staff_id")
 		if from != "" {
 			q = q.Where("stat_date >= ?", from)
@@ -304,10 +304,32 @@ type statTrendRow struct {
 // 为什么不直接 Select("stat_date")：MySQL 的 stat_date 是 DATE 列，读回来是
 // time.Time，GORM 扫进 string 字段会格式化成 RFC3339（2026-10-23T00:00:00Z，
 // parity 首跑实测抓到）；而 SQLite 侧模型是 string、存的就是 'YYYY-MM-DD' 原样。
-// 同一个字段两种形状，前端按日期渲染就会一半带 T 一半不带。
-// CAST(... AS CHAR) 在两边都得到 'YYYY-MM-DD'（MySQL 8.0.46 / SQLite 实测），
-// 故用一个表达式通吃，不引方言分支。分组与排序仍走原始列（DATE/TEXT 排序等价）。
-const statDateExpr = "CAST(stat_date AS CHAR)"
+// 同一个字段三种形态，前端按日期渲染就会奇形怪状。
+//
+// 方言差异（2026-11-28 PG parity 实测）：
+//   - MySQL / SQLite：CAST(... AS CHAR) 得到 'YYYY-MM-DD'；
+//   - PostgreSQL：CAST(... AS CHAR) 未指定长度，默认 char(1)，只返回 '2'——
+//     不报错但日期全错，属于最危险的静默失败。PG 必须用 AS TEXT。
+//
+// 分组与排序仍走原始列（DATE/TEXT 排序等价），只有投影需要这个表达式。
+func statDateExpr(db *gorm.DB) string {
+	if db != nil && db.Dialector != nil && db.Dialector.Name() == "postgres" {
+		return "CAST(stat_date AS TEXT)"
+	}
+	return "CAST(stat_date AS CHAR)"
+}
+
+// sqlQuote 按方言引用 SQL 标识符（别名 / 列名）。
+//
+// 不能裸写别名：`call` 在 MySQL 8 是保留字（CALL 语句），裸写报 1064；
+// 也不能统一用反引号：PG 不认反引号，报 42601。三方 parity 实测都踩过。
+// SQLite 两种引用都接受，跟随 MySQL 分支即可。
+func sqlQuote(db *gorm.DB, name string) string {
+	if db != nil && db.Dialector != nil && db.Dialector.Name() == "postgres" {
+		return `"` + name + `"`
+	}
+	return "`" + name + "`"
+}
 
 // statTrend 按天趋势（同一日期口径 + 同一租户范围）。
 // 只回有事件的日期，无事件日期由前端在首尾之间补零——避免两边各写一套日期推导。
@@ -318,17 +340,17 @@ func statTrend(c *gin.Context, db *gorm.DB, from, to string) ([]statTrendRow, er
 	var rows []statTrendRow
 	q := db.Model(&model.StatEvent{}).
 		Where("staff_id IN (?)", db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
-		Select(statDateExpr + " AS `day`, " +
-			"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
-			"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
-			"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
+		Select(statDateExpr(db) + " AS " + sqlQuote(db, "day") + ", " +
+			"SUM(CASE WHEN event_type = 'visit' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "visit") + ", " +
+			"SUM(CASE WHEN event_type = 'call' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "call") + ", " +
+			"SUM(CASE WHEN event_type = 'save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "save") + ", " +
 			// 注意：别名一律 snake_case。GORM Scan 按字段 DBName 匹配列名，
 			// 写成驼峰（projectView）会**静默扫不进来、计数恒 0 不报错**。
-			"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
-			"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
-			"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
-			"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
-			"SUM(CASE WHEN event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+			"SUM(CASE WHEN event_type = 'project_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "project_view") + ", " +
+			"SUM(CASE WHEN event_type = 'service_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "service_view") + ", " +
+			"SUM(CASE WHEN event_type = 'video_play' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "video_play") + ", " +
+			"SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "share") + ", " +
+			"SUM(CASE WHEN event_type = 'poster_save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "poster_save")).
 		Group("stat_date").Order("stat_date asc")
 	if from != "" {
 		q = q.Where("stat_date >= ?", from)
@@ -376,8 +398,8 @@ func statTopTargets(c *gin.Context, db *gorm.DB, from, to, eventType, table, nam
 		Where("stat_events.staff_id IN (?)",
 			db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
 		Select("stat_events.target_id AS target_id, " +
-			"COALESCE(" + table + "." + nameCol + ", '已删除') AS `name`, " +
-			"COUNT(*) AS cnt").
+			"COALESCE(" + table + "." + nameCol + ", '已删除') AS " + sqlQuote(db, "name") + ", " +
+			"COUNT(*) AS " + sqlQuote(db, "cnt")).
 		Group("stat_events.target_id, " + table + "." + nameCol).
 		// 次级排序固定 target_id：同票数时榜单顺序稳定（分页之外也让测试可断言）
 		Order("cnt DESC, stat_events.target_id ASC").
@@ -425,7 +447,7 @@ func statSourceDist(c *gin.Context, db *gorm.DB, from, to string) ([]statSourceR
 	q := db.Model(&model.StatEvent{}).
 		Where("event_type = ?", "visit").
 		Where("staff_id IN (?)", db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
-		Select("CASE WHEN source = '' THEN 'unknown' ELSE source END AS `source`, COUNT(*) AS cnt").
+		Select("CASE WHEN source = '' THEN 'unknown' ELSE source END AS " + sqlQuote(db, "source") + ", COUNT(*) AS " + sqlQuote(db, "cnt")).
 		Group("source").
 		Order("cnt DESC")
 	if from != "" {
@@ -469,7 +491,7 @@ func statFissionTop(c *gin.Context, db *gorm.DB, from, to string, limit int) ([]
 		Where("stat_events.source = ?", "share_card").
 		Where("stat_events.staff_id IN (?)",
 			db.Model(&model.Employee{}).Select("staff_id").Scopes(scopeCond(c))).
-		Select("stat_events.staff_id AS staff_id, COALESCE(employees.name, '已删除') AS `name`, COUNT(*) AS cnt").
+		Select("stat_events.staff_id AS staff_id, COALESCE(employees.name, '已删除') AS " + sqlQuote(db, "name") + ", COUNT(*) AS " + sqlQuote(db, "cnt")).
 		Group("stat_events.staff_id, employees.name").
 		Order("cnt DESC, stat_events.staff_id ASC").
 		Limit(limit)
@@ -666,7 +688,7 @@ func RegisterStatsDetail(r *gin.Engine, db *gorm.DB) {
 			Joins("JOIN employees ON employees.staff_id = stat_events.staff_id").
 			Select("stat_events.id, stat_events.staff_id, employees.name, " +
 				"stat_events.event_type, stat_events.target_id, " +
-				statDateExpr + " AS stat_date, stat_events.created_at")
+				statDateExpr(db) + " AS " + sqlQuote(db, "stat_date") + ", stat_events.created_at")
 		if from != "" {
 			q = q.Where("stat_date >= ?", from)
 		}
@@ -857,14 +879,14 @@ func statMeWhere(db *gorm.DB, staffID int64, from, to string) *gorm.DB {
 func statMeSummaryOf(db *gorm.DB, staffID int64, from, to string) (statMeSummary, error) {
 	var s statMeSummary
 	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
-		Select("SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+		Select("SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "visit") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "call") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "save") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "project_view") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "service_view") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "video_play") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "share") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "poster_save")).
 		Scan(&s).Error
 	return s, err
 }
@@ -875,15 +897,15 @@ func statMeSummaryOf(db *gorm.DB, staffID int64, from, to string) (statMeSummary
 func statMeTrend(db *gorm.DB, staffID int64, from, to string) ([]statTrendRow, error) {
 	var rows []statTrendRow
 	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
-		Select(statDateExpr + " AS `day`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS `visit`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS `call`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS `save`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS `project_view`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS `service_view`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS `video_play`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS `share`, " +
-			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS `poster_save`").
+		Select(statDateExpr(db) + " AS " + sqlQuote(db, "day") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'visit' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "visit") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'call' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "call") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "save") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'project_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "project_view") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'service_view' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "service_view") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'video_play' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "video_play") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'share' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "share") + ", " +
+			"SUM(CASE WHEN stat_events.event_type = 'poster_save' THEN 1 ELSE 0 END) AS " + sqlQuote(db, "poster_save")).
 		Group("stat_date").Order("stat_date asc").
 		Scan(&rows).Error
 	return rows, err
@@ -902,7 +924,7 @@ func statMeTopTargets(db *gorm.DB, staffID int64, from, to, eventType, table, na
 	err := statMeWhere(db.Table("stat_events"), staffID, from, to).
 		Joins("LEFT JOIN "+table+" ON "+table+".id = stat_events.target_id AND "+table+".deleted_at IS NULL").
 		Where("stat_events.event_type = ?", eventType).
-		Select("stat_events.target_id AS target_id, COALESCE(" + table + "." + nameCol + ", '已删除') AS `name`, COUNT(*) AS cnt").
+		Select("stat_events.target_id AS target_id, COALESCE(" + table + "." + nameCol + ", '已删除') AS " + sqlQuote(db, "name") + ", COUNT(*) AS " + sqlQuote(db, "cnt")).
 		Group("stat_events.target_id, " + table + "." + nameCol).
 		// 次级排序固定 target_id：同票数时顺序稳定（也让测试可断言）
 		Order("cnt DESC, stat_events.target_id ASC").
@@ -923,7 +945,7 @@ func statMeSourceDist(db *gorm.DB, staffID int64, from, to string) ([]statSource
 	var rows []statSourceRow
 	err := statMeWhere(db.Model(&model.StatEvent{}), staffID, from, to).
 		Where("stat_events.event_type = ?", "visit").
-		Select("CASE WHEN stat_events.source = '' THEN 'unknown' ELSE stat_events.source END AS `source`, COUNT(*) AS cnt").
+		Select("CASE WHEN stat_events.source = '' THEN 'unknown' ELSE stat_events.source END AS " + sqlQuote(db, "source") + ", COUNT(*) AS " + sqlQuote(db, "cnt")).
 		Group("stat_events.source").
 		// 次级排序固定 source：同计数时顺序稳定（也让测试可以断言顺序）
 		Order("cnt DESC, source ASC").
