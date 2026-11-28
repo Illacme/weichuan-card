@@ -7141,4 +7141,18 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 | 前端 | vitest 2053/2054 通过；唯一失败是用户工作区未提交的 `app.json`/`brand.ts`（启动标题），与本次无关 |
 | OpenAPI | 140 paths / 139 路由对齐 |
 | 新增守门 | `TestIsPostgresDSN`、`TestDSNFormsMutuallyExclusive`、`TestOpenPostgres`、`TestComposeDSNPostgres`、`TestAPIFlowPostgres`、`TestBumpPostgres` |
-| CI | 待提交后补记 |
+| CI | 提交 `51d9614`（功能）+ `31cc972`（修 CI 两处红灯），run `46103272919`，**16 job 全绿**（含新增 `backend-postgres`） |
+
+### 五、首轮 CI 红灯的复盘
+
+首跑 run `46102447071` 有 2 个 job 红，均与功能正确性无关但都是真问题：
+
+1. **前端 job**：`pii_rekey_docs.spec.ts` 钉住 CI job 数 = 15，加 `backend-postgres` 后变 16。
+   已同步 spec 与四份当前口径文档（README / branch-protection / launch-checklist /
+   部署与联调）；历史轮次里的「15 job」是留档事实，未改。
+2. **漏洞扫描**：gorm postgres driver 传递依赖 `pgx v5.5.5` 命中 GO-2026-5004
+   （dollar-quoted 占位符混淆导致 SQL 注入），升级 `v5.9.2` 后 `govulncheck` 实测 0 漏洞。
+   升级后重跑三方 parity 与全量测试均绿。
+
+**经验**：加 Go 依赖 → 必须重生成 `docs/third-party-licenses.md`（pre-push 钩子会拦）
+且跑 `govulncheck`（传递依赖也会进调用图）；加 CI job → 必须同步 job 数守门与四份文档。
