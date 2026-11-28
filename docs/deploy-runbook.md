@@ -192,7 +192,9 @@ DB_DSN='host=127.0.0.1 port=5432 user=postgres password=pass dbname=weichuan ssl
   导入后对比表清单、报告核心表行数并删库，不碰生产。PG 没有 SQLite 的 `integrity_check`，
   演练判据是「`pg_restore` 成功 + 表清单覆盖生产」。
 - **上线前**：与 MySQL 一样跑三方 parity（§6），确认 `TestAPIFlowPostgres` /
-  `TestBumpPostgres` / `TestOpenPostgres` 真 PASS，而不是 SKIP。
+  `TestBumpPostgres` / `TestOpenPostgres` / `TestInstallPostgresEndToEnd` 真 PASS，而不是 SKIP。
+  最后一项是真连 PG 跑安装向导全流程（预建空库 → 连接测试 → AutoMigrate → 种子超管 → 落配置），
+  不是只拼 DSN 的单测。
 
 下方命令块是 SQLite 路径的示例；PG 部署只需把 `DB_DSN` 换成上面的 PG 写法
 （其余 `JWT_KEY` / `UPLOAD_DIR` / `TZ` 等完全相同），最后一行日志会打印 `database driver=postgres`。
@@ -1933,8 +1935,9 @@ TEST_POSTGRES_DSN='host=127.0.0.1 port=15432 user=postgres password=root dbname=
   go test ./... -v
 ```
 
-预期：`TestAPIFlowPostgres` / `TestOpenPostgres` / `TestBumpPostgres` 由 SKIP 转为 **PASS**
-（三者分别钉住「同一套 API 断言」「DSN 形态判定」「TEXT 列版本号原子递增」）。
+预期：`TestAPIFlowPostgres` / `TestOpenPostgres` / `TestBumpPostgres` /
+`TestInstallPostgresEndToEnd` 由 SKIP 转为 **PASS**
+（四者分别钉住「同一套 API 断言」「DSN 形态判定」「TEXT 列版本号原子递增」「安装向导 PG 全流程」）。
 
 > 本机需 Go ≥ 1.26（见 `backend/go.mod`）。**CI 已常驻两道门禁**：
 > `backend-mysql` job（2026-11-09 起）用 `mysql:8.0` service 容器，

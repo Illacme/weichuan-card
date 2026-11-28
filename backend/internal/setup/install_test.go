@@ -3,13 +3,17 @@ package setup
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 
 	"weichuan/internal/auth"
@@ -547,6 +551,126 @@ func TestInstallMySQLEndToEnd(t *testing.T) {
 	}
 	// 清理
 	if err := sdb.Exec("DROP DATABASE IF EXISTS `" + dbName + "`").Error; err != nil {
+		t.Logf("清理测试库失败（可手动删）：%v", err)
+	}
+}
+
+// PostgreSQL 全流程：需要真实 PG，门控见 TEST_POSTGRES_DSN。
+// 与 MySQL 不同，页面不提供「自动创建数据库」——库必须预建；
+// 本用例先 DROP 掉目标库，确保测的是真正的全新安装。
+func TestInstallPostgresEndToEnd(t *testing.T) {
+	base := os.Getenv("TEST_POSTGRES_DSN")
+	if base == "" {
+		t.Skip("set TEST_POSTGRES_DSN (e.g. host=127.0.0.1 port=5432 user=postgres password=root dbname=weichuan_test sslmode=disable) to run PostgreSQL install path")
+	}
+	cfg, err := pgx.ParseConfig(base)
+	if err != nil {
+		t.Fatalf("TEST_POSTGRES_DSN 无法解析：%v", err)
+	}
+	host, port := cfg.Host, cfg.Port
+	user, pass := cfg.User, cfg.Password
+	if host == "" || user == "" {
+		t.Fatalf("TEST_POSTGRES_DSN 缺少 host/user：%+v", cfg)
+	}
+	if port == 0 {
+		port = 5432
+	}
+	baseName := cfg.Database
+	if baseName == "" {
+		baseName = "weichuan_test"
+	}
+	dbName := baseName + "_inst"
+	if len(dbName) > 64 {
+		dbName = dbName[:64]
+	}
+
+	// 用 URL 形式拼 DSN：用户名/密码交给 url.UserPassword 转义，
+	// 与 install.go 的 composeDSN 同一套规则。
+	pgDSN := func(name string) string {
+		u := &url.URL{
+			Scheme: "postgres",
+			User:   url.UserPassword(user, pass),
+			Host:   net.JoinHostPort(host, strconv.Itoa(int(port))),
+			Path:   "/" + name,
+		}
+		q := u.Query()
+		q.Set("sslmode", "disable")
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+
+	resetInstallState(t)
+	cfgPath, _ := sqliteEnv(t)
+	t.Setenv("DB_DSN", "")
+
+	// 连 postgres 库做清理；DROP DATABASE 必须不在事务块里，单条 Exec 即可。
+	sdb, _, err := dbopen.Open(pgDSN("postgres"))
+	if err != nil {
+		t.Skipf("PostgreSQL 不可达，跳过：%v", err)
+	}
+	defer closeDB(sdb)
+	if err := sdb.Exec(`DROP DATABASE IF EXISTS "` + dbName + `"`).Error; err != nil {
+		t.Fatalf("清理测试库失败：%v", err)
+	}
+	// PG 页面不提供自动建库，运维必须预建空库——这里如实模拟这一步。
+	if err := sdb.Exec(`CREATE DATABASE "` + dbName + `"`).Error; err != nil {
+		t.Fatalf("预建测试库失败：%v", err)
+	}
+
+	req := InstallReq{
+		Engine: "postgres", DBHost: host, DBPort: strconv.Itoa(int(port)),
+		DBUser: user, DBPassword: pass, DBName: dbName,
+		AdminUser: "admin", AdminPass: "installer-pass-123", AdminPass2: "installer-pass-123",
+	}
+	// PG 页面没有自动建库：连接测试必须直接通过，且不提示 WillCreate。
+	testRes, err := TestConnection(req)
+	if err != nil {
+		t.Fatalf("PostgreSQL 连接测试应通过：%v", err)
+	}
+	if testRes.WillCreate || testRes.Driver != dbopen.DriverPostgreSQL {
+		t.Fatalf("连接测试结果异常：%+v", testRes)
+	}
+
+	res, err := Install(req)
+	if err != nil {
+		t.Fatalf("PostgreSQL 安装失败：%v", err)
+	}
+	if !res.OK || res.Driver != dbopen.DriverPostgreSQL {
+		t.Fatalf("安装结果异常：%+v", res)
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Fatalf("配置文件应已写入：%v", err)
+	}
+
+	dsn, _, err := composeDSN(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, _, err := dbopen.Open(dsn)
+	if err != nil {
+		t.Fatalf("打开装好的 PostgreSQL 库失败：%v", err)
+	}
+	var admins int64
+	if err := db.Model(&model.Admin{}).Count(&admins).Error; err != nil {
+		closeDB(db)
+		t.Fatalf("查询管理员失败：%v", err)
+	}
+	if admins != 1 {
+		closeDB(db)
+		t.Fatalf("应种子出 1 个管理员，实际 %d", admins)
+	}
+	var settings int64
+	if err := db.Table("sys_setting").Count(&settings).Error; err != nil {
+		closeDB(db)
+		t.Fatalf("查询系统设置失败：%v", err)
+	}
+	if settings == 0 {
+		closeDB(db)
+		t.Fatal("系统设置应已播种，实际 0 行")
+	}
+	closeDB(db)
+
+	if err := sdb.Exec(`DROP DATABASE IF EXISTS "` + dbName + `"`).Error; err != nil {
 		t.Logf("清理测试库失败（可手动删）：%v", err)
 	}
 }

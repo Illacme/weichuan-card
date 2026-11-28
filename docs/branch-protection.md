@@ -22,7 +22,7 @@
 | `OpenAPI 契约对账` | `scripts/check_openapi.py`：路径 / `$ref` / 字段四档一致性 + 后端路由对账 | ✅ 必跑 |
 | `小程序启动标题同步` | `scripts/sync_mp_app_name.py`：先 `--selftest` 证明守门会红，再 `--check` 校验 app.json 标题与 brand.ts 镜像一致 | ✅ 必跑 |
 | `后端 (Go / MySQL parity)` | CI 自带 `mysql:8.0` service：连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支 | ✅ 必跑（2026-11-09 起，无需仓库变量） |
-| `后端 (Go / PostgreSQL parity)` | CI 自带 `postgres:16-alpine` service：同一套 API 断言 + TEXT 列原子递增 + DSN 分派 | ✅ 必跑（2026-11-28 起，无需仓库变量） |
+| `后端 (Go / PostgreSQL parity)` | CI 自带 `postgres:16-alpine` service：同一套 API 断言 + TEXT 列原子递增 + DSN 分派 + 安装向导 PG 全流程 | ✅ 必跑（2026-11-28 起，无需仓库变量） |
 | `前端 (Vue)` | `npm ci` + eslint + `npm run build` + Vitest（含小程序端纯逻辑测试） | ✅ 必跑 |
 | `前端类型检查 (vue-tsc)` | `vue-tsc --noEmit` 全量类型检查 | ✅ 必跑（历史 4 个 wangEditor 类型错已修复） |
 | `第三方许可清单（过期检查）` | `python3 scripts/gen_third_party_notices.py --check`：核对 `docs/third-party-licenses.md` 与当前依赖 | ✅ 必跑（清单是交付物） |

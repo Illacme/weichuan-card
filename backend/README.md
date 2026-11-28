@@ -1436,7 +1436,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   - `TestAssetLibrary`（`internal/handler/assets_test.go`）：素材库匿名 401、**分页（翻页不重复 / size 与上限 / 非法页码回落与末页夹取 / 分类与关键字过滤 / 无命中空结果）**、**视觉调性（五档清单 / 调性过滤生效 / styleCounts 排除 style 自身 / 分类+调性组合 / 图标只落 clean 一档 / 调性中文名可搜）**、采用落盘（含首页背景 JPEG）、预览图公开 + immutable、封面与背景缩略图、未知素材/空参/路径穿越 404。
   - `TestAPIFlowMySQL`（生产契约 parity）：设置 `TEST_MYSQL_DSN` 后，连真实 MySQL、应用 `migrations/*.sql`，再跑与 SQLite **完全相同的断言**，用以校验 AutoMigrate 与生产建表 SQL 行为一致。
     ⚠️ **两条链路的建库前置也必须一致**：迁移只建表结构，1 号租户由 `seedDefaultCompany` 补齐，`setupSQLiteEngine` 与 `TestAPIFlowMySQL` 共用同一个函数。只在 SQLite 侧建的话，公开接口 / 审核流 / 员工 / 分类 / 服务 / 统计 / 企业内容共 7 个 flow 子测试会因 `company id=1` 不存在集体假失败（2026-11-09 本地真跑 MySQL 才抓到，见该文件注释）。
-  - `TestAPIFlowPostgres`（PG parity）：设置 `TEST_POSTGRES_DSN` 后连真 PG、AutoMigrate 建表，跑**同一个 `runAPIFlow`**。另有 `internal/dbopen:TestOpenPostgres`（DSN 判定）与 `internal/setting:TestBumpPostgres`（TEXT 列原子递增），三者分别守住「方言 SQL」「驱动选择」「PG 特有类型」三类坑。
+  - `TestAPIFlowPostgres`（PG parity）：设置 `TEST_POSTGRES_DSN` 后连真 PG、AutoMigrate 建表，跑**同一个 `runAPIFlow`**。另有 `internal/dbopen:TestOpenPostgres`（DSN 判定）、`internal/setting:TestBumpPostgres`（TEXT 列原子递增）与 `internal/setup:TestInstallPostgresEndToEnd`（安装向导 PG 分支：预建空库 → 连接测试 → AutoMigrate → 种子超管 → 落配置），分别守住「方言 SQL」「驱动选择」「PG 特有类型」「初始化安装」四条链路。
   - `internal/handler/hardening_test.go`（P0 加固守门）：专治「静默失败」——摘掉修复必须红。覆盖：登出写不进黑名单必须报 `code:1`（`TestLogoutReportsRevokeFailure`，另有 `TestLogoutSucceedsNormally` 作对照）、密码生成取不到随机数必须报错而不能 panic（`TestGenPasswordEntropyFailure` / `TestGenPasswordRejectsAtAPI`）、小程序码按 IP 限流挡扫号（`TestWXACodeRateLimitedPerIP`）、小程序码缓存到上限要淘汰（`TestWXACodeCacheEvictsAtCap`）、启停员工留审计且目标不存在要报「未找到」（`TestEmployeeStatusAuditAndNotFound`）。
   - `internal/storage/storage_test.go:TestRandNameEntropyFailure`：守门「熵源读取失败必须报错」——从前忽略错误会让每次上传都叫同一个名字，后上传的静默覆盖先上传的。
   - `internal/handler/mp_release_test.go`（8 例，`TestMPRelease*`）：版本发布 handler 全链路，假微信按调用顺序记账。覆盖：**完整闭环**（登记→提审→轮询到审过→发布，且终态后不再多调一次 release）、**微信报错时本地记录回滚**（不留下「以为提审成功了」的半截状态）、**状态机非法流转被拒**（auditing 态点发布返回 code=1）、**重复版本号 / 未配凭据 / 记录不存在**、**租户凭据优先于全局凭据**、**租户关掉代发后一切写动作 403 而列表仍可读**、**保存凭据时省略 `releaseEnabled` 不清开关**、**重新打开后代发恢复**；每次代发动作都断言落了一条审计（成功记结果态、失败带 error）。
@@ -1450,7 +1450,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
     go test ./internal/handler/ -run TestAPIFlowMySQL -v
   # 生产契约校验（需可用 PostgreSQL）：
   TEST_POSTGRES_DSN='host=127.0.0.1 port=5432 user=postgres password=root dbname=weichuan_test sslmode=disable' \
-    go test ./... -run 'TestAPIFlowPostgres|TestOpenPostgres|TestBumpPostgres' -v
+    go test ./... -run 'TestAPIFlowPostgres|TestOpenPostgres|TestBumpPostgres|TestInstallPostgresEndToEnd' -v
   ```
 - 鉴权约定：中间件返回的是 **HTTP 200 + `{code:401|403}`**（非 HTTP 状态），测试统一断言 `body["code"]`。
 - 测试 DB：默认无需外部 MySQL。通过 `handler.New(db)` 注入一个**临时文件的 SQLite 库**（纯 Go 驱动 `github.com/glebarez/sqlite`，免 cgo），用 GORM `AutoMigrate` 按模型建表，并 `SeedAdmin` 初始超管后把完整路由跑起来。SQLite 把模型里的 `JSON` 列按 `TEXT` 存储，与 MySQL `JSON` 列在字符串读写语义上等价，足以验证 handler 业务正确性。MySQL parity 用例通过 `runtime.Caller` 定位源码目录、回溯读取 `migrations/`，不依赖测试进程 CWD。
@@ -1535,7 +1535,8 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
     长期失效没被发现的原因。本地复跑方式见上文「生产契约校验」命令。
   - `backend-postgres`（**正式门禁，2026-11-28 起必跑**）：`postgres:16-alpine` service 容器
     自供给，跑 `TestAPIFlowPostgres`（同一套 API 断言）、`TestOpenPostgres`（DSN 判定）、
-    `TestBumpPostgres`（TEXT 列原子递增），每步同样 grep `--- PASS` 防「绿着跳过」。
+    `TestBumpPostgres`（TEXT 列原子递增）、`TestInstallPostgresEndToEnd`（安装向导 PG 分支），
+    每步同样 grep `--- PASS` 防「绿着跳过」。
   - `frontend`：`npm ci` + `npm run build` + `npm run test`（Vitest，含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
   - `frontend-typecheck`（**阻塞门禁**）：`vue-tsc --noEmit`。历史 4 个 `@wangeditor/*` 类型错误已通过 tsconfig `paths` 指向真实 d.ts + 精准断言修复，当前 0 错误。
   - `notices`（**阻塞门禁**）：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md`

@@ -282,6 +282,17 @@ jobs:
           grep -q '^--- PASS: TestOpenPostgres' /tmp/pg-open.log \
             || { echo "::error::TestOpenPostgres 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
 
+      # 安装向导的 PG 分支同样只在有 DSN 时才跑，复用同一个 service。
+      # PG 页面没有「自动创建数据库」，用例先 DROP 再 CREATE 空库，
+      # 覆盖「库已预建 → 连接测试 → AutoMigrate → 种子超管 → 落配置」全流程。
+      - name: 测试（PG 安装向导全流程）
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./internal/setup -run TestInstallPostgresEndToEnd -v 2>&1 | tee /tmp/pg-install.log
+          grep -q '^--- PASS: TestInstallPostgresEndToEnd' /tmp/pg-install.log \
+            || { echo "::error::TestInstallPostgresEndToEnd 未真正 PASS（被 Skip 或用例改名）"; exit 1; }
+
   # ───────── 前端：Vue 生产构建 + 单元测试 ─────────
   frontend:
     name: 前端 (Vue)
