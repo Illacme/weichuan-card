@@ -7156,3 +7156,46 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 
 **经验**：加 Go 依赖 → 必须重生成 `docs/third-party-licenses.md`（pre-push 钩子会拦）
 且跑 `govulncheck`（传递依赖也会进调用图）；加 CI job → 必须同步 job 数守门与四份文档。
+
+---
+
+## 第一百一十六轮：PostgreSQL 运维链补齐（2026-11-28）
+
+### 一、目标与结论
+
+第一百一十五轮只做到「核心运行 + 备份」：PG 能连、能建表、能跑同一套业务断言、
+能产出 `pg_dump -Fc` 归档。追问「支持完善了吗」时重新按运维全链路盘点，发现
+**备份了却不能恢复**：`restore.sh` / `restore_drill.sh` 当时只认 MySQL 与 SQLite。
+结论：本轮补齐恢复、演练、告警、预检、自检与文档口径，PG 达到与 MySQL 同等的
+运维闭环，不再是「半支持」。
+
+### 二、改动
+
+| 面 | 改动 |
+|---|---|
+| 恢复 | `restore.sh` 认 `*.dump.gz`，新增 `restore_postgres()`：`pg_restore --clean --if-exists --no-owner` + `psql -tA` 表数校验；`--target` 明确只适用 SQLite |
+| 演练 | `restore_drill.sh` 认 `*.dump.gz`，新增 `drill_postgres()` / `pgdrill()`：临时库导入、表清单与核心表行数对比、结束删库，不碰生产 |
+| 容器变量 | `backup.sh` / `restore.sh` / `restore_drill.sh` 统一 `PG_CONTAINER` 优先、缺省回落 `DB_CONTAINER`；此前 `backup.sh` 只认 `DB_CONTAINER`，与另两个脚本不一致，混跑会备份错容器 |
+| 告警 | `alert_check.sh` R3 纳入 `*.dump.gz`；同时去掉写死的 `weichuan-` 前缀（文件名前缀其实是 `DB_NAME`，自定义库名同样会误报「没有备份文件」） |
+| 预检 | `preflight.sh` 按 `dbopen` 同款判据识别 `postgres://` / `postgresql://` 与 key=value 形态，跳过 MySQL 口令检查、不回显 DSN（口令可能内嵌），`sslmode=disable` 单独 WARN |
+| 自检 | `selftest_backup.sh` 新增 PG 段：五脚本 `bash -n` + 五处 PG 锚点；反向验证删掉锚点后守门会红 |
+| 文档 | README / 后端 README / 部署 Runbook / 上线清单 / 部署与联调 同步三形态；五条告警规则、PG PITR 边界（WAL 需 DBA 自配）、备份三后缀、恢复命令；新增 PG 演练留档 |
+
+### 三、真实验证
+
+| 项 | 结果 |
+|---|---|
+| PG 备份 | `DB_DRIVER=postgres PG_CONTAINER=wc-pg-test scripts/backup.sh` 产出 `.dump.gz` |
+| PG 恢复 | `restore.sh` 恢复到 `pg_restore_test`：**28 张表**，恢复前故意建的 `marker` 表被 `--clean` 清掉 |
+| PG 演练 | `restore_drill.sh` 退出码 **0**；备份 28 / 生产 29 表、缺表 0、行数一致、临时库无残留；留档 `docs/drill-records/2026-11-28-postgres.md` |
+| 容器变量回退 | 只设 `DB_CONTAINER=wc-pg-test`、不设 `PG_CONTAINER` 时，备份与演练仍走对容器（29/29 表通过） |
+| R3 告警 | 自定义库名的 `.dump.gz` 被识别并报「已 7956h 未更新」，不再是「没有备份文件」 |
+| 预检 | URL 与 key=value 两种 PG DSN 都走 PG 分支且不回显口令；MySQL / SQLite 分支未被误吞 |
+| 备份链自检 | `selftest_backup.sh`：**30 通过 / 0 失败**（新增 10 条 PG 断言） |
+| 发版自检 | `selftest_deploy_frontend.sh`：PASS=61 FAIL=0 |
+| 后端 | `gofmt -l .` / `go vet ./...` / `go build ./...` / `go test ./...` 全绿；显式 `--- PASS` 确认 `TestAPIFlowMySQL` / `TestMySQLMigrations` / `TestInstallMySQLEndToEnd` 与 `TestAPIFlowPostgres` / `TestOpenPostgres` / `TestBumpPostgres` 均真跑 |
+| 前端 | vitest 2053/2054；唯一失败仍是用户工作区未提交的 `miniprogram/app.json` / `utils/brand.ts`（启动标题守门），不在本次提交内 |
+| OpenAPI / 许可 | 140 paths / 139 路由对齐；`gen_third_party_notices.py --check` 通过 |
+
+**边界**：PG 全量归档恢复已闭环，但 PITR 仍需 DBA 自配 WAL 归档（本仓库未内置脚本），
+文档已按这个口径写明，避免把「有 PITR 能力」误写成「开箱即用」。

@@ -134,6 +134,30 @@ for s in backup_binlog.sh restore_drill.sh restore_pitr_drill.sh; do
   fi
 done
 
+head_ "6. 三形态（含 PostgreSQL）脚本入口没断"
+# PG 分支平时不跑，语法或分支被误删都不会在 1–5 项里暴露：
+# 备份了却恢复不了，只有真出事那天才发现。这里钉住各脚本的 PG 关键字。
+for s in backup.sh restore.sh restore_drill.sh alert_check.sh preflight.sh; do
+  if bash -n "$SCRIPTS/$s" >/dev/null 2>&1; then
+    ok "$s 语法检查通过"
+  else
+    bad "$s 语法坏了"
+  fi
+done
+for spec in \
+  "backup.sh:pg_dump -Fc" \
+  "restore.sh:pg_restore --clean --if-exists --no-owner" \
+  "restore_drill.sh:drill_postgres" \
+  "alert_check.sh:*.dump.gz" \
+  "preflight.sh:postgres://"; do
+  s="${spec%%:*}"; token="${spec#*:}"
+  if grep -Fq "$token" "$SCRIPTS/$s"; then
+    ok "$s 仍含 PG 分支锚点 ${token}"
+  else
+    bad "$s 的 PG 分支锚点 ${token} 丢了（PG 部署会静默失去备份/恢复/告警）"
+  fi
+done
+
 echo
 echo "════════ 自检结果：${PASS} 通过 / ${FAIL} 失败 ════════"
 [ "$FAIL" -eq 0 ] || exit 1

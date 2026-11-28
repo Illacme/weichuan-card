@@ -4,13 +4,15 @@
 #
 #   scripts/restore.sh backups/weichuan-20261025-030000.db.gz            # SQLite，恢复生产
 #   scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes     # MySQL，不交互
+#   scripts/restore.sh backups/weichuan-20261025-030000.dump.gz --yes    # PostgreSQL
+#     （PG 容器用 PG_CONTAINER 指定；不设则沿用 DB_CONTAINER）
 #   scripts/restore.sh backups/xxx.db.gz --target /tmp/drill.db          # 只还原到指定文件（演练）
 #
 # 选项：
 #   --yes               跳过交互确认（脚本化 / 演练；生产恢复请勿省略）
-#   --target <路径>     恢复到指定文件，不碰生产容器（演练专用）
+#   --target <路径>     恢复到指定文件，不碰生产容器（演练专用，仅 SQLite）
 #   --no-safety         跳过恢复前的自动备份（不推荐：恢复错了就没有退路）
-#   --driver mysql|sqlite  强制指定形态（默认按文件后缀判断）
+#   --driver mysql|sqlite|postgres  强制指定形态（默认按文件后缀判断）
 #
 # 为什么要「恢复前先自动备份」：恢复是**破坏性**操作，把一份两周前的备份
 # 盖上去，等于丢掉这两周的全部数据。安全网不贵（一次 backup.sh），
@@ -19,6 +21,11 @@
 # 为什么 SQLite 恢复要删 -wal / -shm：库文件被替换后，旧 WAL 里还是上一个库
 # 的页；SQLite 打开时会尝试回放它，结果是把旧数据「恢复」进新库——比不恢复更糟。
 # 删掉是最省事也最安全的做法（WAL 本来就是可丢弃的临时结构）。
+#
+# PostgreSQL 用 pg_dump -Fc 的自定义归档，不是纯 SQL：必须走 pg_restore，
+# 不能用 psql < 文件（那是给纯 SQL 用的）。--clean --if-exists 让归档里的
+# DROP/CREATE 先清掉现存对象，等同 MySQL 的 DROP TABLE IF EXISTS 语义。
+# 归档里已含建表语句，故恢复后表结构也回到备份时刻的定义。
 #
 # 恢复完成后一定要看校验结果；校验不过就按最后打印的回滚指引退回安全网那份。
 # 演练请用 scripts/restore_drill.sh（自动跑一遍并在临时库上比对，不碰生产）。
@@ -68,12 +75,18 @@ done
 # ── 形态判定 ──
 if [ -z "$DRIVER" ]; then
   case "$BACKUP_FILE" in
-    *.sql.gz|*.sql) DRIVER="mysql" ;;
-    *.db.gz|*.db)   DRIVER="sqlite" ;;
-    *) die "无法从文件名判断形态（${BACKUP_FILE}）；请用 --driver mysql|sqlite 指定" ;;
+    *.sql.gz|*.sql)   DRIVER="mysql" ;;
+    *.db.gz|*.db)     DRIVER="sqlite" ;;
+    *.dump.gz|*.dump) DRIVER="postgres" ;;
+    *) die "无法从文件名判断形态（${BACKUP_FILE}）；请用 --driver mysql|sqlite|postgres 指定" ;;
   esac
 fi
-case "$DRIVER" in mysql|sqlite) ;; *) die "未知 --driver=$DRIVER" ;; esac
+case "$DRIVER" in mysql|sqlite|postgres) ;; *) die "未知 --driver=$DRIVER" ;; esac
+# PG 归档是自定义格式，只能由 pg_restore 消费；--target 的「还原到文件」语义
+# 只对 SQLite 有意义（MySQL/PG 都是服务器端数据库，没有可替换的单文件）。
+if [ "$DRIVER" != "sqlite" ] && [ -n "$TARGET" ]; then
+  die "--target 只适用于 SQLite；$DRIVER 请用 restore_drill.sh 在临时库上演练"
+fi
 
 # ── 解压到临时文件（先落地再恢复：管道中断会留下半个库）──
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weichuan-restore-XXXXXX")"
@@ -105,8 +118,10 @@ target_desc="$TARGET"
 if [ -z "$target_desc" ]; then
   if [ "$DRIVER" = "sqlite" ]; then
     target_desc="容器 $APP_CONTAINER 的 ${SQLITE_INNER_PATH}（生产库）"
+  elif [ "$DRIVER" = "postgres" ]; then
+    target_desc="容器 ${PG_CONTAINER:-$DB_CONTAINER} 的 PostgreSQL 库 ${DB_NAME}（生产库）"
   else
-    target_desc="容器 $DB_CONTAINER 的数据库 ${DB_NAME}（生产库）"
+    target_desc="容器 $DB_CONTAINER 的 MySQL 库 ${DB_NAME}（生产库）"
   fi
 fi
 if [ "$ASSUME_YES" != "1" ]; then
@@ -247,8 +262,43 @@ restore_mysql() {
   [ -n "$ver" ] && info "schema_migrations 最新版本：$ver"
 }
 
+# ═══════════════ PostgreSQL ═══════════════
+restore_postgres() {
+  local pg_container="${PG_CONTAINER:-}"
+  [ -n "$pg_container" ] || pg_container="$DB_CONTAINER"
+  command -v docker >/dev/null 2>&1 || die "需要 docker（恢复通过容器内 pg_restore 执行）"
+  docker inspect "$pg_container" >/dev/null 2>&1 || die "找不到容器 $pg_container（PG 形态请用 PG_CONTAINER 指定）"
+
+  # 自定义格式归档先拷进容器：pg_restore 读的是文件内容，不能从 stdin 直接来。
+  local inner="/tmp/weichuan-restore-$$.dump"
+  info "导入到 $pg_container/$DB_NAME ..."
+  if ! docker cp "$PLAIN" "$pg_container:$inner" >/dev/null; then
+    die "拷贝归档到容器失败"
+  fi
+  # --clean --if-exists：先删现存对象再建，语义等同 MySQL 的 DROP TABLE IF EXISTS。
+  # --no-owner：归档里的 owner 是备份时的角色名，换环境恢复时可能不存在。
+  # 不用 --single-transaction：pg_restore -Fc 的 --clean 不能在单事务里可靠处理
+  # 对象间的依赖顺序；失败时靠安全网回滚（脚本开头已自动备份）。
+  if ! docker exec -e PGPASSWORD="$DB_PASSWORD" "$pg_container" \
+      pg_restore --clean --if-exists --no-owner -U"$DB_USER" -d"$DB_NAME" "$inner"; then
+    docker exec "$pg_container" rm -f "$inner" >/dev/null 2>&1 || true
+    die "导入失败（上面的 pg_restore 报错为准）；库可能处于半导入状态，请用安全网那份重来"
+  fi
+  docker exec "$pg_container" rm -f "$inner" >/dev/null 2>&1 || true
+
+  local tables
+  # -t 只输出元组、-A 不对齐：-tA 得到裸数字，便于 [ -gt 0 ] 判断。
+  tables="$(docker exec -e PGPASSWORD="$DB_PASSWORD" "$pg_container" \
+    psql -tA -U"$DB_USER" -d"$DB_NAME" -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'")"
+  [ "${tables:-0}" -gt 0 ] || die "导入后一张表都没有，恢复失败"
+  info "校验通过：tables=$tables"
+}
+
 if [ "$DRIVER" = "sqlite" ]; then
   restore_sqlite
+elif [ "$DRIVER" = "postgres" ]; then
+  restore_postgres
 else
   restore_mysql
 fi

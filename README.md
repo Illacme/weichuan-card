@@ -14,7 +14,7 @@
 | `miniprogram/` | 原生微信小程序前端（员工 / 访客侧） |
 | `backend/migrations/` | MySQL 建表脚本：`0001_init.sql` 是纯净终态 schema（全新安装）；`history/` 是 66 个历史增量（升级安装） |
 | `docs/` | OpenAPI 3 接口规范（`openapi.yaml`）· 分支保护协作规范（`branch-protection.md`）· 生产上线 Runbook（`deploy-runbook.md`） |
-| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复；`restore_drill.sh`：恢复演练；`selftest_backup.sh`：备份链自检（CI 里跑，不需 docker）；`alert_check.sh`：最小告警四规则，含外部拨测；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
+| `scripts/` | 运维脚本（`preflight.sh`：上线前配置自检；`backup.sh`：库 + 图片 + 加密密钥包三件套备份（MySQL 逻辑备份 / SQLite 在线快照 / PostgreSQL `pg_dump -Fc`）；`backup_files.sh`：图片与密钥包；`restore.sh` / `restore_files.sh`：恢复（三形态）；`restore_drill.sh`：恢复演练（三形态）；`selftest_backup.sh`：备份链自检（CI 里跑，不需 docker）；`alert_check.sh`：最小告警五规则，含外部拨测与授权到期；`license_setup.sh`：私有部署授权密钥初始化，**只在签发环境跑**） |
 | `*.md`（根目录） | 需求 / 架构 / 接口字段映射等中文文档 |
 
 ## 技术栈
@@ -33,10 +33,11 @@ cd backend && go run ./cmd/devserver      # 监听 :8080
 演示账号：超管 `admin / admin123456`；员工手机 `13800000001` / 密码 `demo1234`（staffId=1）。
 初始超管由后端按 `ADMIN_USER` / `ADMIN_PASS` 首次启动时 seed（表为空才建）；之后可在
 「平台管理 → 账号管理」改用户名或新增平台超管，不必再改环境变量或改库。
-> 注意：`go run ./cmd/devserver` 每次启动都用**新的临时 SQLite 库**，改过的密码/新建的账号
-> 重启即回到初始演示状态（开发态有意设计）。需要持久化请用 `cmd/server`（MySQL）或 docker-compose。
+> 注意：`go run ./cmd/devserver` 默认每次启动都用**新的临时 SQLite 库**，改过的密码/新建的账号
+> 重启即回到初始演示状态（开发态有意设计）。要保留联调数据，先用 `lsof -p <旧pid> | grep weichuan-dev-.*db`
+> 找到库路径，重启时带 `DEV_DB_PATH=<路径>`；正式持久化请用 `cmd/server`（MySQL / PostgreSQL / SQLite）或 docker-compose。
 
-### 方式二：容器一键起（两种数据库形态任选）
+### 方式二：容器一键起（SQLite / MySQL 两种内置形态；PostgreSQL 见方式三）
 ```bash
 cp .env.example .env
 
@@ -62,7 +63,7 @@ docker compose --profile mysql up -d --build
 
 ### 方式三：分别启动（开发态）
 ```bash
-# 后端（需自备 MySQL，配置 DB_DSN / JWT_KEY 等环境变量）
+# 后端（需自备 MySQL / PostgreSQL / SQLite，配置 DB_DSN / JWT_KEY 等环境变量）
 cd backend && go run ./cmd/server
 
 # 前端
@@ -245,16 +246,20 @@ git config core.hooksPath .githooks   # 每个克隆执行一次
 - **后台「测试地址」带完整 SSRF 防护**：`POST /api/admin/url-probe` 对管理员填的 CDN 地址发一次受限 HEAD，直接给出 403（CDN 未启用 HTTPS / 防盗链）、404（漏了对象目录前缀）、200 却是 `text/html` 错误页等结论，用来排查小程序黑屏 00:00 且无报错。防护在 `backend/internal/urlprobe`：协议/凭据/本机域名白名单 → 自解析 DNS 逐个排除私网、回环、链路本地、云元数据与保留段 → 把已校验 IP 固定进 `DialContext` 防 DNS rebinding → 关代理、禁重定向、6s 超时、只发 HEAD 不读响应体；接入层还有后台鉴权、10 次/分双维度限流与 `url_probe.check` 审计（只记 host）。它只证明服务端可达，**不等于真机能播**。契约见 `docs/openapi.yaml`，安全边界见 `backend/README.md`。
 - **备份与恢复**：`scripts/backup.sh` 按 `DB_DRIVER` 选形态——MySQL 走 `mysqldump --single-transaction`，
   SQLite 走二进制自带的 `server backup`（`VACUUM INTO` 在线快照，**不能直接 `cp` 库文件**：
-  WAL 里还有未合并的页，cp 出来是坏库）。**一次产出三件套**：库备份 + `uploads-*.tar.gz`（图片）
+  WAL 里还有未合并的页，cp 出来是坏库），PostgreSQL 走容器内 `pg_dump -Fc`（`.dump.gz`，
+  `pg_restore` 用）。**一次产出三件套**：库备份 + `uploads-*.tar.gz`（图片）
   + `secrets-*.tar.gz.enc`（`runtime.env` 含 `PII_ENC_KEY` 与 `license.key`，AES-256 加密，
   口令 `BACKUP_ENC_KEY` 单独保管）——只备库的话，恢复出来会是「图片 404 + PII 解不开」。
   开启本地镜像（`MIRROR_DIR`）的部署会多一件 `mirror-*.tar.gz`：云桶对象的本地副本，
   用于桶被误删时找回；它只做备份，不参与出参。
   任一件失败即删掉本次全部产物并非零退出，避免「新鲜但缺件」的备份骗过告警。
-  `scripts/restore.sh` 恢复库（**恢复前自动备份当前库**，恢复后校验）；
+  `scripts/restore.sh` 恢复库（**恢复前自动备份当前库**，恢复后校验；MySQL / SQLite / PG 三形态，
+  PG 用 `pg_restore --clean --if-exists --no-owner`）；
   `scripts/restore_files.sh` 恢复图片与密钥（覆盖前另存安全网）；
-  `scripts/restore_drill.sh` 在临时目录/临时库上演练，不碰生产，并额外校验图片与密钥包可解，
-  退出码 `0/1/2` 分别是「通过 / 有失败 / 环境不完整」。详见 `docs/deploy-runbook.md` §9。
+  `scripts/restore_drill.sh` 在临时目录/临时库上演练，不碰生产（PG 建临时库，跑完删除），
+  并额外校验图片与密钥包可解，退出码 `0/1/2` 分别是「通过 / 有失败 / 环境不完整」。
+  PG 演练以「`pg_restore` 导入成功 + 表清单覆盖生产」为判据（没有 SQLite 的 `integrity_check`）。
+  详见 `docs/deploy-runbook.md` §9，演练留档在 `docs/drill-records/`。
   **后台也有面板**（平台管理 → 备份与恢复）：看三件套齐不齐 / 多新鲜，SQLite 形态下可「立即备份」，
   库与图片可下载——但密钥包不提供下载（后端直接拒绝），恢复也不在后台做（必须走 `restore.sh`）。
   面板补的是「看不见」这个洞，不替代 crontab：按钮不会自己按，失败也不会告警。

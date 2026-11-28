@@ -187,6 +187,15 @@ DB_DSN='host=127.0.0.1 port=5432 user=postgres password=pass dbname=weichuan ssl
 - **备份**：`DB_DRIVER=postgres scripts/backup.sh`（容器内 `pg_dump -Fc` 在线一致性快照，
   与文件/密钥三件套共用一套轮转）；`server backup` 只做 SQLite 的 VACUUM INTO，
   传 PG DSN 会明确拒绝并给出正确工具。PG 恢复用 `pg_restore`（自定义格式归档）。
+- **恢复与演练**：`scripts/restore.sh <备份>.dump.gz`（自动备份当前库 + `pg_restore --clean
+  --if-exists --no-owner` + 表数校验）；`scripts/restore_drill.sh <备份>.dump.gz` 建临时库
+  导入后对比表清单、报告核心表行数并删库，不碰生产。PG 没有 SQLite 的 `integrity_check`，
+  演练判据是「`pg_restore` 成功 + 表清单覆盖生产」。
+- **上线前**：与 MySQL 一样跑三方 parity（§6），确认 `TestAPIFlowPostgres` /
+  `TestBumpPostgres` / `TestOpenPostgres` 真 PASS，而不是 SKIP。
+
+下方命令块是 SQLite 路径的示例；PG 部署只需把 `DB_DSN` 换成上面的 PG 写法
+（其余 `JWT_KEY` / `UPLOAD_DIR` / `TZ` 等完全相同），最后一行日志会打印 `database driver=postgres`。
 
 ```bash
 cd backend && go build -o weichuan-server ./cmd/server
@@ -242,16 +251,16 @@ export TZ=Asia/Shanghai                        # 统计按服务端本地日期�
   所以库路径只能在启动时定好（环境变量 `DB_DSN`，或安装向导写入的配置文件
   `data/runtime.env`；优先级 环境变量 > 配置文件 > 内置缺省），改完重启才生效。
 
-### 四条路径对比
+### 五条路径对比
 
-|            | A 先跑起来                    | B 二进制 + nginx | C 完整生产                 | D SQLite 单机  |
-| ---------- | ------------------------- | ------------- | ---------------------- | ------------ |
-| 数据库        | 无（devserver 临时 SQLite）    | 同 A           | MySQL（原生安装）            | SQLite（本地文件） |
-| 数据持久       | 重启丢                       | 重启丢           | 持久                     | **持久**       |
-| 真机 / 内网上传  | ✅ 设 `DEV_UPLOAD_BASE_URL` | ✅ 同 A         | ✅ `UPLOAD_BASE_URL` 可配 | ✅ 同 C        |
-| HTTPS      | 无                         | 无（可加 Caddy）   | ✅                      | ✅ 同 C        |
-| 多副本 / 横向扩展 | —                         | —             | ✅                      | ❌ 单机单进程      |
-| 适合         | 功能测试 / 演示                 | 内网部署 / 给同事看   | 上线（标准）                 | 上线（小体量免运维）   |
+|            | A 先跑起来                    | B 二进制 + nginx | C 完整生产                 | D SQLite 单机  | E PostgreSQL 生产 |
+| ---------- | ------------------------- | ------------- | ---------------------- | ------------ | ---------------- |
+| 数据库        | 无（devserver 临时 SQLite）    | 同 A           | MySQL（原生安装）            | SQLite（本地文件） | PostgreSQL（自建 / 国产化） |
+| 数据持久       | 重启丢                       | 重启丢           | 持久                     | **持久**       | 持久 |
+| 真机 / 内网上传  | ✅ 设 `DEV_UPLOAD_BASE_URL` | ✅ 同 A         | ✅ `UPLOAD_BASE_URL` 可配 | ✅ 同 C        | ✅ 同 C |
+| HTTPS      | 无                         | 无（可加 Caddy）   | ✅                      | ✅ 同 C        | ✅ 同 C |
+| 多副本 / 横向扩展 | —                         | —             | ✅                      | ❌ 单机单进程      | ✅ |
+| 适合         | 功能测试 / 演示                 | 内网部署 / 给同事看   | 上线（标准）                 | 上线（小体量免运维）   | 上线（已有 PG 基建） |
 
 ## 0. 前置条件
 
@@ -330,7 +339,8 @@ openssl rand -base64 12   # → ADMIN_PASS（或自定义强口令）
 
 ## 2. 启动
 
-两种形态任选其一（数据库引擎进了安装向导还能再改）：
+compose 提供两种内置形态任选其一（数据库引擎进了安装向导还能再改）；
+PostgreSQL 生产不走 compose profile，按 §2.E 自备实例 + `DB_DSN` 切换：
 
 ```bash
 # 形态一：零依赖起步（默认）——只起 backend + frontend，向导里选 SQLite，不需要任何口令
@@ -377,11 +387,12 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
 
 页面三步：
 
-1. **选数据库**：MySQL 或 SQLite，与启动时选的 compose 形态对应即可（向导里也能改）。  
+1. **选数据库**：MySQL / SQLite / PostgreSQL 三种都支持，前两种与启动时的 compose 形态对应即可（向导里也能改）。<br>
    MySQL 形态（`--profile mysql`）下会检测到编排环境并预填  
    主机 `mysql` / 端口 `3306` / 用户 `root` / 库名 `weichuan`，  
    口令仍需自己填 `.env` 里的 `MYSQL_ROOT_PASSWORD`（响应与日志都不回显口令）；  
-   SQLite 形态下直接选 SQLite，库文件落在 `/app/data`（`data_data` 卷持久化）；
+   SQLite 形态下直接选 SQLite，库文件落在 `/app/data`（`data_data` 卷持久化）；<br>
+   PG 形态需先在目标实例上 `CREATE DATABASE`，向导不提供「自动创建数据库」（与 MySQL 不同）；
 2. **填管理员账号**：用户名 + 口令（≥8 位，两次一致）。JWT 密钥留空由服务端随机生成；  
    勾选「Cookie 强制 HTTPS」后才写 `COOKIE_SECURE=true`；
 3. **初始数据（默认不装任何数据）**：不勾选 = 装完是一个**干净的空系统**——没有企业、  
@@ -394,13 +405,13 @@ SQLite 形态不用给，MySQL 形态必须给），服务起来会进入「未�
 
 安装动作（服务端一次做完，任何一步失败都不会留下半配置）：
 
-| 步骤     | MySQL                                                                          | SQLite         |
-| ------ | ------------------------------------------------------------------------------ | -------------- |
-| 建库     | 勾选「自动创建」时 `CREATE DATABASE IF NOT EXISTS`（utf8mb4）                             | 目录自动创建         |
-| 建表     | 按 `migrations/*.sql` 顺序应用（幂等：Duplicate column/already exists 忽略）              | 按模型 `AutoMigrate` |
-| 初始数据   | `sys_setting` 缺省值 + 初始超管（bcrypt 哈希）+ 签发 `PII_ENC_KEY`；演示数据仅在勾选时写入                 | 同              |
-| 落配置    | 写入 `CONFIG_FILE`（compose 里是 `/app/data/runtime.env`），权限 0600、临时文件 + rename 原子写 | 同              |
-| 生效     | `syscall.Exec` 原地自重启（Linux）；Windows / 手动托管时提示人工重启                              | 同              |
+| 步骤     | MySQL                                                                          | SQLite         | PostgreSQL |
+| ------ | ------------------------------------------------------------------------------ | -------------- | ---------- |
+| 建库     | 勾选「自动创建」时 `CREATE DATABASE IF NOT EXISTS`（utf8mb4）                             | 目录自动创建         | 需预先建好，向导不代劳 |
+| 建表     | 按 `migrations/*.sql` 顺序应用（幂等：Duplicate column/already exists 忽略）              | 按模型 `AutoMigrate` | 按模型 `AutoMigrate` |
+| 初始数据   | `sys_setting` 缺省值 + 初始超管（bcrypt 哈希）+ 签发 `PII_ENC_KEY`；演示数据仅在勾选时写入                 | 同              | 同 |
+| 落配置    | 写入 `CONFIG_FILE`（compose 里是 `/app/data/runtime.env`），权限 0600、临时文件 + rename 原子写 | 同              | 同 |
+| 生效     | `syscall.Exec` 原地自重启（Linux）；Windows / 手动托管时提示人工重启                              | 同              | 同 |
 
 > **`PII_ENC_KEY` 为什么排在「写演示数据」之前**：员工的手机号盲索引是用当时的密钥算的，
 > 先写数据后换钥 = 这条记录再也查不到（小程序登录报「账号不存在」），且报错与密钥毫无关联。
@@ -1893,9 +1904,9 @@ curl -sk -H 'Accept: text/html' https://127.0.0.1/console/companies -H 'Host: we
 Vue/React 模板，日后在面板改其它设置（如 SSL）时可能自动重新插入 `location /` → 与 `@spa` 段冲突 →
 nginx 启动失败。设为「无」即可永久避免。
 
-## 6. MySQL parity 验证（上线前必做，约 10 分钟）
+## 6. MySQL / PostgreSQL parity 验证（上线前必做，约 10 分钟）
 
-项目测试默认跑 SQLite，而生产是 MySQL——**本仓库有真实前科**：`ON CONFLICT DO NOTHING` 在 SQLite 测试全绿，但 MySQL 不支持该语法（生产登出会 500）。上线前必须用真实 MySQL 把 parity 跑绿：
+项目测试默认跑 SQLite，而生产可能是 MySQL 或 PostgreSQL——**本仓库有真实前科**：`ON CONFLICT DO NOTHING` 在 SQLite 测试全绿，但 MySQL 不支持该语法（生产登出会 500）；PG 侧也踩过 `CAST(x AS CHAR)` 静默截断成首字符、`sys_setting.value` 是 TEXT 不能 `+ 1` 这类「不报错但结果错」的坑。上线前必须用真实目标库把 parity 跑绿：
 
 ```bash
 # 起一个一次性 MySQL 8.0（跑完即可删；也可指向测试库）
@@ -1911,17 +1922,33 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
 （设了 DSN 后 `internal/setup` 的 `TestInstallMySQLEndToEnd` 也会真跑，它自建并删除
 `weichuan_test_inst` 库，不会污染上面的测试库）。全绿再上线。
 
-> 本机需 Go ≥ 1.26（见 `backend/go.mod`）。**CI 已常驻该门禁**（2026-11-09 起）：
-> `backend-mysql` job 用 GitHub Actions 的 `mysql:8.0` service 容器自供给，DSN 写在
-> job 的 `env` 里，**不再需要**在仓库 Settings → Variables 配 `TEST_MYSQL_DSN` 或准备
-> runner 公网可达的 MySQL。每一步还额外断言用例确实 `--- PASS`，防止「绿着 Skip」。
+生产走 PostgreSQL 时同样跑一次（一次性 PG 容器，跑完即可删）：
+
+```bash
+docker run -d --name parity-postgres -p 15432:5432 \
+  -e POSTGRES_PASSWORD=root -e POSTGRES_DB=weichuan_test postgres:16-alpine
+
+cd backend
+TEST_POSTGRES_DSN='host=127.0.0.1 port=15432 user=postgres password=root dbname=weichuan_test sslmode=disable' \
+  go test ./... -v
+```
+
+预期：`TestAPIFlowPostgres` / `TestOpenPostgres` / `TestBumpPostgres` 由 SKIP 转为 **PASS**
+（三者分别钉住「同一套 API 断言」「DSN 形态判定」「TEXT 列版本号原子递增」）。
+
+> 本机需 Go ≥ 1.26（见 `backend/go.mod`）。**CI 已常驻两道门禁**：
+> `backend-mysql` job（2026-11-09 起）用 `mysql:8.0` service 容器，
+> `backend-postgres` job（2026-11-28 起）用 `postgres:16-alpine` service 容器，
+> DSN 都写在 job 的 `env` 里，**不再需要**在仓库 Settings → Variables 配
+> `TEST_MYSQL_DSN` / `TEST_POSTGRES_DSN` 或准备 runner 公网可达的数据库。
+> 每一步还额外断言用例确实 `--- PASS`，防止「绿着 Skip」。
 > 本节命令保留给本地/客户现场复现用。
 
 ## 7. 挂上运维任务
 
 ```cron
-# 每天凌晨 3 点全量备份（mysqldump → gzip → 保留 7 天）
-0 3 * * * cd /path/to/repo && scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
+# 每天凌晨 3 点全量备份（按 DB_DRIVER 选 mysqldump / server backup / pg_dump -Fc → gzip → 保留 7 天）
+0 3 * * * cd /path/to/repo && DB_DRIVER=postgres scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
 
 # 每分钟告警检查（healthz 本地探活 / 5xx / 备份新鲜度 / 外部拨测 / 授权到期，
 # webhook 换成实际机器人地址）
@@ -1932,6 +1959,9 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:13306)/weichuan_test?charset=utf8mb4&par
   BACKUP_DIR=/path/to/repo/backups \
   scripts/alert_check.sh >> /var/log/weichuan-alert.log 2>&1
 ```
+
+R3 的备份新鲜度按后缀扫 `*.sql.gz` / `*.db.gz` / `*.dump.gz`（对应三种形态），
+且不钉 `weichuan-` 前缀——文件名前缀是 `DB_NAME`，自定义库名也照样能报警。
 
 `EXTERNAL_URL` 是**外部拨测**（R4）：从对外域名访问 `/healthz/ready`，覆盖本地探活看不到的
 那一半故障——域名没解析、443 没放行、证书过期、反代 upstream 挂了。同时校验响应耗时
@@ -2080,15 +2110,16 @@ SQLite 单机形态就是 `nohup` 重定向的那个文件）。指错了不会�
 
 ```bash
 # 生产标准用法：口令由环境变量注入（见下「密钥包」）
-BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh
-BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
+BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite   scripts/backup.sh
+BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql    scripts/backup.sh
+BACKUP_ENC_KEY='<口令>' DB_DRIVER=postgres scripts/backup.sh   # 容器内 pg_dump -Fc
 ```
 
 一次运行产出**三件套**，缺一件都不算备份完整：
 
 | 产物 | 内容 | 缺了会怎样 |
 |---|---|---|
-| `backups/weichuan-<时间戳>.db.gz` / `.sql.gz` | 数据库 | —— |
+| `backups/weichuan-<时间戳>.db.gz` / `.sql.gz` / `.dump.gz` | 数据库（SQLite / MySQL / PostgreSQL） | —— |
 | `backups/uploads-<时间戳>.tar.gz` | `uploads/` 里的图片（头像、案例图、海报素材） | 库恢复了，名片页满屏裂图 |
 | `backups/secrets-<时间戳>.tar.gz.enc` | `runtime.env`（含 `PII_ENC_KEY`）+ `license.key`，**加密** | 库里的姓名/手机是密文，**没有钥匙解不开**；业务 PII 无 re-key，丢钥=永久失读 |
 | `backups/mirror-<时间戳>.tar.gz`（可选） | 云桶对象的本地镜像副本（`MIRROR_DIR`） | 未开启本地镜像时本就没有这一件；一旦开启过，缺它就等于「以为有备份，其实只在云厂商那里有一份」，桶被误删没有回头路 |
@@ -2097,6 +2128,7 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 |---|---|
 | SQLite | 容器内 `server backup`（`VACUUM INTO` 在线快照）→ 就地 `integrity_check` → 拷出 → gzip |
 | MySQL | 容器内 `mysqldump --single-transaction` → gzip |
+| PostgreSQL | 容器内 `pg_dump -Fc`（自定义格式归档）→ gzip；用 `pg_restore` 恢复，不能 `psql < 文件` |
 
 **SQLite 为什么不能直接 `cp` 库文件**：库开着 WAL，主文件里可能只有一部分页，剩下的还在
 `-wal` 里。`cp` 出来的是一份撕裂快照，恢复回来 `integrity_check` 直接不通过。
@@ -2140,7 +2172,7 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 | 能做 | 不能做（刻意的） |
 |---|---|
 | 看三件套各自最新一份的文件名、大小、时间、新鲜度；缺哪件直接写明 | 上传备份包一键恢复——恢复是破坏性操作，必须走 `scripts/restore.sh`（有确认、有恢复前安全网） |
-| 「立即备份」补一份（仅 SQLite 形态；MySQL 要 `mysqldump`，运行镜像里没有） | 下载 `secrets-*.tar.gz.enc`——后端直接拒绝。密钥包请用 `scp`/`rsync` 从服务器取，与 `BACKUP_ENC_KEY` 分开保管 |
+| 「立即备份」补一份（仅 SQLite 形态；MySQL / PG 分别要 `mysqldump` / `pg_dump`，走 §9.2 的脚本） | 下载 `secrets-*.tar.gz.enc`——后端直接拒绝。密钥包请用 `scp`/`rsync` 从服务器取，与 `BACKUP_ENC_KEY` 分开保管 |
 | 下载数据库与图片包（流式，不占内存） | 替代 crontab。按钮不会自己按：没人点的那天就没有备份，而且失败时没有告警 |
 
 所以标准做法仍然是 §9.2 的 crontab 每日跑，面板只是「补一份 + 当场确认到底有没有」。
@@ -2150,8 +2182,10 @@ BACKUP_ENC_KEY='<口令>' DB_DRIVER=mysql  scripts/backup.sh
 ### 9.3 恢复
 
 ```bash
-scripts/restore.sh backups/weichuan-20261025-030000.db.gz          # 交互确认
-scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # 脚本化
+scripts/restore.sh backups/weichuan-20261025-030000.db.gz          # SQLite，交互确认
+scripts/restore.sh backups/weichuan-20261025-030000.sql.gz --yes   # MySQL，脚本化
+PG_CONTAINER=<pg容器名> DB_USER=postgres DB_PASSWORD='<口令>' DB_NAME=weichuan \
+  scripts/restore.sh backups/weichuan-20261025-030000.dump.gz      # PostgreSQL
 
 # 再恢复图片与密钥（灾难恢复 / 换了主机时必须做）
 scripts/restore_files.sh --all --yes
@@ -2164,12 +2198,16 @@ scripts/restore_files.sh --all --yes
    这一步失败会直接中止（确需跳过用 `--no-safety`）。
 2. 解压到临时文件（管道中断会留下半个库，所以不直接流式导入）。
 3. 覆盖：SQLite 走一次性容器挂载 `/app/data` 卷完成「删旧 WAL → 写库 → 停/起容器」；
-   MySQL 走 `mysql < dump`（`mysqldump` 自带 `DROP TABLE IF EXISTS`，导入即替换）。
+   MySQL 走 `mysql < dump`（`mysqldump` 自带 `DROP TABLE IF EXISTS`，导入即替换）；
+   PG 把归档拷进容器走 `pg_restore --clean --if-exists --no-owner`（`--no-owner` 是
+   换环境恢复时归档里的旧角色名可能不存在）。
 4. 校验：SQLite 用 `server dbcheck` 验 `integrity_check` 与表数，并等 `/healthz/ready` 回 2xx；
-   MySQL 验表数与 `schema_migrations` 版本。
+   MySQL 验表数与 `schema_migrations` 版本；PG 验 `information_schema.tables` 表数 > 0。
+   PG 自定义格式归档不能用 `psql < 文件` 导入。
 
 **SQLite 必须删 `-wal` / `-shm`**：库文件被替换后，旧 WAL 里还是上一个库的页，
 SQLite 打开时会尝试回放它——结果是把旧数据「恢复」进新库，比不恢复更糟。
+`--target <路径>` 只支持 SQLite（还原成单文件）；MySQL / PG 的隔离演练走 §9.4。
 
 `restore_files.sh` 负责另外两件：
 
@@ -2191,16 +2229,18 @@ SQLite 打开时会尝试回放它——结果是把旧数据「恢复」进新�
 ```bash
 BACKUP_ENC_KEY='<口令>' scripts/restore_drill.sh     # 演练最新一份备份（含文件与密钥）
 scripts/restore_drill.sh backups/xxx.db.gz
+PG_CONTAINER=<pg容器名> DB_USER=postgres DB_PASSWORD='<口令>' DB_NAME=weichuan \
+  scripts/restore_drill.sh backups/xxx.dump.gz
 ```
 
-演练**不碰生产**：SQLite 全程在临时目录里做，MySQL 恢复到临时库
-`weichuan_drill_<时间戳>` 并在结束时删掉。它验证五件事：
+演练**不碰生产**：SQLite 全程在临时目录里做，MySQL / PG 恢复到临时库
+`weichuan_drill_<时间戳>` 并在结束时删掉。它验证五件事（不同形态的第 2/3 项判据不同）：
 
 | 步骤 | 判据 | 失败含义 |
 |---|---|---|
 | 1. 归档完整性 | `gzip -t` | 备份包已损坏 |
-| 2. 恢复到临时目录 | 文件头是 `SQLite format 3` | 备份内容与预期不符 |
-| 3. 库完整性 | `integrity_check = ok` 且表数 > 0 | 备份是坏库 / 空库 |
+| 2. 恢复到临时目录 / 临时库 | SQLite 文件头是 `SQLite format 3`；MySQL / PG 以导入成功为准 | 备份内容与预期不符 |
+| 3. 库完整性 | SQLite `integrity_check = ok` 且表数 > 0；PG 以 `pg_restore` 成功 + 表数 > 0（**没有 integrity_check**）；MySQL 以导入后表数 > 0 | 备份是坏库 / 空库 |
 | 4. 与生产对比 | 生产有的表备份里都有 | **备份不完整**，恢复回去会缺功能 |
 | 5. 文件与密钥 | `uploads-*.tar.gz` 可解开；`secrets-*.enc` 能用 `BACKUP_ENC_KEY` 解开 | 图片恢复不了 / **PII 解不开** |
 
@@ -2267,7 +2307,9 @@ mysqlbinlog --start-datetime="2026-10-25 03:00:00" \
 回放完等于没恢复。
 
 > SQLite 形态没有 PITR：它没有 binlog 这种增量日志，恢复点只能是备份时刻。
-> 对数据丢失零容忍的客户请走 MySQL 形态。
+> PostgreSQL 本身有 WAL 归档 PITR（基备 + `restore_command` + `recovery_target_time`），
+> 但**本仓库只提供全量 `pg_dump -Fc` 备份与恢复**，没有内置 WAL 归档脚本；要用 PG 的
+> PITR 需由 DBA 按实例自行配置归档。对数据丢失零容忍且希望脚本开箱即用，请走 MySQL 形态。
 
 ## 9.6 集中日志
 

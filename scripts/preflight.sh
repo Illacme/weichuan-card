@@ -266,19 +266,43 @@ fi
 
 # ── 7. 数据库口令 ──
 sec "7. 数据库"
-# 驱动按 DSN 形态自动选择（internal/dbopen）：SQLite 部署没有 MySQL 口令可查，
-# 硬查只会产出一条误导性 WARN，这里改为 SKIP 并提示 SQLite 自己的注意点。
+# 驱动按 DSN 形态自动选择（internal/dbopen）：SQLite / PostgreSQL 部署没有 MySQL
+# 口令可查，硬查只会产出一条误导性 WARN。这里按同样的判据分流，只给对应形态的
+# 自检提示。DSN 可能内嵌口令，任何分支都不回显完整连接串。
 dsn="${DB_DSN:-}"
 dsn_path="${dsn%%\?*}"
+dsn_lc="$(printf '%s' "$dsn" | tr '[:upper:]' '[:lower:]')"
+dsn_path_lc="$(printf '%s' "$dsn_path" | tr '[:upper:]' '[:lower:]')"
 is_sqlite=0
-case "$dsn" in
+case "$dsn_lc" in
   sqlite:* | file:*) is_sqlite=1 ;;
 esac
-case "$dsn_path" in
+case "$dsn_path_lc" in
   *.db | *.sqlite | *.sqlite3) is_sqlite=1 ;;
+esac
+is_pg=0
+case "$dsn_lc" in
+  postgres://* | postgresql://*) is_pg=1 ;;
+  *)
+    # 与 dbopen.IsPostgresDSN 一致：libpq key=value 形式要求至少两个 PG 专属键，
+    # 避免把 MySQL 的 charset= / parseTime= 这类参数误认成 PG。
+    read -r -a pg_tokens <<< "$dsn_lc"
+    pg_keys=0
+    for token in "${pg_tokens[@]}"; do
+      case "$token" in
+        host=* | user=* | dbname=* | sslmode=* | port=*) pg_keys=$((pg_keys + 1)) ;;
+      esac
+    done
+    [ "$pg_keys" -ge 2 ] && is_pg=1
+    ;;
 esac
 if [ "$is_sqlite" = "1" ]; then
   skip "DB_DSN 指向 SQLite（${dsn_path:-未设置}）：跳过 MySQL 口令检查。请自行确认——库文件在本地磁盘（勿放 NFS）、单机单进程、备份用 VACUUM INTO"
+elif [ "$is_pg" = "1" ]; then
+  skip "DB_DSN 指向 PostgreSQL（连接串不回显，避免口令入日志）：跳过 MySQL 口令检查。请自行确认——实例可达、目标库已预建（AutoMigrate 建表不建库）、备份用 DB_DRIVER=postgres scripts/backup.sh、恢复与演练用 scripts/restore.sh / scripts/restore_drill.sh"
+  case "$dsn_lc" in
+    *sslmode=disable*) warn "PostgreSQL 连接为 sslmode=disable：同机/内网容器可接受，跨公网生产应启用 TLS（sslmode=require 或 verify-full）" ;;
+  esac
 else
   mrp="${MYSQL_ROOT_PASSWORD:-}"
   # 示例值也从编排文件现读，避免改了 compose、脚本还在检查旧值
@@ -286,7 +310,7 @@ else
   #   未设置时该形态下 mysql 容器启动即报错退出，不会带空口令悄悄启动）
   def_mysql="$(sed -n 's/.*MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD:-\([^}]*\)}.*/\1/p' "$ROOT/docker-compose.yml" | head -1)"
   if [ -z "$mrp" ]; then
-    warn "MYSQL_ROOT_PASSWORD 未设置：仅 --profile mysql 形态需要（未设则该形态下 mysql 容器启动即报错退出，日志有提示）；默认 SQLite 形态可不管"
+    warn "MYSQL_ROOT_PASSWORD 未设置：仅 --profile mysql 形态需要（未设则该形态下 mysql 容器启动即报错退出，日志有提示）；若 DB_DSN 指向自行管理的 MySQL 实例，口令由 DB_DSN 提供，本项可不管"
   elif [ -n "$def_mysql" ] && [ "$mrp" = "$def_mysql" ]; then
     warn "MYSQL_ROOT_PASSWORD 仍是编排文件里的示例值：生产请改强随机值"
   else

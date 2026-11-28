@@ -4,19 +4,20 @@
 #
 #   scripts/restore_drill.sh                     # 演练最新一份备份
 #   scripts/restore_drill.sh backups/xxx.db.gz   # 演练指定备份
+#   scripts/restore_drill.sh backups/xxx.dump.gz # PostgreSQL（PG_CONTAINER 指定容器）
 #   scripts/restore_drill.sh --keep              # 保留临时产物便于排查
 #
 # 它回答的问题只有一个：**「现在真出事，这份备份能不能救回来」**。
 # 所以它做的不是「文件存在吗」，而是：
 #   1. 备份包能不能解开（gzip -t）
-#   2. 恢复出来的库能不能打开（integrity_check）
+#   2. 恢复出来的库能不能用（SQLite integrity_check；MySQL / PG 以导入成功 + 表数为准）
 #   3. 表齐不齐（与生产当前库对比，少表 = FAIL）
 #   4. 数据新旧（行数差异只报告、不判失败——日备本来就会落后）
 #   5. 图片（uploads-*.tar.gz）与密钥包（secrets-*.tar.gz.enc）能不能用
 #      ——库能恢复不等于系统能恢复：图片不在库里，PII 的钥匙在 runtime.env 里。
 #      密钥包「存在但解不开」判 FAIL（需要 BACKUP_ENC_KEY）。
 #
-# SQLite 全程在临时目录里做，不启停容器；MySQL 恢复到临时库
+# SQLite 全程在临时目录里做，不启停容器；MySQL / PostgreSQL 恢复到临时库
 # `weichuan_drill_<时间戳>` 并在结束时删掉。
 #
 # 退出码：0 全部通过 / 1 有 FAIL（可直接接 CI 或 crontab 月度巡检）/
@@ -27,6 +28,8 @@ set -uo pipefail
 
 APP_CONTAINER="${APP_CONTAINER:-weichuan-backend}"
 DB_CONTAINER="${DB_CONTAINER:-weichuan-mysql}"
+# PG 容器与备份 / 恢复脚本同源：优先 PG_CONTAINER，不设才沿用 DB_CONTAINER。
+PG_CONTAINER="${PG_CONTAINER:-$DB_CONTAINER}"
 DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-root}"
 DB_NAME="${DB_NAME:-weichuan}"
@@ -72,16 +75,19 @@ warn() { echo "  [WARN] $*"; }
 info() { echo "  [INFO] $*"; }
 head_() { echo; echo "── $* ──"; }
 
-# 取最新备份（两种产物都认）
+# 取最新备份（三种产物都认：MySQL .sql.gz / SQLite .db.gz / PG .dump.gz）
+# 只按后缀匹配：文件名前缀是 backup.sh 的 DB_NAME（可配置），钉死 weichuan- 前缀
+# 在自定义库名下会误报「没有备份文件」。
 if [ -z "$BACKUP_FILE" ]; then
-  BACKUP_FILE="$(ls -t "$BACKUP_DIR"/weichuan-*.sql.gz "$BACKUP_DIR"/weichuan-*.db.gz 2>/dev/null | head -1 || true)"
+  BACKUP_FILE="$(ls -t "$BACKUP_DIR"/*.sql.gz "$BACKUP_DIR"/*.db.gz "$BACKUP_DIR"/*.dump.gz 2>/dev/null | head -1 || true)"
 fi
 [ -n "$BACKUP_FILE" ] || { echo "[drill][FATAL] $BACKUP_DIR 里没有备份文件（先跑 scripts/backup.sh）" >&2; exit 1; }
 [ -f "$BACKUP_FILE" ] || { echo "[drill][FATAL] 备份文件不存在：$BACKUP_FILE" >&2; exit 1; }
 
 case "$BACKUP_FILE" in
-  *.sql.gz|*.sql) DRIVER="mysql" ;;
-  *.db.gz|*.db)   DRIVER="sqlite" ;;
+  *.sql.gz|*.sql)   DRIVER="mysql" ;;
+  *.db.gz|*.db)     DRIVER="sqlite" ;;
+  *.dump.gz|*.dump) DRIVER="postgres" ;;
   *) echo "[drill][FATAL] 无法判断形态：$BACKUP_FILE" >&2; exit 2 ;;
 esac
 
@@ -277,6 +283,92 @@ drill_mysql() {
   fi
 }
 
+# ═══════════ PostgreSQL 演练 ═══════════
+# pgdrill <库名> <psql 参数...>：在容器里跑 psql，库名为空则不选库。
+# 与 mydrill 对称：临时库的创建与删除都成对写在 drill_postgres 内。
+pgdrill() {
+  local db="$1"; shift
+  if [ -n "$db" ]; then
+    docker exec -e PGPASSWORD="$DB_PASSWORD" "$PG_CONTAINER" psql -tA -U"$DB_USER" -d"$db" "$@"
+  else
+    docker exec -e PGPASSWORD="$DB_PASSWORD" "$PG_CONTAINER" psql -tA -U"$DB_USER" -d postgres "$@"
+  fi
+}
+
+drill_postgres() {
+  head_ "2. 恢复到临时库"
+  local drill_db="weichuan_drill_$(date +%Y%m%d%H%M%S)"
+  local pg_container="$PG_CONTAINER"
+  local t a b
+
+  if ! docker inspect "$pg_container" >/dev/null 2>&1; then
+    fail "找不到容器 ${pg_container}，无法演练 PostgreSQL 备份（请用 PG_CONTAINER 指定）"
+    return
+  fi
+  if ! pgdrill "" -c "CREATE DATABASE $drill_db" >/dev/null 2>&1; then
+    fail "创建临时库失败（权限不足？）"
+    return
+  fi
+
+  local inner="/tmp/weichuan-drill-$$.dump"
+  if ! docker cp "$PLAIN" "$pg_container:$inner" >/dev/null; then
+    fail "拷贝归档到容器失败"
+    pgdrill "" -c "DROP DATABASE IF EXISTS $drill_db" >/dev/null 2>&1 || true
+    return
+  fi
+  # --no-owner 必须：归档里的 owner 是备份环境的角色，临时库里可能不存在。
+  if docker exec -e PGPASSWORD="$DB_PASSWORD" "$pg_container" \
+      pg_restore --no-owner -U"$DB_USER" -d"$drill_db" "$inner" 2>/dev/null; then
+    pass "导入成功"
+    DEEP=1
+  else
+    fail "导入失败——这份备份不能用来恢复"
+    docker exec "$pg_container" rm -f "$inner" >/dev/null 2>&1 || true
+    pgdrill "" -c "DROP DATABASE IF EXISTS $drill_db" >/dev/null 2>&1 || true
+    return
+  fi
+  docker exec "$pg_container" rm -f "$inner" >/dev/null 2>&1 || true
+
+  local t_drill t_prod
+  t_drill="$(pgdrill "$drill_db" -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'")"
+  t_prod="$(pgdrill "$DB_NAME" -c \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'")"
+  if [ "${t_drill:-0}" -gt 0 ]; then pass "临时库表数量 = ${t_drill}（生产 = ${t_prod}）"; else fail "临时库没有表"; fi
+  TABLES_BACKUP="$t_drill"
+  TABLES_PROD="$t_prod"
+
+  head_ "3. 与生产库对比表清单"
+  local missing
+  missing="$(pgdrill "" -c \
+    "SELECT table_name FROM information_schema.tables
+     WHERE table_schema='public' AND table_catalog='$DB_NAME'
+       AND table_name NOT IN (
+         SELECT table_name FROM information_schema.tables
+         WHERE table_schema='public' AND table_catalog='$drill_db')")"
+  if [ -z "$missing" ]; then
+    pass "备份的表清单覆盖生产库（未缺表）"
+  else
+    while read -r t; do [ -n "$t" ] && fail "备份缺少生产库里的表：$t"; done <<< "$missing"
+  fi
+  MISSING_TABLES="$(printf '%s\n' "$missing" | grep -c . || true)"
+
+  head_ "4. 核心表行数（报告）"
+  for t in company employees open_apply card_modify_apply sys_setting audit_log; do
+    a="$(pgdrill "$drill_db" -c "SELECT COUNT(*) FROM \"$t\"" 2>/dev/null || echo '-')"
+    b="$(pgdrill "$DB_NAME" -c "SELECT COUNT(*) FROM \"$t\"" 2>/dev/null || echo '-')"
+    [ "$a" = "-" ] && [ "$b" = "-" ] && continue
+    printf '  [INFO] %-20s 备份 %-8s 生产 %-8s\n' "$t" "$a" "$b"
+    [ "$a" != "$b" ] && DIFF_LINES="${DIFF_LINES}  - ${t}: 备份 ${a} / 生产 ${b}\n"
+  done
+
+  if pgdrill "" -c "DROP DATABASE IF EXISTS $drill_db" >/dev/null 2>&1; then
+    info "已删除临时库 $drill_db"
+  else
+    warn "临时库 $drill_db 删除失败，请手动清理"
+  fi
+}
+
 # ═══════════ 文件资产与运行时密钥 ═══════════
 # 库能恢复 ≠ 系统能恢复：图片在 uploads/，PII 的解密钥匙在 runtime.env。
 # 这两样不在库备份里，所以必须单独验，否则演练会给出一份「通过」的假象。
@@ -328,6 +420,8 @@ drill_files() {
 
 if [ "$DRIVER" = "sqlite" ]; then
   drill_sqlite
+elif [ "$DRIVER" = "postgres" ]; then
+  drill_postgres
 else
   drill_mysql
 fi
@@ -351,7 +445,14 @@ echo "── 留档正文（贴进 docs/drill-records/$(date +%F)-${DRIVER}.md�
 echo "- 日期：$(date +%F)"
 echo "- 备份文件：$(basename "$BACKUP_FILE")"
 echo "- 形态：${DRIVER}｜结论：**${CONCLUSION}**"
-echo "- 校验：gzip -t $([ "$FAILED" -gt 0 ] && echo 见上 || echo PASS)｜integrity_check=${INTEGRITY:-不适用（MySQL 以「导入成功 + 表清单覆盖」为判据）}｜表数 备份 ${TABLES_BACKUP:-?} / 生产 ${TABLES_PROD:-?}｜缺表 ${MISSING_TABLES}"
+if [ -n "$INTEGRITY" ]; then
+  DEEP_NOTE="integrity_check=$INTEGRITY"
+elif [ "$DRIVER" = "postgres" ]; then
+  DEEP_NOTE="integrity_check=不适用（PG 以「pg_restore 导入成功 + 表清单覆盖」为判据）"
+else
+  DEEP_NOTE="integrity_check=不适用（MySQL 以「导入成功 + 表清单覆盖」为判据）"
+fi
+echo "- 校验：gzip -t $([ "$FAILED" -gt 0 ] && echo 见上 || echo PASS)｜${DEEP_NOTE}｜表数 备份 ${TABLES_BACKUP:-?} / 生产 ${TABLES_PROD:-?}｜缺表 ${MISSING_TABLES}"
 echo "- 文件与密钥：上传目录 ${UPLOADS_NOTE}｜密钥包 ${SECRETS_NOTE}"
 echo "- 行数差异（备份落后于生产，属正常）："
 if [ -n "$DIFF_LINES" ]; then printf "$DIFF_LINES"; else echo "  - 无"; fi

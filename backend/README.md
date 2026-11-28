@@ -1,4 +1,4 @@
-# 微传名片 — 后端骨架（Go + Gin + GORM + MySQL）
+# 微传名片 — 后端骨架（Go + Gin + GORM + MySQL / PostgreSQL / SQLite）
 
 对应《首页组件与接口字段映射》《跳转页组件与接口字段映射》两份文档。骨架已覆盖需求中的读操作与写操作（员工/超管登录、开通申请、修改审核流、员工管理）。
 
@@ -58,21 +58,24 @@ backend/
 
 ## 本地运行
 
-`DB_DSN` 同时支持 MySQL 与 SQLite，驱动按 DSN 形态自动选择（`internal/dbopen`），同一个二进制不用换包：
+`DB_DSN` 同时支持 MySQL、PostgreSQL 与 SQLite，驱动按 DSN 形态自动选择（`internal/dbopen`），同一个二进制不用换包：
 
 | 写法 | 驱动 | 说明 |
 |---|---|---|
 | `root:pw@tcp(127.0.0.1:3306)/weichuan?charset=utf8mb4&parseTime=true` | MySQL | 生产标准路径，表结构由 `migrations/*.sql` 建立 |
+| `postgres://user:pass@127.0.0.1:5432/weichuan?sslmode=disable` | PostgreSQL | 需预先建库；启动时按模型 `AutoMigrate` 建表 |
+| `host=127.0.0.1 port=5432 user=postgres password=pass dbname=weichuan sslmode=disable` | PostgreSQL | libpq key=value 写法，等价 |
 | `sqlite:///var/lib/weichuan/weichuan.db` | SQLite | 免装数据库；启动时按模型 `AutoMigrate` 建表，自动补 WAL / busy_timeout / foreign_keys |
 | `file:/var/lib/weichuan/weichuan.db` | SQLite | 同上，URI 写法 |
 | `/var/lib/weichuan/weichuan.db` | SQLite | 裸路径兜底（仅认 `.db` / `.sqlite` / `.sqlite3` 结尾） |
 
 > 用 MySQL 时首次部署要建库并导入迁移；**升级则不用手工跑**——服务启动会按
-> `schema_migrations` 记账表自动补齐未应用的迁移（详见下节）。用 SQLite 时
+> `schema_migrations` 记账表自动补齐未应用的迁移（详见下节）。用 SQLite / PG 时
 > **不要**执行 `migrations/*.sql`
-> （那些是 MySQL 方言，`ENGINE=InnoDB` / `AUTO_INCREMENT` / 反引号 SQLite 都不认）。
+> （那些是 MySQL 方言，`ENGINE=InnoDB` / `AUTO_INCREMENT` / 反引号都不认）；
+> 两者都在启动时按模型 `AutoMigrate` 建表。PG 库本身要预建（AutoMigrate 只建表不建库）。
 > SQLite 的适用边界（单机单进程、库文件必须在本地磁盘、备份用 `VACUUM INTO`）
-> 见仓库根 `docs/deploy-runbook.md`「路径 D：SQLite 单机生产」。
+> 见仓库根 `docs/deploy-runbook.md`「路径 D」；PG 见「路径 E」。
 
 ### 数据库迁移（MySQL）
 
@@ -92,7 +95,7 @@ backend/
 - 失败不记账：某个迁移失败时**不会**把它记成已应用，下次启动会重试；启动日志打
   `[MIGRATE][FATAL]` 且不终止服务（保留「进后台查日志、修完重启自愈」的入口），
   代价是这条日志必须被看见——请把它纳入日志告警匹配词。
-- SQLite 部署不适用：表由启动时按模型 `AutoMigrate` 维护（`./server migrate` 会直接说明）。
+- SQLite / PostgreSQL 部署不适用：表由启动时按模型 `AutoMigrate` 维护（`./server migrate` 会直接说明）。
 - **部署包完整性守门（2026-11-03 事故）**：`internal/migrate/manifest_gen.go` 由
   `scripts/gen_migrations_manifest.py` 把本版本的迁移文件清单**编进二进制**。启动时比对
   清单与磁盘目录，两个方向都报：
@@ -106,8 +109,10 @@ backend/
     CI 的 `TestManifestMatchesMigrationsDir` 双向比对，漏跑即红。
 - **长文本列用 `MEDIUMTEXT`（0036）**：`project_cases.detail` / `biz_services.content` 存的是
   富文本 HTML，`TEXT` 只有 64KB——视频块 + 多图的内容很容易超，超了就是 MySQL 报
-  `Data too long for column`（前端只看到「保存失败」）。模型 tag 已写 `type:mediumtext`
-  （SQLite 忽略长度、MySQL 由迁移改列），**新增富文本列一律按 MEDIUMTEXT 起步**。
+  `Data too long for column`（前端只看到「保存失败」）。**MySQL 生产列仍由迁移改成
+  MEDIUMTEXT**；模型 tag 用方言通用的 `type:text`，因为 PG 不认 `mediumtext`
+  （`type "mediumtext" does not exist`），SQLite 也忽略长度。新增富文本列一律按
+  「MySQL 迁移 MEDIUMTEXT + 模型 tag `type:text`」配套写。
 
 ```bash
 # 手工跑一次（不启服务）
@@ -130,8 +135,8 @@ mysql -u root -p weichuan -e "SELECT version, applied_at FROM schema_migrations 
 ./server dbcheck --file /tmp/weichuan-snapshot.db --field tables   # 取单个值给脚本用
 ```
 
-- `backup` 只支持 SQLite；MySQL 请用 `scripts/backup.sh`（`mysqldump --single-transaction`
-  才有一致性快照，Go 侧不做这件事）。
+- `backup` 只支持 SQLite；MySQL 请用 `scripts/backup.sh` 的 `mysqldump --single-transaction`，
+  PG 请用 `DB_DRIVER=postgres scripts/backup.sh` 的 `pg_dump -Fc`（Go 侧不做一致性快照）。
 - `dbcheck` 以 `mode=ro` 只读打开，**不会创建不存在的文件**——否则体检一个写错的路径
   会得到「0 张表、integrity ok」这种看起来正常的结论。
 
@@ -1148,7 +1153,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 |---|---|---|
 | GET  | /api/admin/audit-logs | 审计日志分页查询（`action` / `actorType` / `actorId` / `result` 过滤）；只读，无写接口 |
 | GET  | /api/admin/backup/status | 三件套状态：每类最新一份的文件名 / 大小 / 时间 / 新鲜度（阈值 26h，与 `alert_check.sh` 一致），外加 `canRun`（仅 SQLite）、`running`、`lastRun`、`notes`（缺件与不可下载的原因） |
-| POST | /api/admin/backup/run | 异步触发一次「库 + 图片」备份（`VACUUM INTO` → gzip、上传目录 → tar.gz）；MySQL 形态直接拒（mysqldump 不在运行镜像里）；进程内互斥，重复点击返回「已有备份任务在进行」 |
+| POST | /api/admin/backup/run | 异步触发一次「库 + 图片」备份（`VACUUM INTO` → gzip、上传目录 → tar.gz）；MySQL / PG 形态直接拒（`mysqldump` / `pg_dump` 不在运行镜像里，走 `scripts/backup.sh`）；进程内互斥，重复点击返回「已有备份任务在进行」 |
 | GET  | /api/admin/backup/download?name= | 流式下载（`FileAttachment`，不占内存）。文件名走白名单正则 + `filepath.Abs` 前缀双检；**`secrets-*.enc` 直接拒**——密钥包不许从后台取走 |
 
 > 三条边界（写在 `handler/backup.go` 顶部注释里，改代码前先读）：
@@ -1408,7 +1413,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   - `RequestID`：注入 / 透传 `X-Request-Id` 响应头，报障时可引用，串联日志排障；
   - `AccessLog`：每请求一行（方法 / 路径 / 状态 / 耗时 / IP），5xx 以 `[ACCESS-5XX]` 前缀标出，便于日志告警规则直接匹配；panic 抛穿本中间件，由链上 `gin.Recovery`（`handler.New` 已用 `gin.New()+Recovery` 替代 `gin.Default()`）记录含栈日志；
   - `Metrics`：内存计数器 + Prometheus 文本格式 `/metrics`（**默认关闭**，`METRICS_ENABLED=1` 显式开启，避免公网暴露流量规模；生产建议仅内网 / 反代白名单可达）。
-- **数据库备份**：仓库根 `scripts/backup.sh` 做 MySQL 逻辑备份（`docker exec mysqldump --single-transaction` → gzip → 按 `KEEP_DAYS` 轮转），可入 crontab；逻辑备份不含 binlog，需 PITR 时另行开启。
+- **数据库备份**：仓库根 `scripts/backup.sh` 按 `DB_DRIVER` 做三形态备份——MySQL `mysqldump --single-transaction`、SQLite `VACUUM INTO`、PG 容器 `pg_dump -Fc`，gzip 后按 `KEEP_DAYS` 轮转，可入 crontab；全量备份不含增量日志，MySQL PITR 需另开 binlog，PG 的 WAL PITR 需 DBA 自配。
 - **GORM 日志脱敏（2026-11-03）**：`dbopen.Open` 统一给 GORM 配脱敏 logger，**SQL 日志永不出现绑定参数值**。两道防线缺一不可：
   - `ParameterizedQueries: true`：callbacks 路径（Create/Updates/Find…）只打 `?`（gorm 靠 `ParamsFilter` 丢弃 vars）；
   - `redactingLogger` 在 `Trace` 出口把字符串字面量再打码一遍——gorm v1.25 的 `DB.Scan`（`finisher_api.go`）有一条独立日志路径，用 `logger.Recorder` 记录**已内联参数**的 SQL，绕过 `ParamsFilter`，而项目里 `db.Raw(...).Scan(...)` 用得很多。
@@ -1417,7 +1422,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
 
 ### 已知待加固项（需流程 / 基建配合，未在本仓库落地）
 - 小程序码 / access_token 等内存缓存多实例不共享，水平扩展需引入 Redis。
-- **最小告警已落地**：仓库根 `scripts/alert_check.sh` 消费 `[ACCESS-5XX]` 访问日志与 `/healthz`（healthz 本地探活 / 5xx / 备份新鲜度 / **外部拨测**四条规则，零依赖，配 crontab 即可运行，配置见《运维与部署》「最小告警（零依赖）」）；待运维侧按需扩展完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）与 PITR（binlog 时间点恢复）；生产需 HTTPS 与反向代理。
+- **最小告警已落地**：仓库根 `scripts/alert_check.sh` 消费 `[ACCESS-5XX]` 访问日志与 `/healthz`（healthz 本地探活 / 5xx / 备份新鲜度 / **外部拨测** / **授权到期**五条规则，零依赖，配 crontab 即可运行，配置见《运维与部署》「最小告警（零依赖）」）；待运维侧按需扩展完整监控栈（Prometheus + Alertmanager）、多地拨测（本脚本的外部拨测仍是单点视角）与 PITR（binlog 时间点恢复）；生产需 HTTPS 与反向代理。
 
 ## 自动化接口测试
 接口层（`/api/*`）已配套 `httptest` 集成测试，覆盖读接口、登录鉴权、审核流、员工管理、分类/项目强校验、业务服务、企业内容、文件上传与存储增强、小程序码等全部主路径，并对「本地驱动不支持预签名→code:1」「CDN 未配置→code:1」「分类下有项目/锁定→删除拦截 code=1」等回退分支做了断言。
@@ -1431,6 +1436,7 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   - `TestAssetLibrary`（`internal/handler/assets_test.go`）：素材库匿名 401、**分页（翻页不重复 / size 与上限 / 非法页码回落与末页夹取 / 分类与关键字过滤 / 无命中空结果）**、**视觉调性（五档清单 / 调性过滤生效 / styleCounts 排除 style 自身 / 分类+调性组合 / 图标只落 clean 一档 / 调性中文名可搜）**、采用落盘（含首页背景 JPEG）、预览图公开 + immutable、封面与背景缩略图、未知素材/空参/路径穿越 404。
   - `TestAPIFlowMySQL`（生产契约 parity）：设置 `TEST_MYSQL_DSN` 后，连真实 MySQL、应用 `migrations/*.sql`，再跑与 SQLite **完全相同的断言**，用以校验 AutoMigrate 与生产建表 SQL 行为一致。
     ⚠️ **两条链路的建库前置也必须一致**：迁移只建表结构，1 号租户由 `seedDefaultCompany` 补齐，`setupSQLiteEngine` 与 `TestAPIFlowMySQL` 共用同一个函数。只在 SQLite 侧建的话，公开接口 / 审核流 / 员工 / 分类 / 服务 / 统计 / 企业内容共 7 个 flow 子测试会因 `company id=1` 不存在集体假失败（2026-11-09 本地真跑 MySQL 才抓到，见该文件注释）。
+  - `TestAPIFlowPostgres`（PG parity）：设置 `TEST_POSTGRES_DSN` 后连真 PG、AutoMigrate 建表，跑**同一个 `runAPIFlow`**。另有 `internal/dbopen:TestOpenPostgres`（DSN 判定）与 `internal/setting:TestBumpPostgres`（TEXT 列原子递增），三者分别守住「方言 SQL」「驱动选择」「PG 特有类型」三类坑。
   - `internal/handler/hardening_test.go`（P0 加固守门）：专治「静默失败」——摘掉修复必须红。覆盖：登出写不进黑名单必须报 `code:1`（`TestLogoutReportsRevokeFailure`，另有 `TestLogoutSucceedsNormally` 作对照）、密码生成取不到随机数必须报错而不能 panic（`TestGenPasswordEntropyFailure` / `TestGenPasswordRejectsAtAPI`）、小程序码按 IP 限流挡扫号（`TestWXACodeRateLimitedPerIP`）、小程序码缓存到上限要淘汰（`TestWXACodeCacheEvictsAtCap`）、启停员工留审计且目标不存在要报「未找到」（`TestEmployeeStatusAuditAndNotFound`）。
   - `internal/storage/storage_test.go:TestRandNameEntropyFailure`：守门「熵源读取失败必须报错」——从前忽略错误会让每次上传都叫同一个名字，后上传的静默覆盖先上传的。
   - `internal/handler/mp_release_test.go`（8 例，`TestMPRelease*`）：版本发布 handler 全链路，假微信按调用顺序记账。覆盖：**完整闭环**（登记→提审→轮询到审过→发布，且终态后不再多调一次 release）、**微信报错时本地记录回滚**（不留下「以为提审成功了」的半截状态）、**状态机非法流转被拒**（auditing 态点发布返回 code=1）、**重复版本号 / 未配凭据 / 记录不存在**、**租户凭据优先于全局凭据**、**租户关掉代发后一切写动作 403 而列表仍可读**、**保存凭据时省略 `releaseEnabled` 不清开关**、**重新打开后代发恢复**；每次代发动作都断言落了一条审计（成功记结果态、失败带 error）。
@@ -1442,6 +1448,9 @@ storage）与他的账号里（`/api/employee/poster-prefs` 要鉴权），**访
   # 生产契约校验（需可用 MySQL）：
   TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/weichuan_test?charset=utf8mb4&parseTime=true' \
     go test ./internal/handler/ -run TestAPIFlowMySQL -v
+  # 生产契约校验（需可用 PostgreSQL）：
+  TEST_POSTGRES_DSN='host=127.0.0.1 port=5432 user=postgres password=root dbname=weichuan_test sslmode=disable' \
+    go test ./... -run 'TestAPIFlowPostgres|TestOpenPostgres|TestBumpPostgres' -v
   ```
 - 鉴权约定：中间件返回的是 **HTTP 200 + `{code:401|403}`**（非 HTTP 状态），测试统一断言 `body["code"]`。
 - 测试 DB：默认无需外部 MySQL。通过 `handler.New(db)` 注入一个**临时文件的 SQLite 库**（纯 Go 驱动 `github.com/glebarez/sqlite`，免 cgo），用 GORM `AutoMigrate` 按模型建表，并 `SeedAdmin` 初始超管后把完整路由跑起来。SQLite 把模型里的 `JSON` 列按 `TEXT` 存储，与 MySQL `JSON` 列在字符串读写语义上等价，足以验证 handler 业务正确性。MySQL parity 用例通过 `runtime.Caller` 定位源码目录、回溯读取 `migrations/`，不依赖测试进程 CWD。
@@ -1524,6 +1533,9 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
     **每步末尾都 grep 断言 `--- PASS`**：`go test` 遇到 `t.Skip` 退出码仍是 0，
     不这么钉住的话，DSN 丢了或用例改名会让 job「绿着跳过」——这正是该门禁
     长期失效没被发现的原因。本地复跑方式见上文「生产契约校验」命令。
+  - `backend-postgres`（**正式门禁，2026-11-28 起必跑**）：`postgres:16-alpine` service 容器
+    自供给，跑 `TestAPIFlowPostgres`（同一套 API 断言）、`TestOpenPostgres`（DSN 判定）、
+    `TestBumpPostgres`（TEXT 列原子递增），每步同样 grep `--- PASS` 防「绿着跳过」。
   - `frontend`：`npm ci` + `npm run build` + `npm run test`（Vitest，含 PC 后台视图层测试与经前端工程纳管的小程序纯逻辑测试）。
   - `frontend-typecheck`（**阻塞门禁**）：`vue-tsc --noEmit`。历史 4 个 `@wangeditor/*` 类型错误已通过 tsconfig `paths` 指向真实 d.ts + 精准断言修复，当前 0 错误。
   - `notices`（**阻塞门禁**）：`python3 scripts/gen_third_party_notices.py --check`，核对 `docs/third-party-licenses.md`
@@ -1603,24 +1615,28 @@ CI：见仓库根 `.github/workflows/ci.yml`，后端相关门禁：
   ```
 - Docker 部署：`docker logs weichuan-backend` 即可查看；若要在宿主机用 `alert_check.sh` 读文件，可挂卷 + `2>` 重定向，或改用 Docker `json-file` logging driver 配合外部采集（filebeat 等）。**告警脚本假设的是裸机/文件场景**，纯 docker 场景建议改用 `docker logs` 轮询或接入标准监控栈。
 
-### 3. 数据库备份（MySQL）
-`scripts/backup.sh` 做 MySQL 逻辑备份（`docker exec mysqldump --single-transaction --quick` → gzip → 按 `KEEP_DAYS` 轮转）。
+### 3. 数据库备份（MySQL / PostgreSQL / SQLite）
+`scripts/backup.sh` 按 `DB_DRIVER` 选形态：MySQL `docker exec mysqldump --single-transaction --quick`、
+SQLite `VACUUM INTO`、PG 容器内 `pg_dump -Fc`，gzip 后按 `KEEP_DAYS` 轮转。
 ```bash
-# 每天 03:00 全量备份（crontab）
-0 3 * * * cd /path/to/repo && scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
+# 每天 03:00 全量备份（crontab，按实际形态给 DB_DRIVER）
+0 3 * * * cd /path/to/repo && DB_DRIVER=postgres scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
 ```
-环境变量：`DB_CONTAINER`(默认 weichuan-mysql) / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `BACKUP_DIR`(默认 ./backups) / `KEEP_DAYS`(默认 7)。逻辑备份不含 binlog，需 PITR 时另行开启 binlog 并定期备份。
+环境变量：`DB_DRIVER` / `DB_CONTAINER`(MySQL 默认 weichuan-mysql) / `PG_CONTAINER`(PG 容器) / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `BACKUP_DIR`(默认 ./backups) / `KEEP_DAYS`(默认 7)。全量备份不含增量日志：MySQL 需另开 binlog 才有 PITR，PG 的 WAL PITR 需 DBA 自配。
 
-> 开发态 `cmd/devserver` 用 SQLite 临时库（每次启动全新、自动 seed），本就无需备份；生产走 `cmd/server`，用本脚本。若生产用的是 SQLite 单机（路径 D），备份改用 `VACUUM INTO` 取在线一致性快照，不要用 `cp`。
+> 开发态 `cmd/devserver` 默认用 SQLite 临时库（每次启动全新、自动 seed），本就无需备份；生产走 `cmd/server`，用本脚本。恢复与演练分别走 `scripts/restore.sh` / `scripts/restore_drill.sh`（三形态都支持）。
 
 ### 4. 最小告警（零依赖）
-`scripts/alert_check.sh` 四条规则，配 crontab **每分钟**运行：
+`scripts/alert_check.sh` 五条规则，配 crontab **每分钟**运行：
 - **R1 healthz**：`GET /healthz/ready` 非 2xx/超时即告警（依赖第 1 节的就绪探针，DB 宕机也能捕获）
 - **R2 5xx**：扫描日志文件新增 `[ACCESS-5XX]`（依赖第 2 节的日志落盘）
-- **R3 备份新鲜度**：`backups/` 最新备份超 `BACKUP_MAX_HOURS`(默认 26h) 即告警（backup.sh 失败时无新文件，本规则兜底）
+- **R3 备份新鲜度**：`backups/` 最新备份（`*.sql.gz` / `*.db.gz` / `*.dump.gz` 三形态都认）
+  超 `BACKUP_MAX_HOURS`(默认 26h) 即告警（backup.sh 失败时无新文件，本规则兜底）
 - **R4 外部拨测**：从对外地址（`EXTERNAL_URL`）访问 `/healthz/ready`——R1 是本机视角，看不出
   域名没解析 / 443 未放行 / 反代 upstream 挂了 / 证书过期这类「本机全绿、用户全挂」的故障。
   同时校验响应耗时（`EXTERNAL_MAX_MS`，默认 2000ms）与证书剩余有效期（`CERT_MIN_DAYS`，默认 14 天）
+- **R5 授权到期**：日志新增 `[LICENSE][EXPIRING]` 即告警，临期 / 过期用不同告警键（6 小时冷却）。
+  到期会自动降只读、私有部署直接拒启，这是唯一不需要有人登录后台的提醒通道。
 ```bash
 # 每分钟检查（crontab）
 * * * * * cd /path/to/repo && EXTERNAL_URL=https://你的域名/healthz/ready scripts/alert_check.sh

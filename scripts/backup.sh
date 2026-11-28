@@ -19,6 +19,7 @@
 #   BACKUP_ENC_KEY='...' scripts/backup.sh              # 生产标准用法（加密密钥包）
 #   scripts/backup.sh                                  # MySQL，默认容器名 weichuan-mysql
 #   DB_DRIVER=sqlite scripts/backup.sh                 # SQLite（默认形态），容器名 weichuan-backend
+#   DB_DRIVER=postgres PG_CONTAINER=my-pg DB_USER=postgres DB_PASSWORD=secret DB_NAME=weichuan scripts/backup.sh
 #   DB_CONTAINER=my-mysql DB_USER=root DB_PASSWORD=secret DB_NAME=weichuan scripts/backup.sh
 #   BACKUP_DIR=/data/backups KEEP_DAYS=14 scripts/backup.sh
 #   BACKUP_SKIP_FILES=1 scripts/backup.sh              # 只备库（不建议：会缺图与密钥）
@@ -31,7 +32,7 @@
 # 在读事务内完成，产物是干净单文件；它需要 sqlite3 命令行工具，而运行镜像只装了
 # tzdata，所以走二进制自带的 `server backup` 子命令——非容器部署也能用。
 #
-# 依赖：docker（两种形态都用容器内工具，宿主机不需要装 mysqldump / sqlite3）。
+# 依赖：docker（MySQL / PG 用容器内工具，宿主机不需要装 mysqldump / pg_dump；SQLite 用后端二进制）。
 # 建议 crontab（每天 3 点）：
 #   0 3 * * * cd /path/to/repo && scripts/backup.sh >> /var/log/weichuan-backup.log 2>&1
 #
@@ -44,6 +45,8 @@ set -euo pipefail
 
 DB_DRIVER="${DB_DRIVER:-mysql}"
 DB_CONTAINER="${DB_CONTAINER:-weichuan-mysql}"
+# PG 容器优先读 PG_CONTAINER；不设时沿用 DB_CONTAINER（与 restore.sh / restore_drill.sh 一致）。
+PG_CONTAINER="${PG_CONTAINER:-$DB_CONTAINER}"
 APP_CONTAINER="${APP_CONTAINER:-weichuan-backend}"
 DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-root}"
@@ -125,8 +128,8 @@ backup_sqlite() {
 # 用容器内的 pg_dump 而非常驻机安装，与 mysql/sqlite 形态的「docker 内执行」一致。
 backup_postgres() {
   local out="$BACKUP_DIR/${DB_NAME}-${STAMP}.dump.gz"
-  echo "[backup] $STAMP dumping ${DB_NAME} from container ${DB_CONTAINER} ..."
-  if docker exec -e PGPASSWORD="$DB_PASSWORD" "$DB_CONTAINER" \
+  echo "[backup] $STAMP dumping ${DB_NAME} from container ${PG_CONTAINER} ..."
+  if docker exec -e PGPASSWORD="$DB_PASSWORD" "$PG_CONTAINER" \
     pg_dump -Fc -U"$DB_USER" -d"$DB_NAME" | gzip > "$out"; then
     DB_OUT="$out"
     echo "[backup] OK -> $out ($(du -h "$out" | cut -f1))"

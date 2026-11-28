@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 初始超管口令 `ADMIN_PASS` | 环境变量 / `data/runtime.env`（留空走安装向导现场生成） | 不再是内置缺省值 `admin123456`（该值已随演示账号写进公开文档）；建议 `openssl rand -base64 12` | ✅ 查缺省值 / 长度；后端 `InsecureGates` 也会拒绝启动 |
 | 签名密钥 `JWT_KEY` | 同上 | 不再是内置缺省值；长度 ≥ 32（`openssl rand -base64 32`） | ✅ 查缺省值 / 长度；`InsecureGates` 同样拒绝启动 |
-| 部署形态 | 用 `cmd/server`（MySQL）或 `docker-compose`；**不要**用 `cmd/devserver` | devserver 每次建临时 SQLite，重启即丢 | ⚠️ 需人工确认启动方式 |
+| 部署形态 | 用 `cmd/server`（MySQL / PostgreSQL / SQLite）或 `docker-compose`；**不要**用 `cmd/devserver` | devserver 每次建临时 SQLite，重启即丢 | ⚠️ 需人工确认启动方式 |
 | HTTPS + 反向代理前置 | 网关 / 反代配置 | 对外只暴露 https，后台 `COOKIE_SECURE=true` | ✅ 查 `COOKIE_SECURE`；设 `PUBLIC_BASE_URL` 后还查外部可达性与证书有效期 |
 | 小程序种子基址 `DEFAULT_BASE_URL` | 小程序源码常量（`miniprogram/utils/config.ts`，**默认为空**） | 是线上 https 域名；**不能**留空，也**不能**是 `127.0.0.1` / `localhost` / **私有网段**（192.168./10./172.16-31.） | ✅ 上述四类（空值 / 回环 / 私有网段 / 明文 http）都判 FAIL（本机联调可 `PREFLIGHT_ALLOW_PRIVATE=1` 放行） |
 | 小程序品牌名 | `app.json` 全局标题 = 产品名；企业名运行时按租户设置 | 不得出现任何**具体客户名**（一套代码多租户，写死客户名等于给别人看别家公司名） | ✅ `miniprogram/tests/brand.spec.ts` 扫全目录守门 |
@@ -35,7 +35,7 @@
 | 本地目录 `UPLOAD_DIR` / 镜像目录 `MIRROR_DIR` | 后台「系统设置 → 主存储（启动配置）」或「存储与分发 → 平台自身配置」，也可部署环境变量 | 改后已重启；镜像目录不在 `uploads/` 下，且与主目录互不包含 | ✅ 查目录关系 |
 | 上传基址（平台配置里的 `baseUrl`） | 文件存储「主存储」行，或首次播种用 `UPLOAD_BASE_URL` | 是真实可访问的 https 基址；保存后立即生效（无需重启），验一张新上传的图 | ✅ 查播种值 / http。**注意**：preflight 读不到库里配置的值，必须后台人工复核 |
 | 微信 `wx_appid` / `wx_appsecret` | 后台「系统设置」覆盖（留空回退 `WX_*` 环境变量） | 真机扫码能拉起、小程序码能生成 | ✅ 查是否配置与格式；`PREFLIGHT_WX_LIVE=1` 时真调微信接口验证是否配对 |
-| 数据库迁移已应用到最新（MySQL 升级） | 启动时自动补齐（`AUTO_MIGRATE=0` 关闭，改跑 `server migrate`） | **MySQL**：启动日志是「已应用 N 个迁移」或「数据库已是最新」，**无** `[MIGRATE][FATAL]`。**SQLite**：表由启动时 `AutoMigrate` 维护，上面两行**根本不会出现**——别照着找（`server migrate` 在 SQLite 下会直接提示无需迁移） | ❌ 需看启动日志（详见 runbook §4） |
+| 数据库迁移已应用到最新（MySQL 升级） | 启动时自动补齐（`AUTO_MIGRATE=0` 关闭，改跑 `server migrate`） | **MySQL**：启动日志是「已应用 N 个迁移」或「数据库已是最新」，**无** `[MIGRATE][FATAL]`。**SQLite / PostgreSQL**：表由启动时 `AutoMigrate` 维护，上面两行**根本不会出现**——别照着找（`server migrate` 在这两种形态下会直接提示无需迁移） | ❌ 需看启动日志（详见 runbook §4） |
 | gin 运行模式 `GIN_MODE` | `docker-compose.yml`（默认 `release`） | 不是 `debug`：debug 下每次启动把全部路由表打进日志，把真正要看的 `[SECURITY]` / `[MIGRATE]` 挤走 | ❌ 需看启动日志有无 `[GIN-debug]` 行 |
 | 服务端时区 `TZ` | `docker-compose.yml` 默认 `Asia/Shanghai`；原生部署设 systemd `Environment=TZ=Asia/Shanghai` | 统计「今日」口径正确：`docker exec weichuan-backend date` 与北京时间一致。不设时 Go 读不到时区库会**静默按 UTC**——每天 00:00–08:00 的访问落到前一天，不报错、只是数字悄悄错位 | ❌ 需人工看一眼容器时间 |
 | 存储 / CDN 多套配置（迁移 0054；平台配置 0059） | 后台「存储与分发」 | 三套系统自带配置都在（主存储 / 租户退路 / 备份存储）且不可删；租户配置已自检通过、全局默认已选、需要搬迁的企业已跑过迁移任务并核对失败清单为空 | ⬜ 需平台超管确认 |
@@ -67,8 +67,8 @@
   （留空时端上回落 `utils/config.ts` 的内置种子域名，换域名时两端都要改）。
 - **接最小告警** `scripts/alert_check.sh`（crontab 每分钟，五条规则）：healthz 本地探活 / 5xx / 备份新鲜度 /
   **外部拨测**（配 `EXTERNAL_URL`，覆盖反代 / 证书 / 防火墙这类本机探活看不见的故障）/ **授权到期**（R5，见下方授权条目）。
-- **备份任务进 crontab**：`BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh`（或 `DB_DRIVER=mysql`），每天一次。
-  一次产出**三件套**：库（`.db.gz` / `.sql.gz`）、图片（`uploads-*.tar.gz`）、
+- **备份任务进 crontab**：`BACKUP_ENC_KEY='<口令>' DB_DRIVER=sqlite scripts/backup.sh`（或 `DB_DRIVER=mysql` / `DB_DRIVER=postgres`），每天一次。
+  一次产出**三件套**：库（`.db.gz` / `.sql.gz` / `.dump.gz`）、图片（`uploads-*.tar.gz`）、
   密钥包（`secrets-*.tar.gz.enc`）。开启本地镜像（`MIRROR_DIR`）的部署会多一件
   `mirror-*.tar.gz`，它是云桶对象的本地副本，同样要确认新鲜度。SQLite 形态**不能直接 `cp` 库文件**
   （WAL 里还有未合并的页，cp 出来是坏库），必须走这个脚本。
@@ -84,9 +84,10 @@
 - **上线前跑一次恢复演练** `BACKUP_ENC_KEY='<口令>' scripts/restore_drill.sh`：期望退出码 `0`。
   `2` 是「环境不完整、没真正校验」，不算通过。演练覆盖库、图片、密钥包三项；
   「有密钥包却没给口令」判 FAIL。把输出贴进运维记录——没演练过的备份不算备份。
-- 数据库：MySQL 形态请确认 `DB_DSN` 指向的实例可达、已建库、迁移已应用到最新、备份策略就位
-  （SQLite 形态库文件勿放 NFS，单机单进程；备份用 `server backup` 的 `VACUUM INTO`，
-  恢复见 `docs/deploy-runbook.md` §9）。
+- 数据库：MySQL / PostgreSQL 形态请确认 `DB_DSN` 指向的实例可达、已建库、迁移已应用到最新、备份策略就位
+  （PG 库需预建，向导不代劳；表由 AutoMigrate 建；备份用 `DB_DRIVER=postgres scripts/backup.sh`，
+  恢复用 `scripts/restore.sh` 的 `pg_restore` 分支）。SQLite 形态库文件勿放 NFS，单机单进程；
+  备份用 `server backup` 的 `VACUUM INTO`。三形态恢复与演练见 `docs/deploy-runbook.md` §9。
 - 代码层兜底已就位：内置缺省密钥 / 口令会被 `InsecureGates` 拒绝启动，不会带着默认凭据悄悄上线。
 - **前端报错已接入服务端日志**：浏览器侧异常（Vue 运行时、`window.onerror`、未捕获 Promise 拒绝）现上报到无鉴权端点 `POST /api/client-error`，服务端以 `[CLIENT-ERROR]` 前缀写日志并带 `X-Request-Id`，可与后端同次请求日志串起来排查。运维侧只需按 `[CLIENT-ERROR]` 关键字在日志 / 归集系统里建视图或告警；DEV 下前端只本地 `console.warn` 不上报，不必担心本地噪音污染。
 - **私有 / 独立部署需有效许可证**：私有化交付时设置 `DEPLOY_MODE=private` 并在 `data/license.key` 放入由签发私钥签名的许可证文件（Ed25519，公钥验签）；验签失败或过期时 `cmd/server` 会**拒绝启动**（与 `InsecureGates` 同一类硬门槛）。集中 / 平台模式无需许可证，走系统设置读取。
@@ -102,7 +103,7 @@
 - **审计日志保留期（C3）默认不清理**：后台「系统设置 → 安全 → 审计日志保留天数」缺省 `0`=永不自动删除（删了不可逆，所以不做默认删除）。要合规留存策略就填 180/365；清理动作本身会记一条 `audit.purge` 审计（操作人显示「系统」）。启动清一次 + 每 12 小时一次（`AUDIT_PURGE_MINUTES`）。
 - **集中日志（C8）：`LOG_FORMAT=json`**：切完每行一个 JSON 对象（`ts/level/msg/tag`，访问日志还有 `method/path/status/latency_ms/request_id`），配合 `deploy/promtail/config.yml` 进 Loki。不切也能跑，但出事时只能靠 grep 正则捞——「把 5xx 按路径聚合」这类问题答不上来。容器日志轮转已在 compose 里配 `max-size=10m / max-file=7`（**改完要 `--force-recreate`**）。
 - **`/metrics` 加第二道门 `METRICS_ALLOW_CIDR`**：即使有人在界面上把 `metrics_enabled` 打开，白名单外的来源访问 `/metrics` 仍一律 404。CIDR 写错时**整体拒绝**（fail-closed），启动日志会点名哪条解析失败。
-- **PITR（时间点恢复）要单独开启**：全量备份的恢复点是备份时刻，想回到「误操作前一秒」必须开 binlog（compose 的 mysqld 已带 `--log-bin`）并按小时跑 `scripts/backup_binlog.sh` 归档。SQLite 形态没有 PITR。
+- **PITR（时间点恢复）要单独开启**：全量备份的恢复点是备份时刻，想回到「误操作前一秒」必须开 binlog（compose 的 mysqld 已带 `--log-bin`）并按小时跑 `scripts/backup_binlog.sh` 归档。SQLite 形态没有 PITR；PG 本身支持 WAL 归档 PITR，但本仓库未内置该脚本，需 DBA 自行配置。
 - **恢复演练要留档**：`scripts/restore_drill.sh` 结尾会直接打印可粘贴的记录正文，存进 `docs/drill-records/YYYY-MM-DD-<形态>.md`，每季度至少一次。「我们演练过」这句话在没记录时无法向客户/审计证明。
 - **CI 门禁**：`.github/workflows/ci.yml` 共 **16 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL / PostgreSQL 双库 parity**（service 容器自供给，PG 为 2026-11-28 起）均为正式门禁。本地复跑两种 parity 见 `docs/deploy-runbook.md` §6。
 
@@ -168,7 +169,7 @@
 | 2 | T 日 | #1 隐私指引复核 👤 | 真机 | 点「存入通讯录」不再 `errno 112` 死循环 | 2026-11-07 已审核通过；**换账号 / 换主体须重新提交**，审核 1~2 工作日又是串行阻塞 |
 | 2 | T 日 | WX 凭据可用 🤖 | 后台「生成小程序码」 | 能出图，海报二维码与微信登录不卡 | `PREFLIGHT_WX_LIVE=1 scripts/preflight.sh` 可真调微信接口校验配对（只读校验） |
 | 3 | T+1 ~ T+7 | #10 恢复演练 👤 | 服务器 + `scripts/restore_drill.sh` | 退出码 0；把脚本结尾打印的「留档正文」粘进 `docs/drill-records/YYYY-MM-DD-<形态>.md` | 每季度至少一次；升级迁移 / 改备份脚本 / 换部署形态后补跑 |
-| 3 | T+1 ~ T+7 | #9 binlog 回放 / PITR 演练 👤 | 服务器 + 留档 | 真跑一次时间点恢复并写进 `docs/drill-records/` | SQLite 形态没有 PITR；MySQL 需开 binlog 与 `scripts/backup_binlog.sh` 归档 |
+| 3 | T+1 ~ T+7 | #9 binlog 回放 / PITR 演练 👤 | 服务器 + 留档 | 真跑一次时间点恢复并写进 `docs/drill-records/` | SQLite 形态没有 PITR；MySQL 需开 binlog 与 `scripts/backup_binlog.sh` 归档；PG 的 WAL PITR 需 DBA 自行配置（本仓库未提供脚本） |
 | 3 | 到期前 | #11 私有部署续期演练 👤 | 客户现场 `data/license.key` + 重启 | 换 key 后写操作恢复；首次换证不留在到期当天 | 需约客户时间；平台形态改到期日下一请求即恢复，不用重启 |
 
 **放弃上线的硬条件**（任一命中就别发版）：备案号未在关于页公示 / 换主体却未重新备案 / 三类域名缺任一 / 服务器上 `preflight.sh` 有 FAIL / `/healthz/ready` 返回 HTML / `/uploads/` 404 带 `immutable` / 启动日志有 `[MIGRATE][FATAL]` / `PII_ENC_KEY` 未备份。
