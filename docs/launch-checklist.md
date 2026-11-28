@@ -104,7 +104,7 @@
 - **`/metrics` 加第二道门 `METRICS_ALLOW_CIDR`**：即使有人在界面上把 `metrics_enabled` 打开，白名单外的来源访问 `/metrics` 仍一律 404。CIDR 写错时**整体拒绝**（fail-closed），启动日志会点名哪条解析失败。
 - **PITR（时间点恢复）要单独开启**：全量备份的恢复点是备份时刻，想回到「误操作前一秒」必须开 binlog（compose 的 mysqld 已带 `--log-bin`）并按小时跑 `scripts/backup_binlog.sh` 归档。SQLite 形态没有 PITR。
 - **恢复演练要留档**：`scripts/restore_drill.sh` 结尾会直接打印可粘贴的记录正文，存进 `docs/drill-records/YYYY-MM-DD-<形态>.md`，每季度至少一次。「我们演练过」这句话在没记录时无法向客户/审计证明。
-- **CI 门禁**：`.github/workflows/ci.yml` 共 **15 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL parity**（service 容器自供给，2026-11-09 起）均为正式门禁。本地复跑 MySQL parity 见 `docs/deploy-runbook.md` §6。
+- **CI 门禁**：`.github/workflows/ci.yml` 共 **16 个 job，全部阻塞合并**。后端 `golangci-lint`（`backend/.golangci.yml`，只留 errcheck/govet/ineffassign/staticcheck/unused 五条「静默失败」类规则）、前端类型检查 `vue-tsc`、镜像构建、密钥扫描、许可清单过期检查、**备份链自检**（`scripts/selftest_backup.sh`，验「备份→恢复→逐字节一致」与失败路径）、**发版脚本自检**、依赖漏洞扫描（govulncheck + npm audit，2026-11-03 起）、端到端冒烟（`scripts/e2e_smoke.sh`，2026-11-09 起）、以及 **MySQL / PostgreSQL 双库 parity**（service 容器自供给，PG 为 2026-11-28 起）均为正式门禁。本地复跑两种 parity 见 `docs/deploy-runbook.md` §6。
 
 ## 四、必须由本人在外部系统完成（仓库代码无法代劳，2026-11-09 汇总）
 

@@ -168,7 +168,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 ## 测试与 CI
 
-CI 见 `.github/workflows/ci.yml`，**15 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
+CI 见 `.github/workflows/ci.yml`，**16 个 job 全部阻塞合并**（2026-11-09 起不再有「可选 / 非阻塞」job）：
 
 - **后端 (Go / SQLite)**：`go build` + `go vet` + `go test ./...`，**默认零外部依赖**，用 SQLite 跑完整接口流程、上传内容嗅探与 MinIO/OSS 驱动的 httptest 假服务测试。
 - **后端 (Go / MySQL parity)**：GitHub Actions 自带 `mysql:8.0` service 容器，连真 MySQL 跑「连接建表 + 同一套 API 断言 + 安装向导 MySQL 分支」；DSN 写在 job 内，**无需**仓库变量。每步额外断言用例确实 `--- PASS`，防止 `t.Skip` 让 job 绿着跳过。

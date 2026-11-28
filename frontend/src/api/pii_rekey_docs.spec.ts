@@ -198,14 +198,14 @@ describe('上线判据文档：数字与生效口径不回退', () => {
     }
   })
 
-  it('CI job 数对齐真实 workflow：四份文档都写 15，不许回退到 12', () => {
+  it('CI job 数对齐真实 workflow：四份文档都写 16，不许回退到 12', () => {
     const ci = read(resolve(REPO, '.github/workflows/ci.yml'))
     const jobCount = (ci.match(/^ {2}[a-z0-9-]+:\n {4}name:/gm) ?? []).length
-    expect(jobCount, 'CI job 数变了，守门数字需要重新核对').toBe(15)
+    expect(jobCount, 'CI job 数变了，守门数字需要重新核对').toBe(16)
     for (const [name, p] of Object.entries(RUNTIME_DOCS)) {
       const src = read(p)
-      expect(src, `${name} 仍写旧 job 数`).not.toMatch(/12 个 job|12 个.*job/)
-      expect(src, `${name} 未写当前 job 数`).toContain('15 个')
+      expect(src, `${name} 仍写旧 job 数`).not.toMatch(/12 个 job|12 个.*job|15 个 job/)
+      expect(src, `${name} 未写当前 job 数`).toContain('16 个')
     }
   })
 
@@ -233,7 +233,7 @@ describe('上线判据文档：数字与生效口径不回退', () => {
   it('branch-protection 表格 job 数与 CI 对齐，且含三处新补的门禁', () => {
     const doc = read(RUNTIME_DOCS.branchProtection)
     const tableRows = (doc.match(/^\| `[^`]+` \|/gm) ?? []).length
-    expect(tableRows, '表格 job 行数与 CI 不一致').toBe(15)
+    expect(tableRows, '表格 job 行数与 CI 不一致').toBe(16)
     expect(doc).toContain('`审计动作 ↔ 中文名对账`')
     expect(doc).toContain('`OpenAPI 契约对账`')
     expect(doc).toContain('`小程序启动标题同步`')
