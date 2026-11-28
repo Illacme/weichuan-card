@@ -7196,6 +7196,7 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 | 后端 | `gofmt -l .` / `go vet ./...` / `go build ./...` / `go test ./...` 全绿；显式 `--- PASS` 确认 `TestAPIFlowMySQL` / `TestMySQLMigrations` / `TestInstallMySQLEndToEnd` 与 `TestAPIFlowPostgres` / `TestOpenPostgres` / `TestBumpPostgres` 均真跑 |
 | 前端 | vitest 2053/2054；唯一失败仍是用户工作区未提交的 `miniprogram/app.json` / `utils/brand.ts`（启动标题守门），不在本次提交内 |
 | OpenAPI / 许可 | 140 paths / 139 路由对齐；`gen_third_party_notices.py --check` 通过 |
+| CI | 提交 `debc30f`，run `46110046485`，**16 job 全绿**（含 PG parity、备份链自检、发版脚本自检） |
 
 **边界**：PG 全量归档恢复已闭环，但 PITR 仍需 DBA 自配 WAL 归档（本仓库未内置脚本），
 文档已按这个口径写明，避免把「有 PITR 能力」误写成「开箱即用」。
