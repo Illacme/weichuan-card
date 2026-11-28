@@ -7200,3 +7200,21 @@ HTTP 缓存副本在 CDN / 反代上，服务端无主动失效能力（除非�
 
 **边界**：PG 全量归档恢复已闭环，但 PITR 仍需 DBA 自配 WAL 归档（本仓库未内置脚本），
 文档已按这个口径写明，避免把「有 PITR 能力」误写成「开箱即用」。
+
+---
+
+## 第一百一十七轮：PG 安装向导全流程门禁（2026-11-28）
+
+追问「初始化安装时能否任意选择三种数据库」时发现：向导 UI 与 `composeDSN` 都已支持
+`mysql` / `sqlite` / `postgres`，但 PG 这条路径**只有 DSN 拼接单测**，没有 MySQL
+那种真实端到端覆盖——「能选」和「选完真能装成」之间缺一道证据。本轮补上。
+
+| 面 | 改动 |
+|---|---|
+| 测试 | 新增 `internal/setup:TestInstallPostgresEndToEnd`：用 `pgx.ParseConfig` 解析 `TEST_POSTGRES_DSN`，DROP 后 CREATE 独立空库 `weichuan_test_inst`（PG 页面不提供自动建库），依次验连接测试、`Install` 结果、配置文件落盘、1 个种子管理员、`sys_setting` 已播种，结束删库不污染测试实例 |
+| CI | `backend-postgres` job 增加一步跑该用例并 grep `--- PASS`，用例改名 / 被 Skip 会红灯；job 数仍 16，无需改 job 数守门 |
+| 文档 | 后端 README、部署 Runbook（§E 与 §6）、分支保护同步新用例口径 |
+
+**验证**：本地真 PG 显式七条 parity 用例全部 `--- PASS`（MySQL / PG API flow、两边安装向导、PG DSN 分派、TEXT 原子递增，无 Skip），测试库无残留；`gofmt` / `go vet` / `go build` / `go test ./...` 全绿；文档守门 19/19、OpenAPI 140 paths / 139 路由、第三方许可清单一致。CI run `46143258383`：**16/16 job 全绿**。
+
+**口径**：初始化向导三种引擎都能选；MySQL 可勾自动建库，SQLite 自动建目录，**PG 要求先在实例上 `CREATE DATABASE`**——这是有意的差异，不是缺功能。
